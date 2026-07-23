@@ -1,0 +1,24 @@
+# Production checklist
+
+- [ ] Run migrations 001 → 004
+- [ ] Create `branding-assets` Storage bucket + policies
+- [ ] Confirm RLS on reports/branding/jobs/logs
+- [ ] Create salesperson and admin users
+- [ ] Set admin `profiles.role = 'admin'`
+- [ ] Add all Vercel env vars from `.env.example`
+- [ ] Restrict Google browser key by HTTP referrer + Places API
+- [ ] Restrict Google server key appropriately
+- [ ] Test ATTOM via `/admin/provider-test`
+- [ ] Test RentCast via `/admin/provider-test`
+- [ ] Test San Jose + Santa Clara GIS
+- [ ] Confirm AI deterministic fallback works without keys
+- [ ] Upload Acton logo at `/admin/branding`
+- [ ] Configure Slack signing secret + `/property`
+- [ ] Confirm Slack messages link to protected reports
+- [ ] Confirm unauthenticated users cannot open reports
+- [ ] `ENABLE_MOCK_RESEARCH=false`
+- [ ] `ALLOW_MOCK_FALLBACK=false`
+- [ ] `npm run build` passes
+- [ ] Confirm no API keys in client bundle (`NEXT_PUBLIC_` only for public values)
+- [ ] Confirm APN `472-29-068` equals `47229068` (no false conflict)
+- [ ] Print a dense sample report and confirm ≤ 6 pages

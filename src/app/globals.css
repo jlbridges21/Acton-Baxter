@@ -1,26 +1,59 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --acton-navy: #0b1f3a;
+  --acton-navy-dark: #071526;
+  --acton-yellow: #f5c518;
+  --acton-yellow-dark: #e0b100;
+  --acton-gray-50: #f5f7fa;
+  --acton-gray-100: #e8edf3;
+  --acton-border: #d7dee8;
+  --acton-muted: #5b6b7c;
+  --background: #f5f7fa;
+  --foreground: #0b1f3a;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-source-sans);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-source-sans), "Segoe UI", sans-serif;
+}
+
+@media print {
+  body {
+    background: white !important;
+  }
+
+  .print\:hidden,
+  header,
+  nav,
+  button {
+    display: none !important;
+  }
+
+  .report-document {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  .print\:break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print\:break-before-page {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  a[href]::after {
+    content: none !important;
+  }
 }
