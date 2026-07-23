@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/session";
+import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { RateLimitError, ValidationError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -6,7 +6,7 @@ import { getAddressProvider } from "@/lib/address/resolve";
 
 export async function GET(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireActiveUser();
     const rate = checkRateLimit(`address-autocomplete:${user.id}`, {
       limit: 60,
       windowMs: 60_000,

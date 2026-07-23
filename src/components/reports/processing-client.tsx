@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle } from "lucide-react";
@@ -34,7 +35,8 @@ export function ProcessingClient({ reportId }: { reportId: string }) {
       if (runStarted) return;
       runStarted = true;
       try {
-        await fetch(`/api/reports/${reportId}/run`, { method: "POST" });
+        // Do not await completion — research continues if the user leaves this page.
+        void fetch(`/api/reports/${reportId}/run`, { method: "POST" });
       } catch {
         // Status polling will surface failures.
       }
@@ -113,11 +115,34 @@ export function ProcessingClient({ reportId }: { reportId: string }) {
           <CardTitle>{failed ? "Research failed" : "Researching property"}</CardTitle>
           <CardDescription className="mt-2">
             {failed
-              ? "The mock research pipeline could not finish. You can retry this report."
-              : "Gathering parcel, property, jurisdiction, and hazard information."}
+              ? "The research pipeline could not finish. You can retry this report."
+              : "Gathering parcel, property, jurisdiction, and hazard information. You can leave this page — research continues in the background. Return from Dashboard or Report History when it finishes."}
           </CardDescription>
         </div>
       </div>
+
+      {!failed ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link
+            href="/dashboard"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+          >
+            Go to dashboard
+          </Link>
+          <Link
+            href="/reports"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+          >
+            Report history
+          </Link>
+          <Link
+            href="/reports/new"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+          >
+            Start another report
+          </Link>
+        </div>
+      ) : null}
 
       <ol className="mt-6 space-y-3">
         {stages.map((stage, index) => {

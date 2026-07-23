@@ -194,9 +194,13 @@ export const normalizedMapsSchema = z.object({
   redfinUrl: z.string().nullable().optional(),
   googleMapsUrl: z.string().nullable().optional(),
   streetViewUrl: z.string().nullable().optional(),
+  satelliteImageAvailable: z.boolean().optional(),
+  streetViewImageAvailable: z.boolean().optional(),
   femaUrl: z.string().nullable().optional(),
   fireZoneUrl: z.string().nullable().optional(),
 });
+
+export type NormalizedMaps = z.infer<typeof normalizedMapsSchema>;
 
 export const propertyProfileAccessSchema = z.object({
   available: z.boolean(),

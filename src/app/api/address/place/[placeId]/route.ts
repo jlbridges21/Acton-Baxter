@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/session";
+import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { RateLimitError, ValidationError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -10,7 +10,7 @@ type RouteContext = {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    const user = await requireActiveUser();
     const rate = checkRateLimit(`address-place:${user.id}`, { limit: 40, windowMs: 60_000 });
     if (!rate.allowed) {
       throw new RateLimitError();

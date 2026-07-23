@@ -47,6 +47,8 @@ export interface ReportStore {
   getSourceHealth(): Promise<ConnectorHealthCheckRow[]>;
   ensureProfile(profile: Profile): Promise<Profile>;
   getProfile(userId: string): Promise<Profile | null>;
+  listProfiles(): Promise<Profile[]>;
+  updateProfileRole(userId: string, role: Profile["role"]): Promise<Profile>;
 }
 
 type MemoryState = {
@@ -83,6 +85,22 @@ class MemoryReportStore implements ReportStore {
     return getMemoryState().profiles.get(userId) ?? null;
   }
 
+  async listProfiles(): Promise<Profile[]> {
+    return Array.from(getMemoryState().profiles.values()).sort((a, b) =>
+      a.full_name.localeCompare(b.full_name),
+    );
+  }
+
+  async updateProfileRole(userId: string, role: Profile["role"]): Promise<Profile> {
+    const existing = getMemoryState().profiles.get(userId);
+    if (!existing) {
+      throw new Error("Profile not found");
+    }
+    const updated: Profile = { ...existing, role, updated_at: nowIso() };
+    getMemoryState().profiles.set(userId, updated);
+    return updated;
+  }
+
   async createReport(input: CreateReportInput): Promise<ReportRow> {
     const id = randomUUID();
     const timestamp = nowIso();
@@ -113,6 +131,7 @@ class MemoryReportStore implements ReportStore {
       country_code: input.countryCode ?? null,
       parent_report_id: input.parentReportId ?? null,
       refresh_reason: input.refreshReason ?? null,
+      maps_json: null,
       facts: [],
       claims: [],
       conflicts: [],
@@ -238,6 +257,7 @@ class MemoryReportStore implements ReportStore {
     report.ai_prompt_version = result.aiGeneration?.promptVersion ?? null;
     report.ai_generated_at = result.aiGeneration?.generatedAt ?? null;
     report.ai_input_hash = result.aiGeneration?.inputHash ?? null;
+    report.maps_json = result.maps ?? null;
     report.error_message = null;
     report.completed_at = timestamp;
     report.updated_at = timestamp;
@@ -397,6 +417,28 @@ class SupabaseReportStore implements ReportStore {
       .maybeSingle();
     if (error) throw error;
     return (data as Profile | null) ?? null;
+  }
+
+  async listProfiles(): Promise<Profile[]> {
+    const supabase = this.client();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data as Profile[]) ?? [];
+  }
+
+  async updateProfileRole(userId: string, role: Profile["role"]): Promise<Profile> {
+    const supabase = this.client();
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ role })
+      .eq("id", userId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return data as Profile;
   }
 
   async createReport(input: CreateReportInput): Promise<ReportRow> {
@@ -589,6 +631,7 @@ class SupabaseReportStore implements ReportStore {
         ai_prompt_version: result.aiGeneration?.promptVersion ?? null,
         ai_generated_at: result.aiGeneration?.generatedAt ?? null,
         ai_input_hash: result.aiGeneration?.inputHash ?? null,
+        maps_json: result.maps ?? null,
         error_message: null,
         completed_at: nowIso(),
       })

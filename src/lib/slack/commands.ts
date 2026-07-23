@@ -20,6 +20,24 @@ export type SlackCommandAck = {
   text: string;
 };
 
+export async function postSlackResponseUrl(
+  responseUrl: string,
+  body: SlackCommandAck,
+): Promise<void> {
+  const response = await fetch(responseUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new AppError(`Slack response_url failed with HTTP ${response.status}`, {
+      code: "SLACK_RESPONSE_URL_FAILED",
+      statusCode: 502,
+      expose: false,
+    });
+  }
+}
+
 function parseAllowedTeamIds(raw: string): Set<string> {
   return new Set(
     raw

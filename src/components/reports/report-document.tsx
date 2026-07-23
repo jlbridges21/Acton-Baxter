@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link2 } from "lucide-react";
 import { ReportHeader } from "./report-header";
 import { ResearchSummary } from "./research-summary";
+import { PropertyImagerySection } from "./property-imagery";
 import { PropertyOverview } from "./property-overview";
 import { ParcelAndPublicRecords } from "./parcel-and-public-records";
 import { PlanningAndHazards } from "./planning-and-hazards";
@@ -80,6 +81,7 @@ export function ReportDocument({
         logoAlt={logoAlt}
       />
       <ResearchSummary summary={report.summary} />
+      <PropertyImagerySection report={report} />
       <PropertyOverview facts={report.facts} claims={report.claims} />
       <ParcelAndPublicRecords report={report} />
       <PlanningAndHazards

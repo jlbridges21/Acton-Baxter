@@ -743,6 +743,8 @@ export async function runMockPropertyResearch(
         "https://www.google.com/maps/search/?api=1&query=655+13th+St,+San+Jose,+CA+95112",
       streetViewUrl:
         "https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=37.34521,-121.88045",
+      satelliteImageAvailable: true,
+      streetViewImageAvailable: true,
       femaUrl: "https://msc.fema.gov/portal/search?sample=1",
       fireZoneUrl:
         "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",

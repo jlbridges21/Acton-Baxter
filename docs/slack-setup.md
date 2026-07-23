@@ -75,9 +75,10 @@ Use a tunnel (Cloudflare Tunnel or ngrok) to your local `/api/slack/commands/pro
 
 ## Troubleshooting
 
-| Issue                  | Fix                                                          |
-| ---------------------- | ------------------------------------------------------------ |
-| invalid_signature      | Signing secret mismatch or raw body altered                  |
-| timeout                | Command must acknowledge quickly; research is async via jobs |
-| disallowed team        | Add team ID to `SLACK_ALLOWED_TEAM_IDS`                      |
-| report never completes | Confirm cron/process-jobs secret and queue rows              |
+| Issue                  | Fix                                                                  |
+| ---------------------- | -------------------------------------------------------------------- |
+| invalid_signature      | Signing secret mismatch or raw body altered                          |
+| operation_timeout      | Fixed by immediate ack + `after()` work; redeploy if still seeing it |
+| timeout                | Command must acknowledge quickly; research is async via jobs         |
+| disallowed team        | Add team ID to `SLACK_ALLOWED_TEAM_IDS`                              |
+| report never completes | Confirm cron/process-jobs secret and queue rows                      |

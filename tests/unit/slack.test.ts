@@ -89,4 +89,9 @@ describe("Slack security and messages", () => {
     });
     expect(JSON.stringify(message)).toContain("Could not identify");
   });
+
+  it("exports response_url poster for async slash-command follow-ups", async () => {
+    const { postSlackResponseUrl } = await import("@/lib/slack/commands");
+    expect(typeof postSlackResponseUrl).toBe("function");
+  });
 });

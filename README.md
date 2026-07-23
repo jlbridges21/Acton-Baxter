@@ -57,6 +57,7 @@ In Supabase SQL Editor, run each file completely:
 2. `supabase/migrations/002_live_research_metadata.sql`
 3. `supabase/migrations/003_prompt3_production.sql`
 4. `supabase/migrations/004_branding_storage.sql`
+5. `supabase/migrations/005_new_user_role_and_maps.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 
@@ -64,9 +65,19 @@ Also create Storage bucket `branding-assets` if step 4 cannot insert into `stora
 
 ## Create users and first admin
 
+Users can **create an account from the login screen**. New self-registered accounts receive the `new_user` role and are blocked from research until an admin grants access.
+
+### Option A — self signup (recommended)
+
+1. Open `/login` → **Create account**
+2. After signup/sign-in, the user lands on **Access pending**
+3. An admin opens **Admin → Users** and clicks **Grant salesperson** (or admin)
+
+### Option B — Supabase dashboard
+
 1. Supabase → Authentication → Users → Add user
 2. Confirm profile row in `profiles`
-3. Promote admin:
+3. Promote admin (or salesperson):
 
 ```sql
 update public.profiles
@@ -74,6 +85,7 @@ set role = 'admin'
 where id = '<user-uuid>';
 ```
 
+Roles: `new_user` (pending), `salesperson` (app access), `admin` (app + admin tools).
 ---
 
 ## Live research keys
@@ -91,11 +103,13 @@ Test at `/admin/provider-test` (admin, non-production).
 
 ## Google Maps / Places (recommended)
 
-1. Google Cloud Console → enable **Places API** and **Geocoding API**
+1. Google Cloud Console → enable **Places API**, **Geocoding API**, **Maps Static API**, and **Street View Static API**
 2. Create:
-   - Browser key → `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (HTTP referrer restricted to your domains; Places only)
-   - Server key → `GOOGLE_MAPS_SERVER_API_KEY` (IP / server restricted; Places + Geocoding)
+   - Browser key → `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (HTTP referrer restricted to your domains)
+   - Server key → `GOOGLE_MAPS_SERVER_API_KEY` (IP / server restricted; Places, Geocoding, Maps Static, Street View Static)
 3. Restart the app
+
+Reports use Google for address autocomplete plus satellite / Street View imagery (proxied through `/api/reports/[id]/imagery`) and deep links to Google Maps.
 
 Without Google keys, manual address entry still works in mock mode; live mode should use autocomplete/resolve for confidence.
 

@@ -1,5 +1,6 @@
+import { isAppAccessRole } from "@/lib/auth/roles";
 import { getEnv } from "@/lib/env";
-import { AuthenticationError } from "@/lib/errors";
+import { AuthenticationError, AuthorizationError } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
 import { getReportStore } from "@/lib/research/report-store";
 import type { Profile, UserRole } from "@/lib/research/db-types";
@@ -63,7 +64,7 @@ export async function requireUser(): Promise<AuthUser> {
         (user.user_metadata?.full_name as string | undefined) ||
         user.email?.split("@")[0] ||
         "Acton User",
-      role: ((user.user_metadata?.role as UserRole | undefined) ?? "salesperson") as UserRole,
+      role: ((user.user_metadata?.role as UserRole | undefined) ?? "new_user") as UserRole,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -84,10 +85,20 @@ export async function getOptionalUser(): Promise<AuthUser | null> {
   }
 }
 
-export async function requireAdmin(): Promise<AuthUser> {
+/** Authenticated user with salesperson or admin access (not pending new_user). */
+export async function requireActiveUser(): Promise<AuthUser> {
   const user = await requireUser();
+  if (!isAppAccessRole(user.profile.role)) {
+    throw new AuthorizationError(
+      "Your account is pending approval. An administrator must grant access before you can use the app.",
+    );
+  }
+  return user;
+}
+
+export async function requireAdmin(): Promise<AuthUser> {
+  const user = await requireActiveUser();
   if (user.profile.role !== "admin") {
-    const { AuthorizationError } = await import("@/lib/errors");
     throw new AuthorizationError("Admin access required");
   }
   return user;

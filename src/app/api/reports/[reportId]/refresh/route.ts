@@ -1,4 +1,4 @@
-import { requireUser } from "@/lib/auth/session";
+import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { NotFoundError, ValidationError, RateLimitError } from "@/lib/errors";
 import { runPropertyResearch } from "@/lib/research/run-property-research";
@@ -12,7 +12,7 @@ type RouteContext = {
 
 export async function POST(_request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    const user = await requireActiveUser();
     const rate = checkRateLimit(`refresh-report:${user.id}`, { limit: 5, windowMs: 60_000 });
     if (!rate.allowed) throw new RateLimitError();
 

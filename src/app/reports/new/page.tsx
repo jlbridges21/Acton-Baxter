@@ -1,9 +1,9 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { NewReportForm } from "@/components/reports/new-report-form";
-import { requireUser } from "@/lib/auth/session";
+import { requireActiveUser } from "@/lib/auth/session";
 
 export default async function NewReportPage() {
-  const user = await requireUser();
+  const user = await requireActiveUser();
   return (
     <AppShell user={user}>
       <div className="mb-6">

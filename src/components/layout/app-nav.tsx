@@ -105,6 +105,20 @@ export function AppNav({
             ) : null}
             {userRole === "admin" ? (
               <Link
+                href="/admin/users"
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
+                  pathname.startsWith("/admin/users")
+                    ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
+                    : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
+                )}
+              >
+                <Shield className="h-4 w-4" />
+                Users
+              </Link>
+            ) : null}
+            {userRole === "admin" ? (
+              <Link
                 href="/admin/branding"
                 className={cn(
                   "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",

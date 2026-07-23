@@ -21,6 +21,7 @@ import {
 } from "@/lib/connectors/california/santa-clara-county/property-profile";
 import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
+import { buildGoogleMapLinks } from "@/lib/providers/google/imagery";
 import { lookupAttomProperty } from "@/lib/providers/attom/provider";
 import { acresToSquareFeet } from "@/lib/providers/attom/normalizer";
 import { lookupRentCastProperty } from "@/lib/providers/rentcast/provider";
@@ -1045,6 +1046,14 @@ export async function runLivePropertyResearch(
     });
   }
 
+  const mapLatitude = parcelGeometrySource?.centroidLatitude ?? latitude;
+  const mapLongitude = parcelGeometrySource?.centroidLongitude ?? longitude;
+  const googleLinks = buildGoogleMapLinks({
+    address: standardizedAddress,
+    latitude: mapLatitude,
+    longitude: mapLongitude,
+  });
+
   const resultWithoutSummary = {
     identity: {
       inputAddress: normalized.inputAddress,
@@ -1110,11 +1119,10 @@ export async function runLivePropertyResearch(
       zoningMapUrl: SAN_JOSE_CONFIG.links.zoningMap,
       permitSearchUrl: `${SAN_JOSE_CONFIG.links.permitSearch}?q=${encodeMapsQuery(standardizedAddress)}`,
       redfinUrl: `https://www.redfin.com/stingray/do/query-location?location=${encodeMapsQuery(standardizedAddress)}`,
-      googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeMapsQuery(standardizedAddress)}`,
-      streetViewUrl:
-        latitude != null && longitude != null
-          ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${latitude},${longitude}`
-          : null,
+      googleMapsUrl: googleLinks.googleMapsUrl,
+      streetViewUrl: googleLinks.streetViewUrl,
+      satelliteImageAvailable: googleLinks.satelliteImageAvailable,
+      streetViewImageAvailable: googleLinks.streetViewImageAvailable,
       femaUrl: "https://msc.fema.gov/portal/search",
       fireZoneUrl:
         "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",

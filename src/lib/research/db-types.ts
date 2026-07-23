@@ -59,6 +59,7 @@ export type ReportRow = {
   ai_prompt_version?: string | null;
   ai_generated_at?: string | null;
   ai_input_hash?: string | null;
+  maps_json?: unknown;
 };
 
 export type PropertyFactRow = {

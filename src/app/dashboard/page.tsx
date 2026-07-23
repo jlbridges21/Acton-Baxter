@@ -1,11 +1,11 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { DashboardClient } from "@/components/dashboard/dashboard-client";
-import { requireUser } from "@/lib/auth/session";
+import { requireActiveUser } from "@/lib/auth/session";
 import { isAdminRole } from "@/lib/auth/roles";
 import { getReportStore } from "@/lib/research/report-store";
 
 export default async function DashboardPage() {
-  const user = await requireUser();
+  const user = await requireActiveUser();
   const reports = await getReportStore().listReports();
 
   return (

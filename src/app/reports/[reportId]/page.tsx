@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { ReportDocument } from "@/components/reports/report-document";
-import { requireUser } from "@/lib/auth/session";
+import { requireActiveUser } from "@/lib/auth/session";
 import { isAdminRole } from "@/lib/auth/roles";
 import { getBrandingWithLogo } from "@/lib/branding/get-branding";
 import { getReportStore } from "@/lib/research/report-store";
@@ -12,7 +12,7 @@ type PageProps = {
 };
 
 export default async function ReportPage({ params }: PageProps) {
-  const user = await requireUser();
+  const user = await requireActiveUser();
   const { reportId } = await params;
   if (!isUuid(reportId)) notFound();
 
