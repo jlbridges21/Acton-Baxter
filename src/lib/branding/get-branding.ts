@@ -1,6 +1,5 @@
 import "server-only";
 
-import { getEnv } from "@/lib/env";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getSignedLogoUrl } from "./logo-url";
 import {
@@ -55,11 +54,18 @@ function getMemoryState(): MemoryBrandingState {
   return globalMemory.__actonBrandingMemory;
 }
 
-export function usesMemoryBrandingStore(env = getEnv()): boolean {
+/** Safe during build/prerender when env is incomplete. */
+export function usesMemoryBrandingStore(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+  const bypass = process.env.E2E_TEST_AUTH_BYPASS === "true";
   return (
-    env.E2E_TEST_AUTH_BYPASS ||
-    env.NEXT_PUBLIC_SUPABASE_URL.includes("127.0.0.1") ||
-    env.NEXT_PUBLIC_SUPABASE_ANON_KEY.startsWith("test-")
+    bypass ||
+    !url ||
+    !anon ||
+    !process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    url.includes("127.0.0.1") ||
+    anon.startsWith("test-")
   );
 }
 
@@ -77,30 +83,41 @@ function mapRow(row: BrandingRow): BrandingSettings {
 }
 
 export async function getBrandingSettings(): Promise<BrandingSettings> {
-  if (usesMemoryBrandingStore()) {
-    return getMemoryState().settings;
-  }
+  try {
+    if (usesMemoryBrandingStore()) {
+      return getMemoryState().settings;
+    }
 
-  const supabase = createServiceClient();
-  const { data, error } = await supabase
-    .from("branding_settings")
-    .select("*")
-    .eq("singleton_key", true)
-    .maybeSingle();
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("branding_settings")
+      .select("*")
+      .eq("singleton_key", true)
+      .maybeSingle();
 
-  // Migration may not be applied yet in some environments; never break page render.
-  if (error) {
-    console.warn("[branding] falling back to defaults:", error.message);
+    if (error) {
+      console.warn("[branding] falling back to defaults:", error.message);
+      return defaultBranding();
+    }
+    if (!data) return defaultBranding();
+    return mapRow(data as BrandingRow);
+  } catch (error) {
+    console.warn(
+      "[branding] falling back to defaults:",
+      error instanceof Error ? error.message : "unknown error",
+    );
     return defaultBranding();
   }
-  if (!data) return defaultBranding();
-  return mapRow(data as BrandingRow);
 }
 
 export async function getBrandingWithLogo(): Promise<BrandingWithLogo> {
   const settings = await getBrandingSettings();
-  const logoUrl = await getSignedLogoUrl(settings.logoStoragePath);
-  return { ...settings, logoUrl };
+  try {
+    const logoUrl = await getSignedLogoUrl(settings.logoStoragePath);
+    return { ...settings, logoUrl };
+  } catch {
+    return { ...settings, logoUrl: null };
+  }
 }
 
 export function getMemoryBrandingForTests(): BrandingSettings {

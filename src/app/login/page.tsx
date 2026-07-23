@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { LoginForm } from "./login-form";
 import { getBrandingWithLogo } from "@/lib/branding/get-branding";
 
+export const dynamic = "force-dynamic";
+
 export default async function LoginPage() {
   const branding = await getBrandingWithLogo();
 

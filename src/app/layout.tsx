@@ -12,6 +12,9 @@ export const metadata: Metadata = {
   title: "Acton Property Research",
   description:
     "Internal Acton ADU property research and Partnership Evaluation Meeting preparation tool.",
+  other: {
+    "acton-app": "acton-property-research",
+  },
 };
 
 export default function RootLayout({
@@ -21,7 +24,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${sourceSans.variable} antialiased`}>{children}</body>
+      <body
+        className={`${sourceSans.variable} antialiased`}
+        data-acton-app="acton-property-research"
+      >
+        {children}
+      </body>
     </html>
   );
 }

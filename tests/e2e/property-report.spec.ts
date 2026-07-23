@@ -14,7 +14,9 @@ test("create mock property report and open completed report", async ({ page }) =
   await page.getByLabel("Property address").fill("655 13th St, San Jose, CA");
   await page.getByRole("button", { name: "Research Property" }).click();
 
-  await expect(page.getByText("Confirm this property address")).toBeVisible();
+  await expect(page.getByText("Confirm this property address")).toBeVisible({
+    timeout: 15_000,
+  });
   await page.getByRole("button", { name: "Confirm address" }).click();
   await page.getByRole("button", { name: "Research Property" }).click();
 

@@ -4,5 +4,8 @@
       "path": "/api/internal/process-jobs",
       "schedule": "*/2 * * * *"
     }
-  ]
+  ],
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build"
 }
