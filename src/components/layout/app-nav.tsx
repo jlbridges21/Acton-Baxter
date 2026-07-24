@@ -3,34 +3,142 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FileText, LayoutDashboard, LogOut, Menu, Palette, Search, Shield, X } from "lucide-react";
+import {
+  BookOpen,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Palette,
+  PlusCircle,
+  Search,
+  Shield,
+  X,
+} from "lucide-react";
 import { CompanyLogo } from "@/components/branding/company-logo";
 import { Button } from "@/components/ui/button";
+import { getNavContext, type NavContext } from "@/lib/baxter/tools";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
-const primaryLinks = [
-  { href: "/", label: "Baxter Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard", label: "Property Research", icon: Search },
-  { href: "/reports", label: "Reports", icon: FileText },
-] as const;
+type NavLink = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  match?: (pathname: string) => boolean;
+};
 
-const adminLinks = [
-  { href: "/admin/sources", label: "Source Health", icon: Shield },
-  { href: "/admin/provider-test", label: "Provider Test", icon: Shield },
-  { href: "/admin/users", label: "Users", icon: Shield },
-  { href: "/admin/branding", label: "Branding", icon: Palette },
-] as const;
+function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
+  const home: NavLink = {
+    href: "/",
+    label: "Baxter Dashboard",
+    icon: LayoutDashboard,
+    match: (pathname) => pathname === "/",
+  };
 
-function isPrimaryActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  if (href === "/dashboard") {
-    return (
-      pathname === "/dashboard" || pathname === "/reports/new" || pathname.startsWith("/reports/")
-    );
+  if (context === "platform") {
+    // Platform home stays simple — tools are opened from dashboard cards.
+    return [home];
   }
-  if (href === "/reports") return pathname === "/reports";
-  return pathname === href || pathname.startsWith(`${href}/`);
+
+  if (context === "property-research") {
+    const links: NavLink[] = [
+      home,
+      {
+        href: "/dashboard",
+        label: "Overview",
+        icon: Search,
+        match: (pathname) => pathname === "/dashboard",
+      },
+      {
+        href: "/reports/new",
+        label: "New Research",
+        icon: PlusCircle,
+        match: (pathname) => pathname === "/reports/new",
+      },
+      {
+        href: "/reports",
+        label: "Reports",
+        icon: FileText,
+        match: (pathname) =>
+          pathname === "/reports" ||
+          (pathname.startsWith("/reports/") && pathname !== "/reports/new"),
+      },
+    ];
+    if (isAdmin) {
+      links.push(
+        {
+          href: "/admin/sources",
+          label: "Source Health",
+          icon: Shield,
+          match: (pathname) => pathname.startsWith("/admin/sources"),
+        },
+        {
+          href: "/admin/provider-test",
+          label: "Provider Test",
+          icon: Shield,
+          match: (pathname) => pathname.startsWith("/admin/provider-test"),
+        },
+      );
+    }
+    return links;
+  }
+
+  if (context === "knowledge") {
+    return [
+      home,
+      {
+        href: "/admin/knowledge",
+        label: "Knowledge Base",
+        icon: BookOpen,
+        match: (pathname) =>
+          pathname === "/admin/knowledge" ||
+          (pathname.startsWith("/admin/knowledge/") && !pathname.includes("/sources")),
+      },
+      {
+        href: "/admin/knowledge/sources",
+        label: "Sources",
+        icon: Shield,
+        match: (pathname) => pathname.startsWith("/admin/knowledge/sources"),
+      },
+    ];
+  }
+
+  // platform-admin (branding, users, etc.)
+  const adminLinks: NavLink[] = [
+    home,
+    {
+      href: "/admin/knowledge",
+      label: "Knowledge Base",
+      icon: BookOpen,
+      match: (pathname) => pathname.startsWith("/admin/knowledge"),
+    },
+    {
+      href: "/admin/users",
+      label: "Users",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/users"),
+    },
+    {
+      href: "/admin/branding",
+      label: "Branding",
+      icon: Palette,
+      match: (pathname) => pathname.startsWith("/admin/branding"),
+    },
+    {
+      href: "/admin/sources",
+      label: "Source Health",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/sources"),
+    },
+    {
+      href: "/admin/provider-test",
+      label: "Provider Test",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/provider-test"),
+    },
+  ];
+  return adminLinks;
 }
 
 export function AppNav({
@@ -39,8 +147,7 @@ export function AppNav({
   userEmail,
   logoUrl = null,
   companyName = "Acton ADU",
-  reportTitle = "Baxter",
-  logoAlt = "Baxter by Acton ADU",
+  logoAlt = "Acton ADU - Baxter",
 }: {
   userName: string;
   userRole: string;
@@ -54,6 +161,8 @@ export function AppNav({
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAdmin = userRole === "admin";
+  const context = getNavContext(pathname);
+  const links = linksForContext(context, isAdmin);
 
   async function handleLogout() {
     try {
@@ -68,12 +177,12 @@ export function AppNav({
 
   const navItems = (
     <>
-      {primaryLinks.map((link) => {
+      {links.map((link) => {
         const Icon = link.icon;
-        const active = isPrimaryActive(pathname, link.href);
+        const active = link.match ? link.match(pathname) : pathname === link.href;
         return (
           <Link
-            key={link.href}
+            key={`${link.href}-${link.label}`}
             href={link.href}
             onClick={() => setMobileOpen(false)}
             className={cn(
@@ -88,28 +197,6 @@ export function AppNav({
           </Link>
         );
       })}
-      {isAdmin
-        ? adminLinks.map((link) => {
-            const Icon = link.icon;
-            const active = pathname.startsWith(link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={() => setMobileOpen(false)}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
-                  active
-                    ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
-                    : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {link.label}
-              </Link>
-            );
-          })
-        : null}
     </>
   );
 
@@ -121,7 +208,7 @@ export function AppNav({
             href="/"
             logoUrl={logoUrl}
             companyName={companyName}
-            reportTitle={reportTitle}
+            productLabel="Baxter"
             alt={logoAlt}
           />
           <nav className="hidden items-center gap-1 lg:flex">{navItems}</nav>

@@ -23,7 +23,7 @@ export type BrandingWithLogo = BrandingSettings & {
 
 export const DEFAULT_COMPANY_NAME = "Acton ADU";
 export const DEFAULT_REPORT_TITLE = "Baxter";
-export const DEFAULT_LOGO_ALT_TEXT = "Baxter by Acton ADU";
+export const DEFAULT_LOGO_ALT_TEXT = "Acton ADU - Baxter";
 export const BRANDING_ASSETS_BUCKET = "branding-assets";
 export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 export const ALLOWED_LOGO_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;

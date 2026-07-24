@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { ArrowRight, Construction } from "lucide-react";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { getEnabledBaxterTools, type BaxterTool } from "@/lib/baxter/tools";
+import { BAXTER_ADMIN_CARDS, getEnabledBaxterTools, type BaxterTool } from "@/lib/baxter/tools";
 import { CompanyLogo } from "@/components/branding/company-logo";
 
 export function BaxterDashboard({
   isAdmin = false,
   logoUrl = null,
   companyName = "Acton ADU",
-  reportTitle = "Baxter",
-  logoAlt = "Baxter by Acton ADU",
+  logoAlt = "Acton ADU - Baxter",
 }: {
   isAdmin?: boolean;
   logoUrl?: string | null;
@@ -26,7 +25,7 @@ export function BaxterDashboard({
           href="/"
           logoUrl={logoUrl}
           companyName={companyName}
-          reportTitle={reportTitle}
+          productLabel="Baxter"
           alt={logoAlt}
           className="sm:hidden"
         />
@@ -45,7 +44,7 @@ export function BaxterDashboard({
         <div>
           <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Tools</h2>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Open an enabled Baxter tool. Property Research remains the first production tool.
+            Open a tool to work. Navigation becomes tool-specific after you enter it.
           </p>
         </div>
 
@@ -53,6 +52,31 @@ export function BaxterDashboard({
           {tools.map((tool) => (
             <ToolCard key={tool.key} tool={tool} />
           ))}
+          {isAdmin
+            ? BAXTER_ADMIN_CARDS.map((card) => {
+                const Icon = card.icon;
+                return (
+                  <Card key={card.key} className="flex h-full flex-col justify-between">
+                    <div>
+                      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--acton-navy)] text-[var(--acton-yellow)]">
+                        <Icon className="h-5 w-5" aria-hidden />
+                      </div>
+                      <CardTitle>{card.name}</CardTitle>
+                      <CardDescription className="mt-2">{card.description}</CardDescription>
+                    </div>
+                    <div className="mt-6">
+                      <Link
+                        href={card.href}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white hover:bg-[var(--acton-navy-dark)]"
+                      >
+                        {card.ctaLabel}
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
+                  </Card>
+                );
+              })
+            : null}
         </div>
       </section>
 
@@ -75,9 +99,13 @@ export function BaxterDashboard({
 }
 
 function ToolCard({ tool }: { tool: BaxterTool }) {
+  const Icon = tool.icon;
   return (
     <Card className="flex h-full flex-col justify-between">
       <div>
+        <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--acton-navy)] text-[var(--acton-yellow)]">
+          <Icon className="h-5 w-5" aria-hidden />
+        </div>
         <CardTitle>{tool.name}</CardTitle>
         <CardDescription className="mt-2">{tool.description}</CardDescription>
       </div>
@@ -86,7 +114,7 @@ function ToolCard({ tool }: { tool: BaxterTool }) {
           href={tool.href}
           className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white hover:bg-[var(--acton-navy-dark)]"
         >
-          Open Property Research
+          {tool.ctaLabel}
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>

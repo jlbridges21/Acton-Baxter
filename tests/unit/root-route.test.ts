@@ -35,6 +35,14 @@ describe("Baxter platform shell", () => {
     expect(tools[0]?.key).toBe("property-research");
     expect(tools[0]?.href).toBe("/reports/new");
     expect(tools[0]?.enabled).toBe(true);
+    expect(tools[0]?.icon).toBeTruthy();
+  });
+
+  it("uses tool-scoped navigation contexts", async () => {
+    const { getNavContext } = await import("@/lib/baxter/tools");
+    expect(getNavContext("/")).toBe("platform");
+    expect(getNavContext("/reports/new")).toBe("property-research");
+    expect(getNavContext("/admin/knowledge")).toBe("knowledge");
   });
 
   it("preserves Property Research routes", () => {

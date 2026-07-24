@@ -8,9 +8,9 @@ export function ActonLogo({
   className,
   compact = false,
   logoUrl = null,
-  companyName = "Acton ADU",
-  reportTitle = "Baxter",
-  logoAlt = "Baxter by Acton ADU",
+  companyName = "Acton ADU - Baxter",
+  reportTitle = "",
+  logoAlt = "Acton ADU - Baxter",
 }: {
   href?: string;
   className?: string;
@@ -39,8 +39,8 @@ export function ActonLogo({
         </span>
       )}
       <span className="leading-tight">
-        <span className="block text-sm font-bold tracking-wide">{companyName.toUpperCase()}</span>
-        {!compact ? (
+        <span className="block text-sm font-bold tracking-wide">{companyName}</span>
+        {!compact && reportTitle ? (
           <span className="block text-xs font-medium text-[var(--acton-muted)]">{reportTitle}</span>
         ) : null}
       </span>

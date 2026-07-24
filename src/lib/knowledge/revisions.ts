@@ -1,0 +1,1 @@
+export { listKnowledgeEntryRevisions } from "./store";

@@ -8,9 +8,10 @@ import { cn } from "@/lib/utils";
 
 export function CompanyLogo({
   logoUrl,
-  alt = "Acton ADU logo",
+  alt = "Acton ADU - Baxter",
   companyName = "Acton ADU",
-  reportTitle = "Property Research",
+  productLabel = "Baxter",
+  reportTitle,
   href = "/",
   className,
   compact = false,
@@ -18,12 +19,17 @@ export function CompanyLogo({
   logoUrl?: string | null;
   alt?: string;
   companyName?: string;
+  /** Shown as "Company - Product" next to the logo (e.g. Acton ADU - Baxter). */
+  productLabel?: string;
+  /** @deprecated Prefer productLabel; kept for call-site compatibility. */
   reportTitle?: string;
   href?: string;
   className?: string;
   compact?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const product = productLabel || reportTitle || "Baxter";
+  const displayName = `${companyName} - ${product}`;
 
   if (!logoUrl || failed) {
     return (
@@ -31,8 +37,8 @@ export function CompanyLogo({
         href={href}
         className={className}
         compact={compact}
-        companyName={companyName}
-        reportTitle={reportTitle}
+        companyName={displayName}
+        reportTitle=""
         logoAlt={alt}
       />
     );
@@ -52,10 +58,7 @@ export function CompanyLogo({
         />
       </span>
       <span className="leading-tight">
-        <span className="block text-sm font-bold tracking-wide">{companyName.toUpperCase()}</span>
-        {!compact ? (
-          <span className="block text-xs font-medium text-[var(--acton-muted)]">{reportTitle}</span>
-        ) : null}
+        <span className="block text-sm font-bold tracking-wide">{displayName}</span>
       </span>
     </Link>
   );

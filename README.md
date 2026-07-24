@@ -54,6 +54,18 @@ Open http://localhost:3000 — authenticated users land on the **Baxter Dashboar
 
 ---
 
+## Knowledge Base (admin)
+
+Admins can manage institutional knowledge at `/admin/knowledge`.
+
+- Draft → Approve → (edit returns to draft) → Approve again
+- Archived entries and drafts are never used for future Baxter employee answers
+- See `docs/baxter-knowledge-base.md` and `docs/baxter-roadmap.md`
+
+Run migration `006_knowledge_base.sql` in Supabase before using Knowledge Base against a live database.
+
+---
+
 ## Supabase migrations (run in order)
 
 In Supabase SQL Editor, run each file completely:
@@ -63,6 +75,7 @@ In Supabase SQL Editor, run each file completely:
 3. `supabase/migrations/003_prompt3_production.sql`
 4. `supabase/migrations/004_branding_storage.sql`
 5. `supabase/migrations/005_new_user_role_and_maps.sql`
+6. `supabase/migrations/006_knowledge_base.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 

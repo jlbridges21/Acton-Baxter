@@ -1,3 +1,6 @@
+import type { LucideIcon } from "lucide-react";
+import { BookOpen, House } from "lucide-react";
+
 export type BaxterTool = {
   key: string;
   name: string;
@@ -5,6 +8,8 @@ export type BaxterTool = {
   href: string;
   enabled: boolean;
   adminOnly?: boolean;
+  icon: LucideIcon;
+  ctaLabel: string;
 };
 
 /**
@@ -18,8 +23,23 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     description: "Research property, parcel, zoning, and planning information for PEM preparation.",
     href: "/reports/new",
     enabled: true,
+    icon: House,
+    ctaLabel: "Open Property Research",
   },
 ];
+
+/** Admin-only platform cards (not employee tools). */
+export const BAXTER_ADMIN_CARDS = [
+  {
+    key: "knowledge-base",
+    name: "Knowledge Base",
+    description:
+      "Manage the approved procedures, policies, and institutional knowledge Baxter will use when answering employees.",
+    href: "/admin/knowledge",
+    ctaLabel: "Manage Knowledge",
+    icon: BookOpen,
+  },
+] as const;
 
 export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTool[] {
   const isAdmin = options?.isAdmin ?? false;
@@ -28,4 +48,15 @@ export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTo
     if (tool.adminOnly && !isAdmin) return false;
     return true;
   });
+}
+
+export type NavContext = "platform" | "property-research" | "knowledge" | "platform-admin";
+
+export function getNavContext(pathname: string): NavContext {
+  if (pathname.startsWith("/admin/knowledge")) return "knowledge";
+  if (pathname.startsWith("/admin")) return "platform-admin";
+  if (pathname === "/dashboard" || pathname === "/reports" || pathname.startsWith("/reports/")) {
+    return "property-research";
+  }
+  return "platform";
 }
