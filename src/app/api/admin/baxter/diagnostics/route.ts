@@ -6,7 +6,9 @@ import {
   getBaxterDiagnosticsSnapshot,
   runCompletePipelineDiagnosticTest,
   runKnowledgeSearchDiagnosticTest,
+  runNormalDynamicAnswerDiagnostic,
   runOpenAiDiagnosticTest,
+  runRateLimitClassificationDiagnostic,
 } from "@/lib/baxter-ai/diagnostics";
 
 export async function GET() {
@@ -25,7 +27,14 @@ export async function POST(request: Request) {
     const body = await request.json();
     const parsed = z
       .object({
-        action: z.enum(["test_openai", "test_knowledge", "test_pipeline", "bootstrap_overview"]),
+        action: z.enum([
+          "test_openai",
+          "test_knowledge",
+          "test_pipeline",
+          "test_dynamic_answer",
+          "test_rate_limit_classification",
+          "bootstrap_overview",
+        ]),
       })
       .parse(body);
 
@@ -37,6 +46,12 @@ export async function POST(request: Request) {
     }
     if (parsed.action === "test_pipeline") {
       return jsonOk({ result: await runCompletePipelineDiagnosticTest(user.id) });
+    }
+    if (parsed.action === "test_dynamic_answer") {
+      return jsonOk({ result: await runNormalDynamicAnswerDiagnostic(user.id) });
+    }
+    if (parsed.action === "test_rate_limit_classification") {
+      return jsonOk({ result: await runRateLimitClassificationDiagnostic() });
     }
     return jsonOk({ result: await bootstrapBaxterOverviewEntry(user.id) });
   } catch (error) {

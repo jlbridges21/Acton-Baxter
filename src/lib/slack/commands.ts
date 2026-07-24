@@ -5,6 +5,7 @@ import { AppError, ValidationError } from "@/lib/errors";
 import { resolveAddressInput } from "@/lib/address/resolve";
 import { createPropertyReportFromAddress } from "@/lib/research/create-property-report";
 import { enqueueJob } from "@/lib/jobs/queue";
+import { createServiceClient } from "@/lib/supabase/admin";
 
 export type SlackCommandPayload = {
   team_id?: string;
@@ -19,6 +20,29 @@ export type SlackCommandAck = {
   response_type: "ephemeral";
   text: string;
 };
+
+/**
+ * Prefer SLACK_REPORT_USER_ID when set; otherwise use the first admin profile.
+ * Avoids requiring a fake Supabase user solely for Slack /property attribution.
+ */
+async function resolvePropertyReportUserId(): Promise<string | null> {
+  const env = getEnv();
+  if (env.SLACK_REPORT_USER_ID) return env.SLACK_REPORT_USER_ID;
+
+  try {
+    const supabase = createServiceClient();
+    const { data } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("role", "admin")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    return data?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function postSlackResponseUrl(
   responseUrl: string,
@@ -90,13 +114,16 @@ export async function handlePropertySlashCommand(
     };
   }
 
-  const reportUserId = env.SLACK_REPORT_USER_ID;
+  const reportUserId = await resolvePropertyReportUserId();
   if (!reportUserId) {
-    throw new AppError("SLACK_REPORT_USER_ID is not configured", {
-      code: "SLACK_USER_MISSING",
-      statusCode: 500,
-      expose: false,
-    });
+    throw new AppError(
+      "No Acton profile is available to own Slack /property reports. Set SLACK_REPORT_USER_ID to an existing employee profile UUID, or ensure at least one admin profile exists.",
+      {
+        code: "SLACK_USER_MISSING",
+        statusCode: 500,
+        expose: false,
+      },
+    );
   }
 
   const created = await createPropertyReportFromAddress(resolved.address, reportUserId);

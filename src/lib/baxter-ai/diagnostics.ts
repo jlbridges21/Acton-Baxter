@@ -13,6 +13,8 @@ import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
 import { OpenAIBaxterProvider } from "@/lib/baxter-ai/openai-provider";
 import { createKnowledgeEntry, patchKnowledgeEntrySyncFields } from "@/lib/knowledge/store";
 import { BAXTER_BOOTSTRAP_TITLE, BAXTER_BOOTSTRAP_CONTENT } from "./bootstrap-content";
+import { getOpenAiMetricsSnapshot } from "./openai-metrics";
+import { classifyOpenAiHttpError, employeeFacingErrorMessage, openaiAdminGuidance } from "./errors";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
@@ -47,11 +49,14 @@ export async function getBaxterDiagnosticsSnapshot() {
     }
   }
 
+  const openaiMetrics = getOpenAiMetricsSnapshot();
+
   return {
     config: {
       chatEnabled: env.BAXTER_CHAT_ENABLED,
       provider: env.BAXTER_LLM_PROVIDER || "openai",
       model: env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o-mini",
+      fallbackModel: env.BAXTER_OPENAI_FALLBACK_MODEL || null,
       openaiKeyPresent: Boolean((env.OPENAI_API_KEY ?? "").trim()),
       supabaseServiceRolePresent: Boolean((env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()),
       googleConfigured: isGoogleWorkspaceConfigured(),
@@ -61,6 +66,12 @@ export async function getBaxterDiagnosticsSnapshot() {
         env.SLACK_SIGNING_SECRET &&
         env.SLACK_ALLOWED_TEAM_IDS,
       ),
+    },
+    openai: {
+      ...openaiMetrics,
+      guidance: openaiMetrics.lastSafeErrorCode
+        ? openaiAdminGuidance(openaiMetrics.lastSafeErrorCode)
+        : [],
     },
     knowledge: {
       total: entries.length,
@@ -87,21 +98,102 @@ export async function getBaxterDiagnosticsSnapshot() {
 }
 
 export async function runOpenAiDiagnosticTest() {
-  const provider = new OpenAIBaxterProvider();
-  const result = await provider.generateAnswer({
-    question: "Reply with the word OK as the answer field value.",
-    contextItems: [],
+  const started = Date.now();
+  try {
+    const provider = new OpenAIBaxterProvider();
+    const result = await provider.generateAnswer({
+      question: "Reply with the word OK as the answer field value.",
+      contextItems: [],
+      channel: "web",
+      questionClass: "general_knowledge",
+      identityContext: "Diagnostic test.",
+      history: [],
+    });
+    const ok = /\bok\b/i.test(result.answer);
+    return {
+      pass: ok,
+      answerPreview: result.answer.slice(0, 200),
+      model: result.modelName,
+      latencyMs: result.latencyMs ?? Date.now() - started,
+      code: null as string | null,
+      guidance: [] as string[],
+    };
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: string }).code ?? "BAXTER_UNKNOWN_ERROR")
+        : "BAXTER_UNKNOWN_ERROR";
+    return {
+      pass: false,
+      answerPreview: employeeFacingErrorMessage(code),
+      model: null,
+      latencyMs: Date.now() - started,
+      code,
+      guidance: openaiAdminGuidance(code),
+    };
+  }
+}
+
+export async function runNormalDynamicAnswerDiagnostic(userId: string) {
+  const result = await answerBaxterQuestion({
+    question: "Can you respond to messages that are not hard coded?",
+    userId,
+    userName: "Diagnostics",
     channel: "web",
-    questionClass: "general_knowledge",
-    identityContext: "Diagnostic test.",
-    history: [],
   });
-  const ok = /\bok\b/i.test(result.answer);
   return {
-    pass: ok,
-    answerPreview: result.answer.slice(0, 200),
-    model: result.modelName,
-    latencyMs: result.latencyMs ?? null,
+    pass: Boolean(result.answer) && !result.errorCode,
+    answerPreview: result.answer.slice(0, 320),
+    answerMode: result.answerMode ?? null,
+    sources: result.sources.length,
+    errorCode: result.errorCode ?? null,
+    conversationId: result.conversationId,
+  };
+}
+
+export async function runRateLimitClassificationDiagnostic() {
+  const cases = [
+    {
+      name: "temporary_rate_limit",
+      status: 429,
+      body: { error: { code: "rate_limit_exceeded", message: "Rate limit reached" } },
+      expected: "BAXTER_OPENAI_RATE_LIMITED",
+    },
+    {
+      name: "quota_exceeded",
+      status: 429,
+      body: { error: { code: "insufficient_quota", type: "insufficient_quota" } },
+      expected: "BAXTER_OPENAI_QUOTA_EXCEEDED",
+    },
+    {
+      name: "billing_required",
+      status: 429,
+      body: { error: { message: "Billing hard limit has been reached" } },
+      expected: "BAXTER_OPENAI_BILLING_REQUIRED",
+    },
+    {
+      name: "auth_failed",
+      status: 401,
+      body: { error: { message: "Invalid API key" } },
+      expected: "BAXTER_OPENAI_AUTH_FAILED",
+    },
+  ] as const;
+
+  return {
+    pass: cases.every((testCase) => {
+      const classified = classifyOpenAiHttpError(testCase.status, testCase.body);
+      return classified.code === testCase.expected;
+    }),
+    cases: cases.map((testCase) => {
+      const classified = classifyOpenAiHttpError(testCase.status, testCase.body);
+      return {
+        name: testCase.name,
+        expected: testCase.expected,
+        actual: classified.code,
+        retryable: classified.retryable,
+        pass: classified.code === testCase.expected,
+      };
+    }),
   };
 }
 

@@ -3,11 +3,10 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { getEnv } from "@/lib/env";
 import { AuthenticationError } from "@/lib/errors";
 import { processQueuedJobs } from "@/lib/jobs/process";
+import { maybeEnqueueScheduledGoogleSync } from "@/lib/connectors/google/schedule";
 
 function authorizeCron(request: Request, secret: string): boolean {
   const header = request.headers.get("authorization");
-  // Vercel Cron sends Authorization: Bearer <CRON_SECRET> when CRON_SECRET is set.
-  // We also accept INTERNAL_CRON_SECRET via Bearer or ?secret=.
   const candidates = [secret, process.env.CRON_SECRET].filter((value): value is string =>
     Boolean(value),
   );
@@ -45,8 +44,9 @@ export async function POST(request: Request) {
       throw new AuthenticationError("Invalid cron secret");
     }
 
+    const scheduled = await maybeEnqueueScheduledGoogleSync();
     const result = await processQueuedJobs({ limit: 10 });
-    return jsonOk(result);
+    return jsonOk({ ...result, googleSync: scheduled });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");
   }

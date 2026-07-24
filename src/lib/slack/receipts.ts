@@ -111,16 +111,14 @@ export async function claimSlackEventReceipt(input: {
 
     if (!error) {
       // Also record in legacy table when present (best-effort).
-      void supabase
-        .from("slack_processed_events")
-        .upsert(
-          {
-            event_id: input.eventId,
-            event_type: input.eventType ?? null,
-            team_id: input.teamId ?? null,
-          },
-          { onConflict: "event_id", ignoreDuplicates: true },
-        );
+      void supabase.from("slack_processed_events").upsert(
+        {
+          event_id: input.eventId,
+          event_type: input.eventType ?? null,
+          team_id: input.teamId ?? null,
+        },
+        { onConflict: "event_id", ignoreDuplicates: true },
+      );
       return { claimed: true, status: "received" };
     }
 

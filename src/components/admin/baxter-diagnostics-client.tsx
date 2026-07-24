@@ -9,10 +9,28 @@ type Snapshot = {
     chatEnabled: boolean;
     provider: string;
     model: string;
+    fallbackModel?: string | null;
     openaiKeyPresent: boolean;
     supabaseServiceRolePresent: boolean;
     googleConfigured: boolean;
     slackConfigured: boolean;
+  };
+  openai?: {
+    lastSuccessfulRequest: string | null;
+    lastFailedRequest: string | null;
+    lastSafeErrorCode: string | null;
+    lastHttpStatus: number | null;
+    lastProviderRequestId: string | null;
+    averageLatencyMs: number | null;
+    requestsLastHour: number;
+    rateLimitErrorsLastHour: number;
+    quotaErrorsLast24h: number;
+    totalRetries: number;
+    duplicatesPrevented: number;
+    lastInputTokens: number | null;
+    lastOutputTokens: number | null;
+    lastModel: string | null;
+    guidance: string[];
   };
   knowledge: {
     total: number;
@@ -126,6 +144,70 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
       </Card>
 
       <Card>
+        <CardTitle>OpenAI</CardTitle>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-[var(--acton-muted)]">API key present</dt>
+            <dd>
+              <YesNo value={snapshot.config.openaiKeyPresent} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Fallback model</dt>
+            <dd>{snapshot.config.fallbackModel || "(none)"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last successful request</dt>
+            <dd>{snapshot.openai?.lastSuccessfulRequest ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last failed request</dt>
+            <dd>{snapshot.openai?.lastFailedRequest ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last safe error code</dt>
+            <dd>{snapshot.openai?.lastSafeErrorCode ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last HTTP status</dt>
+            <dd>{snapshot.openai?.lastHttpStatus ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Requests / rate-limits (1h)</dt>
+            <dd>
+              {snapshot.openai?.requestsLastHour ?? 0} /{" "}
+              {snapshot.openai?.rateLimitErrorsLastHour ?? 0}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Quota errors (24h)</dt>
+            <dd>{snapshot.openai?.quotaErrorsLast24h ?? 0}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Retries / duplicates prevented</dt>
+            <dd>
+              {snapshot.openai?.totalRetries ?? 0} / {snapshot.openai?.duplicatesPrevented ?? 0}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Avg latency / last tokens</dt>
+            <dd>
+              {snapshot.openai?.averageLatencyMs ?? "—"}ms · in{" "}
+              {snapshot.openai?.lastInputTokens ?? "—"} / out{" "}
+              {snapshot.openai?.lastOutputTokens ?? "—"}
+            </dd>
+          </div>
+        </dl>
+        {snapshot.openai?.guidance && snapshot.openai.guidance.length > 0 ? (
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-amber-800">
+            {snapshot.openai.guidance.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        ) : null}
+      </Card>
+
+      <Card>
         <CardTitle>Knowledge Base health</CardTitle>
         <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
           <div>
@@ -192,7 +274,21 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
         </CardDescription>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button disabled={busy} onClick={() => void run("test_openai")}>
-            Test OpenAI
+            Test lightweight OpenAI
+          </Button>
+          <Button
+            disabled={busy}
+            variant="secondary"
+            onClick={() => void run("test_dynamic_answer")}
+          >
+            Test normal Baxter answer
+          </Button>
+          <Button
+            disabled={busy}
+            variant="secondary"
+            onClick={() => void run("test_rate_limit_classification")}
+          >
+            Test rate-limit classification
           </Button>
           <Button disabled={busy} variant="secondary" onClick={() => void run("test_knowledge")}>
             Test Knowledge search

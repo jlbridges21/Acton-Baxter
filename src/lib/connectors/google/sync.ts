@@ -15,6 +15,7 @@ import { GoogleConfigError } from "./errors";
 import { addGoogleSyncFolder, listGoogleSyncFolders, updateGoogleSyncFolder } from "./folders";
 import { isSupportedGoogleMime, parseGoogleDriveFile } from "./parser";
 import { GOOGLE_FOLDER_MIME } from "./types";
+import { normalizeGoogleFolderId } from "./folder-id";
 
 function nowIso() {
   return new Date().toISOString();
@@ -294,7 +295,9 @@ export class GoogleWorkspaceConnector implements KnowledgeConnector {
 
 export async function resolveAndAddFolder(input: { folderId: string; userId: string }) {
   if (!isGoogleWorkspaceConfigured()) throw new GoogleConfigError();
-  const meta = await getFolderMetadata(input.folderId.trim());
+  const folderId = normalizeGoogleFolderId(input.folderId);
+  if (!folderId) throw new GoogleConfigError("A Google folder ID or URL is required.");
+  const meta = await getFolderMetadata(folderId);
   return addGoogleSyncFolder({
     folderId: meta.id,
     folderName: meta.name,

@@ -16,9 +16,12 @@ export class GoogleConnectorError extends AppError {
 }
 
 export class GoogleConfigError extends GoogleConnectorError {
-  constructor(message = "Google Workspace connector is not configured") {
+  constructor(
+    message = "Google Workspace connector is not configured",
+    code: string = "BAXTER_GOOGLE_NOT_CONFIGURED",
+  ) {
     super(message, {
-      code: "GOOGLE_CONFIG_ERROR",
+      code,
       statusCode: 503,
       expose: true,
     });

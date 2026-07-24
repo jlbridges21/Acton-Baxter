@@ -31,7 +31,7 @@ export function BaxterChatInput({
           rows={2}
           value={value}
           disabled={disabled}
-          placeholder="Ask about approved Acton procedures…"
+          placeholder="Ask Baxter anything…"
           className="min-h-[64px] flex-1 resize-none rounded-md border border-[var(--acton-border)] px-3 py-2 text-sm text-[var(--acton-navy)] outline-none focus:border-[var(--acton-navy)] disabled:opacity-60"
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {

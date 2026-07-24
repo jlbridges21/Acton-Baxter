@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { X } from "lucide-react";
 import { BaxterAvatar } from "./baxter-avatar";
 import { BaxterChatInput } from "./baxter-chat-input";
@@ -28,7 +28,9 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [, startTransition] = useTransition();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     const node = scrollRef.current;
@@ -36,14 +38,18 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
   }, [messages, pending]);
 
   async function sendQuestion(question: string) {
-    if (pending) return;
+    if (pending || inFlightRef.current) return;
+    inFlightRef.current = true;
     setShowSuggestions(false);
+    const clientRequestId = crypto.randomUUID();
     const userMessage: ChatUiMessage = {
-      id: `user-${crypto.randomUUID()}`,
+      id: `user-${clientRequestId}`,
       role: "user",
       content: question,
     };
-    setMessages((prev) => [...prev, userMessage]);
+    startTransition(() => {
+      setMessages((prev) => [...prev, userMessage]);
+    });
     setPending(true);
 
     try {
@@ -53,6 +59,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
         body: JSON.stringify({
           question,
           conversationId,
+          clientRequestId,
         }),
       });
       const payload = (await response.json()) as {
@@ -78,6 +85,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
             content:
               payload.error?.message ?? "Baxter couldn’t answer that right now. Please try again.",
             isError: true,
+            conversationId: conversationId,
           },
         ]);
         return;
@@ -96,6 +104,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
           sources: payload.message?.sources ?? [],
           insufficientKnowledge: Boolean(payload.message?.insufficientKnowledge),
           answerMode: payload.message?.answerMode ?? null,
+          conversationId: payload.conversationId ?? conversationId,
         },
       ]);
     } catch {
@@ -110,12 +119,13 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
       ]);
     } finally {
       setPending(false);
+      inFlightRef.current = false;
     }
   }
 
   return (
-    <div className="flex h-[min(34rem,72vh)] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[var(--acton-border)] bg-white shadow-xl sm:w-[24rem]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--acton-border)] bg-[var(--acton-navy)] px-3 py-2.5 text-white">
+    <div className="flex h-[min(32rem,calc(100dvh-5.5rem))] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[var(--acton-border)] bg-white shadow-xl sm:w-[24rem]">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--acton-border)] bg-[var(--acton-navy)] px-3 py-2.5 text-white">
         <div className="flex min-w-0 items-center gap-2">
           <BaxterAvatar size={36} />
           <div className="min-w-0">
@@ -137,7 +147,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
 
       <div
         ref={scrollRef}
-        className="flex-1 space-y-3 overflow-y-auto bg-[var(--acton-gray-50)] p-3"
+        className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto bg-[var(--acton-gray-50)] p-3"
       >
         {messages.map((message) => (
           <BaxterChatMessage key={message.id} message={message} />
@@ -164,12 +174,14 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
         ) : null}
       </div>
 
-      <p className="border-t border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-3 py-2 text-[11px] leading-snug text-[var(--acton-muted)]">
-        Baxter answers from approved Acton knowledge when available, and can also help with general
-        questions. Verify important decisions with the responsible team member.
+      <p className="shrink-0 border-t border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-3 py-1.5 text-[10px] leading-snug text-[var(--acton-muted)]">
+        Official Acton answers cite Sources. General help is labeled. Verify important decisions
+        with your team.
       </p>
 
-      <BaxterChatInput disabled={pending} onSend={sendQuestion} />
+      <div className="shrink-0">
+        <BaxterChatInput disabled={pending} onSend={sendQuestion} />
+      </div>
     </div>
   );
 }

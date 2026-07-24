@@ -6,6 +6,7 @@ import { AppError } from "@/lib/errors";
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
 import { baxterChatRequestSchema } from "@/lib/baxter-ai/schemas";
 import { BaxterConfigError, employeeFacingErrorMessage } from "@/lib/baxter-ai/errors";
+import { getIdempotentChatAnswer, storeIdempotentChatAnswer } from "@/lib/baxter-ai/idempotency";
 
 export async function POST(request: Request) {
   try {
@@ -31,6 +32,25 @@ export async function POST(request: Request) {
     const body = await request.json();
     const parsed = baxterChatRequestSchema.parse(body);
 
+    if (parsed.clientRequestId) {
+      const cached = getIdempotentChatAnswer(user.id, parsed.clientRequestId);
+      if (cached) {
+        return jsonOk({
+          conversationId: cached.conversationId,
+          message: {
+            id: cached.messageId,
+            answer: cached.answer,
+            confidence: cached.confidence,
+            insufficientKnowledge: cached.insufficientKnowledge,
+            sources: cached.sources,
+            answerMode: cached.answerMode ?? null,
+            errorCode: cached.errorCode ?? null,
+          },
+          idempotentReplay: true,
+        });
+      }
+    }
+
     const result = await answerBaxterQuestion({
       question: parsed.question,
       conversationId: parsed.conversationId,
@@ -38,6 +58,10 @@ export async function POST(request: Request) {
       userName: user.profile.full_name ?? user.email,
       channel: "web",
     });
+
+    if (parsed.clientRequestId) {
+      storeIdempotentChatAnswer(user.id, parsed.clientRequestId, result);
+    }
 
     return jsonOk({
       conversationId: result.conversationId,

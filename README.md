@@ -71,12 +71,17 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 - Answers identity and general questions even when the Knowledge Base is empty
 - Uses approved Acton Knowledge Base / Google-synced entries for company-specific facts
 - Cites real sources (model cannot invent URLs)
+- Thumbs up/down feedback on assistant messages
 - Admin diagnostics: `/admin/baxter/diagnostics`
+- Launch readiness: `/admin/baxter/launch-readiness`
+- Feedback review: `/admin/baxter/feedback`
+- Employee guide: `docs/baxter-employee-guide.md`
 - Troubleshooting: `docs/baxter-troubleshooting.md`
 
 ## Google Workspace + Slack
 
 - Google Docs/Sheets sync: `/admin/connectors/google` — see `docs/google-connector.md`
+  - Scheduled sync: `GOOGLE_SYNC_ENABLED`, `GOOGLE_SYNC_INTERVAL_MINUTES` (default 180)
 - Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`
 - Slack `/property` command: Property Research from Slack
 - Connector overview: `/admin/connectors`
@@ -97,6 +102,7 @@ In Supabase SQL Editor, run each file completely:
 7. `supabase/migrations/007_baxter_conversations.sql`
 8. `supabase/migrations/008_google_sync_and_slack_events.sql`
 9. `supabase/migrations/009_slack_production.sql`
+10. `supabase/migrations/010_baxter_feedback.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 
@@ -195,8 +201,11 @@ SLACK_ALLOWED_TEAM_IDS=T...
 SLACK_ALLOWED_CHANNEL_IDS=          # empty = channel mentions disabled (safe pilot default)
 SLACK_ENABLE_DMS=true
 SLACK_ENABLE_CHANNEL_MENTIONS=true
-SLACK_REPORT_USER_ID=<uuid>         # required for /property attribution only
+# SLACK_REPORT_USER_ID=<uuid>       # optional — /property report ownership only; else first admin
 NEXT_PUBLIC_APP_URL=https://acton-baxter.vercel.app
+BAXTER_OPENAI_FALLBACK_MODEL=       # optional — temporary rate-limit fallback
+GOOGLE_SYNC_ENABLED=true
+GOOGLE_SYNC_INTERVAL_MINUTES=180
 INTERNAL_CRON_SECRET=<long-random>
 ```
 
@@ -242,10 +251,10 @@ RUN_LIVE_INTEGRATION_TESTS=true npm run test:integration
 
 ## Employee URL paths
 
-| Who      | Path                                                    |
-| -------- | ------------------------------------------------------- |
-| Everyone | `/login`, `/dashboard`, `/reports/new`, `/reports/[id]` |
-| Admin    | `/admin/knowledge`, `/admin/users`, `/admin/branding`   |
+| Who      | Path                                                                                                              |
+| -------- | ----------------------------------------------------------------------------------------------------------------- |
+| Everyone | `/login`, `/dashboard`, `/reports/new`, `/reports/[id]`                                                           |
+| Admin    | `/admin/knowledge`, `/admin/users`, `/admin/branding`, `/admin/baxter/launch-readiness`, `/admin/baxter/feedback` |
 
 ---
 
@@ -256,7 +265,10 @@ RUN_LIVE_INTEGRATION_TESTS=true npm run test:integration
 - [docs/report-limitations.md](docs/report-limitations.md)
 - [docs/adding-jurisdictions.md](docs/adding-jurisdictions.md)
 - [docs/slack-setup.md](docs/slack-setup.md)
+- [docs/baxter-employee-guide.md](docs/baxter-employee-guide.md)
 - [docs/production-checklist.md](docs/production-checklist.md)
+- [docs/baxter-troubleshooting.md](docs/baxter-troubleshooting.md)
+- [docs/baxter-roadmap.md](docs/baxter-roadmap.md)
 
 ---
 

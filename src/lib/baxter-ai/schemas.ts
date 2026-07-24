@@ -12,6 +12,7 @@ export const baxterChatRequestSchema = z.object({
       `Question must be ${BAXTER_MAX_QUESTION_LENGTH} characters or fewer`,
     ),
   conversationId: z.string().uuid().optional().nullable(),
+  clientRequestId: z.string().uuid().optional().nullable(),
 });
 
 export const baxterLlmStructuredSchema = z.object({

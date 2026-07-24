@@ -44,11 +44,25 @@ export async function getDriveFile(fileId: string): Promise<GoogleDriveFile> {
 }
 
 export async function exportDriveFile(fileId: string, mimeType: string): Promise<string> {
-  const params = new URLSearchParams({ mimeType });
-  return googleFetch<string>(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?${params}`,
-    { rawText: true },
-  );
+  const params = new URLSearchParams({
+    mimeType,
+    supportsAllDrives: "true",
+  });
+  try {
+    return await googleFetch<string>(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?${params}`,
+      { rawText: true },
+    );
+  } catch (error) {
+    if (error instanceof Error) {
+      const wrapped = error as { code?: string };
+      throw Object.assign(new Error(error.message), {
+        code: wrapped.code ?? "BAXTER_GOOGLE_EXPORT_FAILED",
+        statusCode: 502,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function getFolderMetadata(folderId: string): Promise<GoogleDriveFile> {
