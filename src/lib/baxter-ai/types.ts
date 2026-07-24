@@ -6,6 +6,9 @@ export type BaxterLlmProviderName = "openai";
 export type BaxterSourceKind =
   "manual" | "knowledge_entry" | "google_doc" | "google_sheet" | "google_file";
 
+export type BaxterAnswerMode =
+  "identity" | "grounded" | "general" | "mixed" | "clarification" | "error";
+
 export type BaxterSourceReference = {
   title: string;
   sourceName: string | null;
@@ -37,6 +40,8 @@ export type BaxterAnswer = {
   insufficientKnowledge: boolean;
   conversationId: string;
   messageId?: string;
+  answerMode?: BaxterAnswerMode;
+  errorCode?: string | null;
 };
 
 export type BaxterContextItem = {
@@ -56,11 +61,19 @@ export type BaxterContextItem = {
   relevanceScore: number;
 };
 
+export type BaxterHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export type BaxterLLMInput = {
   question: string;
   contextItems: BaxterContextItem[];
   userName?: string | null;
   channel: BaxterChannel;
+  questionClass?: string;
+  identityContext?: string;
+  history?: BaxterHistoryMessage[];
 };
 
 export type BaxterLLMOutput = {
@@ -68,11 +81,13 @@ export type BaxterLLMOutput = {
   usedSourceNumbers: number[];
   confidence: BaxterConfidence;
   insufficientKnowledge: boolean;
+  answerMode: BaxterAnswerMode;
   modelProvider: BaxterLlmProviderName;
   modelName: string;
   inputTokens?: number | null;
   outputTokens?: number | null;
   latencyMs?: number | null;
+  rawTextFallback?: boolean;
 };
 
 export type BaxterConversation = {

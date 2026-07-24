@@ -5,7 +5,7 @@ import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
 import { baxterChatRequestSchema } from "@/lib/baxter-ai/schemas";
-import { EMPLOYEE_SAFE_CHAT_ERROR } from "@/lib/baxter-ai/errors";
+import { BaxterConfigError, employeeFacingErrorMessage } from "@/lib/baxter-ai/errors";
 
 export async function POST(request: Request) {
   try {
@@ -47,15 +47,35 @@ export async function POST(request: Request) {
         confidence: result.confidence,
         insufficientKnowledge: result.insufficientKnowledge,
         sources: result.sources,
+        answerMode: result.answerMode ?? null,
+        errorCode: result.errorCode ?? null,
       },
     });
   } catch (error) {
-    // Never expose provider/stack details to employees.
+    if (error instanceof BaxterConfigError) {
+      return jsonError(
+        new AppError(
+          error.message.includes("Reference:")
+            ? error.message
+            : employeeFacingErrorMessage(error.code),
+          {
+            code: error.code,
+            statusCode: error.statusCode,
+            expose: true,
+          },
+        ),
+        "POST /api/baxter/chat",
+      );
+    }
     if (error instanceof AppError && error.expose) {
       return jsonError(error, "POST /api/baxter/chat");
     }
-    const safe = new AppError(EMPLOYEE_SAFE_CHAT_ERROR, {
-      code: "BAXTER_CHAT_FAILED",
+    const code =
+      error instanceof Error && "code" in error
+        ? String((error as { code?: string }).code ?? "BAXTER_UNKNOWN_ERROR")
+        : "BAXTER_UNKNOWN_ERROR";
+    const safe = new AppError(employeeFacingErrorMessage(code), {
+      code,
       statusCode: 502,
       expose: true,
       cause: error,

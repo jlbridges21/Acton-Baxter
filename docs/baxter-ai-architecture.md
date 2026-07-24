@@ -2,65 +2,51 @@
 
 ## Purpose
 
-Baxter answers Acton employees from **approved** Knowledge Base entries. Prompt 3 adds the shared answering service and a dashboard-only web chat. Prompt 4 will reuse the same service for Slack.
+Baxter is Acton ADU’s internal AI assistant. It combines:
 
-## Shared service
+1. Built-in identity (`identity.ts`)
+2. Approved Knowledge Base retrieval (manual + Google-synced)
+3. Conversation history
+4. OpenAI general assistance
 
-`src/lib/baxter-ai/`
+Web chat (`POST /api/baxter/chat`) and Slack Events both call `answerBaxterQuestion()`.
 
-- `answer.ts` — `answerBaxterQuestion()` orchestration
-- `context.ts` — calls `searchApprovedKnowledge()`
-- `citations.ts` — maps model `[n]` citations to real retrieved records
-- `openai-provider.ts` — current LLM provider (HTTP chat/completions)
-- `provider.ts` — `BaxterLLMProvider` interface
-- `conversations.ts` — conversation/message persistence
-- `prompts.ts` — grounding rules
+## Query classification
 
-Web UI calls `POST /api/baxter/chat` only. It never calls OpenAI directly.
+Deterministic classes in `classify.ts`:
 
-## Provider abstraction
+- `baxter_identity`
+- `acton_company_specific` / `acton_process_specific`
+- `general_knowledge`
+- `conversational` / `clarification`
+- `unsafe_or_disallowed`
 
-```ts
-interface BaxterLLMProvider {
-  generateAnswer(input: BaxterLLMInput): Promise<BaxterLLMOutput>;
-}
-```
+Classification controls whether Baxter can answer without KB hits, must ground in Acton sources, or may use general knowledge.
 
-Current: `OpenAIBaxterProvider` (`BAXTER_LLM_PROVIDER=openai`).
+## Answer modes
 
-Future: Anthropic (not implemented). Setting `BAXTER_LLM_PROVIDER=anthropic` fails safely.
+- `identity` — Baxter information
+- `grounded` — Approved Acton knowledge (+ Sources)
+- `general` — General guidance
+- `mixed` — Official Acton answer unavailable; labeled general help
+- `clarification`
 
-Model selection: `BAXTER_OPENAI_MODEL` (falls back to `OPENAI_MODEL`, default `gpt-4o-mini`).
+## Retrieval
 
-## Knowledge grounding flow
+`searchApprovedKnowledge()` scores approved internal entries with normalized tokens, stop-word filtering, light stemming, and small synonym expansion. No embeddings yet.
 
-1. Validate/normalize the question.
-2. `searchApprovedKnowledge()` — approved + internal only.
-3. Build numbered context items (title, summary, excerpt, source metadata).
-4. Call the LLM with a strict system prompt.
-5. Map `usedSourceNumbers` to real KB records (never trust model titles/URLs).
-6. Persist conversation, messages, and source links.
+## OpenAI
 
-Draft, archived, and admin-only entries are never included.
+HTTP chat/completions with JSON object responses. Lenient parsing keeps a usable answer when optional metadata fails. Errors use codes such as `BAXTER_OPENAI_KEY_MISSING`.
 
-## Conversation logging
+## Diagnostics
 
-Migration `007_baxter_conversations.sql` creates:
-
-- `baxter_conversations`
-- `baxter_messages`
-- `baxter_message_sources`
-
-RLS: users read/write their own web conversations; admins can read all for future diagnostics. Service-role writes are used by the server answer path.
+`/admin/baxter/diagnostics` — configuration Yes/No, KB counts, recent error codes, OpenAI/KB/pipeline tests, idempotent Baxter Overview bootstrap.
 
 ## Safety
 
-- No invented procedures/policies/RACI/customer facts
-- Insufficient knowledge admitted clearly
-- Employee-facing errors never include provider stack traces
-- Chat can be disabled with `BAXTER_CHAT_ENABLED=false`
-- Chat launcher appears only on `/`
-
-## Planned Slack reuse (Prompt 4)
-
-Slack handlers should call `answerBaxterQuestion({ channel: "slack", ... })` with the same retrieval, citations, and logging. No Slack conversational bot exists yet.
+- Never invent official Acton policy
+- Never invent source URLs
+- Never expose secrets
+- Chat only on `/` for the launcher
+- Slack production hardening remains Prompt 5B

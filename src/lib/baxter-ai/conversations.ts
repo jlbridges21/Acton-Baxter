@@ -428,6 +428,8 @@ export function toPublicAnswer(input: {
   sources: BaxterSourceReference[];
   confidence: BaxterConfidence;
   insufficientKnowledge: boolean;
+  answerMode?: BaxterAnswer["answerMode"];
+  errorCode?: string | null;
 }): BaxterAnswer {
   return {
     answer: input.answer,
@@ -436,5 +438,34 @@ export function toPublicAnswer(input: {
     insufficientKnowledge: input.insufficientKnowledge,
     conversationId: input.conversationId,
     messageId: input.messageId,
+    answerMode: input.answerMode,
+    errorCode: input.errorCode ?? null,
   };
+}
+
+export async function getRecentConversationHistory(
+  conversationId: string,
+  options?: { limit?: number; excludeLastUser?: boolean },
+): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  const limit = options?.limit ?? 10;
+  const messages = await listMessagesForConversation(conversationId);
+  const usable = messages.filter(
+    (message) =>
+      (message.role === "user" || message.role === "assistant") &&
+      !message.error_code &&
+      message.content.trim().length > 0,
+  );
+  const sliced = usable.slice(-limit - (options?.excludeLastUser ? 1 : 0));
+  // Exclude the just-appended current user message when requested
+  const withoutCurrent =
+    options?.excludeLastUser && sliced.length > 0 && sliced[sliced.length - 1]?.role === "user"
+      ? sliced.slice(0, -1)
+      : sliced;
+  return withoutCurrent.map((message) => ({
+    role: message.role as "user" | "assistant",
+    content:
+      message.content.length > 1200
+        ? `${message.content.slice(0, 1199).trimEnd()}…`
+        : message.content,
+  }));
 }

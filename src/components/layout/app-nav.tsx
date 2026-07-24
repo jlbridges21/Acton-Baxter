@@ -94,6 +94,12 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       match: (pathname) => pathname.startsWith("/admin/connectors"),
     },
     {
+      href: "/admin/baxter/diagnostics",
+      label: "Baxter Diagnostics",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/baxter"),
+    },
+    {
       href: "/admin/slack",
       label: "Slack",
       icon: Shield,

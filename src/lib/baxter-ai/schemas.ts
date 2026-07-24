@@ -17,8 +17,11 @@ export const baxterChatRequestSchema = z.object({
 export const baxterLlmStructuredSchema = z.object({
   answer: z.string().min(1),
   usedSourceNumbers: z.array(z.number().int().positive()).default([]),
-  confidence: z.enum(["high", "medium", "low"]),
-  insufficientKnowledge: z.boolean(),
+  confidence: z.enum(["high", "medium", "low"]).default("medium"),
+  insufficientKnowledge: z.boolean().default(false),
+  answerMode: z
+    .enum(["identity", "grounded", "general", "mixed", "clarification"])
+    .default("general"),
 });
 
 export type BaxterChatRequest = z.infer<typeof baxterChatRequestSchema>;
@@ -34,7 +37,6 @@ export function parseBaxterLlmJson(raw: string): BaxterLlmStructured {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    // Attempt to extract the first JSON object.
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start >= 0 && end > start) {
@@ -44,4 +46,48 @@ export function parseBaxterLlmJson(raw: string): BaxterLlmStructured {
     }
   }
   return baxterLlmStructuredSchema.parse(parsed);
+}
+
+/**
+ * Prefer structured JSON; if metadata fails but answer text is recoverable, keep the answer.
+ */
+export function parseBaxterLlmOutputLenient(raw: string): {
+  structured: BaxterLlmStructured | null;
+  textFallback: string | null;
+} {
+  try {
+    return { structured: parseBaxterLlmJson(raw), textFallback: null };
+  } catch {
+    // try mild repair without destroying apostrophes inside strings
+    try {
+      const repaired = raw
+        .trim()
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .replace(/,\s*([}\]])/g, "$1");
+      return { structured: parseBaxterLlmJson(repaired), textFallback: null };
+    } catch {
+      const answerMatch = raw.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)"/);
+      if (answerMatch?.[1]) {
+        const unescaped = answerMatch[1]
+          .replace(/\\n/g, "\n")
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, "\\");
+        return {
+          structured: null,
+          textFallback: unescaped.trim() || null,
+        };
+      }
+      // Plain non-JSON text answer
+      const plain = raw
+        .trim()
+        .replace(/^```[\w]*\s*/i, "")
+        .replace(/\s*```$/i, "");
+      if (plain && !plain.startsWith("{")) {
+        return { structured: null, textFallback: plain };
+      }
+      return { structured: null, textFallback: null };
+    }
+  }
 }

@@ -1,12 +1,141 @@
 import type { KnowledgeEntry, KnowledgeSearchInput, KnowledgeSearchResult } from "./types";
 
-function excerpt(content: string, query: string, maxLen = 220): string {
+const STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "am",
+  "i",
+  "you",
+  "we",
+  "they",
+  "he",
+  "she",
+  "it",
+  "me",
+  "my",
+  "our",
+  "your",
+  "their",
+  "this",
+  "that",
+  "these",
+  "those",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "so",
+  "do",
+  "does",
+  "did",
+  "what",
+  "which",
+  "when",
+  "where",
+  "why",
+  "how",
+  "who",
+  "whom",
+  "about",
+  "into",
+  "over",
+  "after",
+  "before",
+  "can",
+  "could",
+  "should",
+  "would",
+  "will",
+  "just",
+  "than",
+  "too",
+  "very",
+  "also",
+  "any",
+  "all",
+  "not",
+  "no",
+  "yes",
+]);
+
+/** Small controlled synonym / intent expansions — not a full NLP stack. */
+const SYNONYM_EXPAND: Record<string, string[]> = {
+  baxter: ["baxter", "assistant", "teammate", "digital employee", "ai agent", "operations agent"],
+  acton: ["acton", "acton adu", "company"],
+  adu: ["adu", "accessory dwelling", "accessory dwelling unit"],
+  pem: ["pem", "partnership evaluation", "partnership evaluation meeting"],
+  raci: ["raci", "responsible", "accountable", "consulted", "informed"],
+  process: ["process", "procedure", "workflow", "steps"],
+  procedure: ["procedure", "process", "workflow", "sop"],
+  policy: ["policy", "handbook", "guideline"],
+};
+
+export function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[’‘‛]/g, "'")
+    .replace(/[“”„]/g, '"')
+    .replace(/[–—]/g, "-")
+    .replace(/[^\p{L}\p{N}\s'#./+-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function tokenizeQuery(query: string): string[] {
+  const normalized = normalizeSearchText(query);
+  if (!normalized) return [];
+  const raw = normalized.split(/\s+/).filter(Boolean);
+  const terms: string[] = [];
+  for (const token of raw) {
+    if (STOP_WORDS.has(token)) continue;
+    if (token.length < 2) continue;
+    terms.push(token);
+    // light plural stripping
+    if (token.endsWith("ies") && token.length > 4) terms.push(`${token.slice(0, -3)}y`);
+    else if (token.endsWith("ses") && token.length > 4) terms.push(token.slice(0, -2));
+    else if (token.endsWith("s") && !token.endsWith("ss") && token.length > 3) {
+      terms.push(token.slice(0, -1));
+    }
+    const expanded = SYNONYM_EXPAND[token];
+    if (expanded) terms.push(...expanded);
+  }
+  return Array.from(new Set(terms));
+}
+
+function excerpt(content: string, query: string, maxLen = 280): string {
   const normalized = content.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
-  const q = query.trim().toLowerCase();
-  if (!q) return normalized.slice(0, maxLen) + (normalized.length > maxLen ? "…" : "");
-  const idx = normalized.toLowerCase().indexOf(q);
-  if (idx < 0) return normalized.slice(0, maxLen) + (normalized.length > maxLen ? "…" : "");
+  const hay = normalizeSearchText(normalized);
+  const terms = tokenizeQuery(query);
+  let idx = -1;
+  for (const term of terms) {
+    idx = hay.indexOf(term);
+    if (idx >= 0) break;
+  }
+  if (idx < 0) {
+    return normalized.slice(0, maxLen) + (normalized.length > maxLen ? "…" : "");
+  }
+  // Map approx index back using original spacing — good enough for excerpts.
   const start = Math.max(0, idx - 40);
   const slice = normalized.slice(start, start + maxLen);
   return `${start > 0 ? "…" : ""}${slice}${start + maxLen < normalized.length ? "…" : ""}`;
@@ -20,32 +149,57 @@ function citationLabel(entry: KnowledgeEntry): string {
 
 /**
  * Deterministic keyword relevance for approved employee-facing retrieval.
- * Title/tag matches weigh more than distant content matches.
+ * Title/tag/summary matches weigh more than distant content matches.
  */
 export function scoreKnowledgeMatch(entry: KnowledgeEntry, query: string): number {
-  const q = query.trim().toLowerCase();
+  const q = normalizeSearchText(query);
   if (!q) return 0;
-  const terms = q.split(/\s+/).filter(Boolean);
+  const terms = tokenizeQuery(query);
+  if (terms.length === 0) {
+    // Fall back to full query without stop-word filter for short queries like "baxter"
+    const fallback = q.split(/\s+/).filter((t) => t.length >= 2);
+    if (fallback.length === 0) return 0;
+    return scoreTerms(entry, fallback, q);
+  }
+  return scoreTerms(entry, terms, q);
+}
+
+function scoreTerms(entry: KnowledgeEntry, terms: string[], fullQuery: string): number {
   let score = 0;
-  const title = entry.title.toLowerCase();
-  const summary = (entry.summary ?? "").toLowerCase();
-  const content = entry.content.toLowerCase();
-  const category = entry.category.toLowerCase();
-  const source = (entry.source_name ?? "").toLowerCase();
-  const tags = entry.tags.map((tag) => tag.toLowerCase());
+  const title = normalizeSearchText(entry.title);
+  const summary = normalizeSearchText(entry.summary ?? "");
+  const content = normalizeSearchText(entry.content);
+  const category = normalizeSearchText(entry.category);
+  const source = normalizeSearchText(entry.source_name ?? "");
+  const tags = entry.tags.map((tag) => normalizeSearchText(tag));
 
   for (const term of terms) {
-    if (title === term) score += 40;
-    else if (title.includes(term)) score += 25;
-    if (tags.some((tag) => tag === term)) score += 20;
-    else if (tags.some((tag) => tag.includes(term))) score += 12;
-    if (category.includes(term)) score += 10;
-    if (source.includes(term)) score += 8;
-    if (summary.includes(term)) score += 6;
-    if (content.includes(term)) score += 3;
+    if (title === term) score += 50;
+    else if (title.includes(term)) score += 30;
+    else if (title.split(/\s+/).some((word) => word.startsWith(term) && term.length >= 3)) {
+      score += 18;
+    }
+
+    if (tags.some((tag) => tag === term)) score += 24;
+    else if (tags.some((tag) => tag.includes(term))) score += 14;
+
+    if (category.includes(term)) score += 12;
+    if (source.includes(term)) score += 10;
+    if (summary.includes(term)) score += 16;
+    if (content.includes(term)) score += 5;
   }
 
-  if (title.includes(q)) score += 15;
+  if (fullQuery.length >= 4) {
+    if (title.includes(fullQuery)) score += 20;
+    if (summary.includes(fullQuery)) score += 12;
+    if (content.includes(fullQuery)) score += 8;
+  }
+
+  // Phrase boost for "digital employee", "operations agent", etc.
+  for (const phrase of ["digital employee", "operations agent", "acton adu", "knowledge base"]) {
+    if (fullQuery.includes(phrase.split(" ")[0]!) && content.includes(phrase)) score += 10;
+  }
+
   return score;
 }
 

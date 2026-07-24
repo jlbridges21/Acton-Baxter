@@ -4,20 +4,30 @@ import {
   appendAssistantMessage,
   appendUserMessage,
   getOrCreateConversation,
+  getRecentConversationHistory,
   toPublicAnswer,
 } from "./conversations";
 import { retrieveBaxterContext } from "./context";
 import { INSUFFICIENT_KNOWLEDGE_ANSWER, mapUsedSourceNumbers } from "./citations";
 import { getBaxterLlmProvider } from "./openai-provider";
-import { BaxterConfigError, EMPLOYEE_SAFE_CHAT_ERROR } from "./errors";
-import { logServerError } from "@/lib/errors";
-import type { BaxterAnswer, BaxterQuestionInput } from "./types";
+import {
+  BaxterConfigError,
+  BaxterProviderError,
+  employeeFacingErrorMessage,
+  logBaxterDiagnostic,
+} from "./errors";
+import { classifyBaxterQuestion } from "./classify";
+import { answerFromBaxterIdentity, buildBaxterIdentityContext } from "./identity";
+import { getEnv } from "@/lib/env";
+import type { BaxterAnswer, BaxterAnswerMode, BaxterQuestionInput } from "./types";
 
 /**
  * Shared Baxter answering entry point for web and Slack.
  */
 export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<BaxterAnswer> {
   const question = input.question.trim();
+  const questionClass = classifyBaxterQuestion(question);
+
   const conversation = await getOrCreateConversation({
     userId: input.userId,
     userName: input.userName,
@@ -32,28 +42,107 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     content: question,
   });
 
-  const contextItems = await retrieveBaxterContext(question);
-
-  if (contextItems.length === 0) {
+  if (questionClass === "unsafe_or_disallowed") {
+    const answer =
+      "I can’t help with that request. Ask me about Acton knowledge, general work questions, or how I can help as Baxter.";
     const message = await appendAssistantMessage({
       conversationId: conversation.id,
-      content: INSUFFICIENT_KNOWLEDGE_ANSWER,
-      insufficientKnowledge: true,
-      confidence: "low",
+      content: answer,
+      insufficientKnowledge: false,
+      confidence: "high",
       modelProvider: null,
       modelName: null,
       sources: [],
       sourceEntryIds: [],
     });
-
     return toPublicAnswer({
       conversationId: conversation.id,
       messageId: message.id,
-      answer: INSUFFICIENT_KNOWLEDGE_ANSWER,
+      answer,
       sources: [],
-      confidence: "low",
-      insufficientKnowledge: true,
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "clarification",
     });
+  }
+
+  // Fast path: identity questions with no need for OpenAI when KB is empty.
+  const contextItems = await retrieveBaxterContext(question);
+  if (
+    questionClass === "baxter_identity" &&
+    contextItems.length === 0 &&
+    !needsOpenAiForIdentityFollowUp(question)
+  ) {
+    const answer = answerFromBaxterIdentity(question);
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: answer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "identity",
+      modelName: "built-in",
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer,
+      sources: [],
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "identity",
+    });
+  }
+
+  // For identity questions, still call OpenAI when nuance is needed; empty KB is OK.
+  if (questionClass === "baxter_identity" && contextItems.length === 0) {
+    // identity layer in the prompt remains authoritative
+  }
+
+  const history = await getRecentConversationHistory(conversation.id, {
+    limit: 10,
+    excludeLastUser: true,
+  });
+
+  const openaiConfigured = Boolean((getEnv().OPENAI_API_KEY ?? "").trim());
+
+  if (!openaiConfigured) {
+    if (
+      questionClass === "acton_company_specific" ||
+      questionClass === "acton_process_specific" ||
+      contextItems.length === 0
+    ) {
+      const answer =
+        questionClass === "general_knowledge" || questionClass === "conversational"
+          ? "I can help with general questions once OPENAI_API_KEY is configured. Meanwhile I can still answer from approved Acton knowledge when it is available."
+          : [
+              INSUFFICIENT_KNOWLEDGE_ANSWER,
+              "",
+              "I also can’t call OpenAI right now because OPENAI_API_KEY is not configured.",
+            ].join("\n");
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: answer,
+        insufficientKnowledge: true,
+        confidence: "low",
+        modelProvider: null,
+        modelName: null,
+        errorCode: "BAXTER_OPENAI_KEY_MISSING",
+        sources: [],
+        sourceEntryIds: [],
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer,
+        sources: [],
+        confidence: "low",
+        insufficientKnowledge: true,
+        answerMode: "mixed",
+        errorCode: "BAXTER_OPENAI_KEY_MISSING",
+      });
+    }
   }
 
   try {
@@ -63,17 +152,60 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       contextItems,
       userName: input.userName,
       channel: input.channel,
+      questionClass,
+      identityContext: buildBaxterIdentityContext(),
+      history,
     });
 
     let sources = mapUsedSourceNumbers(llm.usedSourceNumbers, contextItems);
-    const insufficientKnowledge = llm.insufficientKnowledge || sources.length === 0;
-    if (insufficientKnowledge) {
+    // Never invent sources; only keep mapped ones.
+    let answerMode: BaxterAnswerMode = llm.answerMode;
+    let insufficientKnowledge = false;
+    let answerText = llm.answer.trim();
+
+    if (questionClass === "baxter_identity" && sources.length === 0) {
+      answerMode = "identity";
+      insufficientKnowledge = false;
+      if (!answerText) answerText = answerFromBaxterIdentity(question);
+    } else if (
+      (questionClass === "acton_company_specific" || questionClass === "acton_process_specific") &&
+      sources.length === 0
+    ) {
+      // Official Acton answer unavailable — prefer mixed/general labeled response.
+      insufficientKnowledge = true;
+      answerMode = answerText ? "mixed" : "mixed";
+      if (!answerText) {
+        answerText = [
+          INSUFFICIENT_KNOWLEDGE_ANSWER,
+          "",
+          "If this is a general concept question, ask me in general terms and I can share clearly labeled general guidance.",
+        ].join("\n");
+      } else if (
+        !/general guidance|not an approved acton|don’t have an approved|do not have an approved|doesn't have an approved|approved acton/i.test(
+          answerText,
+        )
+      ) {
+        answerText = `${answerText}\n\nNote: I don’t have an approved Acton source for this yet, so treat any general explanation as guidance—not official Acton policy.`;
+        answerMode = "mixed";
+      }
+      sources = [];
+    } else if (sources.length > 0) {
+      answerMode = answerMode === "general" ? "grounded" : answerMode;
+      if (answerMode === "identity") answerMode = "grounded";
+      insufficientKnowledge = false;
+    } else {
+      // General / conversational with no sources
+      insufficientKnowledge = false;
+      if (answerMode === "grounded") answerMode = "general";
       sources = [];
     }
 
-    const answerText =
-      llm.answer.trim() ||
-      (insufficientKnowledge ? INSUFFICIENT_KNOWLEDGE_ANSWER : EMPLOYEE_SAFE_CHAT_ERROR);
+    if (!answerText) {
+      answerText =
+        questionClass === "baxter_identity"
+          ? answerFromBaxterIdentity(question)
+          : INSUFFICIENT_KNOWLEDGE_ANSWER;
+    }
 
     const sourceEntryIds = sources.map((source, index) => {
       const item = contextItems.find((ctx) => ctx.citationLabel === source.citationLabel);
@@ -105,17 +237,61 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       sources,
       confidence: insufficientKnowledge ? "low" : llm.confidence,
       insufficientKnowledge,
+      answerMode,
     });
   } catch (error) {
     const errorCode =
-      error instanceof Error && "code" in error
-        ? String((error as { code?: string }).code ?? "BAXTER_AI_ERROR")
-        : "BAXTER_AI_ERROR";
+      error instanceof BaxterConfigError || error instanceof BaxterProviderError
+        ? error.code
+        : error instanceof Error && "code" in error
+          ? String((error as { code?: string }).code ?? "BAXTER_UNKNOWN_ERROR")
+          : "BAXTER_UNKNOWN_ERROR";
 
-    await appendAssistantMessage({
+    // Identity fallback if OpenAI is down
+    if (questionClass === "baxter_identity") {
+      const answer = answerFromBaxterIdentity(question);
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: answer,
+        insufficientKnowledge: false,
+        confidence: "medium",
+        modelProvider: "identity",
+        modelName: "built-in-fallback",
+        errorCode,
+        sources: [],
+        sourceEntryIds: [],
+      });
+      logBaxterDiagnostic("answerBaxterQuestion", {
+        code: errorCode,
+        conversationId: conversation.id,
+        userId: input.userId,
+        safeMessage: error instanceof Error ? error.message : "identity fallback",
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer,
+        sources: [],
+        confidence: "medium",
+        insufficientKnowledge: false,
+        answerMode: "identity",
+        errorCode,
+      });
+    }
+
+    const employeeMessage =
+      contextItems.length === 0
+        ? [
+            INSUFFICIENT_KNOWLEDGE_ANSWER,
+            "",
+            `I also hit a temporary AI service issue (${errorCode}). Please try again shortly.`,
+          ].join("\n")
+        : employeeFacingErrorMessage(errorCode);
+
+    const message = await appendAssistantMessage({
       conversationId: conversation.id,
-      content: EMPLOYEE_SAFE_CHAT_ERROR,
-      insufficientKnowledge: false,
+      content: employeeMessage,
+      insufficientKnowledge: contextItems.length === 0,
       confidence: "low",
       modelProvider: null,
       modelName: null,
@@ -124,12 +300,37 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       sourceEntryIds: [],
     });
 
-    logServerError("answerBaxterQuestion", error);
+    logBaxterDiagnostic("answerBaxterQuestion", {
+      code: errorCode,
+      route: "answerBaxterQuestion",
+      userId: input.userId,
+      conversationId: conversation.id,
+      safeMessage: error instanceof Error ? error.message : "unknown",
+    });
+
+    // Prefer a stored assistant reply over throwing when no KB context was available.
+    if (contextItems.length === 0) {
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: employeeMessage,
+        sources: [],
+        confidence: "low",
+        insufficientKnowledge: true,
+        answerMode: "mixed",
+        errorCode,
+      });
+    }
 
     if (error instanceof BaxterConfigError) {
-      throw error;
+      throw new BaxterConfigError(employeeFacingErrorMessage(errorCode), errorCode);
     }
 
     throw error;
   }
+}
+
+function needsOpenAiForIdentityFollowUp(question: string): boolean {
+  // Use OpenAI when the question asks for nuanced comparison or drafting around identity.
+  return /\b(compare|draft|write|summarize|in detail|phase 1|not supposed)\b/i.test(question);
 }

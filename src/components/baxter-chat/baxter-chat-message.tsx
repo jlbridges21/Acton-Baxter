@@ -2,7 +2,8 @@
 
 import { BaxterSourceList } from "./baxter-source-list";
 import { BaxterAvatar } from "./baxter-avatar";
-import type { BaxterSourceReference } from "@/lib/baxter-ai/types";
+import type { BaxterAnswerMode, BaxterSourceReference } from "@/lib/baxter-ai/types";
+import { answerModeLabel } from "@/lib/baxter-ai/classify";
 import { cn } from "@/lib/utils";
 
 export type ChatUiMessage = {
@@ -11,11 +12,13 @@ export type ChatUiMessage = {
   content: string;
   sources?: BaxterSourceReference[];
   insufficientKnowledge?: boolean;
+  answerMode?: BaxterAnswerMode | null;
   isError?: boolean;
 };
 
 export function BaxterChatMessage({ message }: { message: ChatUiMessage }) {
   const isUser = message.role === "user";
+  const modeLabel = !isUser ? answerModeLabel(message.answerMode) : null;
 
   return (
     <div className={cn("flex gap-2", isUser ? "justify-end" : "justify-start")}>
@@ -32,8 +35,15 @@ export function BaxterChatMessage({ message }: { message: ChatUiMessage }) {
                 : "border border-[var(--acton-border)] bg-white text-[var(--acton-navy)]",
         )}
       >
+        {modeLabel ? (
+          <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+            {modeLabel}
+          </p>
+        ) : null}
         {message.content}
-        {!isUser && message.sources ? <BaxterSourceList sources={message.sources} /> : null}
+        {!isUser && message.sources && message.sources.length > 0 ? (
+          <BaxterSourceList sources={message.sources} />
+        ) : null}
       </div>
     </div>
   );

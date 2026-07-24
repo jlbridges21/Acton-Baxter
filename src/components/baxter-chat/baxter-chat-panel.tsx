@@ -6,18 +6,28 @@ import { BaxterAvatar } from "./baxter-avatar";
 import { BaxterChatInput } from "./baxter-chat-input";
 import { BaxterChatMessage, type ChatUiMessage } from "./baxter-chat-message";
 import { Button } from "@/components/ui/button";
-import type { BaxterSourceReference } from "@/lib/baxter-ai/types";
+import type { BaxterAnswerMode, BaxterSourceReference } from "@/lib/baxter-ai/types";
 
 const GREETING: ChatUiMessage = {
   id: "greeting",
   role: "assistant",
-  content: "Hi, I’m Baxter. Ask me about approved Acton procedures, policies, or processes.",
+  answerMode: "identity",
+  content:
+    "Hi, I’m Baxter, Acton ADU’s internal AI assistant. I can answer questions, explain information, help with writing, and search approved Acton knowledge. What can I help with?",
 };
+
+const SUGGESTIONS = [
+  "What can you do?",
+  "Who is Baxter?",
+  "Explain a RACI matrix.",
+  "What approved Acton knowledge can you access?",
+];
 
 export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
   const [messages, setMessages] = useState<ChatUiMessage[]>([GREETING]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,8 +37,9 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
 
   async function sendQuestion(question: string) {
     if (pending) return;
+    setShowSuggestions(false);
     const userMessage: ChatUiMessage = {
-      id: `user-${Date.now()}`,
+      id: `user-${crypto.randomUUID()}`,
       role: "user",
       content: question,
     };
@@ -52,15 +63,17 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
           confidence?: string;
           insufficientKnowledge?: boolean;
           sources?: BaxterSourceReference[];
+          answerMode?: BaxterAnswerMode | null;
+          errorCode?: string | null;
         };
-        error?: { message?: string };
+        error?: { message?: string; code?: string };
       };
 
       if (!response.ok) {
         setMessages((prev) => [
           ...prev,
           {
-            id: `error-${Date.now()}`,
+            id: `error-${crypto.randomUUID()}`,
             role: "assistant",
             content:
               payload.error?.message ?? "Baxter couldn’t answer that right now. Please try again.",
@@ -77,18 +90,19 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
       setMessages((prev) => [
         ...prev,
         {
-          id: payload.message?.id ?? `assistant-${Date.now()}`,
+          id: payload.message?.id ?? `assistant-${crypto.randomUUID()}`,
           role: "assistant",
           content: payload.message?.answer ?? "Baxter couldn’t answer that right now.",
           sources: payload.message?.sources ?? [],
           insufficientKnowledge: Boolean(payload.message?.insufficientKnowledge),
+          answerMode: payload.message?.answerMode ?? null,
         },
       ]);
     } catch {
       setMessages((prev) => [
         ...prev,
         {
-          id: `error-${Date.now()}`,
+          id: `error-${crypto.randomUUID()}`,
           role: "assistant",
           content: "Baxter couldn’t answer that right now. Please try again.",
           isError: true,
@@ -100,7 +114,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="flex h-[min(32rem,70vh)] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[var(--acton-border)] bg-white shadow-xl sm:w-[24rem]">
+    <div className="flex h-[min(34rem,72vh)] w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[var(--acton-border)] bg-white shadow-xl sm:w-[24rem]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--acton-border)] bg-[var(--acton-navy)] px-3 py-2.5 text-white">
         <div className="flex min-w-0 items-center gap-2">
           <BaxterAvatar size={36} />
@@ -128,6 +142,21 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
         {messages.map((message) => (
           <BaxterChatMessage key={message.id} message={message} />
         ))}
+        {showSuggestions && messages.length <= 1 ? (
+          <div className="flex flex-wrap gap-2">
+            {SUGGESTIONS.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                disabled={pending}
+                onClick={() => void sendQuestion(suggestion)}
+                className="rounded-full border border-[var(--acton-border)] bg-white px-3 py-1.5 text-left text-xs font-medium text-[var(--acton-navy)] hover:bg-[var(--acton-gray-100)]"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {pending ? (
           <p className="text-xs text-[var(--acton-muted)]" aria-live="polite">
             Baxter is thinking…
@@ -136,8 +165,8 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <p className="border-t border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-3 py-2 text-[11px] leading-snug text-[var(--acton-muted)]">
-        Baxter answers from approved Acton knowledge. Verify important decisions with the
-        responsible team member.
+        Baxter answers from approved Acton knowledge when available, and can also help with general
+        questions. Verify important decisions with the responsible team member.
       </p>
 
       <BaxterChatInput disabled={pending} onSend={sendQuestion} />

@@ -1,9 +1,9 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
-import { parseBaxterLlmJson } from "./schemas";
+import { parseBaxterLlmOutputLenient } from "./schemas";
 import { buildBaxterSystemPrompt, buildBaxterUserPrompt } from "./prompts";
-import { BaxterConfigError, BaxterProviderError } from "./errors";
+import { BaxterConfigError, BaxterProviderError, classifyOpenAiHttpError } from "./errors";
 import type { BaxterLLMProvider } from "./provider";
 import type { BaxterLLMInput, BaxterLLMOutput } from "./types";
 
@@ -12,8 +12,7 @@ function sleep(ms: number) {
 }
 
 /**
- * OpenAI Baxter provider using the same HTTP chat/completions pattern as Property Research.
- * No separate OpenAI SDK is installed in this repository.
+ * OpenAI Baxter provider using HTTP chat/completions.
  */
 export class OpenAIBaxterProvider implements BaxterLLMProvider {
   readonly key = "openai" as const;
@@ -27,16 +26,18 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
 
   async generateAnswer(input: BaxterLLMInput): Promise<BaxterLLMOutput> {
     const env = getEnv();
-    if (!env.OPENAI_API_KEY) {
+    const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+    if (!apiKey) {
       throw new BaxterConfigError(
         "OPENAI_API_KEY is not configured. Add it to enable Baxter chat.",
+        "BAXTER_OPENAI_KEY_MISSING",
       );
     }
 
     const body = {
       model: this.model,
-      temperature: 0.2,
-      max_tokens: 900,
+      temperature: 0.3,
+      max_tokens: 1200,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: buildBaxterSystemPrompt() },
@@ -53,7 +54,7 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
         const response = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+            Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify(body),
@@ -72,93 +73,110 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
           data = null;
         }
 
-        if (response.status === 401 || response.status === 403) {
-          throw new BaxterConfigError("OpenAI authorization failed. Check OPENAI_API_KEY.");
-        }
-
-        if (response.status === 429 || response.status >= 500) {
-          if (attempt < env.EXTERNAL_API_MAX_RETRIES) {
+        if (!response.ok) {
+          const classified = classifyOpenAiHttpError(response.status);
+          if (classified.retryable && attempt < env.EXTERNAL_API_MAX_RETRIES) {
             attempt += 1;
             await sleep(300 * 2 ** attempt);
             continue;
           }
-          throw new BaxterProviderError(`OpenAI temporary failure (${response.status})`, {
+          if (classified.code === "BAXTER_OPENAI_AUTH_FAILED") {
+            throw new BaxterConfigError(classified.message, classified.code);
+          }
+          throw new BaxterProviderError(classified.message, {
+            code: classified.code,
             statusCode: response.status,
-            retryable: true,
-          });
-        }
-
-        if (!response.ok) {
-          throw new BaxterProviderError(`OpenAI request failed (${response.status})`, {
-            statusCode: response.status,
+            retryable: classified.retryable,
           });
         }
 
         const content = data?.choices?.[0]?.message?.content?.trim();
         if (!content) {
-          throw new BaxterProviderError("OpenAI returned an empty completion");
+          throw new BaxterProviderError("OpenAI returned an empty completion", {
+            code: "BAXTER_OPENAI_MALFORMED_RESPONSE",
+          });
         }
 
-        let structured;
-        try {
-          structured = parseBaxterLlmJson(content);
-        } catch (firstError) {
-          try {
-            structured = parseBaxterLlmJson(repairJsonLike(content));
-          } catch {
-            throw new BaxterProviderError("OpenAI returned an invalid structured response", {
-              cause: firstError,
-            });
-          }
+        const parsed = parseBaxterLlmOutputLenient(content);
+        if (parsed.structured) {
+          return {
+            answer: parsed.structured.answer.trim(),
+            usedSourceNumbers: parsed.structured.usedSourceNumbers,
+            confidence: parsed.structured.confidence,
+            insufficientKnowledge: parsed.structured.insufficientKnowledge,
+            answerMode: parsed.structured.answerMode,
+            modelProvider: this.key,
+            modelName: this.model,
+            inputTokens: data?.usage?.prompt_tokens ?? null,
+            outputTokens: data?.usage?.completion_tokens ?? null,
+            latencyMs: Date.now() - started,
+          };
         }
 
-        return {
-          answer: structured.answer.trim(),
-          usedSourceNumbers: structured.usedSourceNumbers,
-          confidence: structured.confidence,
-          insufficientKnowledge: structured.insufficientKnowledge,
-          modelProvider: this.key,
-          modelName: this.model,
-          inputTokens: data?.usage?.prompt_tokens ?? null,
-          outputTokens: data?.usage?.completion_tokens ?? null,
-          latencyMs: Date.now() - started,
-        };
+        if (parsed.textFallback) {
+          return {
+            answer: parsed.textFallback,
+            usedSourceNumbers: [],
+            confidence: "medium",
+            insufficientKnowledge: false,
+            answerMode: "general",
+            modelProvider: this.key,
+            modelName: this.model,
+            inputTokens: data?.usage?.prompt_tokens ?? null,
+            outputTokens: data?.usage?.completion_tokens ?? null,
+            latencyMs: Date.now() - started,
+            rawTextFallback: true,
+          };
+        }
+
+        throw new BaxterProviderError("OpenAI returned an invalid structured response", {
+          code: "BAXTER_OPENAI_MALFORMED_RESPONSE",
+        });
       } catch (error) {
         if (error instanceof BaxterConfigError || error instanceof BaxterProviderError) {
           throw error;
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new BaxterProviderError("OpenAI request timed out", {
+            code: "BAXTER_OPENAI_TIMEOUT",
+            retryable: true,
+            cause: error,
+          });
         }
         if (attempt < env.EXTERNAL_API_MAX_RETRIES) {
           attempt += 1;
           await sleep(300 * 2 ** attempt);
           continue;
         }
-        throw new BaxterProviderError("OpenAI request failed after retries", { cause: error });
+        throw new BaxterProviderError("OpenAI request failed after retries", {
+          code: "BAXTER_UNKNOWN_ERROR",
+          cause: error,
+        });
       } finally {
         clearTimeout(timer);
       }
     }
 
-    throw new BaxterProviderError("OpenAI request failed after retries");
+    throw new BaxterProviderError("OpenAI request failed after retries", {
+      code: "BAXTER_UNKNOWN_ERROR",
+    });
   }
-}
-
-function repairJsonLike(raw: string): string {
-  return raw
-    .replace(/,\s*([}\]])/g, "$1")
-    .replace(/(\w+)\s*:/g, '"$1":')
-    .replace(/'/g, '"');
 }
 
 export function getBaxterLlmProvider(): BaxterLLMProvider {
   const env = getEnv();
-  const provider = (env.BAXTER_LLM_PROVIDER || "openai").toLowerCase();
+  const provider = (env.BAXTER_LLM_PROVIDER || "openai").toLowerCase().trim();
   if (provider === "openai") {
     return new OpenAIBaxterProvider();
   }
   if (provider === "anthropic") {
     throw new BaxterConfigError(
       "Anthropic is planned for a later release. Set BAXTER_LLM_PROVIDER=openai.",
+      "BAXTER_OPENAI_BAD_REQUEST",
     );
   }
-  throw new BaxterConfigError(`Unsupported BAXTER_LLM_PROVIDER: ${provider}`);
+  throw new BaxterConfigError(
+    `Unsupported BAXTER_LLM_PROVIDER: ${provider}`,
+    "BAXTER_OPENAI_BAD_REQUEST",
+  );
 }

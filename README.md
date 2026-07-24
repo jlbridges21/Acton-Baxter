@@ -68,11 +68,11 @@ Run migration `006_knowledge_base.sql` in Supabase before using Knowledge Base a
 
 Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 
-- Answers are grounded in **approved internal** Knowledge Base entries
-- Sources are attached from retrieved records (the model cannot invent URLs)
-- Google-synced docs open the original Google Doc/Sheet
-- If knowledge is missing, Baxter says so clearly
-- Disable with `BAXTER_CHAT_ENABLED=false`
+- Answers identity and general questions even when the Knowledge Base is empty
+- Uses approved Acton Knowledge Base / Google-synced entries for company-specific facts
+- Cites real sources (model cannot invent URLs)
+- Admin diagnostics: `/admin/baxter/diagnostics`
+- Troubleshooting: `docs/baxter-troubleshooting.md`
 
 ## Google Workspace + Slack (Prompt 4)
 
