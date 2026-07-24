@@ -87,12 +87,20 @@ async function processSlackCompletionNotification(job: ReportJob): Promise<void>
   });
 }
 
+async function processGoogleKnowledgeSync(job: ReportJob): Promise<void> {
+  const { getGoogleConnector } = await import("@/lib/connectors/registry");
+  const folderId = typeof job.metadata.folderId === "string" ? job.metadata.folderId : undefined;
+  await getGoogleConnector().sync(folderId ? { folderId } : undefined);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
       await processPropertyResearch(job);
     } else if (job.jobType === "slack_completion_notification") {
       await processSlackCompletionNotification(job);
+    } else if (job.jobType === "google_knowledge_sync") {
+      await processGoogleKnowledgeSync(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

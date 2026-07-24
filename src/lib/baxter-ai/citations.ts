@@ -1,4 +1,5 @@
-import type { BaxterContextItem, BaxterSourceReference } from "./types";
+import type { BaxterContextItem, BaxterSourceKind, BaxterSourceReference } from "./types";
+import { GOOGLE_DOC_MIME, GOOGLE_SHEET_MIME } from "@/lib/connectors/google/types";
 
 /**
  * Map model-cited temporary source numbers to real retrieved Knowledge Base records.
@@ -22,17 +23,60 @@ export function mapUsedSourceNumbers(
   return sources;
 }
 
+export function resolveSourceKind(input: {
+  sourceType: string;
+  mimeType?: string | null;
+}): BaxterSourceKind {
+  if (input.sourceType === "Google Drive") {
+    if (input.mimeType === GOOGLE_DOC_MIME) return "google_doc";
+    if (input.mimeType === GOOGLE_SHEET_MIME) return "google_sheet";
+    return "google_file";
+  }
+  return "knowledge_entry";
+}
+
+export function resolveOpenLabel(kind: BaxterSourceKind): string {
+  switch (kind) {
+    case "google_doc":
+      return "Open Document";
+    case "google_sheet":
+      return "Open Spreadsheet";
+    case "google_file":
+      return "Open File";
+    default:
+      return "Open Knowledge Entry";
+  }
+}
+
 export function contextItemToSourceReference(item: BaxterContextItem): BaxterSourceReference {
+  const sourceKind = resolveSourceKind({
+    sourceType: item.sourceType,
+    mimeType: item.mimeType,
+  });
+
+  let sourceUrl: string | null = null;
+  if (isSafeAbsoluteHttpUrl(item.sourceUrl)) {
+    sourceUrl = item.sourceUrl;
+  } else if (sourceKind === "knowledge_entry" || sourceKind === "manual") {
+    sourceUrl = `/knowledge/${item.id}`;
+  }
+
   return {
     title: item.title,
     sourceName: item.sourceName,
     category: item.category,
-    sourceUrl: isSafeHttpUrl(item.sourceUrl) ? item.sourceUrl : null,
+    sourceUrl,
     citationLabel: item.citationLabel,
+    sourceKind,
+    openLabel: resolveOpenLabel(sourceKind),
+    lastUpdated: item.updatedAt,
+    relevanceScore: item.relevanceScore,
+    availability: sourceUrl ? "available" : "unavailable",
+    knowledgeEntryId: item.id,
   };
 }
 
-export function isSafeHttpUrl(value: string | null | undefined): boolean {
+export function isSafeAbsoluteHttpUrl(value: string | null | undefined): boolean {
   if (!value) return false;
   try {
     const url = new URL(value);
@@ -40,6 +84,24 @@ export function isSafeHttpUrl(value: string | null | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+export function isSafeHttpUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  if (value.startsWith("/knowledge/")) return true;
+  return isSafeAbsoluteHttpUrl(value);
+}
+
+export function formatRelativeUpdated(iso: string | null): string {
+  if (!iso) return "Unknown";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "Unknown";
+  const diffMs = Date.now() - then;
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  if (days <= 0) return "Updated today";
+  if (days === 1) return "Updated yesterday";
+  if (days < 14) return `Updated ${days} days ago`;
+  return `Updated ${new Date(iso).toLocaleDateString()}`;
 }
 
 export const INSUFFICIENT_KNOWLEDGE_ANSWER =

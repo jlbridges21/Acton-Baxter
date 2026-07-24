@@ -3,7 +3,7 @@ import "server-only";
 import {
   appendAssistantMessage,
   appendUserMessage,
-  getOrCreateWebConversation,
+  getOrCreateConversation,
   toPublicAnswer,
 } from "./conversations";
 import { retrieveBaxterContext } from "./context";
@@ -14,14 +14,17 @@ import { logServerError } from "@/lib/errors";
 import type { BaxterAnswer, BaxterQuestionInput } from "./types";
 
 /**
- * Shared Baxter answering entry point for web (Prompt 3) and future Slack (Prompt 4).
+ * Shared Baxter answering entry point for web and Slack.
  */
 export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<BaxterAnswer> {
   const question = input.question.trim();
-  const conversation = await getOrCreateWebConversation({
+  const conversation = await getOrCreateConversation({
     userId: input.userId,
     userName: input.userName,
     conversationId: input.conversationId,
+    channel: input.channel,
+    externalThreadId: input.externalThreadId,
+    externalUserId: input.externalUserId,
   });
 
   await appendUserMessage({

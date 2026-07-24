@@ -22,6 +22,8 @@ export function toBaxterContextItems(
     tags: result.tags,
     sourceName: result.sourceName,
     sourceUrl: result.sourceUrl,
+    sourceType: result.sourceType,
+    mimeType: result.mimeType,
     updatedAt: result.updatedAt,
     citationLabel: result.citationLabel,
     relevanceScore: result.relevanceScore,

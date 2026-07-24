@@ -1,4 +1,8 @@
-export const JOB_TYPES = ["property_research", "slack_completion_notification"] as const;
+export const JOB_TYPES = [
+  "property_research",
+  "slack_completion_notification",
+  "google_knowledge_sync",
+] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 export const JOB_STATUSES = ["queued", "running", "complete", "failed"] as const;

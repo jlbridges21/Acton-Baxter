@@ -533,3 +533,52 @@ export async function listAllKnowledgeEntriesForRetrieval(): Promise<KnowledgeEn
   }
   return (data as KnowledgeEntry[]) ?? [];
 }
+
+export async function patchKnowledgeEntrySyncFields(
+  id: string,
+  patch: {
+    source_external_id?: string | null;
+    metadata?: Record<string, unknown>;
+    source_url?: string | null;
+  },
+): Promise<KnowledgeEntry | null> {
+  const existing = await getKnowledgeEntry(id);
+  if (!existing) return null;
+
+  const updated: KnowledgeEntry = {
+    ...existing,
+    source_external_id:
+      patch.source_external_id !== undefined
+        ? patch.source_external_id
+        : existing.source_external_id,
+    source_url: patch.source_url !== undefined ? patch.source_url : existing.source_url,
+    metadata: patch.metadata ? { ...existing.metadata, ...patch.metadata } : existing.metadata,
+    updated_at: nowIso(),
+  };
+
+  if (shouldUseMemoryStore()) {
+    getMemory().entries.set(id, updated);
+    return updated;
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("knowledge_entries")
+    .update({
+      source_external_id: updated.source_external_id,
+      source_url: updated.source_url,
+      metadata: updated.metadata,
+      updated_at: updated.updated_at,
+    })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    if (isMissingKnowledgeTableError(error)) {
+      getMemory().entries.set(id, updated);
+      return updated;
+    }
+    throw error;
+  }
+  return (data as KnowledgeEntry | null) ?? updated;
+}

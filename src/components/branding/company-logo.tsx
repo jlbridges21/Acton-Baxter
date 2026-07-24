@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 export function CompanyLogo({
   logoUrl,
-  alt = "Acton ADU - Baxter",
+  alt = "Acton ADU",
   companyName = "Acton ADU",
   productLabel = "Baxter",
   reportTitle,

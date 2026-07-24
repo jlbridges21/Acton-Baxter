@@ -90,6 +90,8 @@ describe("Baxter AI grounding and citations", () => {
         tags: ["inspection"],
         sourceName: "Ops",
         sourceUrl: "javascript:alert(1)",
+        sourceType: "manual",
+        mimeType: null,
         updatedAt: new Date().toISOString(),
         relevanceScore: 10,
         citationLabel: "Production SOP — Site Inspection Checklist",
@@ -99,7 +101,7 @@ describe("Baxter AI grounding and citations", () => {
     const sources = mapUsedSourceNumbers([1, 99, 1], context);
     expect(sources).toHaveLength(1);
     expect(sources[0]?.title).toBe("Site Inspection Checklist");
-    expect(sources[0]?.sourceUrl).toBeNull();
+    expect(sources[0]?.sourceUrl).toBe("/knowledge/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     expect(isSafeHttpUrl("https://example.com/doc")).toBe(true);
     expect(isSafeHttpUrl("javascript:alert(1)")).toBe(false);
   });

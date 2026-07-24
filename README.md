@@ -70,22 +70,20 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 
 - Answers are grounded in **approved internal** Knowledge Base entries
 - Sources are attached from retrieved records (the model cannot invent URLs)
+- Google-synced docs open the original Google Doc/Sheet
 - If knowledge is missing, Baxter says so clearly
-- Disable with `BAXTER_CHAT_ENABLED=false` (launcher hidden; Property Research unaffected)
-- Architecture: `docs/baxter-ai-architecture.md`
+- Disable with `BAXTER_CHAT_ENABLED=false`
 
-Required for live answers:
+## Google Workspace + Slack (Prompt 4)
 
-```bash
-OPENAI_API_KEY=...
-BAXTER_LLM_PROVIDER=openai
-BAXTER_OPENAI_MODEL=gpt-4o-mini
-BAXTER_CHAT_ENABLED=true
-```
+- Google Docs/Sheets sync: `/admin/connectors/google` — see `docs/google-connector.md`
+- Slack DMs/mentions/threads: `/api/slack/events` — see `docs/slack-bot.md`
+- Connector overview: `/admin/connectors`
+- Slack activity: `/admin/slack`
 
-Also run `supabase/migrations/007_baxter_conversations.sql` for conversation logging.
+Required migrations after 007:
 
-Local tip: with `ENABLE_MOCK_RESEARCH=true`, Knowledge Base and chat logging can use in-memory stores when tables are not migrated yet. Production should run migrations 006 and 007.
+8. `supabase/migrations/008_google_sync_and_slack_events.sql`
 
 ---
 
@@ -100,6 +98,7 @@ In Supabase SQL Editor, run each file completely:
 5. `supabase/migrations/005_new_user_role_and_maps.sql`
 6. `supabase/migrations/006_knowledge_base.sql`
 7. `supabase/migrations/007_baxter_conversations.sql`
+8. `supabase/migrations/008_google_sync_and_slack_events.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 

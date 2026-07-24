@@ -109,6 +109,8 @@ export type KnowledgeSearchResult = {
   tags: string[];
   sourceName: string | null;
   sourceUrl: string | null;
+  sourceType: KnowledgeSourceType;
+  mimeType: string | null;
   updatedAt: string;
   relevanceScore: number;
   citationLabel: string;

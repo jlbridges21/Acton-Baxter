@@ -9,7 +9,7 @@ export function BaxterDashboard({
   isAdmin = false,
   logoUrl = null,
   companyName = "Acton ADU",
-  logoAlt = "Acton ADU - Baxter",
+  logoAlt = "Acton ADU",
   chatEnabled = false,
 }: {
   isAdmin?: boolean;

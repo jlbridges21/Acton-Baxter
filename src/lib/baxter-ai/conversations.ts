@@ -82,18 +82,39 @@ export async function getOrCreateWebConversation(input: {
   userName?: string | null;
   conversationId?: string | null;
 }): Promise<BaxterConversation> {
+  return getOrCreateConversation({
+    ...input,
+    channel: "web",
+  });
+}
+
+export async function getOrCreateConversation(input: {
+  userId: string;
+  userName?: string | null;
+  conversationId?: string | null;
+  channel: "web" | "slack";
+  externalThreadId?: string | null;
+  externalUserId?: string | null;
+}): Promise<BaxterConversation> {
   if (input.conversationId) {
-    const existing = await getConversationForUser(input.conversationId, input.userId);
+    const existing = await getConversationForUser(input.conversationId, input.userId, {
+      allowSlackService: input.channel === "slack",
+    });
     if (!existing) throw new NotFoundError("Conversation not found");
     return existing;
   }
 
+  if (input.channel === "slack" && input.externalThreadId) {
+    const byThread = await findConversationByExternalThread(input.externalThreadId);
+    if (byThread) return byThread;
+  }
+
   const conversation: BaxterConversation = {
     id: randomUUID(),
-    channel: "web",
-    external_thread_id: null,
+    channel: input.channel,
+    external_thread_id: input.externalThreadId ?? null,
     user_id: input.userId,
-    external_user_id: null,
+    external_user_id: input.externalUserId ?? null,
     user_display_name: input.userName ?? null,
     status: "active",
     created_at: nowIso(),
@@ -117,6 +138,8 @@ export async function getOrCreateWebConversation(input: {
       channel: conversation.channel,
       user_id: conversation.user_id,
       user_display_name: conversation.user_display_name,
+      external_thread_id: conversation.external_thread_id,
+      external_user_id: conversation.external_user_id,
       status: conversation.status,
       metadata: {},
     })
@@ -136,14 +159,47 @@ export async function getOrCreateWebConversation(input: {
   return data as BaxterConversation;
 }
 
+async function findConversationByExternalThread(
+  externalThreadId: string,
+): Promise<BaxterConversation | null> {
+  if (shouldUseMemoryStore()) {
+    return (
+      Array.from(getMemory().conversations.values()).find(
+        (conversation) => conversation.external_thread_id === externalThreadId,
+      ) ?? null
+    );
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("baxter_conversations")
+    .select("*")
+    .eq("external_thread_id", externalThreadId)
+    .eq("channel", "slack")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (isMissingTableError(error)) {
+      return (
+        Array.from(getMemory().conversations.values()).find(
+          (conversation) => conversation.external_thread_id === externalThreadId,
+        ) ?? null
+      );
+    }
+    throw error;
+  }
+  return (data as BaxterConversation | null) ?? null;
+}
+
 export async function getConversationForUser(
   conversationId: string,
   userId: string,
+  options?: { allowSlackService?: boolean },
 ): Promise<BaxterConversation | null> {
   if (shouldPersistInMemory(conversationId)) {
     const conversation = getMemory().conversations.get(conversationId) ?? null;
     if (!conversation) return null;
-    if (conversation.user_id !== userId) {
+    if (conversation.user_id !== userId && !options?.allowSlackService) {
       throw new AuthorizationError("You cannot continue another employee’s conversation");
     }
     return conversation;
@@ -159,7 +215,7 @@ export async function getConversationForUser(
   if (error) {
     if (isMissingTableError(error)) {
       const conversation = getMemory().conversations.get(conversationId) ?? null;
-      if (conversation && conversation.user_id !== userId) {
+      if (conversation && conversation.user_id !== userId && !options?.allowSlackService) {
         throw new AuthorizationError("You cannot continue another employee’s conversation");
       }
       return conversation;
@@ -169,10 +225,53 @@ export async function getConversationForUser(
   if (!data) return null;
 
   const conversation = data as BaxterConversation;
-  if (conversation.user_id !== userId) {
+  if (
+    conversation.user_id !== userId &&
+    !(options?.allowSlackService && conversation.channel === "slack")
+  ) {
     throw new AuthorizationError("You cannot continue another employee’s conversation");
   }
   return conversation;
+}
+
+export async function listRecentConversations(limit = 30): Promise<BaxterConversation[]> {
+  if (shouldUseMemoryStore()) {
+    return Array.from(getMemory().conversations.values())
+      .sort((a, b) =>
+        (b.last_message_at ?? b.created_at).localeCompare(a.last_message_at ?? a.created_at),
+      )
+      .slice(0, limit);
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("baxter_conversations")
+    .select("*")
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
+  return (data as BaxterConversation[]) ?? [];
+}
+
+export async function listMessagesForConversation(
+  conversationId: string,
+): Promise<BaxterMessage[]> {
+  if (shouldPersistInMemory(conversationId)) {
+    return getMemory().messages.get(conversationId) ?? [];
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("baxter_messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    if (isMissingTableError(error)) return getMemory().messages.get(conversationId) ?? [];
+    throw error;
+  }
+  return (data as BaxterMessage[]) ?? [];
 }
 
 export async function appendUserMessage(input: {

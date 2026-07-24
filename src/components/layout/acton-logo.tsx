@@ -10,7 +10,7 @@ export function ActonLogo({
   logoUrl = null,
   companyName = "Acton ADU",
   reportTitle = "",
-  logoAlt = "Acton ADU - Baxter",
+  logoAlt = "Acton ADU",
 }: {
   href?: string;
   className?: string;

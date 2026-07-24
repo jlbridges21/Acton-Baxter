@@ -1,6 +1,13 @@
 "use client";
 
 import type { BaxterSourceReference } from "@/lib/baxter-ai/types";
+import { formatRelativeUpdated } from "@/lib/baxter-ai/citations";
+
+function confidenceLabel(score: number): string {
+  if (score >= 40) return "High match";
+  if (score >= 15) return "Medium match";
+  return "Lower match";
+}
 
 export function BaxterSourceList({ sources }: { sources: BaxterSourceReference[] }) {
   if (sources.length === 0) return null;
@@ -10,23 +17,28 @@ export function BaxterSourceList({ sources }: { sources: BaxterSourceReference[]
       <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
         Sources
       </p>
-      <ul className="mt-1 space-y-1">
+      <ul className="mt-2 space-y-2">
         {sources.map((source) => (
           <li
-            key={`${source.citationLabel}-${source.title}`}
+            key={`${source.citationLabel}-${source.knowledgeEntryId ?? source.title}`}
             className="text-xs text-[var(--acton-navy)]"
           >
-            {source.sourceUrl ? (
+            <p className="font-semibold">{source.citationLabel}</p>
+            <p className="text-[var(--acton-muted)]">
+              {source.sourceKind.replace("_", " ")} · {formatRelativeUpdated(source.lastUpdated)} ·{" "}
+              {confidenceLabel(source.relevanceScore)}
+            </p>
+            {source.availability === "available" && source.sourceUrl ? (
               <a
                 href={source.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline-offset-2 hover:underline"
+                target={source.sourceUrl.startsWith("http") ? "_blank" : undefined}
+                rel={source.sourceUrl.startsWith("http") ? "noopener noreferrer" : undefined}
+                className="mt-1 inline-flex font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
               >
-                {source.citationLabel}
+                {source.openLabel}
               </a>
             ) : (
-              <span>{source.citationLabel}</span>
+              <p className="mt-1 text-[var(--acton-muted)]">Source unavailable</p>
             )}
           </li>
         ))}

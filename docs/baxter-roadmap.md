@@ -9,18 +9,19 @@
 - Baxter Dashboard chat assistant (Clippy-style launcher on `/` only)
 - Shared conversation schema (`baxter_conversations` / messages / sources)
 - Shared LLM provider abstraction (OpenAI now; Anthropic planned)
+- Slack conversational bot (DMs, mentions, threads) reusing shared AI service
+- Google Workspace connector (Docs/Sheets sync into Knowledge Base)
+- Clickable source references (Google Doc/Sheet + knowledge entries)
+- Connector health dashboard (`/admin/connectors`)
 
-## Future
+## Future (Prompt 5+)
 
-- Slack conversational bot
-- Slack mentions and DMs
+- Buildertrend sync
+- GoHighLevel sync
+- Domo sync
 - User feedback
-- Full admin conversation dashboard
+- Full admin conversation analytics expansion
 - Semantic retrieval / embeddings
-- Google Drive synchronization
-- GoHighLevel
-- Buildertrend
-- Domo
 - Proactive project monitoring
 - RACI enforcement in answers
 

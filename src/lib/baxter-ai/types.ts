@@ -3,6 +3,8 @@ export type BaxterConfidence = "high" | "medium" | "low";
 export type BaxterMessageRole = "user" | "assistant" | "system";
 export type BaxterConversationStatus = "active" | "closed" | "error";
 export type BaxterLlmProviderName = "openai";
+export type BaxterSourceKind =
+  "manual" | "knowledge_entry" | "google_doc" | "google_sheet" | "google_file";
 
 export type BaxterSourceReference = {
   title: string;
@@ -10,6 +12,12 @@ export type BaxterSourceReference = {
   category: string | null;
   sourceUrl: string | null;
   citationLabel: string;
+  sourceKind: BaxterSourceKind;
+  openLabel: string;
+  lastUpdated: string | null;
+  relevanceScore: number;
+  availability: "available" | "unavailable";
+  knowledgeEntryId?: string;
 };
 
 export type BaxterQuestionInput = {
@@ -18,6 +26,8 @@ export type BaxterQuestionInput = {
   userName?: string | null;
   channel: BaxterChannel;
   conversationId?: string | null;
+  externalThreadId?: string | null;
+  externalUserId?: string | null;
 };
 
 export type BaxterAnswer = {
@@ -39,6 +49,8 @@ export type BaxterContextItem = {
   tags: string[];
   sourceName: string | null;
   sourceUrl: string | null;
+  sourceType: string;
+  mimeType: string | null;
   updatedAt: string;
   citationLabel: string;
   relevanceScore: number;

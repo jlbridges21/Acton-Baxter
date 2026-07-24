@@ -77,7 +77,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     ];
   }
 
-  // platform-admin (branding, users, etc.)
+  // platform-admin (branding, users, connectors, etc.)
   void isAdmin;
   return [
     home,
@@ -86,6 +86,18 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       label: "Knowledge Base",
       icon: BookOpen,
       match: (pathname) => pathname.startsWith("/admin/knowledge"),
+    },
+    {
+      href: "/admin/connectors",
+      label: "Connectors",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/connectors"),
+    },
+    {
+      href: "/admin/slack",
+      label: "Slack",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/slack"),
     },
     {
       href: "/admin/users",
@@ -108,7 +120,7 @@ export function AppNav({
   userEmail,
   logoUrl = null,
   companyName = "Acton ADU",
-  logoAlt = "Acton ADU - Baxter",
+  logoAlt = "Acton ADU",
 }: {
   userName: string;
   userRole: string;

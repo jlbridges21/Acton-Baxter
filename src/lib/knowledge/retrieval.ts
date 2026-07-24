@@ -54,6 +54,10 @@ export function buildKnowledgeSearchResult(
   query: string,
   score: number,
 ): KnowledgeSearchResult {
+  const google =
+    entry.metadata?.google && typeof entry.metadata.google === "object"
+      ? (entry.metadata.google as { mimeType?: string })
+      : null;
   return {
     id: entry.id,
     title: entry.title,
@@ -63,6 +67,8 @@ export function buildKnowledgeSearchResult(
     tags: entry.tags,
     sourceName: entry.source_name,
     sourceUrl: entry.source_url,
+    sourceType: entry.source_type,
+    mimeType: google?.mimeType ?? null,
     updatedAt: entry.updated_at,
     relevanceScore: score,
     citationLabel: citationLabel(entry),
