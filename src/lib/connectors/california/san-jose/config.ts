@@ -46,8 +46,7 @@ export const SAN_JOSE_CONFIG = {
   },
   links: {
     zoningMap: "https://gisdata-csj.opendata.arcgis.com/datasets/CSJ::zoning-districts",
-    permitSearch:
-      "https://www.sanjoseca.gov/your-government/departments-offices/planning-building-code-enforcement/building-permits",
+    permitSearch: "https://permits.sanjoseca.gov/search/",
     parcelsOpenData: "https://data.sanjoseca.gov/dataset/parcels",
   },
 } as const;

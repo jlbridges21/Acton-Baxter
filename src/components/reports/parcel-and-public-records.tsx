@@ -1,9 +1,16 @@
-import { ExternalLink, Map } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Check, Copy, ExternalLink, Map } from "lucide-react";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import type { FullReport } from "@/lib/research/db-types";
 import type { NormalizedMaps } from "@/lib/research/schemas";
 import { formatNumber } from "@/lib/utils";
 import { JurisdictionReportCard } from "./jurisdiction-report-card";
+
+const ASSESSOR_PROPERTY_SEARCH_URL =
+  "https://asr.santaclaracounty.gov/online-services/property-search/real-property";
+const SAN_JOSE_PERMIT_SEARCH_URL = "https://permits.sanjoseca.gov/search/";
 
 function LinkRow({ label, href }: { label: string; href: string | null | undefined }) {
   if (!href) {
@@ -30,6 +37,43 @@ function LinkRow({ label, href }: { label: string; href: string | null | undefin
         </a>
       </div>
       <p className="mt-1 hidden text-xs break-all text-[var(--acton-muted)] print:block">{href}</p>
+    </div>
+  );
+}
+
+function CopyableApn({ apn }: { apn: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyApn() {
+    try {
+      await navigator.clipboard.writeText(apn);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-[var(--acton-border)] py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-[var(--acton-navy)]">APN</p>
+          <p className="mt-1 font-mono text-base tracking-wide text-[var(--acton-navy)]">{apn}</p>
+          <p className="mt-1 text-xs text-[var(--acton-muted)]">
+            Copy this APN, then open Tract / assessor search and paste it into the county search.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void copyApn()}
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] print:hidden"
+        >
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          {copied ? "Copied" : "Copy APN"}
+        </button>
+      </div>
+      <p className="mt-2 hidden text-xs text-[var(--acton-muted)] print:block">APN: {apn}</p>
     </div>
   );
 }
@@ -93,18 +137,11 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
   const maps = (report.maps_json ?? null) as NormalizedMaps | null;
   const profileUrl = report.property_profile_url ?? maps?.countyPropertyProfileReportUrl ?? null;
   const accessType = report.property_profile_access_type ?? null;
-  const parcelUrl = report.parcelGeometry?.source_url ?? maps?.parcelMapUrl ?? null;
-  const assessorUrl =
-    maps?.assessorUrl ??
-    (report.apn
-      ? `https://www.sccassessor.org/index.php/online-services/property-search?apn=${report.apn}`
-      : null);
-  const tractUrl = maps?.tractMapUrl ?? assessorUrl;
-  const permitUrl =
-    maps?.permitSearchUrl ??
-    (report.jurisdiction_name?.toLowerCase().includes("san jose")
-      ? `https://www.sanjoseca.gov/your-government/departments-offices/planning-building-code-enforcement/building-permits?q=${encodeURIComponent(report.standardized_address ?? report.input_address)}`
-      : null);
+  const tractUrl = ASSESSOR_PROPERTY_SEARCH_URL;
+  const isSanJose = report.jurisdiction_name?.toLowerCase().includes("san jose");
+  const permitUrl = isSanJose
+    ? SAN_JOSE_PERMIT_SEARCH_URL
+    : (maps?.permitSearchUrl ?? SAN_JOSE_PERMIT_SEARCH_URL);
   const googleMapsUrl =
     maps?.googleMapsUrl ??
     `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
@@ -153,11 +190,10 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
           ) : null}
         </div>
         <div className="mt-4">
+          {report.apn ? <CopyableApn apn={report.apn} /> : null}
           <LinkRow label="Google Maps" href={googleMapsUrl} />
           <LinkRow label="County Property Profile Report" href={profileUrl} />
-          <LinkRow label="Parcel GIS" href={parcelUrl} />
           <LinkRow label="Tract / assessor search" href={tractUrl} />
-          <LinkRow label="Assessor" href={assessorUrl} />
           <LinkRow label="Permit search" href={permitUrl} />
         </div>
       </Card>

@@ -38,6 +38,7 @@ export function resolvePropertyProfileAccess(input: PropertyLookupInput): Proper
 }
 
 export function buildAssessorSearchUrl(apn: string | null | undefined): string | null {
-  if (!apn) return null;
-  return `${SANTA_CLARA_COUNTY_CONFIG.propertyProfile.assessorSearchUrl}?apn=${encodeURIComponent(apn)}`;
+  // County search no longer accepts a reliable APN deep-link; salespeople copy APN in the UI.
+  void apn;
+  return SANTA_CLARA_COUNTY_CONFIG.propertyProfile.assessorSearchUrl;
 }

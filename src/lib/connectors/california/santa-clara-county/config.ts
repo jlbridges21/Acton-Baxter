@@ -19,7 +19,8 @@ export const SANTA_CLARA_COUNTY_CONFIG = {
   propertyProfile: {
     experienceUrl: "https://experience.arcgis.com/experience/b6175d89a38649a898e409d44f3da90b",
     legacyProfileUrl: "https://sccdpdapps.com/profile/",
-    assessorSearchUrl: "https://www.sccassessor.org/index.php/online-services/property-search",
+    assessorSearchUrl:
+      "https://asr.santaclaracounty.gov/online-services/property-search/real-property",
   },
 } as const;
 

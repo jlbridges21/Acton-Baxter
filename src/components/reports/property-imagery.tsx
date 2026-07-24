@@ -114,17 +114,6 @@ export function PropertyImagerySection({ report }: { report: FullReport }) {
           Open Street View
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
-        {maps?.parcelMapUrl ? (
-          <a
-            href={maps.parcelMapUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm font-medium text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
-          >
-            Parcel GIS
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        ) : null}
       </div>
     </Card>
   );

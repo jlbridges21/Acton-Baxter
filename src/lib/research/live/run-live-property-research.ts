@@ -158,7 +158,7 @@ export async function runLivePropertyResearch(
     sources.push({
       sourceName: "ATTOM",
       sourceType: "licensed_property_api",
-      sourceUrl: "https://api.developer.attomdata.com/",
+      sourceUrl: null,
       status: "error",
       retrievedAt,
       responseTimeMs: null,
@@ -172,7 +172,7 @@ export async function runLivePropertyResearch(
       sources.push({
         sourceName: `ATTOM ${pkg.packagePath}`,
         sourceType: "licensed_property_api",
-        sourceUrl: "https://api.developer.attomdata.com/",
+        sourceUrl: null,
         status: pkg.unavailable ? "unavailable" : "active",
         retrievedAt,
         responseTimeMs: pkg.responseTimeMs,
@@ -413,7 +413,7 @@ export async function runLivePropertyResearch(
   // ATTOM claims
   if (attomProperty) {
     const src = "ATTOM";
-    const url = "https://api.developer.attomdata.com/";
+    const url = null;
     const id = attomProperty.identity.attomId;
     pushClaim(
       claimInputs,
@@ -1117,7 +1117,7 @@ export async function runLivePropertyResearch(
       tractMapUrl: buildAssessorSearchUrl(preferredApn),
       assessorUrl: buildAssessorSearchUrl(preferredApn),
       zoningMapUrl: SAN_JOSE_CONFIG.links.zoningMap,
-      permitSearchUrl: `${SAN_JOSE_CONFIG.links.permitSearch}?q=${encodeMapsQuery(standardizedAddress)}`,
+      permitSearchUrl: SAN_JOSE_CONFIG.links.permitSearch,
       redfinUrl: `https://www.redfin.com/stingray/do/query-location?location=${encodeMapsQuery(standardizedAddress)}`,
       googleMapsUrl: googleLinks.googleMapsUrl,
       streetViewUrl: googleLinks.streetViewUrl,

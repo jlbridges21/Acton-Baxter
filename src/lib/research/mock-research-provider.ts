@@ -376,8 +376,7 @@ export async function runMockPropertyResearch(
     "https://example.sccassessor.org/search?apn=47222019&sample=1&note=placeholder-link";
   const zoningMapUrl =
     "https://example.sanjoseca.gov/planning/zoning-map?lat=37.34521&lng=-121.88045&sample=1";
-  const permitSearchUrl =
-    "https://example.sanjoseca.gov/permits/search?address=655%2013th%20St&sample=1";
+  const permitSearchUrl = "https://permits.sanjoseca.gov/search/";
 
   const facts: PropertyFact[] = [
     preferredFact(

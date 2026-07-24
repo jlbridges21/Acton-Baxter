@@ -60,9 +60,8 @@ export const sanJoseConnector: JurisdictionConnector = {
     return null;
   },
 
-  getPermitSearchLink(input: PropertyLookupInput): string | null {
-    const q = encodeURIComponent(input.standardizedAddress ?? input.address);
-    return `${SAN_JOSE_CONFIG.links.permitSearch}?q=${q}`;
+  getPermitSearchLink(_input: PropertyLookupInput): string | null {
+    return SAN_JOSE_CONFIG.links.permitSearch;
   },
 
   getPublicSourceLinks(input: PropertyLookupInput): SourceLink[] {
