@@ -5,8 +5,9 @@ export async function GET() {
   try {
     await requireAdmin();
     return jsonOk({
-      app: "Acton Property Research",
-      packageName: "acton-property-research",
+      app: "Baxter",
+      packageName: "baxter",
+      tools: ["property-research"],
       environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown",
       commitSha:
         process.env.VERCEL_GIT_COMMIT_SHA ??

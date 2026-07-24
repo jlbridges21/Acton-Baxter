@@ -1,9 +1,28 @@
-import { redirect } from "next/navigation";
+import { AppShell } from "@/components/layout/app-shell";
+import { BaxterDashboard } from "@/components/baxter/baxter-dashboard";
+import { requireActiveUser } from "@/lib/auth/session";
+import { isAdminRole } from "@/lib/auth/roles";
+import { getBrandingWithLogo } from "@/lib/branding/get-branding";
+
+export const dynamic = "force-dynamic";
 
 /**
- * Production root route for Acton Property Research.
- * Never render the Create Next App starter UI here.
+ * Authenticated Baxter Dashboard (platform home).
+ * Unauthenticated users are redirected to /login by middleware.
  */
-export default function HomePage() {
-  redirect("/login");
+export default async function HomePage() {
+  const user = await requireActiveUser();
+  const branding = await getBrandingWithLogo();
+
+  return (
+    <AppShell user={user}>
+      <BaxterDashboard
+        isAdmin={isAdminRole(user.profile.role)}
+        logoUrl={branding.logoUrl}
+        companyName={branding.companyName}
+        reportTitle={branding.reportTitle}
+        logoAlt={branding.logoAltText}
+      />
+    </AppShell>
+  );
 }

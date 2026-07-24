@@ -1,7 +1,8 @@
 {
-  "name": "acton-property-research",
+  "name": "baxter",
   "version": "0.1.0",
   "private": true,
+  "description": "Baxter by Acton ADU — internal tools and knowledge platform. Property Research is the first tool.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

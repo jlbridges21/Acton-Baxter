@@ -165,9 +165,7 @@ export function BrandingForm({ initial }: { initial: BrandingWithLogo }) {
 
       <Card>
         <CardTitle>Display settings</CardTitle>
-        <CardDescription className="mt-2">
-          Defaults are Acton ADU and Acton Property Research.
-        </CardDescription>
+        <CardDescription className="mt-2">Defaults are Acton ADU and Baxter.</CardDescription>
         <div className="mt-4 space-y-4">
           <div>
             <label

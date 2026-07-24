@@ -4,13 +4,13 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 export function ActonLogo({
-  href = "/dashboard",
+  href = "/",
   className,
   compact = false,
   logoUrl = null,
   companyName = "Acton ADU",
-  reportTitle = "Property Research",
-  logoAlt = "Acton ADU logo",
+  reportTitle = "Baxter",
+  logoAlt = "Baxter by Acton ADU",
 }: {
   href?: string;
   className?: string;

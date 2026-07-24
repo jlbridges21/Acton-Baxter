@@ -9,11 +9,15 @@ const sourceSans = Source_Sans_3({
 });
 
 export const metadata: Metadata = {
-  title: "Acton Property Research",
+  title: {
+    default: "Baxter",
+    template: "%s · Baxter",
+  },
   description:
-    "Internal Acton ADU property research and Partnership Evaluation Meeting preparation tool.",
+    "Baxter by Acton ADU — internal tools and knowledge platform. Property Research is the first Baxter tool for PEM preparation.",
+  applicationName: "Baxter",
   other: {
-    "acton-app": "acton-property-research",
+    "baxter-app": "baxter",
   },
 };
 
@@ -24,10 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${sourceSans.variable} antialiased`}
-        data-acton-app="acton-property-research"
-      >
+      <body className={`${sourceSans.variable} antialiased`} data-baxter-app="baxter">
         {children}
       </body>
     </html>

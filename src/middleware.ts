@@ -28,8 +28,9 @@ export async function middleware(request: NextRequest) {
   const testBypass = Boolean(env.E2E_TEST_AUTH_BYPASS) && env.NODE_ENV !== "production";
 
   if (testBypass) {
-    if (pathname === "/login" || pathname === "/" || pathname === "/pending-access") {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+    // Baxter home is `/`. Keep Property Research `/dashboard` reachable for e2e.
+    if (pathname === "/login" || pathname === "/pending-access") {
+      return NextResponse.redirect(new URL("/", request.url));
     }
     return NextResponse.next();
   }
@@ -64,8 +65,9 @@ export async function middleware(request: NextRequest) {
       return supabaseResponse;
     }
 
-    if (isAppAccessRole(role) && (isPublic || pathname === "/" || isPendingPath)) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
+    // Authenticated employees land on Baxter Dashboard (`/`), not Property Research.
+    if (isAppAccessRole(role) && (isPublic || isPendingPath)) {
+      return NextResponse.redirect(new URL("/", request.url));
     }
   }
 

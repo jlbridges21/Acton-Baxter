@@ -11,7 +11,7 @@ export function CompanyLogo({
   alt = "Acton ADU logo",
   companyName = "Acton ADU",
   reportTitle = "Property Research",
-  href = "/dashboard",
+  href = "/",
   className,
   compact = false,
 }: {

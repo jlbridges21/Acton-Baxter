@@ -32,8 +32,8 @@ type SignupValues = z.infer<typeof signupSchema>;
 export function LoginForm({
   logoUrl = null,
   companyName = "Acton ADU",
-  reportTitle = "Property Research",
-  logoAlt = "Acton ADU logo",
+  reportTitle = "Baxter",
+  logoAlt = "Baxter by Acton ADU",
 }: {
   logoUrl?: string | null;
   companyName?: string;
@@ -69,7 +69,7 @@ export function LoginForm({
         setError(signInError.message);
         return;
       }
-      const next = searchParams.get("next") || "/dashboard";
+      const next = searchParams.get("next") || "/";
       router.replace(next);
       router.refresh();
     } catch {
@@ -128,8 +128,8 @@ export function LoginForm({
           <CardTitle>{mode === "signin" ? "Sign in" : "Create account"}</CardTitle>
           <CardDescription className="mt-2">
             {mode === "signin"
-              ? "Sign in with your Acton account. New accounts stay locked until an administrator grants access."
-              : "Create an account to request access. You will receive the new_user role and cannot run research until an admin approves you."}
+              ? "Sign in to Baxter, Acton ADU’s internal tools platform. New accounts stay locked until an administrator grants access."
+              : "Create an account to request Baxter access. You will receive the new_user role and cannot use tools until an admin approves you."}
           </CardDescription>
 
           <div className="mt-4 flex gap-2">

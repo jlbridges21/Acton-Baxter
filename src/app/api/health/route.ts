@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 
 /**
  * Public, secret-free deployment identity check.
- * Use this to confirm Vercel is serving the Acton app rather than the Create Next App starter.
+ * Use this to confirm Vercel is serving Baxter rather than the Create Next App starter.
  */
 export async function GET() {
   return NextResponse.json({
     ok: true,
-    app: "Acton Property Research",
-    packageName: "acton-property-research",
+    app: "Baxter",
+    packageName: "baxter",
+    tools: ["property-research"],
     environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "unknown",
     commitSha:
       process.env.VERCEL_GIT_COMMIT_SHA ??

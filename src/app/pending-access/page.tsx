@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function PendingAccessPage() {
   const user = await requireUser();
   if (isAppAccessRole(user.profile.role)) {
-    redirect("/dashboard");
+    redirect("/");
   }
 
   const branding = await getBrandingWithLogo();

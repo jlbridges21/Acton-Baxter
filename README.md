@@ -1,23 +1,28 @@
-# Acton Property Research
+# Baxter
 
-Internal Acton ADU app for researching a California property address and preparing a short Partnership Evaluation Meeting (PEM) brief.
+**Baxter** is Acton ADU’s internal tools and knowledge platform.
 
-**Supported automated jurisdictions today**
+**Property Research** is the first Baxter tool. It researches a California property address and prepares a short Partnership Evaluation Meeting (PEM) brief.
+
+Future Baxter features will include a knowledge-backed Slack assistant. That assistant is **not** implemented yet.
+
+**Supported automated jurisdictions today (Property Research)**
 
 - City of San Jose GIS (parcel, zoning, general plan, historic where available)
 - Santa Clara County GIS (parcel profile attributes and Property Explorer link)
 
-Outside those sources, the app still uses ATTOM and RentCast when configured, and shows official manual-review links. It never declares ADU feasibility.
+Outside those sources, Property Research still uses ATTOM and RentCast when configured, and shows official manual-review links. It never declares ADU feasibility.
 
 ---
 
-## What the app does
+## What Property Research does
 
-1. Salesperson signs in.
-2. Selects a standardized property address (Google Places autocomplete when configured).
-3. App researches licensed + public sources, detects meaningful conflicts, and prepares a concise report.
-4. Optional Slack `/property` command creates the same report and returns a login-protected link.
-5. Salesperson opens the report and uses **Download / Print PDF**.
+1. Salesperson signs in to Baxter.
+2. Opens **Property Research Tool** from the Baxter Dashboard (or goes to `/reports/new`).
+3. Selects a standardized property address (Google Places autocomplete when configured).
+4. App researches licensed + public sources, detects meaningful conflicts, and prepares a concise report.
+5. Optional Slack `/property` command creates the same report and returns a login-protected link.
+6. Salesperson opens the report and uses **Download / Print PDF**.
 
 Reports target **under six printed pages**.
 
@@ -45,7 +50,7 @@ AI_PROVIDER=deterministic
 npm run dev
 ```
 
-Open http://localhost:3000
+Open http://localhost:3000 — authenticated users land on the **Baxter Dashboard**.
 
 ---
 

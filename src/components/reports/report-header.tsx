@@ -20,7 +20,7 @@ export function ReportHeader({
   report,
   logoUrl = null,
   companyName = "Acton ADU",
-  reportTitle = "Acton Property Research",
+  reportTitle = "Property Research",
   logoAlt = "Acton ADU logo",
 }: {
   report: FullReport;

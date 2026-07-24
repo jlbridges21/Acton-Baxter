@@ -5,10 +5,11 @@ import { expect, test } from "@playwright/test";
  * configured in playwright.config.ts. Never enable that bypass outside test.
  */
 test("create mock property report and open completed report", async ({ page }) => {
-  await page.goto("/dashboard");
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Baxter", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Property Research" })).toBeVisible();
 
-  await page.getByRole("link", { name: "New Property Research" }).first().click();
+  await page.getByRole("link", { name: "Open Property Research" }).click();
   await expect(page.getByLabel("Property address")).toBeVisible();
 
   await page.getByLabel("Property address").fill("655 13th St, San Jose, CA");

@@ -6,7 +6,6 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import type { FullReport } from "@/lib/research/db-types";
 import type { NormalizedMaps } from "@/lib/research/schemas";
 import { formatNumber } from "@/lib/utils";
-import { JurisdictionReportCard } from "./jurisdiction-report-card";
 
 const ASSESSOR_PROPERTY_SEARCH_URL =
   "https://asr.santaclaracounty.gov/online-services/property-search/real-property";
@@ -61,7 +60,7 @@ function CopyableApn({ apn }: { apn: string }) {
           <p className="text-sm font-semibold text-[var(--acton-navy)]">APN</p>
           <p className="mt-1 font-mono text-base tracking-wide text-[var(--acton-navy)]">{apn}</p>
           <p className="mt-1 text-xs text-[var(--acton-muted)]">
-            Copy this APN, then open Tract / assessor search and paste it into the county search.
+            Copy this APN for county assessor or Property Profile search.
           </p>
         </div>
         <button
@@ -136,7 +135,6 @@ function ParcelOutline({ geometry }: { geometry: unknown }) {
 export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
   const maps = (report.maps_json ?? null) as NormalizedMaps | null;
   const profileUrl = report.property_profile_url ?? maps?.countyPropertyProfileReportUrl ?? null;
-  const accessType = report.property_profile_access_type ?? null;
   const tractUrl = ASSESSOR_PROPERTY_SEARCH_URL;
   const isSanJose = report.jurisdiction_name?.toLowerCase().includes("san jose");
   const permitUrl = isSanJose
@@ -148,69 +146,51 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
       report.standardized_address ?? report.input_address,
     )}`;
 
-  const openLabel =
-    accessType === "direct_report"
+  const profileOpenLabel =
+    report.property_profile_access_type === "direct_report"
       ? "Open County Property Profile"
-      : accessType === "recreated_from_layers"
-        ? "Open County Mapping Source"
-        : "Search County Property Profile";
-
-  const notes =
-    report.property_profile_status_message ??
-    "County Property Profile access depends on public ArcGIS Experience capabilities.";
+      : "Search County Property Profile";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card>
-        <CardTitle>Parcel and public records</CardTitle>
-        <CardDescription>
-          Parcel boundary and official record links for salesperson follow-up.
-        </CardDescription>
-        <div className="mt-4 overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)]">
-          {report.parcelGeometry?.geometry_geojson ? (
-            <ParcelOutline geometry={report.parcelGeometry.geometry_geojson} />
-          ) : (
-            <div className="flex min-h-40 items-center justify-center px-4 text-center">
-              <div>
-                <Map className="mx-auto h-8 w-8 text-[var(--acton-navy)]" />
-                <p className="mt-2 text-sm font-semibold text-[var(--acton-navy)]">
-                  Parcel map preview
-                </p>
-                <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                  Parcel geometry unavailable
-                </p>
-              </div>
+    <Card>
+      <CardTitle>Parcel and public records</CardTitle>
+      <CardDescription>
+        Parcel boundary and official record links for salesperson follow-up.
+      </CardDescription>
+      <div className="mt-4 overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] sm:max-w-xl">
+        {report.parcelGeometry?.geometry_geojson ? (
+          <ParcelOutline geometry={report.parcelGeometry.geometry_geojson} />
+        ) : (
+          <div className="flex min-h-40 items-center justify-center px-4 text-center">
+            <div>
+              <Map className="mx-auto h-8 w-8 text-[var(--acton-navy)]" />
+              <p className="mt-2 text-sm font-semibold text-[var(--acton-navy)]">
+                Parcel map preview
+              </p>
+              <p className="mt-1 text-xs text-[var(--acton-muted)]">Parcel geometry unavailable</p>
             </div>
-          )}
-          {report.parcelGeometry ? (
-            <p className="border-t border-[var(--acton-border)] px-3 py-2 text-xs text-[var(--acton-muted)]">
-              Parcel polygon · ~{formatNumber(report.parcelGeometry.calculated_area_sq_ft)} sq ft
-              calculated
-            </p>
-          ) : null}
-        </div>
-        <div className="mt-4">
-          {report.apn ? <CopyableApn apn={report.apn} /> : null}
-          <LinkRow label="Google Maps" href={googleMapsUrl} />
-          <LinkRow label="County Property Profile Report" href={profileUrl} />
-          <LinkRow label="Tract / assessor search" href={tractUrl} />
-          <LinkRow label="Permit search" href={permitUrl} />
-        </div>
-      </Card>
-
-      <JurisdictionReportCard
-        title="Santa Clara County Property Profile Report"
-        jurisdictionName="Santa Clara County"
-        available={Boolean(profileUrl)}
-        reportUrl={profileUrl}
-        openLabel={openLabel}
-        thumbnailLabel="Property profile preview"
-        notes={notes}
-        accessType={accessType}
-        searchHint={
-          accessType === "generic_search" && report.apn ? `Search using APN ${report.apn}` : null
-        }
-      />
-    </div>
+          </div>
+        )}
+        {report.parcelGeometry ? (
+          <p className="border-t border-[var(--acton-border)] px-3 py-2 text-xs text-[var(--acton-muted)]">
+            Parcel polygon · ~{formatNumber(report.parcelGeometry.calculated_area_sq_ft)} sq ft
+            calculated
+          </p>
+        ) : null}
+      </div>
+      <div className="mt-4 max-w-2xl">
+        {report.apn ? <CopyableApn apn={report.apn} /> : null}
+        <LinkRow label="Google Maps" href={googleMapsUrl} />
+        <LinkRow label="Tract / assessor search" href={tractUrl} />
+        <LinkRow label="Permit search" href={permitUrl} />
+        <LinkRow label={profileOpenLabel} href={profileUrl} />
+        {profileUrl && report.apn ? (
+          <p className="border-t border-[var(--acton-border)] py-2 text-xs text-[var(--acton-muted)]">
+            County Property Profile has no embeddable preview. Open the search link and look up APN{" "}
+            <span className="font-mono font-semibold text-[var(--acton-navy)]">{report.apn}</span>.
+          </p>
+        ) : null}
+      </div>
+    </Card>
   );
 }
