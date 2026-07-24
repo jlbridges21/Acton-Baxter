@@ -203,6 +203,10 @@ export function KnowledgeListClient({ initialEntries }: { initialEntries: Knowle
                     </Link>
                     <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
                     <Badge tone="navy">v{entry.version}</Badge>
+                    {entry.source_type === "Google Drive" ||
+                    entry.metadata?.googleManaged === true ? (
+                      <Badge tone="amber">Google Workspace managed</Badge>
+                    ) : null}
                   </div>
                   <p className="mt-2 text-sm text-[var(--acton-muted)]">
                     {(entry.summary || entry.content).slice(0, 180)}
@@ -213,14 +217,35 @@ export function KnowledgeListClient({ initialEntries }: { initialEntries: Knowle
                     {entry.tags.length ? ` · ${entry.tags.join(", ")}` : ""}
                     {entry.source_name ? ` · ${entry.source_name}` : ""}
                     {` · updated ${formatDate(entry.updated_at)}`}
+                    {entry.source_url && entry.source_type === "Google Drive" ? (
+                      <>
+                        {" · "}
+                        <a
+                          href={entry.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline"
+                        >
+                          Open in Google
+                        </a>
+                      </>
+                    ) : null}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {entry.source_type === "Google Drive" ? (
+                    <Link
+                      href="/admin/connectors/google"
+                      className="inline-flex h-8 items-center rounded-md border border-[var(--acton-border)] bg-white px-3 text-xs font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+                    >
+                      Manage source
+                    </Link>
+                  ) : null}
                   <Link
                     href={`/admin/knowledge/${entry.id}/edit`}
                     className="inline-flex h-8 items-center rounded-md border border-[var(--acton-border)] bg-white px-3 text-xs font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
                   >
-                    Edit
+                    {entry.source_type === "Google Drive" ? "Metadata" : "Edit"}
                   </Link>
                   {entry.status !== "approved" ? (
                     <Button

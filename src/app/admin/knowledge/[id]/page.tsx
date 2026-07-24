@@ -37,18 +37,36 @@ export default async function KnowledgeDetailPage({ params }: PageProps) {
                 {entry.status}
               </Badge>
               <Badge tone="navy">v{entry.version}</Badge>
+              {entry.source_type === "Google Drive" || entry.metadata?.googleManaged === true ? (
+                <Badge tone="amber">Google Workspace managed</Badge>
+              ) : null}
             </div>
             <p className="mt-1 text-sm text-[var(--acton-muted)]">
               {entry.category}
               {entry.tags.length ? ` · ${entry.tags.join(", ")}` : ""}
             </p>
+            {entry.source_type === "Google Drive" ? (
+              <p className="mt-2 text-sm text-amber-800">
+                Content is controlled by Google Drive. Edit the original Google file, then sync.
+                Tags/category metadata may be edited in Baxter without being overwritten
+                unexpectedly.
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
+            {entry.source_type === "Google Drive" ? (
+              <Link
+                href="/admin/connectors/google"
+                className="inline-flex h-10 items-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)]"
+              >
+                Manage source
+              </Link>
+            ) : null}
             <Link
               href={`/admin/knowledge/${entry.id}/edit`}
               className="inline-flex h-10 items-center rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white"
             >
-              Edit
+              {entry.source_type === "Google Drive" ? "Edit metadata" : "Edit"}
             </Link>
             <Link
               href={`/admin/knowledge/${entry.id}/history`}

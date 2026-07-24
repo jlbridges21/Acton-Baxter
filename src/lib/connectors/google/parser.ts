@@ -60,11 +60,12 @@ export async function parseGoogleDriveFile(
   }
 
   if (file.mimeType === GOOGLE_SHEET_MIME) {
-    const contentText = await exportDriveFile(file.id, "text/csv");
+    const { exportGoogleSheetStructured } = await import("./sheets");
+    const structured = await exportGoogleSheetStructured(file.id);
     return {
       ...base,
-      contentText,
-      contentHash: hashContent(contentText),
+      contentText: structured.contentText,
+      contentHash: hashContent(structured.contentText),
       parseMode: "full_text",
     };
   }

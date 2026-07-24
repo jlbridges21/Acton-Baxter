@@ -28,8 +28,15 @@ export class ValidationError extends AppError {
 }
 
 export class AuthenticationError extends AppError {
-  constructor(message = "Authentication required") {
-    super(message, { code: "AUTHENTICATION_ERROR", statusCode: 401, expose: true });
+  constructor(
+    message = "Authentication required",
+    options?: { code?: string; statusCode?: number },
+  ) {
+    super(message, {
+      code: options?.code ?? "AUTHENTICATION_ERROR",
+      statusCode: options?.statusCode ?? 401,
+      expose: true,
+    });
     this.name = "AuthenticationError";
   }
 }

@@ -23,6 +23,8 @@ export type ConnectorSyncResult = {
   unchanged: number;
   skipped: number;
   errors: string[];
+  archived?: number;
+  runId?: string;
 };
 
 export interface KnowledgeConnector {
@@ -30,5 +32,9 @@ export interface KnowledgeConnector {
   readonly name: string;
   health(): Promise<ConnectorHealth>;
   listSources(): Promise<Array<{ id: string; name: string; status: string }>>;
-  sync(options?: { folderId?: string }): Promise<ConnectorSyncResult>;
+  sync(options?: {
+    folderId?: string;
+    triggerSource?: "manual" | "cron" | "retry" | "admin";
+    jobId?: string | null;
+  }): Promise<ConnectorSyncResult>;
 }

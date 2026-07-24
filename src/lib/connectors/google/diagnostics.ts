@@ -290,9 +290,14 @@ export async function getGoogleAdminOverview() {
     listGoogleSyncFolders(),
     testGoogleAuthentication(),
   ]);
+  const { computeGoogleManagerHealth } = await import("./manager-health");
+  const managerHealth = await computeGoogleManagerHealth({
+    authenticated: auth.pass,
+  });
   return {
     config: googleAdminConfigSnapshot(),
     health,
+    managerHealth,
     folders,
     authenticated: auth.pass,
     authCode: auth.code,

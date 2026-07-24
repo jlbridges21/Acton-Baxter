@@ -16,6 +16,7 @@ export default async function AdminGoogleConnectorPage() {
         initialFolders={overview.folders}
         initialConfig={overview.config}
         initialAuthenticated={overview.authenticated}
+        initialManagerHealth={overview.managerHealth}
       />
     </AppShell>
   );

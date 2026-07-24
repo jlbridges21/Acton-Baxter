@@ -90,7 +90,17 @@ async function processSlackCompletionNotification(job: ReportJob): Promise<void>
 async function processGoogleKnowledgeSync(job: ReportJob): Promise<void> {
   const { getGoogleConnector } = await import("@/lib/connectors/registry");
   const folderId = typeof job.metadata.folderId === "string" ? job.metadata.folderId : undefined;
-  await getGoogleConnector().sync(folderId ? { folderId } : undefined);
+  const trigger =
+    job.metadata.source === "scheduled"
+      ? "cron"
+      : job.metadata.source === "admin_manual"
+        ? "manual"
+        : "admin";
+  await getGoogleConnector().sync({
+    folderId,
+    triggerSource: trigger as "manual" | "cron" | "admin",
+    jobId: job.id,
+  });
 }
 
 async function processSlackBaxterReply(job: ReportJob): Promise<void> {

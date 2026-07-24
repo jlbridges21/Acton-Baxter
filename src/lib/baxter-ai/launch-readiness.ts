@@ -6,9 +6,7 @@ import { getOpenAiMetricsSnapshot } from "@/lib/baxter-ai/openai-metrics";
 import { openaiAdminGuidance } from "@/lib/baxter-ai/errors";
 import { getAdminSlackSnapshot } from "@/lib/slack/admin";
 import { evaluateSlackHealth } from "@/lib/slack/config";
-import {
-  getGoogleAdminOverview,
-} from "@/lib/connectors/google/diagnostics";
+import { getGoogleAdminOverview } from "@/lib/connectors/google/diagnostics";
 import { listAllKnowledgeEntriesForRetrieval } from "@/lib/knowledge/store";
 
 export type LaunchOverallStatus =
@@ -82,7 +80,9 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
     supabaseServiceRolePresent: diagnostics.config.supabaseServiceRolePresent,
     openaiKeyPresent: diagnostics.config.openaiKeyPresent,
     appBaseUrl: env.APP_BASE_URL,
-    cronSecretConfigured: Boolean(env.INTERNAL_CRON_SECRET),
+    cronSecretConfigured: Boolean(
+      (process.env.CRON_SECRET ?? "").trim() || (env.INTERNAL_CRON_SECRET ?? "").trim(),
+    ),
     slackTeamRestricted: !slack.config.integrationEnabled || slack.config.allowedTeamIds.length > 0,
     productionHttps: env.APP_BASE_URL.startsWith("https://"),
   };
@@ -128,7 +128,7 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
   }
   if (!security.cronSecretConfigured && (slackSection.enabled || google.config.configured)) {
     attention.push(
-      "INTERNAL_CRON_SECRET is missing — background jobs will not run on Vercel Cron.",
+      "CRON_SECRET (or legacy INTERNAL_CRON_SECRET) is missing — Vercel Cron cannot authorize /api/internal/process-jobs.",
     );
   }
 

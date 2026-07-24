@@ -71,7 +71,7 @@ See `docs/production-checklist.md` for the manual checklist.
 Slack uses the same classification, retrieval, and OpenAI path as web chat. Slack-specific layers:
 
 - **Events API** — signature verification, team/channel/user allowlists, durable dedupe via `slack_event_receipts`
-- **Async processing** — `slack_baxter_reply` jobs processed by `after()` and Vercel cron (`/api/internal/process-jobs`, every 2 minutes)
+- **Async processing** — `slack_baxter_reply` jobs processed by `after()` and Vercel cron (`/api/internal/process-jobs`; schedule in `vercel.json`, Hobby-safe daily by default)
 - **Conversation mapping** — `external_thread_id` = `team:channel:user` (DM) or `team:channel:thread_ts` (channel thread); `user_id` stays null for Slack Q&A
 - **`/property`** — optional `SLACK_REPORT_USER_ID`; else first admin profile (no fake Supabase users)
 - **Formatting** — Slack mrkdwn with escaped markup, validated source links, message splitting

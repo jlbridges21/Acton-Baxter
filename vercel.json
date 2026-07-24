@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/internal/process-jobs",
-      "schedule": "*/2 * * * *"
+      "schedule": "0 12 * * *"
     }
   ],
   "framework": "nextjs",

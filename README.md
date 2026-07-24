@@ -206,12 +206,14 @@ NEXT_PUBLIC_APP_URL=https://acton-baxter.vercel.app
 BAXTER_OPENAI_FALLBACK_MODEL=       # optional — temporary rate-limit fallback
 GOOGLE_SYNC_ENABLED=true
 GOOGLE_SYNC_INTERVAL_MINUTES=180
-INTERNAL_CRON_SECRET=<long-random>
+CRON_SECRET=<long-random>
+# INTERNAL_CRON_SECRET=   # deprecated alias if CRON_SECRET unset
 ```
 
 - **Q&A:** DM Baxter or `@Baxter` in an allowed channel (replies in thread)
 - **Property Research:** `/property 655 13th St, San Jose, CA`
 - **Admin:** `/admin/slack`
+- **Google Knowledge Manager:** `/admin/connectors/google` (see `docs/google-drive-knowledge-manager.md`)
 
 Slack never uploads PDFs. Property Research posts a login-protected report link only.
 
@@ -226,7 +228,9 @@ Slack never uploads PDFs. Property Research posts a login-protected report link 
 5. Set `ALLOW_MOCK_FALLBACK=false`
 6. Deploy
 7. Point Slack slash command Request URL to `https://YOUR_APP/api/slack/commands/property`
-8. Confirm cron hits `/api/internal/process-jobs` with Bearer `INTERNAL_CRON_SECRET`
+8. Confirm Vercel Cron hits `/api/internal/process-jobs` with `Authorization: Bearer ${CRON_SECRET}` (browser open will 401 — expected)
+9. Apply Supabase migration **011** for Google Knowledge Manager tables
+10. Use admin **Run sync now** for manual Google sync (no cron secret)
 
 ---
 

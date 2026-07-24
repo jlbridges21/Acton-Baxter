@@ -109,13 +109,16 @@ When enabled, Baxter enqueues `google_knowledge_sync` jobs on a schedule:
 | `GOOGLE_SYNC_ENABLED`          | `true`  | Set `false` to disable scheduled enqueue |
 | `GOOGLE_SYNC_INTERVAL_MINUTES` | `180`   | Min 15, max 1440                         |
 
-Scheduling runs inside **`/api/internal/process-jobs`** (Vercel cron every 2 minutes). The scheduler:
+Scheduling runs inside **`/api/internal/process-jobs`** (Vercel Cron — see `vercel.json`; Hobby-safe default is daily at 12:00 UTC). The scheduler:
 
-- Skips if interval has not elapsed since last folder sync
+- Skips if interval has not elapsed since last folder sync (`GOOGLE_SYNC_INTERVAL_MINUTES`)
 - Avoids overlapping queued/running sync jobs
 - Requires active sync folders or `GOOGLE_DRIVE_ROOT_FOLDER`
+- Does nothing for Google when `GOOGLE_SYNC_ENABLED=false` (manual sync still works)
 
-Admins can also **Run real sync** immediately from the UI.
+Admins should use **Run sync now** (admin-authenticated; no cron secret). Opening `/api/internal/process-jobs` in a browser returns 401 — that is expected.
+
+Full Knowledge Manager guide: [`docs/google-drive-knowledge-manager.md`](./google-drive-knowledge-manager.md).
 
 ---
 
@@ -123,14 +126,18 @@ Admins can also **Run real sync** immediately from the UI.
 
 At **`/admin/connectors/google`**:
 
-| Action                                | Purpose                                          |
-| ------------------------------------- | ------------------------------------------------ |
-| **Test authentication**               | Mint access token; checks key format             |
-| **Test root folder**                  | Folder metadata + Shared Drive detection         |
-| **List sample files**                 | Sample supported files in root/folders           |
-| **Dry-run sync**                      | Preview sync without KB writes                   |
-| **Run real sync**                     | Full sync into Knowledge Base                    |
-| **Test Google source through Baxter** | Retrieval + citation in `answerBaxterQuestion()` |
+| Action                      | Purpose                                          |
+| --------------------------- | ------------------------------------------------ |
+| **Test credentials**        | Mint access token; checks key format             |
+| **Test root folder**        | Folder metadata + Shared Drive detection         |
+| **Browse files**            | Drive browser from connected root                |
+| **Preview selected**        | Bounded text preview (no KB write)               |
+| **Add to Baxter**           | Explicit file/folder selection                   |
+| **List sample files**       | Sample supported files in root/folders           |
+| **Dry-run sync**            | Preview sync without KB writes                   |
+| **Run sync now**            | Enqueue/process sync without cron secret         |
+| **Process pending job now** | Claim one google sync job                        |
+| **Test through Baxter**     | Retrieval + citation in `answerBaxterQuestion()` |
 
 Configuration panel shows: project ID present, client email, private key valid format, root folder configured, sync enabled, interval minutes. Secrets are never displayed.
 

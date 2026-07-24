@@ -282,9 +282,10 @@ Set in **Vercel → Project → Settings → Environment Variables**. **Redeploy
 
 ### Cron
 
-| Variable               | Required | Notes                                |
-| ---------------------- | -------- | ------------------------------------ |
-| `INTERNAL_CRON_SECRET` | Yes      | Secures `/api/internal/process-jobs` |
+| Variable               | Required        | Notes                                                |
+| ---------------------- | --------------- | ---------------------------------------------------- |
+| `CRON_SECRET`          | Yes (preferred) | Secures `/api/internal/process-jobs` (Vercel Bearer) |
+| `INTERNAL_CRON_SECRET` | Compatibility   | Used only if `CRON_SECRET` is unset                  |
 
 ### Pilot starter configuration
 
@@ -306,7 +307,8 @@ BAXTER_OPENAI_MODEL=gpt-4o-mini
 # BAXTER_OPENAI_FALLBACK_MODEL=gpt-4o-mini
 GOOGLE_SYNC_ENABLED=true
 GOOGLE_SYNC_INTERVAL_MINUTES=180
-INTERNAL_CRON_SECRET=<long random string>
+CRON_SECRET=<long random string>
+# INTERNAL_CRON_SECRET=  # deprecated alias
 ```
 
 Start with **empty** `SLACK_ALLOWED_CHANNEL_IDS` (DMs only). Add channel IDs after inviting Baxter to a pilot channel.
@@ -352,8 +354,8 @@ Baxter acknowledges Slack events within seconds, then processes AI replies async
 | Mechanism       | Details                                                                                |
 | --------------- | -------------------------------------------------------------------------------------- |
 | **Immediate**   | Next.js `after()` processes `slack_baxter_reply` right after acknowledging             |
-| **Cron backup** | Vercel Cron every **2 minutes**: `*/2 * * * *` on `/api/internal/process-jobs`         |
-| **Auth**        | `Authorization: Bearer <INTERNAL_CRON_SECRET>`                                         |
+| **Cron backup** | Vercel Cron on `/api/internal/process-jobs` (see `vercel.json`; Hobby ≤ daily)         |
+| **Auth**        | `Authorization: Bearer <CRON_SECRET>` (legacy: `INTERNAL_CRON_SECRET`)                 |
 | **Google sync** | Scheduled `google_knowledge_sync` when `GOOGLE_SYNC_ENABLED=true` and interval elapsed |
 
 If a reply is delayed, check `/admin/slack` and trigger **Process one pending Slack job**.
@@ -449,7 +451,7 @@ Do not enable all channels until mention behavior, source links, and error handl
 
 ## 22. Security checklist
 
-- [ ] Never commit `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, or `INTERNAL_CRON_SECRET`
+- [ ] Never commit `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, or `CRON_SECRET` / `INTERNAL_CRON_SECRET`
 - [ ] Rotate any token pasted into chat, email, or screenshots
 - [ ] Set `SLACK_ALLOWED_TEAM_IDS` to Acton workspace only — never empty in production
 - [ ] Start pilot with **empty** `SLACK_ALLOWED_CHANNEL_IDS`

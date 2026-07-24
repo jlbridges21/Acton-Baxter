@@ -54,12 +54,18 @@ Additional database tasks:
 - [ ] Root folder or sync folders shared with **`GOOGLE_CLIENT_EMAIL`** (service account), not only `baxter@actonadu.com`
 - [ ] Shared Drive folders: service account added as Shared Drive member (if applicable)
 - [ ] `GOOGLE_DRIVE_ROOT_FOLDER` or admin-added folders configured at `/admin/connectors/google`
-- [ ] `GOOGLE_SYNC_ENABLED=true` (default)
-- [ ] `GOOGLE_SYNC_INTERVAL_MINUTES=180` (default; min 15, max 1440)
+- [ ] Apply migration **011** (`google_source_selections`, `google_synced_files`, `google_sync_runs`)
+- [ ] Select at least one file or managed folder in the Drive browser (do not rely on “see everything”)
+- [ ] **Preview** a Google Doc before first import
+- [ ] `GOOGLE_SYNC_ENABLED=true` (default) — controls scheduled sync only
+- [ ] `GOOGLE_SYNC_INTERVAL_MINUTES=180` (due logic; Hobby cron may still be daily)
+- [ ] `CRON_SECRET` set in Vercel (canonical); optional legacy `INTERNAL_CRON_SECRET`
+- [ ] Confirm opening `/api/internal/process-jobs` in a browser returns auth error (expected)
+- [ ] **Run sync now** from admin UI starts a sync without entering a cron secret
 - [ ] **Dry-run sync** passes at `/admin/connectors/google`
-- [ ] **Run real sync** completes; approved Google entries appear in Knowledge Base
-- [ ] **Test Google source through Baxter** cites a real Google URL
-- [ ] Scheduled sync enqueues via Vercel cron (`/api/internal/process-jobs`)
+- [ ] **Run sync now** completes; approved Google-managed entries appear in Knowledge Base
+- [ ] **Test through Baxter** cites a real Google URL
+- [ ] Scheduled sync: Vercel Cron registered for `/api/internal/process-jobs` (Production only)
 
 ---
 
@@ -110,7 +116,8 @@ Additional database tasks:
 
 - [ ] No secrets committed to git (`.env.local` only locally)
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` server-side only
-- [ ] `INTERNAL_CRON_SECRET` set; Vercel cron authorized on `/api/internal/process-jobs`
+- [ ] `CRON_SECRET` set (preferred); `INTERNAL_CRON_SECRET` optional legacy alias
+- [ ] Vercel cron authorized on `/api/internal/process-jobs` with Bearer header only
 - [ ] Slack signing secret and bot token never pasted into Slack messages
 - [ ] `SLACK_ALLOWED_TEAM_IDS` restricts to Acton workspace only
 - [ ] No broad Slack scopes (`channels:history`, etc.) without explicit approval

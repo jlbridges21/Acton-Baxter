@@ -1,51 +1,29 @@
-import { timingSafeEqual } from "node:crypto";
 import { jsonError, jsonOk } from "@/lib/api";
-import { getEnv } from "@/lib/env";
 import { AuthenticationError } from "@/lib/errors";
 import { processQueuedJobs } from "@/lib/jobs/process";
 import { maybeEnqueueScheduledGoogleSync } from "@/lib/connectors/google/schedule";
+import { authorizeCronBearer } from "@/lib/jobs/cron-auth";
+import { recordCronInvocation } from "@/lib/jobs/cron-metrics";
 
-function authorizeCron(request: Request, secret: string): boolean {
-  const header = request.headers.get("authorization");
-  const candidates = [secret, process.env.CRON_SECRET].filter((value): value is string =>
-    Boolean(value),
-  );
-  if (header?.startsWith("Bearer ")) {
-    const token = header.slice("Bearer ".length).trim();
-    for (const candidate of candidates) {
-      const expected = Buffer.from(candidate, "utf8");
-      const actual = Buffer.from(token, "utf8");
-      if (expected.length === actual.length && timingSafeEqual(expected, actual)) {
-        return true;
-      }
-    }
-  }
-  const url = new URL(request.url);
-  const querySecret = url.searchParams.get("secret");
-  if (querySecret) {
-    for (const candidate of candidates) {
-      const expected = Buffer.from(candidate, "utf8");
-      const actual = Buffer.from(querySecret, "utf8");
-      if (expected.length === actual.length && timingSafeEqual(expected, actual)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const env = getEnv();
-    if (!env.INTERNAL_CRON_SECRET) {
-      throw new AuthenticationError("INTERNAL_CRON_SECRET is not configured");
-    }
-    if (!authorizeCron(request, env.INTERNAL_CRON_SECRET)) {
-      throw new AuthenticationError("Invalid cron secret");
+    const auth = authorizeCronBearer(request);
+    if (!auth.ok) {
+      recordCronInvocation({ ok: false, code: auth.code });
+      throw new AuthenticationError(
+        auth.code === "BAXTER_CRON_SECRET_MISSING"
+          ? "Cron secret is not configured"
+          : "Invalid cron secret",
+        { code: auth.code ?? "BAXTER_CRON_UNAUTHORIZED" },
+      );
     }
 
     const scheduled = await maybeEnqueueScheduledGoogleSync();
     const result = await processQueuedJobs({ limit: 10 });
+    recordCronInvocation({ ok: true, code: null });
     return jsonOk({ ...result, googleSync: scheduled });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");

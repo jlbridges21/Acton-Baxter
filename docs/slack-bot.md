@@ -69,7 +69,7 @@ Slack retries receive HTTP 200 with `duplicate: true` — no duplicate replies.
 Job type: `slack_baxter_reply` on the existing `report_jobs` queue.
 
 - **Immediate:** Next.js `after()` in `/api/slack/events` claims and processes the job
-- **Backup:** Vercel Cron every 2 minutes on `/api/internal/process-jobs`
+- **Backup:** Vercel Cron on `/api/internal/process-jobs` (see `vercel.json`)
 
 ---
 

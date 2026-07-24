@@ -84,7 +84,11 @@ Baxter normalizes keys (strips quotes, converts `\n`, validates BEGIN/END marker
 
 Run **Test root folder** for Shared Drive detection and inline guidance.
 
-Full Google setup: **`docs/google-connector.md`**
+### Cron / process-jobs
+
+Opening `/api/internal/process-jobs` in a browser returns **Invalid cron secret** / 401. That is expected — browsers do not send `Authorization: Bearer`. Use **Run sync now** on `/admin/connectors/google`. Prefer `CRON_SECRET` in Vercel; `INTERNAL_CRON_SECRET` is a legacy alias.
+
+Full Google setup: **`docs/google-connector.md`** and **`docs/google-drive-knowledge-manager.md`**
 
 ---
 

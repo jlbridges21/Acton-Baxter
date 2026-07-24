@@ -36,10 +36,20 @@
   - Production checklist (`docs/production-checklist.md`)
   - Employee guide (`docs/baxter-employee-guide.md`)
   - `/property` report ownership: optional `SLACK_REPORT_USER_ID` or first admin (no fake Supabase users for Slack Q&A)
+- **Prompt 6 — Google Drive Knowledge Manager**
+  - Explicit file/folder selection (recursive + future-file inclusion + exclusions)
+  - Drive browser, preview, sync dashboard, setup checklist
+  - Migration 011 (`google_source_selections`, `google_synced_files`, `google_sync_runs`)
+  - Admin manual sync `POST /api/admin/connectors/google/sync` (no cron secret)
+  - Cron auth standardized on `CRON_SECRET` Bearer (legacy `INTERNAL_CRON_SECRET`)
+  - Hobby-safe daily Vercel cron; due logic via `GOOGLE_SYNC_INTERVAL_MINUTES`
+  - Structured Sheets export (tabs/headers/rows)
+  - Guide: `docs/google-drive-knowledge-manager.md`
 
 ## Current
 
 - Initial Acton employee Slack pilot (Jackson, Milan, Maxx, James — see `docs/slack-setup.md` section 21)
+- Google Drive selective sync pilot (share roots with service account; select Project Brief + managed folders)
 
 ## Future
 
