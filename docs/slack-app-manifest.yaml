@@ -1,0 +1,36 @@
+display_information:
+  name: Baxter
+  description: >-
+    Acton ADU’s internal AI assistant for approved company knowledge,
+    procedures, processes, and general employee assistance.
+  background_color: "#0B1F33"
+features:
+  bot_user:
+    display_name: Baxter
+    always_online: true
+  slash_commands:
+    - command: /property
+      url: https://acton-baxter.vercel.app/api/slack/commands/property
+      description: Research a property address with Baxter Property Research
+      usage_hint: "[address]"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      # Required — conversational Baxter
+      - app_mentions:read
+      - chat:write
+      - im:history
+      # Required — /property slash command
+      - commands
+settings:
+  event_subscriptions:
+    request_url: https://acton-baxter.vercel.app/api/slack/events
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

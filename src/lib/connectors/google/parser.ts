@@ -120,8 +120,8 @@ export function googleSourceKind(mimeType: string): "google_doc" | "google_sheet
 }
 
 export function googleOpenLabel(mimeType: string): string {
-  if (mimeType === GOOGLE_DOC_MIME) return "Open Document";
-  if (mimeType === GOOGLE_SHEET_MIME) return "Open Spreadsheet";
+  if (mimeType === GOOGLE_DOC_MIME) return "Open Google Doc";
+  if (mimeType === GOOGLE_SHEET_MIME) return "Open Google Sheet";
   if (mimeType === PDF_MIME) return "Open PDF";
-  return "Open File";
+  return "Open Google File";
 }

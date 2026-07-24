@@ -44,6 +44,10 @@ const serverEnvSchema = publicEnvSchema.extend({
   SLACK_CLIENT_SECRET: z.string().optional().default(""),
   SLACK_COMMAND_NAME: z.string().optional().default("/property"),
   SLACK_ALLOWED_TEAM_IDS: z.string().optional().default(""),
+  SLACK_ALLOWED_CHANNEL_IDS: z.string().optional().default(""),
+  SLACK_ALLOWED_USER_IDS: z.string().optional().default(""),
+  SLACK_ENABLE_DMS: booleanFromString.default(true),
+  SLACK_ENABLE_CHANNEL_MENTIONS: booleanFromString.default(true),
   SLACK_REPORT_USER_ID: z.string().optional().default(""),
   INTERNAL_CRON_SECRET: z.string().optional().default(""),
   E2E_TEST_AUTH_BYPASS: booleanFromString.default(false),
@@ -94,6 +98,10 @@ function readServerRaw() {
     SLACK_CLIENT_SECRET: process.env.SLACK_CLIENT_SECRET ?? "",
     SLACK_COMMAND_NAME: process.env.SLACK_COMMAND_NAME ?? "/property",
     SLACK_ALLOWED_TEAM_IDS: process.env.SLACK_ALLOWED_TEAM_IDS ?? "",
+    SLACK_ALLOWED_CHANNEL_IDS: process.env.SLACK_ALLOWED_CHANNEL_IDS ?? "",
+    SLACK_ALLOWED_USER_IDS: process.env.SLACK_ALLOWED_USER_IDS ?? "",
+    SLACK_ENABLE_DMS: process.env.SLACK_ENABLE_DMS ?? "true",
+    SLACK_ENABLE_CHANNEL_MENTIONS: process.env.SLACK_ENABLE_CHANNEL_MENTIONS ?? "true",
     SLACK_REPORT_USER_ID: process.env.SLACK_REPORT_USER_ID ?? "",
     INTERNAL_CRON_SECRET: process.env.INTERNAL_CRON_SECRET ?? "",
     E2E_TEST_AUTH_BYPASS: process.env.E2E_TEST_AUTH_BYPASS ?? "false",
@@ -136,18 +144,7 @@ export function getEnv(): AppEnv {
     throw new Error("AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY");
   }
 
-  if (env.ENABLE_SLACK_INTEGRATION) {
-    const missingSlack: string[] = [];
-    if (!env.SLACK_SIGNING_SECRET) missingSlack.push("SLACK_SIGNING_SECRET");
-    if (!env.SLACK_BOT_TOKEN) missingSlack.push("SLACK_BOT_TOKEN");
-    if (!env.SLACK_ALLOWED_TEAM_IDS) missingSlack.push("SLACK_ALLOWED_TEAM_IDS");
-    if (!env.SLACK_REPORT_USER_ID) missingSlack.push("SLACK_REPORT_USER_ID");
-    if (missingSlack.length > 0) {
-      throw new Error(
-        `ENABLE_SLACK_INTEGRATION is true but required Slack settings are missing: ${missingSlack.join(", ")}`,
-      );
-    }
-  }
+  // Slack misconfiguration must not crash the web app. Health/admin surfaces report gaps.
 
   if (env.ALLOW_MOCK_FALLBACK && env.NODE_ENV === "production") {
     throw new Error("ALLOW_MOCK_FALLBACK cannot be enabled in production");

@@ -9,20 +9,27 @@
 - Baxter Dashboard chat assistant (Clippy-style launcher on `/` only)
 - Shared conversation schema (`baxter_conversations` / messages / sources)
 - Shared LLM provider abstraction (OpenAI now; Anthropic planned)
-- Slack conversational bot foundation (DMs, mentions, threads) reusing shared AI service
 - Google Workspace connector (Docs/Sheets sync into Knowledge Base)
 - Clickable source references (Google Doc/Sheet + knowledge entries)
 - Connector health dashboard (`/admin/connectors`)
 - Useful web assistant behavior (identity, classification, general + grounded answers, continuity)
 - Admin Baxter diagnostics (`/admin/baxter/diagnostics`)
+- **Prompt 5B — Slack production readiness**
+  - Shared `answerBaxterQuestion()` for Slack DMs and `@Baxter` mentions
+  - Durable event deduplication (`slack_event_receipts`, migration 009)
+  - Async `slack_baxter_reply` jobs with `after()` + Vercel cron
+  - Channel/user allowlists and mention-required channel follow-ups
+  - Slack mrkdwn formatting with validated source links
+  - Health model (`disabled` / `misconfigured` / `ready` / `warning` / `offline`)
+  - Admin Slack diagnostics (`/admin/slack`, conversation detail)
+  - Comprehensive setup guide (`docs/slack-setup.md`) and manifest (`docs/slack-app-manifest.yaml`)
+  - Existing `/property` slash command preserved
+
+## Current
+
+- Initial Acton employee Slack pilot (Jackson, Milan, Maxx, James — see `docs/slack-setup.md` section M)
 
 ## Future
-
-### Prompt 5B
-
-- Slack production setup hardening and workspace rollout
-
-### Later
 
 - Buildertrend sync
 - GoHighLevel sync

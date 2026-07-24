@@ -1,11 +1,17 @@
 import "server-only";
 
-import { getEnv } from "@/lib/env";
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
-import type { BaxterAnswer, BaxterSourceReference } from "@/lib/baxter-ai/types";
-import { formatRelativeUpdated } from "@/lib/baxter-ai/citations";
-import { postSlackMessage } from "@/lib/slack/client";
-import { createServiceClient } from "@/lib/supabase/admin";
+import { enqueueJob } from "@/lib/jobs/queue";
+import {
+  getSlackRuntimeConfig,
+  isSlackChannelAllowed,
+  isSlackUserAllowed,
+} from "@/lib/slack/config";
+import { employeeFacingSlackError, SLACK_ERROR_CODES } from "@/lib/slack/errors";
+import { buildSlackReplySegments } from "@/lib/slack/format";
+import { postSlackMessage, SlackClientError } from "@/lib/slack/client";
+import { claimSlackEventReceipt, updateSlackEventReceipt } from "@/lib/slack/receipts";
+import { logServerError } from "@/lib/errors";
 
 export type SlackIncomingEvent = {
   type?: string;
@@ -21,7 +27,13 @@ export type SlackIncomingEvent = {
   event_ts?: string;
 };
 
-function stripBotMention(text: string): string {
+export type SlackBaxterReplyPayload = {
+  eventId: string;
+  teamId: string | null;
+  event: SlackIncomingEvent;
+};
+
+export function stripBotMention(text: string): string {
   return text.replace(/<@[A-Z0-9]+>/gi, "").trim();
 }
 
@@ -30,143 +42,319 @@ export function shouldIgnoreSlackEvent(event: SlackIncomingEvent): boolean {
   if (event.subtype === "bot_message") return true;
   if (event.type !== "message" && event.type !== "app_mention") return true;
   if (event.type === "message" && event.subtype && event.subtype !== "file_share") {
-    // Ignore message edits/deletes/etc.
     if (event.subtype !== "thread_broadcast") return true;
   }
   return false;
 }
 
+/**
+ * Stable conversation keys:
+ * - DM: team:channel:user
+ * - Channel thread: team:channel:thread_ts
+ */
+export function buildSlackExternalThreadId(input: {
+  teamId: string | null;
+  channelId: string;
+  userId: string | null;
+  threadTs: string;
+  isDm: boolean;
+}): string {
+  const team = input.teamId ?? "unknown";
+  if (input.isDm) {
+    return `${team}:${input.channelId}:${input.userId ?? "unknown"}`;
+  }
+  return `${team}:${input.channelId}:${input.threadTs}`;
+}
+
+export function isDirectMessageEvent(event: SlackIncomingEvent): boolean {
+  return event.channel_type === "im" || event.type === "message";
+}
+
+export function evaluateSlackAccess(event: SlackIncomingEvent): {
+  allowed: boolean;
+  code?: string;
+  isDm: boolean;
+} {
+  const config = getSlackRuntimeConfig();
+  const isDm =
+    event.channel_type === "im" ||
+    (event.type === "message" &&
+      event.channel_type !== "channel" &&
+      event.channel_type !== "group");
+
+  // app_mention is always a channel (or group) interaction.
+  const treatAsDm = event.type === "app_mention" ? false : isDm || event.channel_type === "im";
+
+  if (treatAsDm) {
+    if (!config.enableDms) {
+      return { allowed: false, code: SLACK_ERROR_CODES.DMS_DISABLED, isDm: true };
+    }
+  } else {
+    if (!config.enableChannelMentions) {
+      return { allowed: false, code: SLACK_ERROR_CODES.MENTIONS_DISABLED, isDm: false };
+    }
+    if (!isSlackChannelAllowed(event.channel)) {
+      return { allowed: false, code: SLACK_ERROR_CODES.CHANNEL_NOT_ALLOWED, isDm: false };
+    }
+  }
+
+  if (!isSlackUserAllowed(event.user)) {
+    return { allowed: false, code: SLACK_ERROR_CODES.USER_NOT_ALLOWED, isDm: treatAsDm };
+  }
+
+  return { allowed: true, isDm: treatAsDm };
+}
+
+/** @deprecated Use claimSlackEventReceipt — kept for existing tests. */
 export async function claimSlackEvent(eventId: string, eventType?: string, teamId?: string) {
-  const memory = globalThis as typeof globalThis & {
-    __baxterSlackEvents?: Set<string>;
-  };
-  if (!memory.__baxterSlackEvents) memory.__baxterSlackEvents = new Set();
-  if (memory.__baxterSlackEvents.has(eventId)) return false;
-
-  try {
-    const env = getEnv();
-    const useMemory = Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";
-    if (useMemory) {
-      memory.__baxterSlackEvents.add(eventId);
-      return true;
-    }
-
-    const supabase = createServiceClient();
-    const { error } = await supabase.from("slack_processed_events").insert({
-      event_id: eventId,
-      event_type: eventType ?? null,
-      team_id: teamId ?? null,
-    });
-    if (error) {
-      if (error.code === "23505") return false; // duplicate
-      // Missing table → memory fallback
-      memory.__baxterSlackEvents.add(eventId);
-      return true;
-    }
-    return true;
-  } catch {
-    memory.__baxterSlackEvents.add(eventId);
-    return true;
-  }
-}
-
-export function buildBaxterSlackBlocks(answer: BaxterAnswer): unknown[] {
-  const blocks: unknown[] = [
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: answer.answer },
-    },
-  ];
-
-  if (answer.sources.length > 0) {
-    const lines = answer.sources.map((source) => formatSlackSourceLine(source));
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Sources*\n${lines.join("\n")}`,
-      },
-    });
-  }
-
-  blocks.push({
-    type: "context",
-    elements: [
-      {
-        type: "mrkdwn",
-        text: `Confidence: ${answer.confidence}${
-          answer.insufficientKnowledge ? " · Insufficient approved knowledge" : ""
-        }`,
-      },
-    ],
+  const result = await claimSlackEventReceipt({
+    eventId,
+    eventType,
+    teamId,
   });
-
-  return blocks;
+  return result.claimed;
 }
 
-function formatSlackSourceLine(source: BaxterSourceReference): string {
-  const updated = formatRelativeUpdated(source.lastUpdated);
-  const env = (() => {
-    try {
-      return getEnv();
-    } catch {
-      return null;
+export { buildBaxterSlackBlocks } from "./format";
+
+export async function enqueueBaxterSlackReply(payload: SlackBaxterReplyPayload) {
+  return enqueueJob({
+    reportId: null,
+    jobType: "slack_baxter_reply",
+    metadata: {
+      eventId: payload.eventId,
+      teamId: payload.teamId,
+      event: payload.event,
+    },
+  });
+}
+
+/**
+ * Process a claimed Slack Baxter Q&A event (shared by job worker and after()).
+ */
+export async function handleBaxterSlackEvent(
+  event: SlackIncomingEvent,
+  options?: { eventId?: string; teamId?: string | null },
+): Promise<void> {
+  const config = getSlackRuntimeConfig();
+  const eventId = options?.eventId;
+  const teamId = options?.teamId ?? event.team ?? null;
+
+  if (!config.enabled) {
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "ignored",
+        errorCode: SLACK_ERROR_CODES.DISABLED,
+      });
     }
-  })();
-  const absolute =
-    source.sourceUrl && source.sourceUrl.startsWith("/")
-      ? `${(env?.APP_BASE_URL ?? "").replace(/\/$/, "")}${source.sourceUrl}`
-      : source.sourceUrl;
-
-  if (absolute && source.availability === "available") {
-    return `• *${source.citationLabel}* (${updated})\n${absolute}`;
-  }
-  return `• *${source.citationLabel}* (${updated}) — unavailable`;
-}
-
-export async function handleBaxterSlackEvent(event: SlackIncomingEvent): Promise<void> {
-  const env = getEnv();
-  if (!env.ENABLE_SLACK_INTEGRATION) return;
-  if (shouldIgnoreSlackEvent(event)) return;
-
-  const text = stripBotMention(event.text ?? "");
-  if (!text) return;
-
-  const channel = event.channel;
-  if (!channel) return;
-
-  const threadTs = event.thread_ts || event.ts || null;
-  const userId = env.SLACK_REPORT_USER_ID;
-  if (!userId) {
-    await postSlackMessage({
-      channel,
-      threadTs: threadTs ?? undefined,
-      text: "Baxter is not fully configured (missing SLACK_REPORT_USER_ID).",
-    });
     return;
   }
+
+  if (!config.readyForEvents) {
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "failed",
+        errorCode: SLACK_ERROR_CODES.MISCONFIGURED,
+      });
+    }
+    return;
+  }
+
+  if (shouldIgnoreSlackEvent(event)) {
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "ignored",
+        errorCode: SLACK_ERROR_CODES.EVENT_UNSUPPORTED,
+      });
+    }
+    return;
+  }
+
+  const access = evaluateSlackAccess(event);
+  if (!access.allowed) {
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "ignored",
+        errorCode: access.code,
+      });
+    }
+    return;
+  }
+
+  const text = stripBotMention(event.text ?? "");
+  const channel = event.channel;
+  if (!channel) {
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "ignored",
+        errorCode: SLACK_ERROR_CODES.EVENT_UNSUPPORTED,
+      });
+    }
+    return;
+  }
+
+  const threadTs = event.thread_ts || event.ts || null;
+  if (!threadTs) {
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "ignored",
+        errorCode: SLACK_ERROR_CODES.EVENT_UNSUPPORTED,
+      });
+    }
+    return;
+  }
+
+  // Empty mention (just @Baxter) — reply with a short prompt, no AI call.
+  if (!text) {
+    try {
+      await postSlackMessage({
+        channel,
+        threadTs,
+        text: "*Baxter*\nAsk me a question about Acton procedures, general work help, or what I can do.",
+      });
+      if (eventId) {
+        await updateSlackEventReceipt({ eventId, status: "completed" });
+      }
+    } catch (error) {
+      await markPostFailure(eventId, error);
+    }
+    return;
+  }
+
+  const externalThreadId = buildSlackExternalThreadId({
+    teamId,
+    channelId: channel,
+    userId: event.user ?? null,
+    threadTs,
+    isDm: access.isDm,
+  });
 
   try {
     const result = await answerBaxterQuestion({
       question: text,
-      userId,
+      userId: null,
       userName: event.user ? `Slack user ${event.user}` : "Slack user",
       channel: "slack",
-      externalThreadId: threadTs,
+      externalThreadId,
       externalUserId: event.user ?? null,
     });
 
-    await postSlackMessage({
-      channel,
-      threadTs: threadTs ?? undefined,
-      text: result.answer,
-      blocks: buildBaxterSlackBlocks(result),
+    const segments = buildSlackReplySegments(result);
+    for (const segment of segments) {
+      await postSlackMessage({
+        channel,
+        threadTs,
+        text: segment.text,
+        blocks: segment.blocks,
+      });
+    }
+
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "completed",
+        metadata: {
+          conversationId: result.conversationId,
+          sourceCount: result.sources.length,
+          answerMode: result.answerMode ?? null,
+        },
+      });
+    }
+  } catch (error) {
+    const code =
+      error instanceof SlackClientError
+        ? error.baxterCode
+        : (resultErrorCode(error) ?? SLACK_ERROR_CODES.JOB_FAILED);
+
+    logServerError("handleBaxterSlackEvent", {
+      code,
+      eventId: eventId ?? null,
+      channelId: channel,
+      threadTs,
+      slackError: error instanceof SlackClientError ? error.slackError : null,
+      httpStatus: error instanceof SlackClientError ? error.httpStatus : null,
     });
-  } catch {
-    await postSlackMessage({
-      channel,
-      threadTs: threadTs ?? undefined,
-      text: "Baxter couldn’t answer that right now. Please try again.",
-    });
+
+    try {
+      await postSlackMessage({
+        channel,
+        threadTs,
+        text: employeeFacingSlackError(code),
+      });
+    } catch (postError) {
+      logServerError("handleBaxterSlackEvent:errorReply", {
+        code: SLACK_ERROR_CODES.POST_FAILED,
+        eventId: eventId ?? null,
+        channelId: channel,
+        threadTs,
+        slackError: postError instanceof SlackClientError ? postError.slackError : null,
+      });
+    }
+
+    if (eventId) {
+      await updateSlackEventReceipt({
+        eventId,
+        status: "failed",
+        errorCode: code,
+      });
+    }
   }
+}
+
+function resultErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const record = error as { code?: string; errorCode?: string };
+  return record.errorCode ?? record.code ?? null;
+}
+
+async function markPostFailure(eventId: string | undefined, error: unknown) {
+  const code = error instanceof SlackClientError ? error.baxterCode : SLACK_ERROR_CODES.POST_FAILED;
+  if (eventId) {
+    await updateSlackEventReceipt({ eventId, status: "failed", errorCode: code });
+  }
+}
+
+/**
+ * Job processor entry for slack_baxter_reply.
+ */
+export async function processSlackBaxterReplyJob(metadata: Record<string, unknown>): Promise<void> {
+  const event = metadata.event as SlackIncomingEvent | undefined;
+  const eventId = typeof metadata.eventId === "string" ? metadata.eventId : undefined;
+  const teamId = typeof metadata.teamId === "string" ? metadata.teamId : null;
+  if (!event) {
+    throw new Error("slack_baxter_reply job missing event metadata");
+  }
+  await handleBaxterSlackEvent(event, { eventId, teamId });
+}
+
+/** Claim + enqueue a Slack Baxter reply job. Caller should process via after()/cron. */
+export async function acceptBaxterSlackEvent(input: {
+  eventId: string;
+  teamId: string | null;
+  event: SlackIncomingEvent;
+}): Promise<{ duplicate: boolean; jobId?: string }> {
+  const claim = await claimSlackEventReceipt({
+    eventId: input.eventId,
+    teamId: input.teamId,
+    eventType: input.event.type,
+    eventTs: input.event.event_ts ?? input.event.ts,
+  });
+
+  if (!claim.claimed) {
+    return { duplicate: true };
+  }
+
+  const job = await enqueueBaxterSlackReply({
+    eventId: input.eventId,
+    teamId: input.teamId,
+    event: input.event,
+  });
+
+  return { duplicate: false, jobId: job.id };
 }

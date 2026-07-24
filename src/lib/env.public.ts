@@ -21,7 +21,8 @@ export function readPublicRaw() {
   return {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    APP_BASE_URL: process.env.APP_BASE_URL ?? "http://localhost:3000",
+    APP_BASE_URL:
+      process.env.APP_BASE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
     ENABLE_MOCK_RESEARCH: process.env.ENABLE_MOCK_RESEARCH ?? "true",
     NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "",
   };

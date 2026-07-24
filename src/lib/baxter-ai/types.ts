@@ -25,7 +25,8 @@ export type BaxterSourceReference = {
 
 export type BaxterQuestionInput = {
   question: string;
-  userId: string;
+  /** Web chats require a Supabase user; Slack may pass null and use external_user_id. */
+  userId: string | null;
   userName?: string | null;
   channel: BaxterChannel;
   conversationId?: string | null;

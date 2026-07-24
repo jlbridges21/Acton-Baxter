@@ -48,8 +48,8 @@ describe("Google connector helpers", () => {
     expect(hashContent("hello")).not.toBe(hashContent("hello!"));
     expect(googleSourceKind(GOOGLE_DOC_MIME)).toBe("google_doc");
     expect(googleSourceKind(GOOGLE_SHEET_MIME)).toBe("google_sheet");
-    expect(googleOpenLabel(GOOGLE_DOC_MIME)).toBe("Open Document");
-    expect(googleOpenLabel(GOOGLE_SHEET_MIME)).toBe("Open Spreadsheet");
+    expect(googleOpenLabel(GOOGLE_DOC_MIME)).toBe("Open Google Doc");
+    expect(googleOpenLabel(GOOGLE_SHEET_MIME)).toBe("Open Google Sheet");
   });
 
   it("reports Google connector offline when credentials are missing", async () => {
@@ -116,7 +116,7 @@ describe("Clickable sources", () => {
     ];
 
     const sources = mapUsedSourceNumbers([1, 2], items);
-    expect(sources[0]?.openLabel).toBe("Open Document");
+    expect(sources[0]?.openLabel).toBe("Open Google Doc");
     expect(sources[0]?.sourceUrl).toBe("https://docs.google.com/document/d/abc");
     expect(sources[0]?.relevanceScore).toBe(42);
     expect(sources[1]?.openLabel).toBe("Open Knowledge Entry");
@@ -173,7 +173,7 @@ describe("Slack verification and events", () => {
           sourceUrl: "https://docs.google.com/document/d/abc",
           citationLabel: "Sales — PEM Preparation",
           sourceKind: "google_doc",
-          openLabel: "Open Document",
+          openLabel: "Open Google Doc",
           lastUpdated: new Date().toISOString(),
           relevanceScore: 40,
           availability: "available",

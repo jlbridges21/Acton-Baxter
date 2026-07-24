@@ -9,7 +9,7 @@ Baxter is Acton ADU’s internal AI assistant. It combines:
 3. Conversation history
 4. OpenAI general assistance
 
-Web chat (`POST /api/baxter/chat`) and Slack Events both call `answerBaxterQuestion()`.
+Web chat (`POST /api/baxter/chat`) and Slack Events (`POST /api/slack/events`) both call `answerBaxterQuestion()` with `channel: "web"` or `channel: "slack"`.
 
 ## Query classification
 
@@ -43,10 +43,23 @@ HTTP chat/completions with JSON object responses. Lenient parsing keeps a usable
 
 `/admin/baxter/diagnostics` — configuration Yes/No, KB counts, recent error codes, OpenAI/KB/pipeline tests, idempotent Baxter Overview bootstrap.
 
+## Slack (Prompt 5B)
+
+Slack uses the same classification, retrieval, and OpenAI path as web chat. Slack-specific layers:
+
+- **Events API** — signature verification, team/channel/user allowlists, durable dedupe via `slack_event_receipts`
+- **Async processing** — `slack_baxter_reply` jobs processed by `after()` and Vercel cron (`/api/internal/process-jobs`, every 2 minutes)
+- **Conversation mapping** — `external_thread_id` = `team:channel:user` (DM) or `team:channel:thread_ts` (channel thread); `user_id` stays null
+- **Formatting** — Slack mrkdwn with escaped markup, validated source links, message splitting
+- **Access** — empty `SLACK_ALLOWED_CHANNEL_IDS` disables channel mentions; DMs enabled by default
+- **Admin** — `/admin/slack` health (`disabled` / `misconfigured` / `ready` / `warning` / `offline`)
+
+Setup: `docs/slack-setup.md` · Details: `docs/slack-bot.md`
+
 ## Safety
 
 - Never invent official Acton policy
 - Never invent source URLs
 - Never expose secrets
 - Chat only on `/` for the launcher
-- Slack production hardening remains Prompt 5B
+- Slack tokens and signing secrets server-side only

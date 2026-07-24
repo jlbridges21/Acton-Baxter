@@ -93,6 +93,11 @@ async function processGoogleKnowledgeSync(job: ReportJob): Promise<void> {
   await getGoogleConnector().sync(folderId ? { folderId } : undefined);
 }
 
+async function processSlackBaxterReply(job: ReportJob): Promise<void> {
+  const { processSlackBaxterReplyJob } = await import("@/lib/slack/baxter-events");
+  await processSlackBaxterReplyJob(job.metadata);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -101,6 +106,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processSlackCompletionNotification(job);
     } else if (job.jobType === "google_knowledge_sync") {
       await processGoogleKnowledgeSync(job);
+    } else if (job.jobType === "slack_baxter_reply") {
+      await processSlackBaxterReply(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

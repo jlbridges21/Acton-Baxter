@@ -2,86 +2,204 @@
 
 ## Purpose
 
-Baxter answers Acton employees in Slack using the **same** Knowledge Base retrieval and OpenAI answering service as the web chat.
+Baxter answers Acton employees in Slack using the **same** `answerBaxterQuestion()` service as the web chat. Slack-specific code handles events, access control, formatting, and API calls only — no duplicated AI logic.
 
-## Manifest (YAML)
+Property Research remains a separate flow via the `/property` slash command.
 
-```yaml
-display_information:
-  name: Baxter
-  description: Acton ADU internal AI teammate for approved procedures and property research
-features:
-  bot_user:
-    display_name: Baxter
-    always_online: true
-  slash_commands:
-    - command: /property
-      url: https://YOUR_VERCEL_DOMAIN/api/slack/commands/property
-      description: Research a property address
-      usage_hint: "[address]"
-      should_escape: false
-oauth_config:
-  scopes:
-    bot:
-      - app_mentions:read
-      - channels:history
-      - chat:write
-      - commands
-      - groups:history
-      - im:history
-      - im:read
-      - im:write
-      - mpim:history
-settings:
-  event_subscriptions:
-    request_url: https://YOUR_VERCEL_DOMAIN/api/slack/events
-    bot_events:
-      - app_mention
-      - message.im
-  org_deploy_enabled: false
-  socket_mode_enabled: false
-  token_rotation_enabled: false
+Setup guide: `docs/slack-setup.md`
+
+---
+
+## Shared AI backend
+
+Both channels call the same pipeline:
+
+```
+POST /api/baxter/chat          (web)
+POST /api/slack/events         (Slack Events API)
+        ↓
+answerBaxterQuestion({ channel: "slack", ... })
+        ↓
+Knowledge retrieval · classification · OpenAI · conversation history
+        ↓
+Formatted reply (web JSON or Slack mrkdwn)
 ```
 
-Identity note: use **baxter@actonadu.com** as the Acton owner contact for the Slack app when possible.
+Slack passes:
 
-## Setup
+- `channel: "slack"`
+- `userId: null` — no fake Supabase user
+- `externalUserId` — Slack user ID (`U...`)
+- `externalThreadId` — stable conversation key (see below)
+- `userName` — `Slack user U...` (or display name if `users:read` is added later)
 
-1. Create/update the Slack app with the manifest above.
-2. Install to the Acton workspace.
-3. Copy Signing Secret + Bot Token.
-4. Subscribe Events URL to `/api/slack/events` and verify.
-5. Create/use a Supabase user UUID for attribution (`SLACK_REPORT_USER_ID`).
-6. Set env vars and redeploy.
+---
 
-## Environment
+## Event flow
 
-```bash
-ENABLE_SLACK_INTEGRATION=true
-SLACK_SIGNING_SECRET=...
-SLACK_BOT_TOKEN=xoxb-...
-SLACK_APP_TOKEN=   # optional / future socket mode
-SLACK_ALLOWED_TEAM_IDS=T...
-SLACK_REPORT_USER_ID=<uuid>
-SLACK_COMMAND_NAME=/property
+```
+Slack event
+  → verify signature (SLACK_SIGNING_SECRET)
+  → validate team (SLACK_ALLOWED_TEAM_IDS)
+  → claim event (slack_event_receipts — durable dedupe)
+  → enqueue slack_baxter_reply job
+  → HTTP 200 immediately
+  → after() + cron process job
+  → answerBaxterQuestion()
+  → chat.postMessage (thread or DM)
+  → update receipt status
 ```
 
-## Supported behaviors
+### Durable receipts
 
-- DMs to Baxter
-- `@Baxter` mentions
-- Thread replies (continues conversation via `thread_ts`)
-- Clickable Google Doc / Sheet links in Sources
-- Insufficient-knowledge responses when KB has no match
+Migration `009_slack_production.sql` creates `slack_event_receipts`:
 
-## Ignored
+| Status       | Meaning                                                    |
+| ------------ | ---------------------------------------------------------- |
+| `received`   | Event claimed, job enqueued                                |
+| `processing` | Job in progress                                            |
+| `completed`  | Reply posted successfully                                  |
+| `failed`     | Error recorded with `BAXTER_SLACK_*` code                  |
+| `ignored`    | Bot message, disallowed channel, unsupported subtype, etc. |
 
-- Bot messages / Baxter’s own replies
-- Duplicate Slack retries (`slack_processed_events`)
-- Disallowed workspaces
+Slack retries receive HTTP 200 with `duplicate: true` — no duplicate replies.
 
-## Architecture
+### Async jobs
 
-`/api/slack/events` → verify signature → dedupe → `answerBaxterQuestion({ channel: "slack" })` → `chat.postMessage`
+Job type: `slack_baxter_reply` on the existing `report_jobs` queue.
 
-`/property` slash command remains Property Research only.
+- **Immediate:** Next.js `after()` in `/api/slack/events` claims and processes the job
+- **Backup:** Vercel Cron every 2 minutes on `/api/internal/process-jobs`
+
+---
+
+## Conversation mapping
+
+| Context                 | `external_thread_id` format    | Behavior                      |
+| ----------------------- | ------------------------------ | ----------------------------- |
+| DM                      | `team_id:channel_id:user_id`   | One conversation per user DM  |
+| Channel thread          | `team_id:channel_id:thread_ts` | One conversation per thread   |
+| New top-level `@Baxter` | New `thread_ts`                | Starts a **new** conversation |
+
+Follow-ups in the **same DM** reuse the conversation automatically.
+
+In **channels**, follow-ups require another `@Baxter` mention (mention-required default) because the app does not subscribe to broad channel history events.
+
+Conversations are stored with `user_id = null` and `external_user_id` set to the Slack user ID.
+
+---
+
+## Access control
+
+| Setting                         | Behavior                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| `SLACK_ALLOWED_TEAM_IDS`        | Required when enabled — rejects other workspaces                                       |
+| `SLACK_ALLOWED_CHANNEL_IDS`     | **Empty = channel mentions disabled** (safe default). Non-empty = only those channels. |
+| `SLACK_ALLOWED_USER_IDS`        | Empty = all humans in allowed workspace. Non-empty = pilot allowlist.                  |
+| `SLACK_ENABLE_DMS`              | Toggle direct messages                                                                 |
+| `SLACK_ENABLE_CHANNEL_MENTIONS` | Toggle `@Baxter` in allowed channels                                                   |
+
+Bots, Baxter's own messages, and unsupported subtypes (edits, joins, etc.) are ignored.
+
+---
+
+## Message formatting
+
+Responses use Slack mrkdwn:
+
+```
+*Baxter*
+
+Answer text.
+
+*Sources*
+• <https://docs.google.com/...|Project Brief> — Google Doc
+• <https://acton-baxter.vercel.app/knowledge/...|Process Doc> — Knowledge Base
+
+_Answer type: Approved Acton knowledge_
+```
+
+- Unsafe markup escaped (`<!channel>`, `@everyone`, etc.)
+- Source URLs from validated server records only — never from model output
+- Long answers split at ~3500 characters without breaking links
+- Sources and answer-type line appear in the final segment when split
+- Empty `@Baxter` mention → short prompt, no AI call
+
+---
+
+## Health statuses
+
+Evaluated by `evaluateSlackHealth()` and shown at `/admin/slack`:
+
+| Status          | Meaning                                                  |
+| --------------- | -------------------------------------------------------- |
+| `disabled`      | `ENABLE_SLACK_INTEGRATION=false` — web Baxter unaffected |
+| `misconfigured` | Missing signing secret, bot token, or team IDs           |
+| `ready`         | Credentials present; auth test passed (or not yet run)   |
+| `warning`       | Configured but recent event/posting errors recorded      |
+| `offline`       | Slack `auth.test` failed — token revoked or invalid      |
+
+---
+
+## Admin routes
+
+| Route                             | Purpose                                                                            |
+| --------------------------------- | ---------------------------------------------------------------------------------- |
+| `/admin/slack`                    | Health, configuration (Yes/No), receipt stats, recent activity, diagnostic actions |
+| `/admin/slack/conversations/[id]` | Conversation detail — messages, sources, answer mode, errors (admin only)          |
+
+Diagnostic actions (admin only, explicit destinations required):
+
+- Test Slack authentication
+- Post test message to a channel or user ID
+- Process one pending `slack_baxter_reply` job
+- Test complete Baxter answer pipeline without public post
+
+Secrets are never displayed — only present/absent indicators.
+
+---
+
+## Supported interactions
+
+| Interaction                  | Supported                             |
+| ---------------------------- | ------------------------------------- |
+| Direct messages              | Yes — free-form conversation          |
+| `@Baxter` in allowed channel | Yes — replies in thread               |
+| Thread follow-up in DM       | Yes — no re-mention needed            |
+| Thread follow-up in channel  | Requires `@Baxter` again (default)    |
+| `/property` slash command    | Yes — separate Property Research flow |
+| Bot-to-bot messages          | Ignored                               |
+| Duplicate Slack retries      | Deduped safely                        |
+
+---
+
+## Ignored events
+
+- Messages with `bot_id`
+- Baxter's own replies
+- Unsupported subtypes (`message_changed`, channel join, etc.)
+- Disallowed teams, channels, or users
+- Empty or whitespace-only mentions (handled with a prompt instead)
+
+---
+
+## Error responses
+
+Employees see safe messages with reference codes:
+
+> Baxter couldn't complete that response right now. Please try again in a few minutes. Reference: BAXTER_SLACK_POST_FAILED
+
+Bot tokens and signing secrets never appear in logs or client-facing errors.
+
+Full code list: `docs/slack-setup.md` section K.
+
+---
+
+## API routes
+
+| Route                          | Method | Purpose                    |
+| ------------------------------ | ------ | -------------------------- |
+| `/api/slack/events`            | POST   | Events API (DMs, mentions) |
+| `/api/slack/commands/property` | POST   | `/property` slash command  |
+
+Manifest: `docs/slack-app-manifest.yaml`

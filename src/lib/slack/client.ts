@@ -2,11 +2,33 @@ import "server-only";
 
 import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
+import { mapSlackApiErrorToCode, SLACK_ERROR_CODES, type SlackErrorCode } from "./errors";
 
 export class SlackClientError extends AppError {
-  constructor(message: string, statusCode = 502) {
-    super(message, { code: "SLACK_CLIENT_ERROR", statusCode, expose: false });
+  readonly slackError: string | null;
+  readonly baxterCode: SlackErrorCode;
+  readonly httpStatus: number;
+  readonly retryAfterSeconds: number | null;
+
+  constructor(
+    message: string,
+    options?: {
+      statusCode?: number;
+      slackError?: string | null;
+      baxterCode?: SlackErrorCode;
+      retryAfterSeconds?: number | null;
+    },
+  ) {
+    super(message, {
+      code: options?.baxterCode ?? "SLACK_CLIENT_ERROR",
+      statusCode: options?.statusCode ?? 502,
+      expose: false,
+    });
     this.name = "SlackClientError";
+    this.slackError = options?.slackError ?? null;
+    this.baxterCode = options?.baxterCode ?? SLACK_ERROR_CODES.POST_FAILED;
+    this.httpStatus = options?.statusCode ?? 502;
+    this.retryAfterSeconds = options?.retryAfterSeconds ?? null;
   }
 }
 
@@ -17,18 +39,21 @@ export type SlackPostMessageInput = {
   threadTs?: string;
 };
 
-export async function postSlackMessage(
-  input: SlackPostMessageInput,
-): Promise<{ ok: true; ts?: string }> {
-  const env = getEnv();
-  if (!env.SLACK_BOT_TOKEN) {
-    throw new SlackClientError("SLACK_BOT_TOKEN is not configured", 500);
-  }
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
+async function postOnce(
+  token: string,
+  input: SlackPostMessageInput,
+): Promise<
+  | { ok: true; ts?: string }
+  | { ok: false; error: string; retryAfter: number | null; status: number }
+> {
   const response = await fetch("https://slack.com/api/chat.postMessage", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json; charset=utf-8",
     },
     body: JSON.stringify({
@@ -41,17 +66,118 @@ export async function postSlackMessage(
     }),
   });
 
+  const retryAfterHeader = response.headers.get("Retry-After");
+  const retryAfter = retryAfterHeader ? Number(retryAfterHeader) : null;
+
   const data = (await response.json().catch(() => null)) as {
     ok?: boolean;
     error?: string;
     ts?: string;
   } | null;
 
+  if (response.status === 429 || data?.error === "ratelimited") {
+    return {
+      ok: false,
+      error: "ratelimited",
+      retryAfter: Number.isFinite(retryAfter) ? retryAfter : 3,
+      status: 429,
+    };
+  }
+
   if (!response.ok || !data?.ok) {
-    throw new SlackClientError(
-      data?.error ? `Slack API error: ${data.error}` : "Slack API request failed",
-    );
+    return {
+      ok: false,
+      error: data?.error ?? "request_failed",
+      retryAfter: null,
+      status: response.status,
+    };
   }
 
   return { ok: true, ts: data.ts };
+}
+
+export async function postSlackMessage(
+  input: SlackPostMessageInput,
+): Promise<{ ok: true; ts?: string }> {
+  const env = getEnv();
+  if (!env.SLACK_BOT_TOKEN) {
+    throw new SlackClientError("SLACK_BOT_TOKEN is not configured", {
+      statusCode: 500,
+      baxterCode: SLACK_ERROR_CODES.MISCONFIGURED,
+    });
+  }
+
+  const maxAttempts = 3;
+  let lastError: string | null = null;
+  let lastStatus = 502;
+  let lastRetryAfter: number | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = await postOnce(env.SLACK_BOT_TOKEN, input);
+    if (result.ok) return { ok: true, ts: result.ts };
+
+    lastError = result.error;
+    lastStatus = result.status;
+    lastRetryAfter = result.retryAfter;
+
+    if (result.error === "ratelimited" && attempt < maxAttempts) {
+      const waitSeconds = Math.min(Math.max(result.retryAfter ?? 2, 1), 10);
+      await sleep(waitSeconds * 1000);
+      continue;
+    }
+
+    if (result.error === "msg_too_long") {
+      throw new SlackClientError("Slack API error: msg_too_long", {
+        statusCode: lastStatus,
+        slackError: lastError,
+        baxterCode: SLACK_ERROR_CODES.POST_FAILED,
+      });
+    }
+
+    break;
+  }
+
+  throw new SlackClientError(
+    lastError ? `Slack API error: ${lastError}` : "Slack API request failed",
+    {
+      statusCode: lastStatus,
+      slackError: lastError,
+      baxterCode: mapSlackApiErrorToCode(lastError),
+      retryAfterSeconds: lastRetryAfter,
+    },
+  );
+}
+
+export async function authTestSlack(): Promise<{
+  ok: boolean;
+  error?: string;
+  team?: string;
+  user?: string;
+}> {
+  const env = getEnv();
+  if (!env.SLACK_BOT_TOKEN) {
+    return { ok: false, error: "missing_bot_token" };
+  }
+
+  const response = await fetch("https://slack.com/api/auth.test", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "",
+  });
+
+  const data = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    error?: string;
+    team?: string;
+    user?: string;
+  } | null;
+
+  if (!data?.ok) {
+    return { ok: false, error: data?.error ?? "auth_test_failed" };
+  }
+
+  return { ok: true, team: data.team, user: data.user };
 }

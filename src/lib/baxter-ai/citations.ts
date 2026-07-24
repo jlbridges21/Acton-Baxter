@@ -38,11 +38,11 @@ export function resolveSourceKind(input: {
 export function resolveOpenLabel(kind: BaxterSourceKind): string {
   switch (kind) {
     case "google_doc":
-      return "Open Document";
+      return "Open Google Doc";
     case "google_sheet":
-      return "Open Spreadsheet";
+      return "Open Google Sheet";
     case "google_file":
-      return "Open File";
+      return "Open Google File";
     default:
       return "Open Knowledge Entry";
   }

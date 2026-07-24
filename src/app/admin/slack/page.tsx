@@ -4,136 +4,154 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
-import {
-  listMessagesForConversation,
-  listRecentConversations,
-} from "@/lib/baxter-ai/conversations";
+import { getAdminSlackSnapshot } from "@/lib/slack/admin";
+import { AdminSlackDiagnosticsClient } from "@/components/admin/admin-slack-diagnostics-client";
+
+function YesNo({ value }: { value: boolean }) {
+  return (
+    <span className={value ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
+      {value ? "Yes" : "No"}
+    </span>
+  );
+}
 
 export default async function AdminSlackPage() {
   const user = await requireActiveUser();
   if (!isAdminRole(user.profile.role)) redirect("/");
 
-  const conversations = await listRecentConversations(40);
-  const slackConversations = conversations.filter(
-    (conversation) => conversation.channel === "slack",
-  );
-
-  const rows = await Promise.all(
-    slackConversations.slice(0, 20).map(async (conversation) => {
-      const messages = await listMessagesForConversation(conversation.id);
-      const latestUser = [...messages].reverse().find((message) => message.role === "user");
-      const latestAssistant = [...messages]
-        .reverse()
-        .find((message) => message.role === "assistant");
-      const sources =
-        latestAssistant &&
-        Array.isArray((latestAssistant.metadata as { sources?: unknown }).sources)
-          ? ((latestAssistant.metadata as { sources: Array<{ citationLabel?: string }> }).sources ??
-            [])
-          : [];
-      return {
-        conversation,
-        question: latestUser?.content ?? "(no question yet)",
-        answer: latestAssistant?.content ?? "",
-        insufficient: latestAssistant?.insufficient_knowledge ?? false,
-        errorCode: latestAssistant?.error_code ?? null,
-        sources,
-      };
-    }),
-  );
-
-  const gaps = rows.filter((row) => row.insufficient);
-  const errors = rows.filter((row) => row.errorCode);
-  const questionCounts = new Map<string, number>();
-  for (const row of rows) {
-    const key = row.question.slice(0, 120);
-    questionCounts.set(key, (questionCounts.get(key) ?? 0) + 1);
-  }
-  const commonQuestions = Array.from(questionCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8);
+  const snapshot = await getAdminSlackSnapshot();
+  const { health, config, stats, activity } = snapshot;
 
   return (
     <AppShell user={user}>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Slack activity</h1>
+          <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Slack</h1>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Recent Baxter Slack conversations, knowledge gaps, and source usage.
+            Deployment status, health, recent activity, and admin diagnostics for Baxter in Slack.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardTitle>Health</CardTitle>
+          <CardDescription className="mt-2 text-lg font-semibold text-[var(--acton-navy)]">
+            {health.label} ({health.status})
+          </CardDescription>
+          <p className="mt-2 text-sm text-[var(--acton-muted)]">{health.details}</p>
+        </Card>
+
+        <Card>
+          <CardTitle>Slack configuration</CardTitle>
+          <dl className="mt-3 grid gap-2 text-sm text-[var(--acton-navy)] md:grid-cols-2">
+            <div>
+              Integration enabled: <YesNo value={config.integrationEnabled} />
+            </div>
+            <div>
+              Signing secret present: <YesNo value={config.signingSecretPresent} />
+            </div>
+            <div>
+              Bot token present: <YesNo value={config.botTokenPresent} />
+            </div>
+            <div>
+              App token present: <YesNo value={config.appTokenPresent} />
+            </div>
+            <div>
+              DMs enabled: <YesNo value={config.dmsEnabled} />
+            </div>
+            <div>
+              Channel mentions enabled: <YesNo value={config.channelMentionsEnabled} />
+            </div>
+            <div>
+              Allowed team IDs:{" "}
+              {config.allowedTeamIds.length > 0 ? config.allowedTeamIds.join(", ") : "(none)"}
+            </div>
+            <div>Allowed channels: {config.allowedChannelCount}</div>
+            <div>Allowed users: {config.allowedUserCount || "all workspace humans"}</div>
+            <div className="break-all md:col-span-2">
+              Events endpoint: {config.eventsEndpointUrl}
+            </div>
+            <div className="break-all md:col-span-2">
+              Property command endpoint: {config.propertyCommandEndpointUrl}
+            </div>
+            {config.missingRequired.length > 0 ? (
+              <div className="font-semibold text-amber-800 md:col-span-2">
+                Missing: {config.missingRequired.join(", ")}
+              </div>
+            ) : null}
+          </dl>
+        </Card>
+
+        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-4">
           <Card>
-            <CardTitle className="text-base">Slack conversations</CardTitle>
+            <CardTitle className="text-base">Events (24h)</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
-              {slackConversations.length}
+              {stats.processedLast24h}
             </CardDescription>
           </Card>
           <Card>
-            <CardTitle className="text-base">Knowledge gaps</CardTitle>
+            <CardTitle className="text-base">Pending jobs</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
-              {gaps.length}
+              {stats.pendingJobs}
             </CardDescription>
           </Card>
           <Card>
-            <CardTitle className="text-base">Recent errors</CardTitle>
+            <CardTitle className="text-base">Failed jobs</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
-              {errors.length}
+              {stats.failedJobs}
+            </CardDescription>
+          </Card>
+          <Card>
+            <CardTitle className="text-base">Duplicates ignored</CardTitle>
+            <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
+              {stats.duplicatesIgnored}
             </CardDescription>
           </Card>
         </div>
 
         <Card>
-          <CardTitle>Most common recent questions</CardTitle>
-          <ul className="mt-3 space-y-2 text-sm text-[var(--acton-navy)]">
-            {commonQuestions.length === 0 ? (
-              <li className="text-[var(--acton-muted)]">No Slack questions logged yet.</li>
-            ) : (
-              commonQuestions.map(([question, count]) => (
-                <li key={question}>
-                  <span className="font-semibold">{count}×</span> {question}
-                </li>
-              ))
-            )}
+          <CardTitle>Recent health signals</CardTitle>
+          <ul className="mt-3 space-y-1 text-sm text-[var(--acton-muted)]">
+            <li>Last valid event: {stats.lastValidEventAt ?? "—"}</li>
+            <li>Last successful reply: {stats.lastCompletedAt ?? "—"}</li>
+            <li>Last failed reply: {stats.lastFailedAt ?? "—"}</li>
+            <li>
+              Recent error codes:{" "}
+              {stats.recentErrorCodes.length > 0 ? stats.recentErrorCodes.join(", ") : "none"}
+            </li>
           </ul>
         </Card>
 
+        <Card>
+          <CardTitle>Diagnostic actions</CardTitle>
+          <CardDescription className="mt-1">
+            Admin-only. Test posts require an explicit channel or user ID and never run on page
+            load.
+          </CardDescription>
+          <div className="mt-4">
+            <AdminSlackDiagnosticsClient />
+          </div>
+        </Card>
+
         <div className="space-y-3">
-          <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Recent conversations</h2>
-          {rows.length === 0 ? (
+          <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Recent activity</h2>
+          {activity.length === 0 ? (
             <p className="text-sm text-[var(--acton-muted)]">No Slack conversations yet.</p>
           ) : (
-            rows.map((row) => (
-              <Card key={row.conversation.id}>
-                <CardTitle className="text-base">
-                  {row.conversation.user_display_name ?? "Slack user"}
-                </CardTitle>
+            activity.map((row) => (
+              <Card key={row.conversationId}>
+                <CardTitle className="text-base">{row.userLabel}</CardTitle>
                 <CardDescription className="mt-2">
-                  {row.conversation.last_message_at
-                    ? new Date(row.conversation.last_message_at).toLocaleString()
-                    : new Date(row.conversation.created_at).toLocaleString()}
+                  {new Date(row.timestamp).toLocaleString()} · {row.status}
+                  {row.errorCode ? ` · ${row.errorCode}` : ""}
                 </CardDescription>
-                <p className="mt-3 text-sm font-semibold text-[var(--acton-navy)]">
-                  Q: {row.question}
+                <p className="mt-3 text-sm text-[var(--acton-navy)]">
+                  {row.questionExcerpt || "(no question yet)"}
                 </p>
-                <p className="mt-2 text-sm whitespace-pre-wrap text-[var(--acton-muted)]">
-                  A: {row.answer || "—"}
+                <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                  Sources used: {row.sourceCount}
                 </p>
-                {row.sources.length > 0 ? (
-                  <p className="mt-2 text-xs text-[var(--acton-navy)]">
-                    Sources:{" "}
-                    {row.sources.map((source) => source.citationLabel ?? "Source").join(" · ")}
-                  </p>
-                ) : null}
-                {row.insufficient ? (
-                  <p className="mt-2 text-xs font-semibold text-amber-800">Knowledge gap</p>
-                ) : null}
-                {row.errorCode ? (
-                  <p className="mt-2 text-xs font-semibold text-red-700">Error: {row.errorCode}</p>
-                ) : null}
                 <Link
-                  href={`/admin/slack?conversation=${row.conversation.id}`}
+                  href={`/admin/slack/conversations/${row.conversationId}`}
                   className="mt-3 inline-block text-xs font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
                 >
                   Open conversation

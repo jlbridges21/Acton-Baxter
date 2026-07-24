@@ -1,51 +1,36 @@
 import "server-only";
 
-import { getEnv } from "@/lib/env";
+import { evaluateSlackHealth } from "@/lib/slack/config";
 import type { ConnectorHealth } from "../types";
+
+function mapStatus(status: string): ConnectorHealth["status"] {
+  switch (status) {
+    case "ready":
+      return "healthy";
+    case "warning":
+    case "misconfigured":
+      return "warning";
+    case "disabled":
+    case "offline":
+    default:
+      return "offline";
+  }
+}
 
 export async function SlackConnectorHealth(): Promise<ConnectorHealth> {
   try {
-    const env = getEnv();
-    const enabled = env.ENABLE_SLACK_INTEGRATION;
-    const configured = Boolean(
-      env.SLACK_BOT_TOKEN && env.SLACK_SIGNING_SECRET && env.SLACK_ALLOWED_TEAM_IDS,
-    );
-
-    if (!enabled) {
-      return {
-        key: "slack",
-        name: "Slack",
-        status: "offline",
-        label: "Offline",
-        lastSyncAt: null,
-        lastError: null,
-        itemsSynced: null,
-        details: "ENABLE_SLACK_INTEGRATION is false.",
-      };
-    }
-
-    if (!configured) {
-      return {
-        key: "slack",
-        name: "Slack",
-        status: "warning",
-        label: "Warning",
-        lastSyncAt: null,
-        lastError: "Missing Slack bot token, signing secret, or allowed team IDs.",
-        itemsSynced: null,
-        details: "Slack integration is enabled but incomplete.",
-      };
-    }
-
+    // Config-only check here (no live auth.test) so the connectors page stays fast.
+    // /admin/slack runs auth.test on demand via diagnostic actions.
+    const health = await evaluateSlackHealth();
     return {
       key: "slack",
       name: "Slack",
-      status: "healthy",
-      label: "Healthy",
+      status: mapStatus(health.status),
+      label: health.label,
       lastSyncAt: null,
-      lastError: null,
+      lastError: health.authError,
       itemsSynced: null,
-      details: "Events API + /property slash command ready when endpoints are configured.",
+      details: health.details,
     };
   } catch {
     return {

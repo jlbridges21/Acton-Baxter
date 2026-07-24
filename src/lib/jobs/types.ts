@@ -2,6 +2,7 @@ export const JOB_TYPES = [
   "property_research",
   "slack_completion_notification",
   "google_knowledge_sync",
+  "slack_baxter_reply",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

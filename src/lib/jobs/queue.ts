@@ -42,6 +42,7 @@ function getMemoryState(): MemoryJobsState {
 export function usesMemoryJobStore(env = getEnv()): boolean {
   return (
     env.E2E_TEST_AUTH_BYPASS ||
+    (env.ENABLE_MOCK_RESEARCH && env.NODE_ENV !== "production") ||
     env.NEXT_PUBLIC_SUPABASE_URL.includes("127.0.0.1") ||
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY.startsWith("test-")
   );
@@ -102,6 +103,52 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<ReportJob> {
     .single();
   if (error) throw error;
   return mapRow(data as JobRow);
+}
+
+export async function claimJobById(jobId: string): Promise<ReportJob | null> {
+  const now = nowIso();
+
+  if (usesMemoryJobStore()) {
+    const existing = getMemoryState().jobs.get(jobId);
+    if (!existing || existing.status !== "queued") return null;
+    const claimed: ReportJob = {
+      ...existing,
+      status: "running",
+      attempts: existing.attempts + 1,
+      lockedAt: now,
+      updatedAt: now,
+    };
+    getMemoryState().jobs.set(claimed.id, claimed);
+    return claimed;
+  }
+
+  const supabase = createServiceClient();
+  const { data: existing, error: readError } = await supabase
+    .from("report_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("status", "queued")
+    .maybeSingle();
+  if (readError) throw readError;
+  if (!existing) return null;
+
+  const row = existing as JobRow;
+  const { data: updated, error } = await supabase
+    .from("report_jobs")
+    .update({
+      status: "running",
+      attempts: row.attempts + 1,
+      locked_at: now,
+      updated_at: now,
+    })
+    .eq("id", jobId)
+    .eq("status", "queued")
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!updated) return null;
+  return mapRow(updated as JobRow);
 }
 
 export async function claimNextJob(options?: {

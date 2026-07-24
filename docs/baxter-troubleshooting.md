@@ -65,3 +65,32 @@ Never displays secret values (only Yes/No).
 
 Log error codes, user/conversation IDs, provider, model, latency.  
 Do **not** log API keys, tokens, full private prompts, or entire proprietary documents.
+
+## Slack
+
+Full Slack setup and troubleshooting: **`docs/slack-setup.md`** (sections J–K).
+
+Quick checks:
+
+1. Open `/admin/slack` — confirm health is **ready** (not `misconfigured` or `offline`).
+2. Run **Test Slack authentication** from the admin diagnostics panel.
+3. Confirm migration **009** applied (`slack_event_receipts` table exists).
+4. Confirm `SLACK_ALLOWED_TEAM_IDS` includes the Acton workspace team ID.
+5. For channel mentions, add channel IDs to `SLACK_ALLOWED_CHANNEL_IDS` and `/invite @Baxter`.
+6. For DMs only, leave `SLACK_ALLOWED_CHANNEL_IDS` empty.
+
+Common Slack issues:
+
+| Symptom                             | Fix                                                                         |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| No DM replies                       | `SLACK_ENABLE_DMS=true`, valid bot token, `OPENAI_API_KEY` set              |
+| Mentions ignored                    | Add channel to `SLACK_ALLOWED_CHANNEL_IDS`; invite Baxter to channel        |
+| Duplicate replies                   | Should not happen — check migration 009; see `BAXTER_SLACK_EVENT_DUPLICATE` |
+| `not_in_channel`                    | `/invite @Baxter` in the channel                                            |
+| Auth failures                       | Refresh `SLACK_BOT_TOKEN` after reinstall → `BAXTER_SLACK_AUTH_FAILED`      |
+| Thread follow-up ignored in channel | Expected — `@Baxter` again (mention-required default)                       |
+| Source links broken                 | Set `NEXT_PUBLIC_APP_URL=https://acton-baxter.vercel.app`                   |
+
+Slack error codes use the `BAXTER_SLACK_*` prefix. Employees may see `Reference: BAXTER_SLACK_POST_FAILED` without secret details.
+
+Admin conversation detail: `/admin/slack/conversations/[id]`

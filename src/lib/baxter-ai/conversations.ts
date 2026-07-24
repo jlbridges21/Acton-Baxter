@@ -89,17 +89,28 @@ export async function getOrCreateWebConversation(input: {
 }
 
 export async function getOrCreateConversation(input: {
-  userId: string;
+  userId: string | null;
   userName?: string | null;
   conversationId?: string | null;
   channel: "web" | "slack";
   externalThreadId?: string | null;
   externalUserId?: string | null;
 }): Promise<BaxterConversation> {
+  if (input.channel === "web" && !input.userId) {
+    throw new AuthorizationError("Web conversations require an authenticated user");
+  }
+
   if (input.conversationId) {
-    const existing = await getConversationForUser(input.conversationId, input.userId, {
-      allowSlackService: input.channel === "slack",
-    });
+    if (!input.userId && input.channel !== "slack") {
+      throw new AuthorizationError("Conversation lookup requires a user");
+    }
+    const existing = await getConversationForUser(
+      input.conversationId,
+      input.userId ?? "slack-service",
+      {
+        allowSlackService: input.channel === "slack",
+      },
+    );
     if (!existing) throw new NotFoundError("Conversation not found");
     return existing;
   }

@@ -4,7 +4,7 @@
 
 **Property Research** is the first Baxter tool. It researches a California property address and prepares a short Partnership Evaluation Meeting (PEM) brief.
 
-Future Baxter features will include a knowledge-backed Slack assistant. That assistant is **not** implemented yet.
+Baxter also answers employees in Slack (DMs, `@Baxter` mentions, and `/property`). See **Prompt 5B** setup in `docs/slack-setup.md`.
 
 **Supported automated jurisdictions today (Property Research)**
 
@@ -74,16 +74,13 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 - Admin diagnostics: `/admin/baxter/diagnostics`
 - Troubleshooting: `docs/baxter-troubleshooting.md`
 
-## Google Workspace + Slack (Prompt 4)
+## Google Workspace + Slack
 
 - Google Docs/Sheets sync: `/admin/connectors/google` — see `docs/google-connector.md`
-- Slack DMs/mentions/threads: `/api/slack/events` — see `docs/slack-bot.md`
+- Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`
+- Slack `/property` command: Property Research from Slack
 - Connector overview: `/admin/connectors`
-- Slack activity: `/admin/slack`
-
-Required migrations after 007:
-
-8. `supabase/migrations/008_google_sync_and_slack_events.sql`
+- Slack health and activity: `/admin/slack`
 
 ---
 
@@ -99,6 +96,7 @@ In Supabase SQL Editor, run each file completely:
 6. `supabase/migrations/006_knowledge_base.sql`
 7. `supabase/migrations/007_baxter_conversations.sql`
 8. `supabase/migrations/008_google_sync_and_slack_events.sql`
+9. `supabase/migrations/009_slack_production.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 
@@ -183,22 +181,30 @@ If AI fails, the report still completes with deterministic PEM content.
 
 ---
 
-## Slack
+## Slack (Prompt 5B — production)
 
-See [docs/slack-setup.md](docs/slack-setup.md).
+Full setup: [docs/slack-setup.md](docs/slack-setup.md) · Architecture: [docs/slack-bot.md](docs/slack-bot.md) · Manifest: [docs/slack-app-manifest.yaml](docs/slack-app-manifest.yaml)
+
+Baxter in Slack reuses the same `answerBaxterQuestion()` backend as web chat. Production URL: `https://acton-baxter.vercel.app`
 
 ```bash
 ENABLE_SLACK_INTEGRATION=true
 SLACK_SIGNING_SECRET=...
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_ALLOWED_TEAM_IDS=T...
-SLACK_REPORT_USER_ID=<acton-profile-uuid>
+SLACK_ALLOWED_CHANNEL_IDS=          # empty = channel mentions disabled (safe pilot default)
+SLACK_ENABLE_DMS=true
+SLACK_ENABLE_CHANNEL_MENTIONS=true
+SLACK_REPORT_USER_ID=<uuid>         # required for /property attribution only
+NEXT_PUBLIC_APP_URL=https://acton-baxter.vercel.app
 INTERNAL_CRON_SECRET=<long-random>
 ```
 
-Slash command: `/property 655 13th St, San Jose, CA`
+- **Q&A:** DM Baxter or `@Baxter` in an allowed channel (replies in thread)
+- **Property Research:** `/property 655 13th St, San Jose, CA`
+- **Admin:** `/admin/slack`
 
-Slack never uploads PDFs. It only posts a protected report link.
+Slack never uploads PDFs. Property Research posts a login-protected report link only.
 
 ---
 
