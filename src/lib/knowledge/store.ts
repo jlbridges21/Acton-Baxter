@@ -65,6 +65,22 @@ function shouldUseMemoryStore(): boolean {
   }
 }
 
+/** True when knowledge tables have not been migrated yet (or schema cache is stale). */
+function isMissingKnowledgeTableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: string; message?: string; details?: string };
+  const code = record.code ?? "";
+  const message = `${record.message ?? ""} ${record.details ?? ""}`.toLowerCase();
+  return (
+    code === "42P01" ||
+    code === "PGRST205" ||
+    code === "PGRST204" ||
+    message.includes("does not exist") ||
+    message.includes("could not find the table") ||
+    message.includes("schema cache")
+  );
+}
+
 function snapshotRevision(
   entry: KnowledgeEntry,
   changedBy: string,
@@ -157,7 +173,15 @@ export async function listKnowledgeEntries(
   else query = query.order("updated_at", { ascending: false });
 
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) {
+    if (isMissingKnowledgeTableError(error)) {
+      console.warn(
+        "[knowledge] knowledge_entries table missing — run migration 006_knowledge_base.sql",
+      );
+      return [];
+    }
+    throw error;
+  }
   let rows = (data ?? []) as KnowledgeEntry[];
   if (options.q?.trim()) {
     const q = options.q.trim().toLowerCase();
@@ -396,7 +420,15 @@ export async function listKnowledgeSources(): Promise<KnowledgeSource[]> {
   }
   const supabase = createServiceClient();
   const { data, error } = await supabase.from("knowledge_sources").select("*").order("name");
-  if (error) throw error;
+  if (error) {
+    if (isMissingKnowledgeTableError(error)) {
+      console.warn(
+        "[knowledge] knowledge_sources table missing — run migration 006_knowledge_base.sql",
+      );
+      return [];
+    }
+    throw error;
+  }
   return (data as KnowledgeSource[]) ?? [];
 }
 
@@ -490,6 +522,14 @@ export async function listAllKnowledgeEntriesForRetrieval(): Promise<KnowledgeEn
   }
   const supabase = createServiceClient();
   const { data, error } = await supabase.from("knowledge_entries").select("*");
-  if (error) throw error;
+  if (error) {
+    if (isMissingKnowledgeTableError(error)) {
+      console.warn(
+        "[knowledge] knowledge_entries table missing — run migration 006_knowledge_base.sql",
+      );
+      return [];
+    }
+    throw error;
+  }
   return (data as KnowledgeEntry[]) ?? [];
 }

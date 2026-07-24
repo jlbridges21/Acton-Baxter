@@ -59,10 +59,33 @@ Open http://localhost:3000 — authenticated users land on the **Baxter Dashboar
 Admins can manage institutional knowledge at `/admin/knowledge`.
 
 - Draft → Approve → (edit returns to draft) → Approve again
-- Archived entries and drafts are never used for future Baxter employee answers
+- Archived entries and drafts are never used for Baxter employee answers
 - See `docs/baxter-knowledge-base.md` and `docs/baxter-roadmap.md`
 
 Run migration `006_knowledge_base.sql` in Supabase before using Knowledge Base against a live database.
+
+## Baxter web chat
+
+Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
+
+- Answers are grounded in **approved internal** Knowledge Base entries
+- Sources are attached from retrieved records (the model cannot invent URLs)
+- If knowledge is missing, Baxter says so clearly
+- Disable with `BAXTER_CHAT_ENABLED=false` (launcher hidden; Property Research unaffected)
+- Architecture: `docs/baxter-ai-architecture.md`
+
+Required for live answers:
+
+```bash
+OPENAI_API_KEY=...
+BAXTER_LLM_PROVIDER=openai
+BAXTER_OPENAI_MODEL=gpt-4o-mini
+BAXTER_CHAT_ENABLED=true
+```
+
+Also run `supabase/migrations/007_baxter_conversations.sql` for conversation logging.
+
+Local tip: with `ENABLE_MOCK_RESEARCH=true`, Knowledge Base and chat logging can use in-memory stores when tables are not migrated yet. Production should run migrations 006 and 007.
 
 ---
 
@@ -76,6 +99,7 @@ In Supabase SQL Editor, run each file completely:
 4. `supabase/migrations/004_branding_storage.sql`
 5. `supabase/migrations/005_new_user_role_and_maps.sql`
 6. `supabase/migrations/006_knowledge_base.sql`
+7. `supabase/migrations/007_baxter_conversations.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 
@@ -213,10 +237,10 @@ RUN_LIVE_INTEGRATION_TESTS=true npm run test:integration
 
 ## Employee URL paths
 
-| Who      | Path                                                                |
-| -------- | ------------------------------------------------------------------- |
-| Everyone | `/login`, `/dashboard`, `/reports`, `/reports/new`, `/reports/[id]` |
-| Admin    | `/admin/sources`, `/admin/provider-test`, `/admin/branding`         |
+| Who      | Path                                                    |
+| -------- | ------------------------------------------------------- |
+| Everyone | `/login`, `/dashboard`, `/reports/new`, `/reports/[id]` |
+| Admin    | `/admin/knowledge`, `/admin/users`, `/admin/branding`   |
 
 ---
 

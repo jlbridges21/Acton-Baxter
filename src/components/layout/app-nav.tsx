@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
-  FileText,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -37,12 +36,11 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
   };
 
   if (context === "platform") {
-    // Platform home stays simple — tools are opened from dashboard cards.
     return [home];
   }
 
   if (context === "property-research") {
-    const links: NavLink[] = [
+    return [
       home,
       {
         href: "/dashboard",
@@ -56,32 +54,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
         icon: PlusCircle,
         match: (pathname) => pathname === "/reports/new",
       },
-      {
-        href: "/reports",
-        label: "Reports",
-        icon: FileText,
-        match: (pathname) =>
-          pathname === "/reports" ||
-          (pathname.startsWith("/reports/") && pathname !== "/reports/new"),
-      },
     ];
-    if (isAdmin) {
-      links.push(
-        {
-          href: "/admin/sources",
-          label: "Source Health",
-          icon: Shield,
-          match: (pathname) => pathname.startsWith("/admin/sources"),
-        },
-        {
-          href: "/admin/provider-test",
-          label: "Provider Test",
-          icon: Shield,
-          match: (pathname) => pathname.startsWith("/admin/provider-test"),
-        },
-      );
-    }
-    return links;
   }
 
   if (context === "knowledge") {
@@ -105,7 +78,8 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
   }
 
   // platform-admin (branding, users, etc.)
-  const adminLinks: NavLink[] = [
+  void isAdmin;
+  return [
     home,
     {
       href: "/admin/knowledge",
@@ -125,20 +99,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       icon: Palette,
       match: (pathname) => pathname.startsWith("/admin/branding"),
     },
-    {
-      href: "/admin/sources",
-      label: "Source Health",
-      icon: Shield,
-      match: (pathname) => pathname.startsWith("/admin/sources"),
-    },
-    {
-      href: "/admin/provider-test",
-      label: "Provider Test",
-      icon: Shield,
-      match: (pathname) => pathname.startsWith("/admin/provider-test"),
-    },
   ];
-  return adminLinks;
 }
 
 export function AppNav({

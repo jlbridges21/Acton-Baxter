@@ -40,6 +40,8 @@ create index if not exists knowledge_entries_category_idx on public.knowledge_en
 create index if not exists knowledge_entries_updated_at_idx on public.knowledge_entries (updated_at desc);
 create index if not exists knowledge_entries_source_type_idx on public.knowledge_entries (source_type);
 create index if not exists knowledge_entries_tags_gin_idx on public.knowledge_entries using gin (tags);
+-- Full-text index must stay IMMUTABLE-safe. Do not use array_to_string() here
+-- (STABLE). Tags remain searchable via the GIN tags index and app-layer ranking.
 create index if not exists knowledge_entries_fts_idx on public.knowledge_entries
   using gin (
     to_tsvector(
@@ -48,8 +50,7 @@ create index if not exists knowledge_entries_fts_idx on public.knowledge_entries
       coalesce(summary, '') || ' ' ||
       coalesce(content, '') || ' ' ||
       coalesce(category, '') || ' ' ||
-      coalesce(source_name, '') || ' ' ||
-      coalesce(array_to_string(tags, ' '), '')
+      coalesce(source_name, '')
     )
   );
 

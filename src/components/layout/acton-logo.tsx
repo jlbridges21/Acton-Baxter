@@ -8,7 +8,7 @@ export function ActonLogo({
   className,
   compact = false,
   logoUrl = null,
-  companyName = "Acton ADU - Baxter",
+  companyName = "Acton ADU",
   reportTitle = "",
   logoAlt = "Acton ADU - Baxter",
 }: {

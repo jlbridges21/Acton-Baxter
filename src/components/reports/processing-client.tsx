@@ -130,7 +130,7 @@ export function ProcessingClient({ reportId }: { reportId: string }) {
             Go to dashboard
           </Link>
           <Link
-            href="/reports"
+            href="/dashboard"
             className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
           >
             Report history

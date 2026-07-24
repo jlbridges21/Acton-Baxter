@@ -3,6 +3,7 @@ import { BaxterDashboard } from "@/components/baxter/baxter-dashboard";
 import { requireActiveUser } from "@/lib/auth/session";
 import { isAdminRole } from "@/lib/auth/roles";
 import { getBrandingWithLogo } from "@/lib/branding/get-branding";
+import { getEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const user = await requireActiveUser();
   const branding = await getBrandingWithLogo();
+  const chatEnabled = getEnv().BAXTER_CHAT_ENABLED;
 
   return (
     <AppShell user={user}>
@@ -22,6 +24,7 @@ export default async function HomePage() {
         companyName={branding.companyName}
         reportTitle={branding.reportTitle}
         logoAlt={branding.logoAltText}
+        chatEnabled={chatEnabled}
       />
     </AppShell>
   );

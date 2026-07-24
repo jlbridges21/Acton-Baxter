@@ -52,7 +52,7 @@ describe("Baxter platform shell", () => {
     );
     expect(reportsNew).toMatch(/requireActiveUser|requireUser/);
     const reportsList = readFileSync(path.join(process.cwd(), "src/app/reports/page.tsx"), "utf8");
-    expect(reportsList.length).toBeGreaterThan(0);
+    expect(reportsList).toMatch(/redirect\("\/dashboard"\)/);
   });
 
   it("defaults branding fallback title to Baxter", () => {

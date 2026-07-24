@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, Construction } from "lucide-react";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { BaxterChatLauncher } from "@/components/baxter-chat/baxter-chat-launcher";
 import { BAXTER_ADMIN_CARDS, getEnabledBaxterTools, type BaxterTool } from "@/lib/baxter/tools";
 import { CompanyLogo } from "@/components/branding/company-logo";
 
@@ -9,17 +10,19 @@ export function BaxterDashboard({
   logoUrl = null,
   companyName = "Acton ADU",
   logoAlt = "Acton ADU - Baxter",
+  chatEnabled = false,
 }: {
   isAdmin?: boolean;
   logoUrl?: string | null;
   companyName?: string;
   reportTitle?: string;
   logoAlt?: string;
+  chatEnabled?: boolean;
 }) {
   const tools = getEnabledBaxterTools({ isAdmin });
 
   return (
-    <div className="space-y-8">
+    <div className="relative space-y-8">
       <div className="space-y-4">
         <CompanyLogo
           href="/"
@@ -43,9 +46,7 @@ export function BaxterDashboard({
       <section className="space-y-4">
         <div>
           <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Tools</h2>
-          <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Open a tool to work. Navigation becomes tool-specific after you enter it.
-          </p>
+          <p className="mt-1 text-sm text-[var(--acton-muted)]">Open a tool to work.</p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -87,13 +88,15 @@ export function BaxterDashboard({
             <div>
               <CardTitle className="text-base">More Baxter tools coming later</CardTitle>
               <CardDescription className="mt-2">
-                A knowledge-backed Slack assistant and related Baxter capabilities are planned for
-                later prompts. They are not available yet.
+                Slack conversations and additional Acton system integrations are planned for later
+                prompts. They are not available yet.
               </CardDescription>
             </div>
           </div>
         </Card>
       </section>
+
+      {chatEnabled ? <BaxterChatLauncher /> : null}
     </div>
   );
 }

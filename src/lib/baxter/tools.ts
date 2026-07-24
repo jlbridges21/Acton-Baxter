@@ -55,7 +55,7 @@ export type NavContext = "platform" | "property-research" | "knowledge" | "platf
 export function getNavContext(pathname: string): NavContext {
   if (pathname.startsWith("/admin/knowledge")) return "knowledge";
   if (pathname.startsWith("/admin")) return "platform-admin";
-  if (pathname === "/dashboard" || pathname === "/reports" || pathname.startsWith("/reports/")) {
+  if (pathname === "/dashboard" || pathname.startsWith("/reports")) {
     return "property-research";
   }
   return "platform";
