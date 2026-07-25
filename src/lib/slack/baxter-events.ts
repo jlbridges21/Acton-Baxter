@@ -73,6 +73,7 @@ export function isDirectMessageEvent(event: SlackIncomingEvent): boolean {
 export function evaluateSlackAccess(event: SlackIncomingEvent): {
   allowed: boolean;
   code?: string;
+  reason?: string;
   isDm: boolean;
 } {
   const config = getSlackRuntimeConfig();
@@ -87,22 +88,59 @@ export function evaluateSlackAccess(event: SlackIncomingEvent): {
 
   if (treatAsDm) {
     if (!config.enableDms) {
-      return { allowed: false, code: SLACK_ERROR_CODES.DMS_DISABLED, isDm: true };
+      return {
+        allowed: false,
+        code: SLACK_ERROR_CODES.DMS_DISABLED,
+        reason: "dms_disabled",
+        isDm: true,
+      };
     }
   } else {
     if (!config.enableChannelMentions) {
-      return { allowed: false, code: SLACK_ERROR_CODES.MENTIONS_DISABLED, isDm: false };
+      return {
+        allowed: false,
+        code: SLACK_ERROR_CODES.MENTIONS_DISABLED,
+        reason: "channel_mentions_disabled",
+        isDm: false,
+      };
     }
     if (!isSlackChannelAllowed(event.channel)) {
-      return { allowed: false, code: SLACK_ERROR_CODES.CHANNEL_NOT_ALLOWED, isDm: false };
+      return {
+        allowed: false,
+        code: SLACK_ERROR_CODES.CHANNEL_NOT_ALLOWED,
+        reason: "channel_not_in_allowlist",
+        isDm: false,
+      };
     }
   }
 
   if (!isSlackUserAllowed(event.user)) {
-    return { allowed: false, code: SLACK_ERROR_CODES.USER_NOT_ALLOWED, isDm: treatAsDm };
+    return {
+      allowed: false,
+      code: SLACK_ERROR_CODES.USER_NOT_ALLOWED,
+      reason: "user_not_allowed",
+      isDm: treatAsDm,
+    };
   }
 
   return { allowed: true, isDm: treatAsDm };
+}
+
+/** Safe diagnostic log for ignored Slack mentions/events — never logs text, tokens, or secrets. */
+export function logIgnoredSlackMention(input: {
+  eventType: string | undefined;
+  teamId: string | null;
+  channelId: string | null | undefined;
+  reason: string;
+  code?: string;
+}) {
+  console.error("[slack.mention.ignored]", {
+    eventType: input.eventType ?? null,
+    teamId: input.teamId,
+    channelId: input.channelId ?? null,
+    reason: input.reason,
+    code: input.code ?? null,
+  });
 }
 
 /** @deprecated Use claimSlackEventReceipt — kept for existing tests. */
@@ -163,6 +201,13 @@ export async function handleBaxterSlackEvent(
   }
 
   if (shouldIgnoreSlackEvent(event)) {
+    logIgnoredSlackMention({
+      eventType: event.type,
+      teamId,
+      channelId: event.channel,
+      reason: event.bot_id || event.subtype === "bot_message" ? "bot_message" : "unsupported_event",
+      code: SLACK_ERROR_CODES.EVENT_UNSUPPORTED,
+    });
     if (eventId) {
       await updateSlackEventReceipt({
         eventId,
@@ -175,6 +220,13 @@ export async function handleBaxterSlackEvent(
 
   const access = evaluateSlackAccess(event);
   if (!access.allowed) {
+    logIgnoredSlackMention({
+      eventType: event.type,
+      teamId,
+      channelId: event.channel,
+      reason: access.reason ?? access.code ?? "access_denied",
+      code: access.code,
+    });
     if (eventId) {
       await updateSlackEventReceipt({
         eventId,

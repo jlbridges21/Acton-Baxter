@@ -132,11 +132,16 @@ export function isSlackTeamAllowed(teamId: string | null | undefined): boolean {
   return config.allowedTeamIds.includes(teamId);
 }
 
+/**
+ * Channel allowlist for app_mention / channel replies.
+ * - Missing, undefined, empty, or whitespace-only SLACK_ALLOWED_CHANNEL_IDS → all channels allowed
+ * - One or more comma-separated IDs → only those channels allowed
+ * Channel mentions can still be fully disabled via SLACK_ENABLE_CHANNEL_MENTIONS=false.
+ */
 export function isSlackChannelAllowed(channelId: string | null | undefined): boolean {
   const config = getSlackRuntimeConfig();
   if (!channelId) return false;
-  // Empty allowlist = channel mentions disabled (safe pilot default).
-  if (config.allowedChannelIds.length === 0) return false;
+  if (config.allowedChannelIds.length === 0) return true;
   return config.allowedChannelIds.includes(channelId);
 }
 

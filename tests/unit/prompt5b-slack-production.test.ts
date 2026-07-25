@@ -109,7 +109,7 @@ describe("Prompt 5B Slack access and events", () => {
     expect(await claimSlackEvent("evt-5b-1", "message", "T123")).toBe(false);
   });
 
-  it("allows DMs and restrict channels by allowlist", () => {
+  it("allows DMs; restricts channels only when allowlist is configured", () => {
     expect(
       evaluateSlackAccess({
         type: "message",
