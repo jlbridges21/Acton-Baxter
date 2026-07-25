@@ -89,7 +89,7 @@ Run **Test connection** / **Test root folder** for friendly guidance (not raw JS
 
 ### Cron / process-jobs
 
-Opening `/api/internal/process-jobs` in a browser returns **Invalid cron secret** / 401. That is expected — browsers do not send `Authorization: Bearer`. Use **Run sync now** on `/admin/connectors/google`. Prefer `CRON_SECRET` in Vercel; `INTERNAL_CRON_SECRET` is a legacy alias.
+Opening `/api/internal/process-jobs` in a browser returns **Invalid cron secret** / 401. That is expected — browsers do not send `Authorization: Bearer`. Use **Sync changes** on `/admin/connectors/google`. Prefer `CRON_SECRET` in Vercel; `INTERNAL_CRON_SECRET` is a legacy alias.
 
 Full Google setup: **`docs/google-workspace-oauth-setup.md`**, **`docs/google-connector.md`**, and **`docs/google-drive-knowledge-manager.md`**
 

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { exportDriveFile } from "./drive";
+import { downloadDriveFileBytes, exportDriveFile } from "./drive";
 import {
   GOOGLE_DOC_MIME,
   GOOGLE_SHEET_MIME,
@@ -13,6 +13,9 @@ const PDF_MIME = "application/pdf";
 const TEXT_MIME = "text/plain";
 const MARKDOWN_MIME = "text/markdown";
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const CSV_MIME = "text/csv";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const XLS_MIME = "application/vnd.ms-excel";
 
 export function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex");
@@ -26,13 +29,16 @@ export function isSupportedGoogleMime(mimeType: string): boolean {
     mimeType === MARKDOWN_MIME ||
     mimeType === PDF_MIME ||
     mimeType === DOCX_MIME ||
+    mimeType === CSV_MIME ||
+    mimeType === XLSX_MIME ||
+    mimeType === XLS_MIME ||
     mimeType.startsWith("text/")
   );
 }
 
 /**
  * Parse a Drive file into searchable text when possible.
- * PDF: metadata only. DOCX: prepared/metadata only (no binary parse yet).
+ * Binary Office/PDF/CSV/XLSX: download bytes and reuse Knowledge Import parsers.
  */
 export async function parseGoogleDriveFile(
   file: GoogleDriveFile,
@@ -75,7 +81,6 @@ export async function parseGoogleDriveFile(
     file.mimeType === MARKDOWN_MIME ||
     file.mimeType.startsWith("text/")
   ) {
-    // Plain text downloads use alt=media
     const { googleFetch } = await import("./auth");
     const contentText = await googleFetch<string>(
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
@@ -89,21 +94,55 @@ export async function parseGoogleDriveFile(
     };
   }
 
-  if (file.mimeType === PDF_MIME || file.mimeType === DOCX_MIME) {
-    const stub = [
-      `Title: ${file.name}`,
-      `Type: ${file.mimeType === PDF_MIME ? "PDF" : "Word document"}`,
-      "Content extraction is not enabled yet. Open the original file for full content.",
-      file.webViewLink ? `URL: ${file.webViewLink}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    return {
-      ...base,
-      contentText: stub,
-      contentHash: hashContent(`${file.id}:${file.modifiedTime ?? ""}:${file.md5Checksum ?? ""}`),
-      parseMode: "metadata_only",
-    };
+  if (
+    file.mimeType === XLSX_MIME ||
+    file.mimeType === XLS_MIME ||
+    file.mimeType === CSV_MIME ||
+    file.mimeType === PDF_MIME ||
+    file.mimeType === DOCX_MIME
+  ) {
+    try {
+      const buffer = await downloadDriveFileBytes(file.id);
+      const { parseKnowledgeUpload } = await import("@/lib/knowledge-import/parser");
+      const filename = file.name.includes(".")
+        ? file.name
+        : `${file.name}${
+            file.mimeType === XLSX_MIME || file.mimeType === XLS_MIME
+              ? ".xlsx"
+              : file.mimeType === CSV_MIME
+                ? ".csv"
+                : file.mimeType === PDF_MIME
+                  ? ".pdf"
+                  : ".docx"
+          }`;
+      const parsed = await parseKnowledgeUpload({
+        filename,
+        buffer,
+        mimeType: file.mimeType,
+      });
+      return {
+        ...base,
+        contentText: parsed.content,
+        contentHash: parsed.contentHash || hashContent(parsed.content),
+        parseMode: "full_text",
+      };
+    } catch (error) {
+      const stub = [
+        `Title: ${file.name}`,
+        `Type: ${file.mimeType}`,
+        "Content extraction failed. Open the original file for full content.",
+        file.webViewLink ? `URL: ${file.webViewLink}` : "",
+        error instanceof Error ? `Error: ${error.message.slice(0, 200)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        ...base,
+        contentText: stub,
+        contentHash: hashContent(`${file.id}:${file.modifiedTime ?? ""}:${file.md5Checksum ?? ""}`),
+        parseMode: "metadata_only",
+      };
+    }
   }
 
   return {
@@ -123,6 +162,7 @@ export function googleSourceKind(mimeType: string): "google_doc" | "google_sheet
 export function googleOpenLabel(mimeType: string): string {
   if (mimeType === GOOGLE_DOC_MIME) return "Open Google Doc";
   if (mimeType === GOOGLE_SHEET_MIME) return "Open Google Sheet";
+  if (mimeType === XLSX_MIME || mimeType === XLS_MIME) return "Open spreadsheet";
   if (mimeType === PDF_MIME) return "Open PDF";
   return "Open Google File";
 }

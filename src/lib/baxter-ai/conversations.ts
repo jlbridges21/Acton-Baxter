@@ -390,14 +390,54 @@ async function persistMessageSources(
 ) {
   if (sources.length === 0) return;
 
-  const mapped = sources.map((source) => ({
-    knowledge_entry_id: source.id,
-    source_order: source.order,
-    relevance_score: source.relevanceScore,
-  }));
+  let snapshots = new Map<
+    string,
+    {
+      title: string | null;
+      sourceType: string | null;
+      sourceUrl: string | null;
+      label: string | null;
+    }
+  >();
+  try {
+    const { getKnowledgeEntry } = await import("@/lib/knowledge/store");
+    for (const source of sources) {
+      const entry = await getKnowledgeEntry(source.id);
+      if (entry) {
+        snapshots.set(source.id, {
+          title: entry.title,
+          sourceType: entry.source_type,
+          sourceUrl: entry.source_url,
+          label: entry.source_name || entry.title,
+        });
+      }
+    }
+  } catch {
+    snapshots = new Map();
+  }
+
+  const mapped = sources.map((source) => {
+    const snap = snapshots.get(source.id);
+    return {
+      knowledge_entry_id: source.id,
+      source_order: source.order,
+      relevance_score: source.relevanceScore,
+      source_title_snapshot: snap?.title ?? null,
+      source_type_snapshot: snap?.sourceType ?? null,
+      source_url_snapshot: snap?.sourceUrl ?? null,
+      source_label_snapshot: snap?.label ?? null,
+    };
+  });
 
   if (shouldPersistInMemory(conversationId)) {
-    getMemory().sources.set(messageId, mapped);
+    getMemory().sources.set(
+      messageId,
+      mapped.map((row) => ({
+        knowledge_entry_id: row.knowledge_entry_id,
+        source_order: row.source_order,
+        relevance_score: row.relevance_score,
+      })),
+    );
     return;
   }
 
@@ -407,10 +447,27 @@ async function persistMessageSources(
     .insert(mapped.map((row) => ({ ...row, message_id: messageId })));
 
   if (error) {
-    // Missing table or missing knowledge FK — keep answering path working.
-    getMemory().sources.set(messageId, mapped);
-    if (!isMissingTableError(error) && error.code !== "23503") {
-      console.warn("[baxter-ai] failed to persist message sources", error.message);
+    // Retry without snapshot columns if migration 015 not applied yet
+    const fallback = await supabase.from("baxter_message_sources").insert(
+      mapped.map((row) => ({
+        message_id: messageId,
+        knowledge_entry_id: row.knowledge_entry_id,
+        source_order: row.source_order,
+        relevance_score: row.relevance_score,
+      })),
+    );
+    if (fallback.error) {
+      getMemory().sources.set(
+        messageId,
+        mapped.map((row) => ({
+          knowledge_entry_id: row.knowledge_entry_id,
+          source_order: row.source_order,
+          relevance_score: row.relevance_score,
+        })),
+      );
+      if (!isMissingTableError(fallback.error) && fallback.error.code !== "23503") {
+        console.warn("[baxter-ai] failed to persist message sources", fallback.error.message);
+      }
     }
   }
 }

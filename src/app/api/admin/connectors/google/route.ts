@@ -96,6 +96,11 @@ export async function POST(request: Request) {
           "preview_file",
           "list_synced_files",
           "process_one_job",
+          "add_to_baxter",
+          "remove_from_baxter",
+          "reconcile",
+          "set_primary_root",
+          "remember_folder",
         ]),
         folderId: z.string().optional(),
         driveId: z.string().optional().nullable(),
@@ -106,6 +111,7 @@ export async function POST(request: Request) {
         sort: z.enum(["name", "modified"]).optional(),
         fileType: z.enum(["all", "docs", "sheets", "folders", "supported"]).optional(),
         googleFileId: z.string().optional(),
+        googleFileIds: z.array(z.string()).optional(),
         selectionType: z.enum(["file", "folder"]).optional(),
         recursive: z.boolean().optional(),
         includeFutureFiles: z.boolean().optional(),
@@ -116,6 +122,23 @@ export async function POST(request: Request) {
         defaultTags: z.array(z.string()).optional(),
         enabled: z.boolean().optional(),
         selectionId: z.string().uuid().optional(),
+        selectionIds: z.array(z.string().uuid()).optional(),
+        knowledgeEntryId: z.string().uuid().optional().nullable(),
+        repair: z.boolean().optional(),
+        files: z
+          .array(
+            z.object({
+              googleFileId: z.string(),
+              selectionType: z.enum(["file", "folder"]),
+              title: z.string().optional(),
+              mimeType: z.string().optional(),
+              driveId: z.string().optional().nullable(),
+              parentFileId: z.string().optional().nullable(),
+              recursive: z.boolean().optional(),
+              includeFutureFiles: z.boolean().optional(),
+            }),
+          )
+          .optional(),
       })
       .parse(body);
 
@@ -275,6 +298,10 @@ export async function POST(request: Request) {
         fileType: parsed.fileType,
       });
       const selections = root ? await listSelectionsForRoot(root.id) : [];
+      if (root && browse.currentFolderId) {
+        const { rememberBrowsedFolder } = await import("@/lib/connectors/google/add-remove");
+        await rememberBrowsedFolder(root.id, browse.currentFolderId).catch(() => undefined);
+      }
       return jsonOk({
         result: {
           ...browse,
@@ -381,6 +408,70 @@ export async function POST(request: Request) {
       }
       const outcome = await processJob(job);
       return jsonOk({ processed: true, jobId: job.id, outcome });
+    }
+
+    if (parsed.action === "add_to_baxter") {
+      if (!parsed.rootId || !parsed.files?.length) {
+        throw new Error("rootId and files are required");
+      }
+      const { addFilesToBaxter } = await import("@/lib/connectors/google/add-remove");
+      const { reconcileGoogleKnowledgeState } = await import("@/lib/connectors/google/reconcile");
+      const outcome = await addFilesToBaxter({
+        rootId: parsed.rootId,
+        userId: user.id,
+        files: parsed.files,
+      });
+      await reconcileGoogleKnowledgeState({
+        rootId: parsed.rootId,
+        repair: true,
+        userId: user.id,
+      }).catch(() => undefined);
+      return jsonOk(outcome);
+    }
+
+    if (parsed.action === "remove_from_baxter") {
+      const { removeFilesFromBaxter } = await import("@/lib/connectors/google/add-remove");
+      const { reconcileGoogleKnowledgeState } = await import("@/lib/connectors/google/reconcile");
+      const outcome = await removeFilesFromBaxter({
+        rootId: parsed.rootId,
+        userId: user.id,
+        googleFileIds: parsed.googleFileIds,
+        selectionIds: parsed.selectionIds,
+        knowledgeEntryId: parsed.knowledgeEntryId,
+      });
+      await reconcileGoogleKnowledgeState({
+        rootId: parsed.rootId,
+        repair: true,
+        userId: user.id,
+      }).catch(() => undefined);
+      return jsonOk(outcome);
+    }
+
+    if (parsed.action === "reconcile") {
+      const { reconcileGoogleKnowledgeState } = await import("@/lib/connectors/google/reconcile");
+      const reconcile = await reconcileGoogleKnowledgeState({
+        rootId: parsed.rootId,
+        repair: parsed.repair !== false,
+        userId: user.id,
+      });
+      return jsonOk({ reconcile });
+    }
+
+    if (parsed.action === "set_primary_root") {
+      if (!parsed.rootId) throw new Error("rootId is required");
+      const { updateGoogleSyncFolder: updateRoot } =
+        await import("@/lib/connectors/google/folders");
+      const folder = await updateRoot(parsed.rootId, { is_primary: true });
+      return jsonOk({ folder });
+    }
+
+    if (parsed.action === "remember_folder") {
+      if (!parsed.rootId || !parsed.currentFolderId) {
+        throw new Error("rootId and currentFolderId are required");
+      }
+      const { rememberBrowsedFolder } = await import("@/lib/connectors/google/add-remove");
+      await rememberBrowsedFolder(parsed.rootId, parsed.currentFolderId);
+      return jsonOk({ ok: true });
     }
 
     return jsonOk({ ok: true });

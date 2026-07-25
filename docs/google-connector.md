@@ -6,6 +6,8 @@ Google Docs and Sheets are the **source of truth**. Baxter syncs their text into
 
 Admin UI: **`/admin/connectors/google`** (labeled **Google Workspace**)
 
+The primary page is a Drive file picker: connected account, active Shared Drive, browse, **Add to Baxter** / **Remove from Baxter**, and **Sync changes**. Cron notes, credential tests, dry-runs, and raw JSON live under **Advanced diagnostics**.
+
 **Primary production auth:** Google Workspace OAuth as `baxter@actonadu.com`  
 See **`docs/google-workspace-oauth-setup.md`**.
 

@@ -93,7 +93,7 @@ describe("knowledge delete safety", () => {
     expect(result).toEqual({ deleted: true });
   });
 
-  it("blocks Google-managed hard delete", async () => {
+  it("removes Google-managed entries from Baxter instead of blocking", async () => {
     const entry = await createKnowledgeEntry(
       {
         title: "Google doc",
@@ -104,9 +104,13 @@ describe("knowledge delete safety", () => {
       },
       "00000000-0000-4000-8000-000000000001",
     );
-    await expect(deleteKnowledgeEntry(entry.id)).rejects.toMatchObject({
-      code: KNOWLEDGE_ERROR_CODES.GOOGLE_MANAGED,
+    const result = await deleteKnowledgeEntry(entry.id, {
+      userId: "00000000-0000-4000-8000-000000000001",
     });
+    expect(result).toMatchObject({ removedFromBaxter: true });
+    if ("entry" in result) {
+      expect(result.entry.status).toBe("archived");
+    }
   });
 
   it("returns not found for missing ids", async () => {

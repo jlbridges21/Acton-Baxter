@@ -1,6 +1,6 @@
 import "server-only";
 
-import { googleFetch } from "./auth";
+import { googleFetch, mintAccessToken } from "./auth";
 import { GOOGLE_FOLDER_MIME, type GoogleDriveFile } from "./types";
 
 const FILE_FIELDS =
@@ -63,6 +63,24 @@ export async function exportDriveFile(fileId: string, mimeType: string): Promise
     }
     throw error;
   }
+}
+
+/** Download a binary Drive file (XLSX, DOCX, PDF, etc.) as a Buffer. */
+export async function downloadDriveFileBytes(fileId: string): Promise<Buffer> {
+  const token = await mintAccessToken();
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw Object.assign(
+      new Error(`Google file download failed (${response.status}): ${text.slice(0, 200)}`),
+      { code: "BAXTER_GOOGLE_DOWNLOAD_FAILED", statusCode: response.status },
+    );
+  }
+  const ab = await response.arrayBuffer();
+  return Buffer.from(ab);
 }
 
 export async function getFolderMetadata(folderId: string): Promise<GoogleDriveFile> {

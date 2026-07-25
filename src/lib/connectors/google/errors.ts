@@ -8,7 +8,8 @@ export class GoogleConnectorError extends AppError {
     super(message, {
       code: options?.code ?? "GOOGLE_CONNECTOR_ERROR",
       statusCode: options?.statusCode ?? 502,
-      expose: options?.expose ?? false,
+      // Admin connector UI needs actionable messages by default.
+      expose: options?.expose ?? true,
       cause: options?.cause,
     });
     this.name = "GoogleConnectorError";

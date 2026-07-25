@@ -61,7 +61,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const user = await requireAdmin();
     const { id } = await context.params;
     if (!isUuid(id)) throw new ValidationError("Invalid knowledge entry id");
-    await adminDeleteKnowledgeEntry(user.profile.role, id);
+    await adminDeleteKnowledgeEntry(user.profile.role, id, user.id);
     return jsonOk({ deleted: true });
   } catch (error) {
     return jsonError(error, "DELETE /api/admin/knowledge/[id]");

@@ -138,21 +138,35 @@ export function KnowledgeListClient({
     const google =
       entry?.source_type === "Google Drive" ||
       Boolean((entry?.metadata as { googleManaged?: boolean } | undefined)?.googleManaged);
-    if (google) {
-      setError(
-        "This entry is managed by Google Workspace. Remove it from Baxter through Google Workspace.",
-      );
-      return;
-    }
-    if (!window.confirm(`Permanently delete “${title}”? Prefer Archive if Baxter has cited it.`)) {
+    const isUpload = entry?.source_type === "uploaded_document";
+    const confirmMsg = google
+      ? `Remove “${title}” from Baxter?\n\nBaxter will stop using this file. The original Google Drive file will not be changed.`
+      : isUpload
+        ? `Delete “${title}” from Baxter?`
+        : `Delete “${title}” permanently?`;
+    if (!window.confirm(confirmMsg)) {
       return;
     }
     setBusyId(id);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/knowledge/${id}`, { method: "DELETE" });
-      const payload = (await response.json()) as { error?: { message?: string } };
-      if (!response.ok) throw new Error(payload.error?.message ?? "Delete failed");
+      if (google) {
+        const response = await fetch("/api/admin/connectors/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "remove_from_baxter",
+            knowledgeEntryId: id,
+            googleFileIds: entry?.source_external_id ? [entry.source_external_id] : undefined,
+          }),
+        });
+        const payload = (await response.json()) as { error?: { message?: string } };
+        if (!response.ok) throw new Error(payload.error?.message ?? "Remove failed");
+      } else {
+        const response = await fetch(`/api/admin/knowledge/${id}`, { method: "DELETE" });
+        const payload = (await response.json()) as { error?: { message?: string } };
+        if (!response.ok) throw new Error(payload.error?.message ?? "Delete failed");
+      }
       setEntries((current) => current.filter((row) => row.id !== id));
       router.refresh();
     } catch (err) {
@@ -329,6 +343,16 @@ export function KnowledgeListClient({
                           >
                             Open
                           </Link>
+                          {entry.source_type === "Google Drive" && entry.source_url ? (
+                            <a
+                              href={entry.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded px-2 py-1 text-xs font-semibold text-[var(--acton-navy)] hover:bg-white"
+                            >
+                              Open in Google
+                            </a>
+                          ) : null}
                           {entry.status !== "approved" ? (
                             <button
                               type="button"
@@ -355,7 +379,15 @@ export function KnowledgeListClient({
                             disabled={busyId === entry.id}
                             onClick={() => void deleteEntry(entry.id, entry.title)}
                           >
-                            Delete
+                            {entry.source_type === "Google Drive" ||
+                            Boolean(
+                              (entry.metadata as { googleManaged?: boolean } | undefined)
+                                ?.googleManaged,
+                            )
+                              ? "Remove from Baxter"
+                              : entry.source_type === "uploaded_document"
+                                ? "Delete from Baxter"
+                                : "Delete permanently"}
                           </button>
                         </div>
                       </td>

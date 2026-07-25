@@ -42,9 +42,9 @@ export async function adminSetKnowledgeStatus(
   return setKnowledgeEntryStatus(id, status, userId);
 }
 
-export async function adminDeleteKnowledgeEntry(role: string, id: string) {
+export async function adminDeleteKnowledgeEntry(role: string, id: string, userId?: string) {
   assertCanManageKnowledge(role);
-  return deleteKnowledgeEntry(id);
+  return deleteKnowledgeEntry(id, { userId });
 }
 
 export async function adminCreateKnowledgeSource(

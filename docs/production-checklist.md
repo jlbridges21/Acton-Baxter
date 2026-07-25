@@ -68,10 +68,13 @@ Additional database tasks:
 - [ ] `GOOGLE_SYNC_INTERVAL_MINUTES=180` (due logic; Hobby cron may still be daily)
 - [ ] `CRON_SECRET` set in Vercel (canonical); optional legacy `INTERNAL_CRON_SECRET`
 - [ ] Confirm opening `/api/internal/process-jobs` in a browser returns auth error (expected)
-- [ ] **Run sync now** from admin UI starts a sync without entering a cron secret
-- [ ] **Dry-run sync** passes at `/admin/connectors/google`
-- [ ] **Run sync now** completes; approved Google-managed entries appear in Knowledge Base
-- [ ] **Test through Baxter** cites a real Google URL
+- [ ] **Sync changes** from admin UI starts a sync without entering a cron secret
+- [ ] Drive browser opens automatically when OAuth + Shared Drive root already exist
+- [ ] **Add selected to Baxter** creates Knowledge entries (including XLSX) without a separate sync step
+- [ ] Google entries can be removed from Knowledge Center (**Remove from Baxter**)
+- [ ] Migration `015_google_knowledge_usability.sql` applied in Supabase
+- [ ] **Sync changes** completes; approved Google-managed entries appear in Knowledge Base
+- [ ] Advanced diagnostics (optional): dry-run / repair Google knowledge
 - [ ] Scheduled sync: Vercel Cron registered for `/api/internal/process-jobs` (Production only)
 
 ---

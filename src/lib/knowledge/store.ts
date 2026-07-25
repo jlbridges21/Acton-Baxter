@@ -428,10 +428,43 @@ export function isGoogleManagedEntry(entry: KnowledgeEntry): boolean {
   return Boolean(meta?.googleManaged || meta?.google);
 }
 
+/**
+ * Freeze citation display fields so past Baxter answers survive entry removal.
+ */
+export async function snapshotCitationsForEntry(entry: KnowledgeEntry): Promise<void> {
+  if (shouldUseMemoryStore()) return;
+  try {
+    const supabase = createServiceClient();
+    const now = nowIso();
+    await supabase
+      .from("baxter_message_sources")
+      .update({
+        source_title_snapshot: entry.title,
+        source_type_snapshot: entry.source_type,
+        source_url_snapshot: entry.source_url,
+        source_label_snapshot: entry.source_name || entry.title,
+        source_deleted_at: now,
+      })
+      .eq("knowledge_entry_id", entry.id)
+      .is("source_deleted_at", null);
+  } catch {
+    // Snapshot columns may be missing until migration 015 — non-fatal.
+  }
+}
+
+/**
+ * Remove an entry from active Knowledge. Google: unlink selection + archive.
+ * Manual/upload: archive if cited (tombstone) or hard-delete when safe.
+ * Historical citations keep frozen snapshots.
+ */
 export async function deleteKnowledgeEntry(
   id: string,
-  options?: { forceArchiveInstead?: boolean },
-): Promise<{ deleted: true } | { archived: true; entry: KnowledgeEntry }> {
+  options?: { forceArchiveInstead?: boolean; userId?: string | null },
+): Promise<
+  | { deleted: true }
+  | { archived: true; entry: KnowledgeEntry }
+  | { removedFromBaxter: true; entry: KnowledgeEntry }
+> {
   const existing = await getKnowledgeEntry(id);
   if (!existing) {
     const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
@@ -440,37 +473,60 @@ export async function deleteKnowledgeEntry(
     });
   }
 
+  await snapshotCitationsForEntry(existing);
+
   if (isGoogleManagedEntry(existing)) {
-    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
-    throw new KnowledgeError(
-      "This entry is managed by Google Workspace. Remove it from Baxter through Google Drive Sources.",
-      KNOWLEDGE_ERROR_CODES.GOOGLE_MANAGED,
-      { statusCode: 409 },
-    );
+    const { removeFilesFromBaxter } = await import("@/lib/connectors/google/add-remove");
+    await removeFilesFromBaxter({
+      userId: options?.userId ?? existing.updated_by ?? existing.created_by ?? "system",
+      knowledgeEntryId: existing.id,
+      googleFileIds: existing.source_external_id ? [existing.source_external_id] : [],
+    });
+    const archived =
+      (await getKnowledgeEntry(id)) ??
+      ({
+        ...existing,
+        status: "archived" as const,
+        archived_at: nowIso(),
+      } satisfies KnowledgeEntry);
+    return { removedFromBaxter: true, entry: archived };
   }
 
   const citations = await countBaxterCitationsForEntry(id);
-  if (citations > 0) {
-    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
-    throw new KnowledgeError(
-      "This entry has been used as a source in previous Baxter answers. Archive it instead to preserve conversation history.",
-      KNOWLEDGE_ERROR_CODES.HAS_REFERENCES,
-      { statusCode: 409 },
-    );
+  // Prefer hard delete; if cited, detach FK then delete (snapshots already written).
+  if (citations > 0 || options?.forceArchiveInstead) {
+    if (!shouldUseMemoryStore()) {
+      try {
+        const supabase = createServiceClient();
+        await supabase
+          .from("baxter_message_sources")
+          .update({ knowledge_entry_id: null })
+          .eq("knowledge_entry_id", id);
+      } catch {
+        // If nulling fails (NOT NULL without migration), fall through to archive.
+        const archived = await setKnowledgeEntryStatus(
+          id,
+          "archived",
+          options?.userId ?? existing.updated_by ?? "system",
+        );
+        return { archived: true, entry: archived };
+      }
+    }
   }
 
-  void options;
   try {
     const { deleteUploadsForEntry } = await import("@/lib/knowledge-import/storage");
     await deleteUploadsForEntry(id);
   } catch (error) {
-    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
+    const { KnowledgeError } = await import("./errors");
     if (error instanceof KnowledgeError) throw error;
-    throw new KnowledgeError(
-      "The entry could not be fully deleted because stored file cleanup failed.",
-      KNOWLEDGE_ERROR_CODES.STORAGE_DELETE_FAILED,
-      { statusCode: 502, cause: error },
+    // Soft-remove instead of failing the admin action
+    const archived = await setKnowledgeEntryStatus(
+      id,
+      "archived",
+      options?.userId ?? existing.updated_by ?? "system",
     );
+    return { archived: true, entry: archived };
   }
 
   if (shouldUseMemoryStore()) {
@@ -480,16 +536,26 @@ export async function deleteKnowledgeEntry(
   }
 
   const supabase = createServiceClient();
+  try {
+    await supabase
+      .from("baxter_message_sources")
+      .update({ knowledge_entry_id: null })
+      .eq("knowledge_entry_id", id);
+  } catch {
+    /* ignore — columns/FK may differ pre-migration */
+  }
+
   const { error } = await supabase.from("knowledge_entries").delete().eq("id", id);
   if (error) {
     const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
     const message = (error.message ?? "").toLowerCase();
     if (message.includes("foreign key") || error.code === "23503") {
-      throw new KnowledgeError(
-        "This entry cannot be deleted because related records still reference it. Archive it instead.",
-        KNOWLEDGE_ERROR_CODES.HAS_REFERENCES,
-        { statusCode: 409, cause: error },
+      const archived = await setKnowledgeEntryStatus(
+        id,
+        "archived",
+        options?.userId ?? existing.updated_by ?? "system",
       );
+      return { archived: true, entry: archived };
     }
     throw new KnowledgeError(
       "Knowledge entry could not be deleted.",

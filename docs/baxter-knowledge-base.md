@@ -12,7 +12,7 @@ Primary actions:
 
 - **New Entry** → `/admin/knowledge/new` (title + content only)
 - **Upload Files** → `/admin/knowledge/upload`
-- **Google Workspace** → `/admin/connectors/google`
+- **Google Workspace** → `/admin/connectors/google` (Drive browser → **Add to Baxter**)
 - **Settings** → `/admin/knowledge/settings`
 
 ## Roles

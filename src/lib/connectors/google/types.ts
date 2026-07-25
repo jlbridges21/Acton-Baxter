@@ -43,4 +43,8 @@ export type GoogleSyncFolder = {
   created_at: string;
   updated_at: string;
   metadata: Record<string, unknown>;
+  /** Prefer this root when opening Google Workspace. */
+  is_primary?: boolean;
+  last_browsed_folder_id?: string | null;
+  last_browsed_at?: string | null;
 };

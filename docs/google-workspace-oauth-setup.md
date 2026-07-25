@@ -132,10 +132,13 @@ Paste the output into Vercel as `GOOGLE_TOKEN_ENCRYPTION_KEY`. Rotate by generat
 
 ## Shared Drives, roots, files, sync
 
-1. Click **Browse Google Drive** / **List Shared Drives**.
-2. Open the Acton Shared Drive → **Connect as root** (no manual ID paste required).
-3. Browse folders/files → select → preview → sync.
-4. Scheduled sync uses the encrypted refresh token server-side (no browser session).
+1. Click **Connect Google Workspace**.
+2. Choose the Acton Shared Drive card (**Use this Drive**) once.
+3. Browse folders/files in the main Drive browser (opens automatically on return visits).
+4. Select files → **Add selected to Baxter** (sync + Knowledge entries run together).
+5. Scheduled sync uses the encrypted refresh token server-side (no browser session).
+
+Technical diagnostics (credential tests, dry-run, repair) live under **Connection settings → Advanced diagnostics**.
 
 ## Reauthorization and disconnect
 

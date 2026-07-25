@@ -26,7 +26,11 @@ Notion-style entry view with tabs:
 
 ## Google Workspace
 
-`/admin/connectors/google` — connection status, browse Drive, select sources, sync with visible progress. Technical JSON is behind “View technical details”.
+`/admin/connectors/google` — Drive browser first. Add/remove files from Baxter in one click. Connection settings and advanced diagnostics are secondary.
+
+Google-managed Knowledge entries can be removed directly from the Knowledge Center (**Remove from Baxter**). Historical Baxter citations keep frozen titles/URLs after removal (migration `015`).
+
+Supported Google imports include Docs, Sheets, Markdown, Text, PDF, DOCX, CSV, and **XLSX**.
 
 ## Settings
 

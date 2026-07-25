@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
 import type { KnowledgeEntry, KnowledgeEntryRevision } from "@/lib/knowledge/types";
@@ -12,7 +14,7 @@ import { cn } from "@/lib/utils";
 type Tab = "content" | "history" | "sources" | "usage";
 
 export function KnowledgeEntryDetailClient({
-  entry,
+  entry: initialEntry,
   revisions,
   citationCount,
 }: {
@@ -20,7 +22,13 @@ export function KnowledgeEntryDetailClient({
   revisions: KnowledgeEntryRevision[];
   citationCount: number;
 }) {
+  const router = useRouter();
+  const [entry, setEntry] = useState(initialEntry);
   const [tab, setTab] = useState<Tab>("content");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   const meta = (entry.metadata ?? {}) as Record<string, unknown>;
   const isGoogle = entry.source_type === "Google Drive" || Boolean(meta.googleManaged);
   const isUpload = entry.source_type === "uploaded_document";
@@ -41,6 +49,78 @@ export function KnowledgeEntryDetailClient({
     { id: "usage", label: "Baxter Usage" },
   ];
 
+  async function removeFromBaxter() {
+    if (
+      !window.confirm(
+        `Remove “${entry.title}” from Baxter?\n\nBaxter will stop using this file. The original Google Drive file will not be changed.`,
+      )
+    ) {
+      return;
+    }
+    setBusy("remove");
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/connectors/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "remove_from_baxter",
+          knowledgeEntryId: entry.id,
+          googleFileIds: entry.source_external_id ? [entry.source_external_id] : undefined,
+        }),
+      });
+      const payload = (await response.json()) as { error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message ?? "Remove failed");
+      setMessage("File removed from Baxter");
+      router.push("/admin/knowledge");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Remove failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function syncNow() {
+    setBusy("sync");
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/connectors/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync" }),
+      });
+      const payload = (await response.json()) as { error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message ?? "Sync failed");
+      setMessage("Knowledge updated");
+      const refreshed = await fetch(`/api/admin/knowledge/${entry.id}`);
+      const body = (await refreshed.json()) as { entry?: KnowledgeEntry };
+      if (body.entry) setEntry(body.entry);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteEntry() {
+    const label = isUpload ? "Delete from Baxter" : "Delete permanently";
+    if (!window.confirm(`${label}: “${entry.title}”?`)) return;
+    setBusy("delete");
+    try {
+      const response = await fetch(`/api/admin/knowledge/${entry.id}`, { method: "DELETE" });
+      const payload = (await response.json()) as { error?: { message?: string } };
+      if (!response.ok) throw new Error(payload.error?.message ?? "Delete failed");
+      router.push("/admin/knowledge");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <KnowledgeCenterShell
       title={entry.title}
@@ -49,6 +129,17 @@ export function KnowledgeEntryDetailClient({
       activeView="all"
     >
       <div className="space-y-4">
+        {message ? (
+          <p className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-900" role="status">
+            {message}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+            {error}
+          </p>
+        ) : null}
+
         <div className="rounded-xl border border-[var(--acton-border)] bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -77,24 +168,69 @@ export function KnowledgeEntryDetailClient({
                 Updated {formatDate(entry.updated_at)}
                 {entry.approved_at ? ` · Approved ${formatDate(entry.approved_at)}` : ""}
               </p>
+              {isGoogle ? (
+                <p className="mt-2 text-sm text-[var(--acton-muted)]">
+                  Managed by Google Workspace. Edit this content in Google Drive. Baxter will update
+                  it on the next sync.
+                </p>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
-              {isGoogle ? (
-                <Link
-                  href="/admin/connectors/google"
+              {isGoogle && entry.source_url ? (
+                <a
+                  href={entry.source_url}
+                  target="_blank"
+                  rel="noreferrer"
                   className="inline-flex h-10 items-center rounded-md border border-[var(--acton-border)] px-4 text-sm font-semibold"
                 >
-                  Manage in Google
-                </Link>
+                  Open in Google
+                </a>
               ) : null}
-              <Link
-                href={`/admin/knowledge/${entry.id}/edit`}
-                className="inline-flex h-10 items-center rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white"
-              >
-                {isGoogle ? "Edit metadata" : "Edit"}
-              </Link>
+              {isGoogle ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy === "sync"}
+                    onClick={() => void syncNow()}
+                  >
+                    {busy === "sync" ? "Syncing…" : "Sync now"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy === "remove"}
+                    onClick={() => void removeFromBaxter()}
+                  >
+                    {busy === "remove" ? "Removing…" : "Remove from Baxter"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    href={`/admin/knowledge/${entry.id}/edit`}
+                    className="inline-flex h-10 items-center rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white"
+                  >
+                    Edit
+                  </Link>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy === "delete"}
+                    onClick={() => void deleteEntry()}
+                  >
+                    {isUpload ? "Delete from Baxter" : "Delete permanently"}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
+
+          {isGoogle && lastSync ? (
+            <p className="mt-4 text-sm text-[var(--acton-muted)]">
+              Last synced: {formatDate(lastSync)}
+            </p>
+          ) : null}
 
           <div className="mt-6 flex flex-wrap gap-1 border-b border-[var(--acton-border)]">
             {tabs.map((item) => (
@@ -206,9 +342,8 @@ export function KnowledgeEntryDetailClient({
                   {citationCount === 1 ? "" : "s"}.
                 </p>
                 <p className="text-[var(--acton-muted)]">
-                  {entry.status === "approved"
-                    ? "This entry is available for retrieval when relevant."
-                    : "Baxter will not use this entry until it is approved."}
+                  Past answers keep frozen source titles and links even if this entry is removed
+                  from active Knowledge.
                 </p>
               </div>
             ) : null}

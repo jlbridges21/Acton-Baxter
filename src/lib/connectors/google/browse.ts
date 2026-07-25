@@ -30,11 +30,14 @@ function toBrowseItem(file: GoogleDriveFile): BrowseItem {
   else if (
     file.mimeType.includes("document") ||
     file.mimeType.includes("spreadsheet") ||
-    file.mimeType.startsWith("text/")
+    file.mimeType.startsWith("text/") ||
+    file.mimeType === "text/csv" ||
+    file.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    file.mimeType === "application/vnd.ms-excel"
   ) {
     parseModeHint = "full_text";
   } else if (file.mimeType === "application/pdf" || file.mimeType.includes("wordprocessingml")) {
-    parseModeHint = "metadata_only";
+    parseModeHint = "full_text";
   }
 
   return {

@@ -108,6 +108,7 @@ In Supabase SQL Editor, run each file completely:
 12. `supabase/migrations/012_knowledge_uploads.sql`
 13. `supabase/migrations/013_google_workspace_oauth.sql`
 14. `supabase/migrations/014_admin_role_management.sql`
+15. `supabase/migrations/015_google_knowledge_usability.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 
