@@ -27,15 +27,15 @@ export function normalizeTags(input: string[] | string | undefined | null): stri
 }
 
 export const knowledgeEntryWriteSchema = z.object({
-  title: z.string().trim().min(3).max(300),
-  content: z.string().trim().min(10).max(100_000),
+  title: z.string().trim().min(1, "Title is required").max(300),
+  content: z.string().trim().min(1, "Content is required").max(100_000),
   summary: z.string().trim().max(2000).optional().nullable(),
-  category: z.string().trim().min(2).max(120),
+  category: z.string().trim().max(120).optional().nullable(),
   tags: z.union([z.array(z.string()), z.string()]).optional(),
   source_name: z.string().trim().max(200).optional().nullable(),
-  source_type: knowledgeSourceTypeSchema.default("manual"),
+  source_type: knowledgeSourceTypeSchema.optional().default("manual"),
   source_url: z.string().trim().max(2000).optional().nullable(),
-  visibility: knowledgeVisibilitySchema.default("internal"),
+  visibility: knowledgeVisibilitySchema.optional().default("internal"),
   status: knowledgeStatusSchema.optional(),
   change_note: z.string().trim().max(1000).optional().nullable(),
 });

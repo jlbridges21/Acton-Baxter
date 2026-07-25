@@ -2,63 +2,77 @@
 
 ## Purpose
 
-The Knowledge Base stores Acton ADU institutional knowledge (procedures, policies, RACI notes, and related process docs) so Baxter can later answer employees from **approved** sources only.
+The Knowledge Base stores Acton ADU institutional knowledge so Baxter can answer employees from **approved + internal** sources only.
+
+## Admin home
+
+**`/admin/knowledge`** is the Knowledge Management landing page.
+
+Primary actions:
+
+- **Add knowledge** → `/admin/knowledge/new` (title + content only)
+- **Upload documents** → `/admin/knowledge/upload`
+- **Connect Google Drive** → `/admin/connectors/google`
 
 ## Roles
 
-| Role                   | Access                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------- |
-| salesperson / employee | Cannot manage Knowledge Base. Future retrieval returns only **approved + internal** entries. |
-| admin                  | Full CRUD, approve, archive, restore, delete, revision history, sources                      |
+| Role                   | Access                                                                  |
+| ---------------------- | ----------------------------------------------------------------------- |
+| salesperson / employee | No admin Knowledge navigation. Retrieval uses approved + internal only. |
+| admin                  | Full manage, upload, approve, archive, restore, safe delete             |
 
-Authorization is enforced in API routes (`requireAdmin`) and mutation helpers. Database RLS also restricts access.
+## Simple manual entry
+
+Required:
+
+- Title
+- Content
+
+Defaults:
+
+- `source_type = manual`
+- `source_name = Manual entry`
+- `visibility = internal` (All Acton employees)
+- `category = General`
+- `tags = []`
+- status = draft unless **Approve and publish**
+
+Advanced options (optional): summary, category, tags, source name, source URL, visibility.
 
 ## Statuses
 
-- **draft** — editable working copy; never used for employee answers
-- **approved** — eligible for Baxter retrieval (if visibility is `internal`)
-- **archived** — retained for history; never used for answers
+- **draft** — not available to Baxter
+- **approved** — Baxter can use it (when visibility is internal)
+- **archived** — unavailable to Baxter; history preserved
 
-## Approval workflow
+### Editing approved entries
 
-1. Admin creates or edits an entry (usually as draft).
-2. Admin approves the entry (`approved_by` / `approved_at` recorded).
-3. Meaningful content edits to an approved entry:
-   - save prior version to `knowledge_entry_revisions`
-   - increment `version`
-   - return status to **draft**
-   - clear approval until re-approved
-4. Archive removes the entry from retrieval; restore returns it to draft.
+Saves a revision, increments version, returns to **draft**, and requires re-approval.
 
-Deleting an entry permanently removes it and cascades revisions. Confirmation is required in the UI.
+## Deletion
 
-## Admin usage
+Hard delete works for unused manual/uploaded entries.
 
-1. Open Baxter Dashboard → **Manage Knowledge** (admins only), or go to `/admin/knowledge`.
-2. Create an entry with title, content, category, tags, and source fields.
-3. Approve when ready for Baxter.
-4. Use **Knowledge Sources** (`/admin/knowledge/sources`) for manual source registry only.
+If Baxter has cited the entry:
 
-## Future Slack retrieval
+> Archive it instead to preserve conversation history.
 
-`searchApprovedKnowledge()` returns ranked approved internal results with:
+Google-managed entries cannot be hard-deleted from the Knowledge list — use **Manage Google source**.
 
-- title, summary, excerpt
-- category, tags
-- source name/URL
-- citation label (e.g. `Sales Process — PEM Preparation Checklist`)
-- relevance score
+Migration **012** sets `baxter_message_sources.knowledge_entry_id` to `ON DELETE SET NULL` and adds upload storage.
 
-Draft, archived, and admin_only entries are excluded.
+## Uploads
 
-## Security notes
+See **`docs/knowledge-imports.md`**.
 
-- No API keys or secrets in `knowledge_sources`
-- Future Google Drive / GHL / Buildertrend / Domo are shown as **Not connected** only
-- OpenAI and Slack AI conversations are **not** implemented in this prompt
+Libraries: Mammoth (DOCX), pdf-parse (PDF text), SheetJS/`xlsx` (Excel), built-in CSV/text/Markdown parsers.
 
-## Migration
+## Source badges
 
-Run in Supabase SQL Editor (or CLI) after prior migrations:
+- Manual
+- Uploaded
+- Google
 
-`supabase/migrations/006_knowledge_base.sql`
+## Google Drive
+
+Navigation and existing connector pages are available now. Shared Drive authentication redesign is **Prompt 2**.

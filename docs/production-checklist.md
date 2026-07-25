@@ -6,7 +6,7 @@ Production URL: **`https://acton-baxter.vercel.app`**
 
 ---
 
-## Database (migrations 001–010)
+## Database (migrations 001–012)
 
 Run each file in Supabase SQL Editor, in order:
 
@@ -20,11 +20,14 @@ Run each file in Supabase SQL Editor, in order:
 - [ ] `008_google_sync_and_slack_events.sql`
 - [ ] `009_slack_production.sql` — `slack_event_receipts`, `slack_baxter_reply` job type
 - [ ] `010_baxter_feedback.sql` — web chat thumbs feedback
+- [ ] `011_google_knowledge_manager.sql` — Google selections / synced files / sync runs
+- [ ] `012_knowledge_uploads.sql` — uploads table, `knowledge-uploads` bucket, citation FK SET NULL
 
 Additional database tasks:
 
 - [ ] Create Storage bucket `branding-assets` if migration 004 cannot insert it (private, ≤ 2 MB, PNG/JPEG/WEBP)
-- [ ] Confirm RLS on reports, branding, jobs, logs, knowledge, Baxter conversations, Slack receipts, feedback
+- [ ] Confirm Storage bucket `knowledge-uploads` exists (private; created by migration 012)
+- [ ] Confirm RLS on reports, branding, jobs, logs, knowledge, Baxter conversations, Slack receipts, feedback, uploads
 - [ ] Create at least one **admin** profile (`profiles.role = 'admin'`)
 - [ ] Grant **salesperson** (or admin) to employees who need Property Research
 - [ ] Confirm at least one **approved** Knowledge Base entry exists (bootstrap or Google sync)
@@ -94,7 +97,15 @@ Additional database tasks:
 
 ---
 
-## Web application
+## Knowledge Base admin
+
+- [ ] `/admin/knowledge` landing shows Add / Upload / Google Drive actions
+- [ ] New entry requires only title + content; Approve and publish works
+- [ ] Upload Markdown preview + import works
+- [ ] Scanned/empty PDF shows no-OCR warning
+- [ ] Delete unused manual entry succeeds; cited entry prompts archive
+- [ ] Google-managed delete is blocked with Manage source guidance
+- [ ] Navigation shows Knowledge, Upload Documents, Google Drive for admins only
 
 - [ ] `NEXT_PUBLIC_APP_URL=https://acton-baxter.vercel.app` (Knowledge Base source links in Slack and web)
 - [ ] `APP_BASE_URL` matches production HTTPS URL

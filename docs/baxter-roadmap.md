@@ -45,11 +45,19 @@
   - Hobby-safe daily Vercel cron; due logic via `GOOGLE_SYNC_INTERVAL_MINUTES`
   - Structured Sheets export (tabs/headers/rows)
   - Guide: `docs/google-drive-knowledge-manager.md`
+- **Knowledge Management Rework — Prompt 1 of 3**
+  - Simplified manual entry (title + content)
+  - Fixed Knowledge delete (`baxter_message_sources` FK + actionable errors)
+  - Document uploads (md/txt/pdf/docx/csv/xlsx) with preview + duplicates
+  - Migration 012 (`knowledge_uploads`, private `knowledge-uploads` bucket)
+  - Knowledge landing page + admin navigation (Upload, Google Drive)
+  - Guide: `docs/knowledge-imports.md`
 
 ## Current
 
 - Initial Acton employee Slack pilot (Jackson, Milan, Maxx, James — see `docs/slack-setup.md` section 21)
-- Google Drive selective sync pilot (share roots with service account; select Project Brief + managed folders)
+- Knowledge Management Rework Prompt 2: Google Workspace auth / Shared Drive / selection UX
+- Knowledge Management Rework Prompt 3: polish and rollout
 
 ## Future
 

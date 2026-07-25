@@ -10,16 +10,14 @@ const postSlackMessage = vi.fn(
   }),
 );
 
-const answerBaxterQuestion = vi.fn(
-  async (): Promise<BaxterAnswer> => ({
-    answer: "Hello from Baxter.",
-    conversationId: "conv-1",
-    sources: [],
-    answerMode: "general",
-    confidence: "medium",
-    insufficientKnowledge: false,
-  }),
-);
+const answerBaxterQuestion = vi.fn(async (): Promise<BaxterAnswer> => ({
+  answer: "Hello from Baxter.",
+  conversationId: "conv-1",
+  sources: [],
+  answerMode: "general",
+  confidence: "medium",
+  insufficientKnowledge: false,
+}));
 
 vi.mock("@/lib/slack/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/slack/client")>();
@@ -227,9 +225,8 @@ describe("Slack DM vs channel reply threading", () => {
       }),
     );
 
-    const { postSlackMessage: realPost } = await vi.importActual<
-      typeof import("@/lib/slack/client")
-    >("@/lib/slack/client");
+    const { postSlackMessage: realPost } =
+      await vi.importActual<typeof import("@/lib/slack/client")>("@/lib/slack/client");
     await realPost({ channel: "D1", text: "top-level" });
     expect(bodies[0]).not.toHaveProperty("thread_ts");
     expect(bodies[0]).not.toHaveProperty("reply_broadcast");

@@ -1,19 +1,23 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
 import {
   BookOpen,
+  Cloud,
+  FileUp,
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   Palette,
   PlusCircle,
   Search,
   Shield,
+  Upload,
   X,
 } from "lucide-react";
+import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/branding/company-logo";
 import { Button } from "@/components/ui/button";
 import { getNavContext, type NavContext } from "@/lib/baxter/tools";
@@ -57,52 +61,95 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     ];
   }
 
+  if (!isAdmin) return [home];
+
   if (context === "knowledge") {
     return [
       home,
       {
         href: "/admin/knowledge",
-        label: "Knowledge Base",
+        label: "All Knowledge",
         icon: BookOpen,
         match: (pathname) =>
           pathname === "/admin/knowledge" ||
-          (pathname.startsWith("/admin/knowledge/") && !pathname.includes("/sources")),
+          (/^\/admin\/knowledge\/[^/]+$/.test(pathname) &&
+            !pathname.includes("/upload") &&
+            !pathname.includes("/new") &&
+            !pathname.includes("/sources") &&
+            !pathname.includes("/edit") &&
+            !pathname.includes("/history")),
       },
       {
-        href: "/admin/knowledge/sources",
-        label: "Sources",
-        icon: Shield,
-        match: (pathname) => pathname.startsWith("/admin/knowledge/sources"),
+        href: "/admin/knowledge/new",
+        label: "Add Entry",
+        icon: PlusCircle,
+        match: (pathname) => pathname === "/admin/knowledge/new",
+      },
+      {
+        href: "/admin/knowledge/upload",
+        label: "Upload Documents",
+        icon: Upload,
+        match: (pathname) => pathname.startsWith("/admin/knowledge/upload"),
+      },
+      {
+        href: "/admin/connectors/google",
+        label: "Google Drive",
+        icon: Cloud,
+        match: (pathname) => pathname.startsWith("/admin/connectors/google"),
       },
     ];
   }
 
-  // platform-admin (branding, users, connectors, etc.)
-  void isAdmin;
+  // platform-admin
   return [
     home,
     {
       href: "/admin/knowledge",
-      label: "Knowledge Base",
+      label: "Knowledge",
       icon: BookOpen,
       match: (pathname) => pathname.startsWith("/admin/knowledge"),
+    },
+    {
+      href: "/admin/knowledge/upload",
+      label: "Upload",
+      icon: FileUp,
+      match: (pathname) => pathname.startsWith("/admin/knowledge/upload"),
+    },
+    {
+      href: "/admin/connectors/google",
+      label: "Google Drive",
+      icon: Cloud,
+      match: (pathname) => pathname.startsWith("/admin/connectors/google"),
     },
     {
       href: "/admin/connectors",
       label: "Connectors",
       icon: Shield,
-      match: (pathname) => pathname.startsWith("/admin/connectors"),
+      match: (pathname) =>
+        pathname.startsWith("/admin/connectors") && !pathname.includes("/google"),
     },
     {
       href: "/admin/baxter/diagnostics",
-      label: "Baxter Diagnostics",
+      label: "Diagnostics",
       icon: Shield,
-      match: (pathname) => pathname.startsWith("/admin/baxter"),
+      match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
+    },
+    {
+      href: "/admin/baxter/feedback",
+      label: "Feedback",
+      icon: MessageSquare,
+      match: (pathname) => pathname.startsWith("/admin/baxter/feedback"),
+    },
+    {
+      href: "/admin/baxter/launch-readiness",
+      label: "Launch Ready",
+      icon: Shield,
+      match: (pathname) => pathname.startsWith("/admin/baxter/launch-readiness"),
     },
     {
       href: "/admin/slack",
       label: "Slack",
-      icon: Shield,
+      icon: MessageSquare,
       match: (pathname) => pathname.startsWith("/admin/slack"),
     },
     {
@@ -190,7 +237,7 @@ export function AppNav({
             productLabel="Baxter"
             alt={logoAlt}
           />
-          <nav className="hidden items-center gap-1 lg:flex">{navItems}</nav>
+          <nav className="hidden items-center gap-1 xl:flex">{navItems}</nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="hidden text-right sm:block">
@@ -207,7 +254,7 @@ export function AppNav({
             type="button"
             variant="secondary"
             size="sm"
-            className="lg:hidden"
+            className="xl:hidden"
             aria-expanded={mobileOpen}
             aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
             onClick={() => setMobileOpen((open) => !open)}
@@ -217,7 +264,7 @@ export function AppNav({
         </div>
       </div>
       {mobileOpen ? (
-        <nav className="flex flex-col gap-1 border-t border-[var(--acton-border)] px-4 py-3 lg:hidden">
+        <nav className="flex flex-col gap-1 border-t border-[var(--acton-border)] px-4 py-3 xl:hidden">
           {navItems}
         </nav>
       ) : null}

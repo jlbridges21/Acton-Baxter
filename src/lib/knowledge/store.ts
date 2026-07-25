@@ -244,9 +244,11 @@ export async function createKnowledgeEntry(
     title: input.title.trim(),
     content: input.content.trim(),
     summary: emptyToNull(input.summary ?? null),
-    category: input.category.trim(),
+    category: input.category?.trim() || "General",
     tags,
-    source_name: emptyToNull(input.source_name ?? null),
+    source_name:
+      emptyToNull(input.source_name ?? null) ??
+      (input.source_type === "manual" || !input.source_type ? "Manual entry" : null),
     source_type: input.source_type ?? "manual",
     source_url: emptyToNull(input.source_url ?? null),
     source_external_id: null,
@@ -291,7 +293,7 @@ export async function updateKnowledgeEntry(
     title: input.title.trim(),
     content: input.content.trim(),
     summary: emptyToNull(input.summary ?? null),
-    category: input.category.trim(),
+    category: input.category?.trim() || existing.category || "General",
     tags,
   };
   const meaningful = isMeaningfulKnowledgeChange(existing, nextFields);
@@ -403,15 +405,99 @@ export async function setKnowledgeEntryStatus(
   return data as KnowledgeEntry;
 }
 
-export async function deleteKnowledgeEntry(id: string): Promise<void> {
+export async function countBaxterCitationsForEntry(entryId: string): Promise<number> {
+  if (shouldUseMemoryStore()) {
+    return 0;
+  }
+  try {
+    const supabase = createServiceClient();
+    const { count, error } = await supabase
+      .from("baxter_message_sources")
+      .select("id", { count: "exact", head: true })
+      .eq("knowledge_entry_id", entryId);
+    if (error) return 0;
+    return count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function isGoogleManagedEntry(entry: KnowledgeEntry): boolean {
+  if (entry.source_type === "Google Drive") return true;
+  const meta = entry.metadata as { googleManaged?: boolean; google?: unknown } | null;
+  return Boolean(meta?.googleManaged || meta?.google);
+}
+
+export async function deleteKnowledgeEntry(
+  id: string,
+  options?: { forceArchiveInstead?: boolean },
+): Promise<{ deleted: true } | { archived: true; entry: KnowledgeEntry }> {
+  const existing = await getKnowledgeEntry(id);
+  if (!existing) {
+    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
+    throw new KnowledgeError("Knowledge entry not found.", KNOWLEDGE_ERROR_CODES.NOT_FOUND, {
+      statusCode: 404,
+    });
+  }
+
+  if (isGoogleManagedEntry(existing)) {
+    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
+    throw new KnowledgeError(
+      "This entry is managed by Google Workspace. Remove it from Baxter through Google Drive Sources.",
+      KNOWLEDGE_ERROR_CODES.GOOGLE_MANAGED,
+      { statusCode: 409 },
+    );
+  }
+
+  const citations = await countBaxterCitationsForEntry(id);
+  if (citations > 0) {
+    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
+    throw new KnowledgeError(
+      "This entry has been used as a source in previous Baxter answers. Archive it instead to preserve conversation history.",
+      KNOWLEDGE_ERROR_CODES.HAS_REFERENCES,
+      { statusCode: 409 },
+    );
+  }
+
+  void options;
+  try {
+    const { deleteUploadsForEntry } = await import("@/lib/knowledge-import/storage");
+    await deleteUploadsForEntry(id);
+  } catch (error) {
+    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
+    if (error instanceof KnowledgeError) throw error;
+    throw new KnowledgeError(
+      "The entry could not be fully deleted because stored file cleanup failed.",
+      KNOWLEDGE_ERROR_CODES.STORAGE_DELETE_FAILED,
+      { statusCode: 502, cause: error },
+    );
+  }
+
   if (shouldUseMemoryStore()) {
     getMemory().entries.delete(id);
     getMemory().revisions.delete(id);
-    return;
+    return { deleted: true };
   }
+
   const supabase = createServiceClient();
   const { error } = await supabase.from("knowledge_entries").delete().eq("id", id);
-  if (error) throw error;
+  if (error) {
+    const { KnowledgeError, KNOWLEDGE_ERROR_CODES } = await import("./errors");
+    const message = (error.message ?? "").toLowerCase();
+    if (message.includes("foreign key") || error.code === "23503") {
+      throw new KnowledgeError(
+        "This entry cannot be deleted because related records still reference it. Archive it instead.",
+        KNOWLEDGE_ERROR_CODES.HAS_REFERENCES,
+        { statusCode: 409, cause: error },
+      );
+    }
+    throw new KnowledgeError(
+      "Knowledge entry could not be deleted.",
+      KNOWLEDGE_ERROR_CODES.DELETE_FAILED,
+      { statusCode: 500, cause: error },
+    );
+  }
+  return { deleted: true };
 }
 
 export async function listKnowledgeSources(): Promise<KnowledgeSource[]> {

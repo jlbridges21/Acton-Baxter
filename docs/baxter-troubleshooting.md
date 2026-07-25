@@ -92,7 +92,17 @@ Full Google setup: **`docs/google-connector.md`** and **`docs/google-drive-knowl
 
 ---
 
-## Diagnostics
+## Knowledge Base deletion
+
+| Symptom                                            | Cause                                                                 | Fix                                                                   |
+| -------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| “An unexpected error occurred” on delete (pre-012) | `baxter_message_sources` FK `ON DELETE RESTRICT` when entry was cited | Apply migration **012**; archive cited entries instead of hard delete |
+| Google-managed cannot delete                       | Intentional                                                           | Use Google Drive Sources → Remove from Baxter                         |
+| Storage delete failed                              | Bucket missing or policy                                              | Confirm `knowledge-uploads` bucket from migration 012                 |
+
+## Knowledge uploads
+
+See **`docs/knowledge-imports.md`**.
 
 Open **`/admin/baxter/diagnostics`** as an admin.
 

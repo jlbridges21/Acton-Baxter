@@ -1,5 +1,6 @@
 /** Suggested categories for Acton institutional knowledge. */
 export const KNOWLEDGE_CATEGORIES = [
+  "General",
   "Employee Handbook",
   "Sales Process",
   "Production SOP",

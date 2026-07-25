@@ -38,13 +38,30 @@ export default async function KnowledgeDetailPage({ params }: PageProps) {
               </Badge>
               <Badge tone="navy">v{entry.version}</Badge>
               {entry.source_type === "Google Drive" || entry.metadata?.googleManaged === true ? (
-                <Badge tone="amber">Google Workspace managed</Badge>
-              ) : null}
+                <Badge tone="amber">Google</Badge>
+              ) : entry.source_type === "uploaded_document" ? (
+                <Badge tone="navy">Uploaded</Badge>
+              ) : (
+                <Badge tone="green">Manual</Badge>
+              )}
             </div>
             <p className="mt-1 text-sm text-[var(--acton-muted)]">
               {entry.category}
               {entry.tags.length ? ` · ${entry.tags.join(", ")}` : ""}
             </p>
+            {entry.status === "draft" ? (
+              <p className="mt-2 text-sm text-amber-800">
+                This entry is not currently available to Baxter.
+              </p>
+            ) : null}
+            {entry.status === "approved" && entry.visibility === "internal" ? (
+              <p className="mt-2 text-sm text-emerald-800">Baxter can currently use this entry.</p>
+            ) : null}
+            {entry.status === "archived" ? (
+              <p className="mt-2 text-sm text-[var(--acton-muted)]">
+                This entry is archived and unavailable to Baxter.
+              </p>
+            ) : null}
             {entry.source_type === "Google Drive" ? (
               <p className="mt-2 text-sm text-amber-800">
                 Content is controlled by Google Drive. Edit the original Google file, then sync.
