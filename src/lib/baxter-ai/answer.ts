@@ -81,12 +81,22 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   const contextItems = evidence.contextItems;
 
   // Deterministic structured answer when we have a direct field value
-  const direct =
+  let direct =
     evidence.structured && !evidence.structured.ambiguous
       ? draftDirectStructuredAnswer(question, evidence.structured)
       : evidence.structured?.ambiguous
         ? evidence.structured.clarificationPrompt
         : null;
+
+  if (direct && evidence.conflicts.length > 0) {
+    const conflictLines = evidence.conflicts
+      .map(
+        (c) =>
+          `I found conflicting approved Acton information. One source lists ${c.values[0]} and another lists ${c.values[1]}.`,
+      )
+      .join(" ");
+    direct = `${conflictLines} Please review the cited sources.`;
+  }
 
   if (
     direct &&

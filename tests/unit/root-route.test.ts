@@ -29,11 +29,11 @@ describe("Baxter platform shell", () => {
     expect(pkg.name).toBe("baxter");
   });
 
-  it("registers Property Research as the enabled Baxter tool at /reports/new", () => {
+  it("registers Property Research as the enabled Baxter tool at /dashboard", () => {
     const tools = getEnabledBaxterTools();
     expect(tools).toHaveLength(1);
     expect(tools[0]?.key).toBe("property-research");
-    expect(tools[0]?.href).toBe("/reports/new");
+    expect(tools[0]?.href).toBe("/dashboard");
     expect(tools[0]?.enabled).toBe(true);
     expect(tools[0]?.icon).toBeTruthy();
   });

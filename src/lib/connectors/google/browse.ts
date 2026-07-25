@@ -4,6 +4,7 @@ import { getDriveFile, listFilesInFolder } from "./drive";
 import { GOOGLE_FOLDER_MIME, type GoogleDriveFile } from "./types";
 import { GoogleConnectorError } from "./errors";
 import { isSupportedGoogleMime } from "./parser";
+import { looksLikeGoogleUrl, parseGoogleWorkspaceUrl } from "./google-url";
 
 export type BrowseItem = {
   id: string;
@@ -16,6 +17,8 @@ export type BrowseItem = {
   driveId: string | null;
   supported: boolean;
   parseModeHint: "full_text" | "metadata_only" | "unsupported" | "folder";
+  sheetGid?: string | null;
+  matchedByUrl?: boolean;
 };
 
 export type Breadcrumb = {
@@ -23,17 +26,20 @@ export type Breadcrumb = {
   name: string;
 };
 
-function toBrowseItem(file: GoogleDriveFile): BrowseItem {
+function toBrowseItem(file: GoogleDriveFile, extras?: Partial<BrowseItem>): BrowseItem {
   const isFolder = file.mimeType === GOOGLE_FOLDER_MIME;
   let parseModeHint: BrowseItem["parseModeHint"] = "unsupported";
   if (isFolder) parseModeHint = "folder";
   else if (
     file.mimeType.includes("document") ||
     file.mimeType.includes("spreadsheet") ||
+    file.mimeType.includes("presentation") ||
     file.mimeType.startsWith("text/") ||
     file.mimeType === "text/csv" ||
     file.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-    file.mimeType === "application/vnd.ms-excel"
+    file.mimeType === "application/vnd.ms-excel" ||
+    file.mimeType.startsWith("image/") ||
+    file.mimeType.includes("presentationml")
   ) {
     parseModeHint = "full_text";
   } else if (file.mimeType === "application/pdf" || file.mimeType.includes("wordprocessingml")) {
@@ -51,6 +57,7 @@ function toBrowseItem(file: GoogleDriveFile): BrowseItem {
     driveId: file.driveId ?? null,
     supported: isFolder ? true : isSupportedGoogleMime(file.mimeType),
     parseModeHint,
+    ...extras,
   };
 }
 
@@ -149,11 +156,39 @@ export async function browseDriveFolder(input: {
       "This folder appears empty. If you expected files, confirm the service account can access Shared Drive members or child shares.";
   }
 
-  let items = files.map(toBrowseItem);
+  let items = files.map((f) => toBrowseItem(f));
 
   if (input.search?.trim()) {
-    const q = input.search.trim().toLowerCase();
-    items = items.filter((item) => item.name.toLowerCase().includes(q));
+    const rawSearch = input.search.trim();
+    if (looksLikeGoogleUrl(rawSearch) || /^https?:\/\//i.test(rawSearch)) {
+      const parsed = parseGoogleWorkspaceUrl(rawSearch);
+      if (parsed.kind === "folder" && parsed.folderId) {
+        // Navigate into the folder instead of filtering the current listing
+        return browseDriveFolder({
+          ...input,
+          folderId: parsed.folderId,
+          search: null,
+        });
+      }
+      if (parsed.fileId) {
+        try {
+          const file = await getDriveFile(parsed.fileId);
+          items = [
+            toBrowseItem(file, {
+              matchedByUrl: true,
+              sheetGid: parsed.sheetGid,
+            }),
+          ];
+        } catch {
+          items = [];
+        }
+      } else {
+        items = [];
+      }
+    } else {
+      const q = rawSearch.toLowerCase();
+      items = items.filter((item) => item.name.toLowerCase().includes(q));
+    }
   }
 
   if (input.fileType && input.fileType !== "all") {

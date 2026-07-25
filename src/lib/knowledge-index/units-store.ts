@@ -140,6 +140,89 @@ export async function listAllSpreadsheetRowUnits(): Promise<KnowledgeUnitRecord[
   return (data as KnowledgeUnitRecord[]) ?? [];
 }
 
+export async function listAllEmbeddableUnits(): Promise<KnowledgeUnitRecord[]> {
+  const embeddable = [
+    "document_section",
+    "paragraph",
+    "table",
+    "summary",
+    "summary_metrics",
+    "note",
+    "image_description",
+    "image_ocr",
+    "pdf_page",
+    "slide",
+    "key_value",
+  ];
+  if (shouldUseMemory()) {
+    return Array.from(getMemory().units.values())
+      .flat()
+      .filter((u) => embeddable.includes(u.unit_type));
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("knowledge_units")
+    .select("*")
+    .in("unit_type", embeddable);
+  if (error) {
+    if (isMissingTable(error)) {
+      return Array.from(getMemory().units.values())
+        .flat()
+        .filter((u) => embeddable.includes(u.unit_type));
+    }
+    throw error;
+  }
+  return (data as KnowledgeUnitRecord[]) ?? [];
+}
+
+export async function updateUnitEmbedding(
+  unitId: string,
+  embedding: {
+    vector: number[];
+    provider: string;
+    model: string;
+    contentHash: string;
+  },
+): Promise<void> {
+  const generatedAt = nowIso();
+  // Update memory copy if present
+  for (const [entryId, units] of getMemory().units) {
+    const idx = units.findIndex((u) => u.id === unitId);
+    if (idx >= 0) {
+      const next = [...units];
+      next[idx] = {
+        ...next[idx]!,
+        embedding: embedding.vector,
+        embedding_provider: embedding.provider,
+        embedding_model: embedding.model,
+        embedding_generated_at: generatedAt,
+        embedding_content_hash: embedding.contentHash,
+      };
+      getMemory().units.set(entryId, next);
+      break;
+    }
+  }
+
+  if (shouldUseMemory()) return;
+
+  try {
+    const supabase = createServiceClient();
+    await supabase
+      .from("knowledge_units")
+      .update({
+        embedding: embedding.vector,
+        embedding_provider: embedding.provider,
+        embedding_model: embedding.model,
+        embedding_generated_at: generatedAt,
+        embedding_content_hash: embedding.contentHash,
+        updated_at: generatedAt,
+      })
+      .eq("id", unitId);
+  } catch {
+    // Column may be missing until migration 017
+  }
+}
+
 export async function deleteUnitsForEntry(knowledgeEntryId: string): Promise<void> {
   getMemory().units.delete(knowledgeEntryId);
   if (shouldUseMemory()) return;

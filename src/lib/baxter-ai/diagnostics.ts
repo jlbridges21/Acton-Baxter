@@ -15,9 +15,15 @@ import { createKnowledgeEntry, patchKnowledgeEntrySyncFields } from "@/lib/knowl
 import { BAXTER_BOOTSTRAP_TITLE, BAXTER_BOOTSTRAP_CONTENT } from "./bootstrap-content";
 import { getOpenAiMetricsSnapshot } from "./openai-metrics";
 import { classifyOpenAiHttpError, employeeFacingErrorMessage, openaiAdminGuidance } from "./errors";
+import { getBaxterProviderDiagnostics } from "./providers";
+import { getEmbeddingConfig } from "@/lib/knowledge-index/embeddings";
+import { getBaxterVisionProvider } from "./vision";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
+  const providerDiag = getBaxterProviderDiagnostics();
+  const embedding = getEmbeddingConfig();
+  const vision = getBaxterVisionProvider();
   const entries = await listAllKnowledgeEntriesForRetrieval();
   const approvedInternal = entries.filter(
     (entry) => entry.status === "approved" && entry.visibility === "internal",
@@ -54,10 +60,17 @@ export async function getBaxterDiagnosticsSnapshot() {
   return {
     config: {
       chatEnabled: env.BAXTER_CHAT_ENABLED,
-      provider: env.BAXTER_LLM_PROVIDER || "openai",
-      model: env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o-mini",
-      fallbackModel: env.BAXTER_OPENAI_FALLBACK_MODEL || null,
+      provider: providerDiag.reasoningProvider,
+      model: providerDiag.reasoningModel,
+      fallbackProvider: providerDiag.fallbackProvider,
+      fallbackModel: providerDiag.fallbackModel,
+      embeddingProvider: providerDiag.embeddingProvider,
+      embeddingModel: providerDiag.embeddingModel || embedding.model,
+      visionProvider: providerDiag.visionProvider,
+      visionModel: vision.model,
+      propertyResearchAiProvider: providerDiag.propertyResearchAiProvider,
       openaiKeyPresent: Boolean((env.OPENAI_API_KEY ?? "").trim()),
+      anthropicKeyPresent: Boolean((env.ANTHROPIC_API_KEY ?? "").trim()),
       supabaseServiceRolePresent: Boolean((env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()),
       googleConfigured: isGoogleWorkspaceConfigured(),
       slackConfigured: Boolean(

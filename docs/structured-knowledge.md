@@ -5,6 +5,8 @@ Baxter now supports **two kinds of knowledge**:
 1. **Document knowledge** — procedures, policies, Docs, PDFs, manuals (chunked by headings/paragraphs)
 2. **Structured data** — Google Sheets, XLSX, CSV (tables, rows, summary metrics)
 
+**Prompt 2** adds multimodal units (images, PDF pages, slides), embeddings, and hybrid retrieval. See [baxter-retrieval.md](./baxter-retrieval.md). Index version is **`KNOWLEDGE_INDEX_VERSION = 2`**.
+
 ## Knowledge entries vs units
 
 - `knowledge_entries` remain the human-facing source records in the Knowledge Center.

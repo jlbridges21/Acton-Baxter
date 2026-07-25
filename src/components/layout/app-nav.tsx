@@ -73,7 +73,7 @@ function adminLinks(): NavLink[] {
       match: (pathname) => pathname === "/",
     },
     {
-      href: "/reports/new",
+      href: "/dashboard",
       label: "Property Research",
       icon: Search,
       match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
@@ -120,6 +120,12 @@ function adminLinks(): NavLink[] {
       label: "Diagnostics",
       icon: Activity,
       match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
+    },
+    {
+      href: "/admin/baxter/evaluations",
+      label: "Evaluations",
+      icon: Rocket,
+      match: (pathname) => pathname.startsWith("/admin/baxter/evaluations"),
     },
     {
       href: "/admin/baxter/feedback",

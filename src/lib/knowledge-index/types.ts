@@ -1,8 +1,9 @@
 /**
- * Baxter Intelligence — structured knowledge index (Prompt 1 of 3).
- * Current parser/index version. Bump when unit shape or spreadsheet detection changes.
+ * Baxter Intelligence — knowledge index version.
+ * v1: structured spreadsheet units (Prompt 1)
+ * v2: multimodal units + embeddings (Prompt 2)
  */
-export const KNOWLEDGE_INDEX_VERSION = 1;
+export const KNOWLEDGE_INDEX_VERSION = 2;
 
 export const KNOWLEDGE_UNIT_TYPES = [
   "document_section",
@@ -15,6 +16,11 @@ export const KNOWLEDGE_UNIT_TYPES = [
   "summary",
   "summary_metrics",
   "note",
+  "image_description",
+  "image_ocr",
+  "pdf_page",
+  "slide",
+  "conflict_note",
 ] as const;
 
 export type KnowledgeUnitType = (typeof KNOWLEDGE_UNIT_TYPES)[number];
@@ -88,10 +94,34 @@ export type KnowledgeUnitRecord = {
   index_version: number;
   created_at: string;
   updated_at: string;
+  embedding?: number[] | null;
+  embedding_provider?: string | null;
+  embedding_model?: string | null;
+  embedding_generated_at?: string | null;
+  embedding_content_hash?: string | null;
 };
 
+export type KnowledgeIntent =
+  | "identity"
+  | "general"
+  | "acton_factual"
+  | "acton_procedure"
+  | "structured_lookup"
+  | "structured_aggregation"
+  | "document_lookup"
+  | "multimodal_lookup"
+  | "hybrid";
+
 export type KnowledgeQueryPlan = {
-  mode: "document" | "structured_lookup" | "structured_aggregate" | "hybrid";
+  mode:
+    | "document"
+    | "structured_lookup"
+    | "structured_aggregate"
+    | "hybrid"
+    | "lexical"
+    | "semantic"
+    | "multimodal";
+  intent: KnowledgeIntent;
   entities: string[];
   requestedFields: string[];
   filters: Array<{ field: string; value: string }>;

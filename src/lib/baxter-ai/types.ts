@@ -2,7 +2,7 @@ export type BaxterChannel = "web" | "slack";
 export type BaxterConfidence = "high" | "medium" | "low";
 export type BaxterMessageRole = "user" | "assistant" | "system";
 export type BaxterConversationStatus = "active" | "closed" | "error";
-export type BaxterLlmProviderName = "openai";
+export type BaxterLlmProviderName = "openai" | "anthropic";
 export type BaxterSourceKind =
   "manual" | "knowledge_entry" | "google_doc" | "google_sheet" | "google_file";
 

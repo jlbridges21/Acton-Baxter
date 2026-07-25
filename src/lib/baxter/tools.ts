@@ -21,7 +21,7 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     key: "property-research",
     name: "Property Research Tool",
     description: "Research property, parcel, zoning, and planning information for PEM preparation.",
-    href: "/reports/new",
+    href: "/dashboard",
     enabled: true,
     icon: House,
     ctaLabel: "Open Property Research",

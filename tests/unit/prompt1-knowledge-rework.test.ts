@@ -174,7 +174,7 @@ describe("document parsing", () => {
 
   it("rejects unsupported types and oversized files", async () => {
     await expect(
-      parseKnowledgeUpload({ filename: "photo.png", buffer: Buffer.from("x") }),
+      parseKnowledgeUpload({ filename: "clip.mp4", buffer: Buffer.from("x") }),
     ).rejects.toMatchObject({ code: KNOWLEDGE_ERROR_CODES.UPLOAD_UNSUPPORTED });
 
     process.env.KNOWLEDGE_UPLOAD_MAX_MB = "0.00001"; // ~10 bytes

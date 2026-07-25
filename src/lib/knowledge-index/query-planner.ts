@@ -81,18 +81,43 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
     filters.push({ field: "Project Type (BR/Custom)", value: "Custom" });
   }
 
+  const wantsMultimodal =
+    /\b(diagram|image|screenshot|photo|chart|slide|presentation|floor plan|site plan|png|jpg|jpeg)\b/i.test(
+      q,
+    );
+  const wantsProcedure =
+    /\b(what happens|procedure|process|after|before|during|steps?|how (do|does|to)|workflow)\b/i.test(
+      q,
+    );
+  const wantsAcronym = /\b(stand for|acronym|mean|definition of|what is [A-Z]{2,6}\b)/i.test(raw);
+
   let mode: KnowledgeQueryPlan["mode"] = "document";
+  let intent: KnowledgeQueryPlan["intent"] = "document_lookup";
+
   if (wantsStructured && aggregation && entities.length === 0) {
     mode = "structured_aggregate";
+    intent = "structured_aggregation";
   } else if (wantsStructured && entities.length > 0) {
     mode = "structured_lookup";
+    intent = "structured_lookup";
   } else if (wantsStructured) {
     mode = "hybrid";
+    intent = "hybrid";
+  } else if (wantsMultimodal) {
+    mode = "multimodal";
+    intent = "multimodal_lookup";
+  } else if (wantsProcedure) {
+    mode = "hybrid";
+    intent = "acton_procedure";
+  } else if (wantsAcronym) {
+    mode = "lexical";
+    intent = "acton_factual";
   }
 
   // Summary metric style questions without a person name
   if (entities.length === 0 && requestedFields.some((f) => /total |avg /i.test(f))) {
     mode = "structured_aggregate";
+    intent = "structured_aggregation";
   }
 
   // If the only entities look like report nouns, treat as aggregate
@@ -104,8 +129,10 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
     requestedFields.some((f) => /total |avg |average /i.test(f) || f === "Total Contracts")
   ) {
     mode = "structured_aggregate";
+    intent = "structured_aggregation";
     return {
       mode,
+      intent,
       entities: [],
       requestedFields,
       filters,
@@ -115,8 +142,14 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
     };
   }
 
+  if (mode === "document" && intent === "document_lookup" && keywords.length > 0) {
+    intent = "acton_factual";
+    mode = "hybrid";
+  }
+
   return {
     mode,
+    intent,
     entities: personLike.length ? personLike : entities,
     requestedFields,
     filters,

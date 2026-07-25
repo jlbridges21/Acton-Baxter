@@ -1,5 +1,6 @@
 export const GOOGLE_DOC_MIME = "application/vnd.google-apps.document";
 export const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
+export const GOOGLE_SLIDES_MIME = "application/vnd.google-apps.presentation";
 export const GOOGLE_FOLDER_MIME = "application/vnd.google-apps.folder";
 
 export type GoogleDriveFile = {
@@ -27,6 +28,10 @@ export type ParsedGoogleDocument = {
   parseMode: "full_text" | "metadata_only" | "unsupported";
   folderId: string | null;
   workbook?: import("@/lib/knowledge-index/types").ParsedWorkbook;
+  imageUnits?: import("@/lib/knowledge-index/chunking").DraftUnit[];
+  slideUnits?: import("@/lib/knowledge-index/chunking").DraftUnit[];
+  imageMeta?: Record<string, unknown>;
+  pdfPages?: Array<{ pageNumber: number; text: string }>;
 };
 
 export type GoogleSyncFolder = {

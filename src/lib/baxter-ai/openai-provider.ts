@@ -46,6 +46,7 @@ function resolveFallbackModel(): string | null {
 
 /**
  * OpenAI Baxter provider using HTTP chat/completions.
+ * Use getBaxterLlmProvider from ./providers for primary + fallback resolution.
  */
 export class OpenAIBaxterProvider implements BaxterLLMProvider {
   readonly key = "openai" as const;
@@ -319,20 +320,5 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
   }
 }
 
-export function getBaxterLlmProvider(): BaxterLLMProvider {
-  const env = getEnv();
-  const provider = (env.BAXTER_LLM_PROVIDER || "openai").toLowerCase().trim();
-  if (provider === "openai") {
-    return new OpenAIBaxterProvider();
-  }
-  if (provider === "anthropic") {
-    throw new BaxterConfigError(
-      "Anthropic is planned for a later release. Set BAXTER_LLM_PROVIDER=openai.",
-      "BAXTER_OPENAI_BAD_REQUEST",
-    );
-  }
-  throw new BaxterConfigError(
-    `Unsupported BAXTER_LLM_PROVIDER: ${provider}`,
-    "BAXTER_OPENAI_BAD_REQUEST",
-  );
-}
+/** @deprecated Import from `@/lib/baxter-ai/providers` instead. */
+export { getBaxterLlmProvider } from "./providers";

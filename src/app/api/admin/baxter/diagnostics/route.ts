@@ -10,6 +10,10 @@ import {
   runOpenAiDiagnosticTest,
   runRateLimitClassificationDiagnostic,
 } from "@/lib/baxter-ai/diagnostics";
+import { AnthropicBaxterProvider } from "@/lib/baxter-ai/anthropic-provider";
+import { embedText } from "@/lib/knowledge-index/embeddings";
+import { getBaxterVisionProvider } from "@/lib/baxter-ai/vision";
+import { retrieveBaxterEvidence } from "@/lib/baxter-ai/context";
 
 export async function GET() {
   try {
@@ -29,6 +33,10 @@ export async function POST(request: Request) {
       .object({
         action: z.enum([
           "test_openai",
+          "test_primary_reasoning",
+          "test_fallback_reasoning",
+          "test_embeddings",
+          "test_vision",
           "test_knowledge",
           "test_pipeline",
           "test_dynamic_answer",
@@ -43,33 +51,152 @@ export async function POST(request: Request) {
     if (parsed.action === "inspect_retrieval") {
       const question =
         parsed.question?.trim() || "How much was the Lori Harris project agreement for?";
-      const { planKnowledgeQuery, searchStructuredKnowledge, buildStructuredEvidencePackage } =
-        await import("@/lib/knowledge-index");
-      const plan = planKnowledgeQuery(question);
-      const structured = await searchStructuredKnowledge(question, plan);
-      const hit = structured.lookups[0];
+      const evidence = await retrieveBaxterEvidence(question);
+      const hit = evidence.structured?.lookups[0];
       return jsonOk({
         result: {
           question,
-          queryMode: plan.mode,
-          entities: plan.entities,
-          requestedFields: plan.requestedFields,
-          aggregation: plan.aggregation,
-          matchedSource: hit?.entryTitle ?? structured.aggregates[0]?.entryTitle ?? null,
-          matchedSheet: hit?.sheetName ?? null,
-          matchedEntity: hit?.entityLabel ?? null,
-          requestedField: hit?.requestedField ?? null,
-          value: hit?.directValue ?? structured.aggregates[0]?.displayValue ?? null,
-          ambiguous: structured.ambiguous,
-          evidence: buildStructuredEvidencePackage(structured),
-          lookupCount: structured.lookups.length,
-          aggregateCount: structured.aggregates.length,
+          intent: evidence.intent,
+          queryMode: evidence.queryMode,
+          plan: {
+            entities: evidence.plan.entities,
+            requestedFields: evidence.plan.requestedFields,
+            aggregation: evidence.plan.aggregation,
+          },
+          structured: {
+            matchedSource:
+              hit?.entryTitle ?? evidence.structured?.aggregates[0]?.entryTitle ?? null,
+            matchedSheet: hit?.sheetName ?? null,
+            matchedEntity: hit?.entityLabel ?? null,
+            requestedField: hit?.requestedField ?? null,
+            value: hit?.directValue ?? evidence.structured?.aggregates[0]?.displayValue ?? null,
+            confidence: hit ? "high" : evidence.structured?.aggregates.length ? "high" : "none",
+            lookupCount: evidence.structured?.lookups.length ?? 0,
+            aggregateCount: evidence.structured?.aggregates.length ?? 0,
+            ambiguous: evidence.structured?.ambiguous ?? false,
+          },
+          lexical: evidence.lexicalHits.slice(0, 5).map((h) => ({
+            title: h.unit.title,
+            unitType: h.unit.unit_type,
+            score: h.score,
+            reason: h.reason,
+          })),
+          semantic: evidence.semanticHits.slice(0, 5).map((h) => ({
+            title: h.unit.title,
+            unitType: h.unit.unit_type,
+            score: Number(h.score.toFixed(4)),
+            reason: h.reason,
+          })),
+          finalEvidence: evidence.ranked.slice(0, 8).map((r) => ({
+            source: r.title,
+            unitType: r.unitType ?? null,
+            score: Number(r.score.toFixed(3)),
+            reason: r.reason,
+            channel: r.channel,
+          })),
+          conflicts: evidence.conflicts,
+          evidencePackage: evidence.evidencePackage,
         },
       });
     }
 
-    if (parsed.action === "test_openai") {
+    if (parsed.action === "test_openai" || parsed.action === "test_primary_reasoning") {
       return jsonOk({ result: await runOpenAiDiagnosticTest() });
+    }
+    if (parsed.action === "test_fallback_reasoning") {
+      const started = Date.now();
+      try {
+        const provider = new AnthropicBaxterProvider();
+        const result = await provider.generateAnswer({
+          question: "Reply with the word OK as the answer field value.",
+          contextItems: [],
+          channel: "web",
+          questionClass: "general_knowledge",
+          identityContext: "Fallback diagnostic test.",
+          history: [],
+        });
+        return jsonOk({
+          result: {
+            pass: /\bok\b/i.test(result.answer),
+            answerPreview: result.answer.slice(0, 200),
+            model: result.modelName,
+            provider: result.modelProvider,
+            latencyMs: result.latencyMs ?? Date.now() - started,
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            answerPreview: error instanceof Error ? error.message : "Fallback test failed",
+            model: null,
+            provider: "anthropic",
+            latencyMs: Date.now() - started,
+          },
+        });
+      }
+    }
+    if (parsed.action === "test_embeddings") {
+      const started = Date.now();
+      try {
+        const emb = await embedText("Baxter embedding diagnostic");
+        return jsonOk({
+          result: {
+            pass: emb.vector.length > 0,
+            provider: emb.provider,
+            model: emb.model,
+            dimensions: emb.vector.length,
+            latencyMs: Date.now() - started,
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            error: error instanceof Error ? error.message : "Embedding test failed",
+            latencyMs: Date.now() - started,
+          },
+        });
+      }
+    }
+    if (parsed.action === "test_vision") {
+      const started = Date.now();
+      try {
+        const vision = getBaxterVisionProvider();
+        const payload = Buffer.from(
+          JSON.stringify({
+            description: "Diagnostic diagram",
+            extractedText: "OK",
+            importantFacts: [],
+            entities: [],
+            documentType: "diagram",
+            warnings: [],
+          }),
+          "utf8",
+        ).toString("base64");
+        const analysis = await vision.analyzeImage({
+          mimeType: "image/png",
+          base64Data: payload,
+          filename: "diagnostic.png",
+        });
+        return jsonOk({
+          result: {
+            pass: Boolean(analysis.description || analysis.extractedText),
+            provider: vision.key,
+            model: vision.model,
+            descriptionPreview: analysis.description.slice(0, 160),
+            latencyMs: Date.now() - started,
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            error: error instanceof Error ? error.message : "Vision test failed",
+            latencyMs: Date.now() - started,
+          },
+        });
+      }
     }
     if (parsed.action === "test_knowledge") {
       return jsonOk({ result: await runKnowledgeSearchDiagnosticTest() });

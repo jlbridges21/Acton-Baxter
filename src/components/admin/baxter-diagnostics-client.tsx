@@ -9,8 +9,15 @@ type Snapshot = {
     chatEnabled: boolean;
     provider: string;
     model: string;
+    fallbackProvider?: string | null;
     fallbackModel?: string | null;
+    embeddingProvider?: string;
+    embeddingModel?: string;
+    visionProvider?: string;
+    visionModel?: string;
+    propertyResearchAiProvider?: string;
     openaiKeyPresent: boolean;
+    anthropicKeyPresent?: boolean;
     supabaseServiceRolePresent: boolean;
     googleConfigured: boolean;
     slackConfigured: boolean;
@@ -137,15 +144,46 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             </dd>
           </div>
           <div>
-            <dt className="text-[var(--acton-muted)]">Provider / model</dt>
+            <dt className="text-[var(--acton-muted)]">Reasoning provider</dt>
             <dd>
               {snapshot.config.provider} / {snapshot.config.model}
             </dd>
           </div>
           <div>
+            <dt className="text-[var(--acton-muted)]">Fallback</dt>
+            <dd>
+              {snapshot.config.fallbackProvider
+                ? `${snapshot.config.fallbackProvider} / ${snapshot.config.fallbackModel ?? "default"}`
+                : "None"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Embedding</dt>
+            <dd>
+              {snapshot.config.embeddingProvider ?? "openai"} /{" "}
+              {snapshot.config.embeddingModel ?? "text-embedding-3-small"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Vision</dt>
+            <dd>
+              {snapshot.config.visionProvider ?? "openai"} / {snapshot.config.visionModel ?? "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Property Research AI</dt>
+            <dd>{snapshot.config.propertyResearchAiProvider ?? "deterministic"}</dd>
+          </div>
+          <div>
             <dt className="text-[var(--acton-muted)]">OpenAI key present</dt>
             <dd>
               <YesNo value={snapshot.config.openaiKeyPresent} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Anthropic key present</dt>
+            <dd>
+              <YesNo value={Boolean(snapshot.config.anthropicKeyPresent)} />
             </dd>
           </div>
           <div>
@@ -296,7 +334,8 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
       <Card>
         <CardTitle>Retrieval inspector</CardTitle>
         <CardDescription className="mt-2">
-          Deterministic structured retrieval decisions (no hidden chain-of-thought).
+          Hybrid retrieval inspector: intent, structured/lexical/semantic matches, final ranking (no
+          hidden chain-of-thought).
         </CardDescription>
         <div className="mt-4 flex flex-wrap gap-2">
           <input
@@ -322,8 +361,21 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
           These call the real shared services (OpenAI only when configured).
         </CardDescription>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button disabled={busy} onClick={() => void run("test_openai")}>
-            Test lightweight OpenAI
+          <Button disabled={busy} onClick={() => void run("test_primary_reasoning")}>
+            Test primary reasoning
+          </Button>
+          <Button
+            disabled={busy}
+            variant="secondary"
+            onClick={() => void run("test_fallback_reasoning")}
+          >
+            Test fallback reasoning
+          </Button>
+          <Button disabled={busy} variant="secondary" onClick={() => void run("test_embeddings")}>
+            Test embeddings
+          </Button>
+          <Button disabled={busy} variant="secondary" onClick={() => void run("test_vision")}>
+            Test vision
           </Button>
           <Button
             disabled={busy}

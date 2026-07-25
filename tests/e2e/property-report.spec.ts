@@ -10,6 +10,9 @@ test("create mock property report and open completed report", async ({ page }) =
   await expect(page.getByRole("link", { name: "Open Property Research" })).toBeVisible();
 
   await page.getByRole("link", { name: "Open Property Research" }).click();
+  await expect(page).toHaveURL(/\/dashboard/);
+
+  await page.getByRole("link", { name: "New Research" }).click();
   await expect(page.getByLabel("Property address")).toBeVisible();
 
   await page.getByLabel("Property address").fill("655 13th St, San Jose, CA");

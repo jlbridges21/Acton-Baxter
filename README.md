@@ -169,19 +169,24 @@ Without Google keys, manual address entry still works in mock mode; live mode sh
 
 ## AI setup
 
+**Property Research** (report narrative) uses `AI_PROVIDER` (default `deterministic`). Optional alias: `PROPERTY_RESEARCH_AI_PROVIDER`.
+
+**Baxter chat** uses separate variables — see `docs/baxter-ai-providers.md`:
+
 ```bash
-AI_PROVIDER=deterministic   # default, no key required
-# or
-AI_PROVIDER=openai
+AI_PROVIDER=deterministic   # Property Research only; default, no key required
+BAXTER_LLM_PROVIDER=openai
+BAXTER_LLM_FALLBACK_PROVIDER=   # optional: anthropic
+BAXTER_OPENAI_MODEL=gpt-4o-mini
+BAXTER_ANTHROPIC_MODEL=claude-3-5-haiku-latest
+BAXTER_EMBEDDING_PROVIDER=openai
+BAXTER_EMBEDDING_MODEL=text-embedding-3-small
+BAXTER_VISION_PROVIDER=openai
 OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-4o-mini
-# or
-AI_PROVIDER=anthropic
 ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL=claude-3-5-haiku-latest
 ```
 
-If AI fails, the report still completes with deterministic PEM content.
+If Property Research AI fails, the report still completes with deterministic PEM content.
 
 ---
 

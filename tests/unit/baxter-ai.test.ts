@@ -132,12 +132,14 @@ describe("Baxter AI grounding and citations", () => {
     expect(() => parseBaxterLlmJson("not-json")).toThrow();
   });
 
-  it("exposes OpenAIBaxterProvider and does not claim Anthropic is implemented", () => {
+  it("supports Anthropic as a primary Baxter provider configuration", () => {
     const provider = new OpenAIBaxterProvider("gpt-4o-mini");
     expect(provider.key).toBe("openai");
     process.env.BAXTER_LLM_PROVIDER = "anthropic";
+    process.env.ANTHROPIC_API_KEY = "test-key";
     resetEnvCacheForTests();
-    expect(() => getBaxterLlmProvider()).toThrow(/Anthropic is planned/i);
+    const anthropic = getBaxterLlmProvider();
+    expect(anthropic.key).toBe("anthropic");
   });
 
   it("chat launcher is dashboard-only and feature-flagged", () => {

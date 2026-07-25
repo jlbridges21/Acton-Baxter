@@ -20,6 +20,11 @@ export const KNOWLEDGE_UPLOAD_EXTENSIONS = [
   "docx",
   "csv",
   "xlsx",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "pptx",
 ] as const;
 
 export type KnowledgeUploadExtension = (typeof KNOWLEDGE_UPLOAD_EXTENSIONS)[number];

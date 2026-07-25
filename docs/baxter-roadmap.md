@@ -8,8 +8,11 @@
 - Knowledge-grounded OpenAI answering (`answerBaxterQuestion`)
 - Baxter Dashboard chat assistant (Clippy-style launcher on `/` only)
 - Shared conversation schema (`baxter_conversations` / messages / sources)
-- Shared LLM provider abstraction (OpenAI now; Anthropic planned)
-- Google Workspace connector (Docs/Sheets sync into Knowledge Base)
+- Shared LLM provider abstraction (OpenAI + Anthropic with optional fallback)
+- Hybrid retrieval (structured + lexical + semantic embeddings) — Prompt 2
+- Multimodal indexing (images, PDF pages, Slides/PPTX) — Prompt 2
+- Evaluation foundation (`baxter_eval_cases`) — Prompt 2
+- Google Workspace connector (Docs/Sheets/Slides/images sync into Knowledge Base)
 - Clickable source references (Google Doc/Sheet + knowledge entries)
 - Connector health dashboard (`/admin/connectors`)
 - Useful web assistant behavior (identity, classification, general + grounded answers, continuity)

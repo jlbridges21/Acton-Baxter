@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { File, FileImage, FileSpreadsheet, FileText, Folder, Presentation } from "lucide-react";
 import type { ConnectorHealth } from "@/lib/connectors/types";
 import type { GoogleSyncFolder } from "@/lib/connectors/google/types";
+import { googleFileIconKind } from "@/lib/connectors/google/file-icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
@@ -81,14 +83,46 @@ type Panel = "browser" | "settings" | "diagnostics";
 
 function mimeLabel(mime: string, isFolder: boolean) {
   if (isFolder) return "Folder";
+  if (mime.includes("presentation") && mime.includes("google-apps")) return "Google Slides";
+  if (mime.includes("presentationml") || mime.includes("ms-powerpoint")) return "PowerPoint";
+  if (mime.includes("document") && mime.includes("google-apps")) return "Google Doc";
   if (mime.includes("document")) return "Google Doc";
   if (mime.includes("spreadsheet") && mime.includes("google-apps")) return "Google Sheet";
   if (mime.includes("spreadsheetml") || mime.includes("ms-excel")) return "Excel (XLSX)";
   if (mime === "text/csv") return "CSV";
   if (mime === "application/pdf") return "PDF";
   if (mime.includes("wordprocessingml")) return "Word (DOCX)";
+  if (mime.startsWith("image/")) return "Image";
+  if (mime === "text/markdown") return "Markdown";
   if (mime.startsWith("text/")) return "Text";
   return "File";
+}
+
+function FileTypeIcon({ mime, isFolder }: { mime: string; isFolder: boolean }) {
+  const kind = googleFileIconKind(mime, isFolder);
+  const className = "mt-0.5 h-4 w-4 shrink-0 text-[var(--acton-muted)]";
+  switch (kind) {
+    case "folder":
+      return <Folder className={className} aria-hidden />;
+    case "sheet":
+      return <FileSpreadsheet className={`${className} text-emerald-700`} aria-hidden />;
+    case "xlsx":
+    case "csv":
+      return <FileSpreadsheet className={`${className} text-emerald-700`} aria-hidden />;
+    case "doc":
+    case "word":
+    case "markdown":
+      return <FileText className={`${className} text-sky-700`} aria-hidden />;
+    case "slides":
+    case "pptx":
+      return <Presentation className={`${className} text-amber-700`} aria-hidden />;
+    case "pdf":
+      return <FileText className={`${className} text-red-700`} aria-hidden />;
+    case "image":
+      return <FileImage className={`${className} text-violet-700`} aria-hidden />;
+    default:
+      return <File className={className} aria-hidden />;
+  }
 }
 
 function baxterStatus(
@@ -102,7 +136,9 @@ function baxterStatus(
       return { label: "Synced folder", tone: "text-emerald-700" };
     return { label: "Folder", tone: "text-[var(--acton-muted)]" };
   }
-  if (!item.supported) return { label: "Unsupported", tone: "text-amber-800" };
+  if (!item.supported) {
+    return { label: "Not indexed yet", tone: "text-amber-800" };
+  }
   const sync = synced.find((s) => s.google_file_id === item.id);
   const sel = selections.find(
     (s) => s.google_file_id === item.id && s.enabled && !s.explicitly_excluded,
@@ -923,13 +959,13 @@ export function GoogleConnectorClient({
           <div className="flex flex-wrap items-center gap-2 border-b border-[var(--acton-border)] px-4 py-3">
             <input
               className="min-w-[160px] flex-1 rounded-md border border-[var(--acton-border)] px-3 py-2 text-sm"
-              placeholder="Search files…"
+              placeholder="Search by name or paste a Google URL…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && activeRoot) void loadBrowser(activeRoot, currentFolderId);
               }}
-              aria-label="Search files"
+              aria-label="Search files or paste Google URL"
             />
             <select
               className="rounded-md border border-[var(--acton-border)] px-2 py-2 text-sm"
@@ -1069,16 +1105,19 @@ export function GoogleConnectorClient({
                           <td className="px-3 py-3">
                             <button
                               type="button"
-                              className="text-left font-semibold text-[var(--acton-navy)] hover:underline"
+                              className="flex items-start gap-2 text-left font-semibold text-[var(--acton-navy)] hover:underline"
                               onClick={() => void openPreview(item)}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") void openPreview(item);
                               }}
                             >
-                              {item.name}
+                              <FileTypeIcon mime={item.mimeType} isFolder={item.isFolder} />
+                              <span>{item.name}</span>
                             </button>
                             {!item.supported && !item.isFolder ? (
-                              <p className="text-xs text-amber-800">Unsupported</p>
+                              <p className="pl-6 text-xs text-amber-800">
+                                {mimeLabel(item.mimeType, false)} — not indexed automatically yet
+                              </p>
                             ) : null}
                           </td>
                           <td className="px-3 py-3 text-[var(--acton-muted)]">
