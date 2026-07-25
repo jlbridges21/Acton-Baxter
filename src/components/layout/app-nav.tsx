@@ -12,9 +12,12 @@ import {
   Palette,
   PlusCircle,
   Search,
+  Settings,
   Shield,
-  Upload,
+  Users,
   X,
+  Activity,
+  Rocket,
 } from "lucide-react";
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -31,17 +34,13 @@ type NavLink = {
   match?: (pathname: string) => boolean;
 };
 
-function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
+function employeeLinks(context: NavContext): NavLink[] {
   const home: NavLink = {
     href: "/",
     label: "Baxter Dashboard",
     icon: LayoutDashboard,
     match: (pathname) => pathname === "/",
   };
-
-  if (context === "platform") {
-    return [home];
-  }
 
   if (context === "property-research") {
     return [
@@ -61,49 +60,24 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     ];
   }
 
-  if (!isAdmin) return [home];
+  return [home];
+}
 
-  if (context === "knowledge") {
-    return [
-      home,
-      {
-        href: "/admin/knowledge",
-        label: "Knowledge Center",
-        icon: BookOpen,
-        match: (pathname) =>
-          pathname === "/admin/knowledge" ||
-          pathname.startsWith("/admin/knowledge/settings") ||
-          (/^\/admin\/knowledge\/[^/]+$/.test(pathname) &&
-            !pathname.includes("/upload") &&
-            !pathname.includes("/new") &&
-            !pathname.includes("/sources") &&
-            !pathname.includes("/edit") &&
-            !pathname.includes("/history")),
-      },
-      {
-        href: "/admin/knowledge/new",
-        label: "New Entry",
-        icon: PlusCircle,
-        match: (pathname) => pathname === "/admin/knowledge/new",
-      },
-      {
-        href: "/admin/knowledge/upload",
-        label: "Uploads",
-        icon: Upload,
-        match: (pathname) => pathname.startsWith("/admin/knowledge/upload"),
-      },
-      {
-        href: "/admin/connectors/google",
-        label: "Google Workspace",
-        icon: Cloud,
-        match: (pathname) => pathname.startsWith("/admin/connectors/google"),
-      },
-    ];
-  }
-
-  // platform-admin
+/** Full admin menu — always available so Users and tools are never hidden. */
+function adminLinks(): NavLink[] {
   return [
-    home,
+    {
+      href: "/",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      match: (pathname) => pathname === "/",
+    },
+    {
+      href: "/reports/new",
+      label: "Property Research",
+      icon: Search,
+      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+    },
     {
       href: "/admin/knowledge",
       label: "Knowledge Center",
@@ -112,7 +86,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     },
     {
       href: "/admin/knowledge/upload",
-      label: "Upload",
+      label: "Uploads",
       icon: FileUp,
       match: (pathname) => pathname.startsWith("/admin/knowledge/upload"),
     },
@@ -121,6 +95,18 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       label: "Google Workspace",
       icon: Cloud,
       match: (pathname) => pathname.startsWith("/admin/connectors/google"),
+    },
+    {
+      href: "/admin/users",
+      label: "Users",
+      icon: Users,
+      match: (pathname) => pathname.startsWith("/admin/users"),
+    },
+    {
+      href: "/admin/slack",
+      label: "Slack",
+      icon: MessageSquare,
+      match: (pathname) => pathname.startsWith("/admin/slack"),
     },
     {
       href: "/admin/connectors",
@@ -132,7 +118,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     {
       href: "/admin/baxter/diagnostics",
       label: "Diagnostics",
-      icon: Shield,
+      icon: Activity,
       match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
     },
     {
@@ -144,26 +130,20 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     {
       href: "/admin/baxter/launch-readiness",
       label: "Launch Ready",
-      icon: Shield,
+      icon: Rocket,
       match: (pathname) => pathname.startsWith("/admin/baxter/launch-readiness"),
-    },
-    {
-      href: "/admin/slack",
-      label: "Slack",
-      icon: MessageSquare,
-      match: (pathname) => pathname.startsWith("/admin/slack"),
-    },
-    {
-      href: "/admin/users",
-      label: "Users",
-      icon: Shield,
-      match: (pathname) => pathname.startsWith("/admin/users"),
     },
     {
       href: "/admin/branding",
       label: "Branding",
       icon: Palette,
       match: (pathname) => pathname.startsWith("/admin/branding"),
+    },
+    {
+      href: "/admin/knowledge/settings",
+      label: "Settings",
+      icon: Settings,
+      match: (pathname) => pathname.startsWith("/admin/knowledge/settings"),
     },
   ];
 }
@@ -189,7 +169,7 @@ export function AppNav({
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAdmin = userRole === "admin";
   const context = getNavContext(pathname);
-  const links = linksForContext(context, isAdmin);
+  const links = isAdmin ? adminLinks() : employeeLinks(context);
 
   async function handleLogout() {
     try {
@@ -219,7 +199,7 @@ export function AppNav({
                 : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
             )}
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-4 w-4 shrink-0" />
             {link.label}
           </Link>
         );
@@ -238,13 +218,37 @@ export function AppNav({
             productLabel="Baxter"
             alt={logoAlt}
           />
-          <nav className="hidden items-center gap-1 xl:flex">{navItems}</nav>
+          {/* Desktop: show a compact primary set; full list remains in the menu */}
+          <nav className="hidden items-center gap-1 lg:flex">
+            {links.slice(0, 6).map((link) => {
+              const Icon = link.icon;
+              const active = link.match ? link.match(pathname) : pathname === link.href;
+              return (
+                <Link
+                  key={`desktop-${link.href}-${link.label}`}
+                  href={link.href}
+                  className={cn(
+                    "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
+                    active
+                      ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
+                      : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {link.label}
+                </Link>
+              );
+            })}
+          </nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="hidden text-right sm:block">
             <p className="text-sm font-semibold text-[var(--acton-navy)]">{userName}</p>
             <p className="text-xs text-[var(--acton-muted)]">
-              {userRole} · {userEmail}
+              {userRole}
+              {userEmail.trim().toLowerCase() === "baxter@actonadu.com"
+                ? " · super-admin"
+                : ""} · {userEmail}
             </p>
           </div>
           <Button variant="secondary" size="sm" onClick={handleLogout} type="button">
@@ -255,7 +259,6 @@ export function AppNav({
             type="button"
             variant="secondary"
             size="sm"
-            className="xl:hidden"
             aria-expanded={mobileOpen}
             aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
             onClick={() => setMobileOpen((open) => !open)}
@@ -265,7 +268,10 @@ export function AppNav({
         </div>
       </div>
       {mobileOpen ? (
-        <nav className="flex flex-col gap-1 border-t border-[var(--acton-border)] px-4 py-3 xl:hidden">
+        <nav className="flex max-h-[70vh] flex-col gap-1 overflow-y-auto border-t border-[var(--acton-border)] px-4 py-3">
+          <p className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-[var(--acton-muted)] uppercase">
+            {isAdmin ? "Admin menu" : "Menu"}
+          </p>
           {navItems}
         </nav>
       ) : null}

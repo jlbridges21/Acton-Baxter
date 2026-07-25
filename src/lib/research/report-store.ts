@@ -431,13 +431,48 @@ class SupabaseReportStore implements ReportStore {
 
   async updateProfileRole(userId: string, role: Profile["role"]): Promise<Profile> {
     const supabase = this.client();
+    // Prefer SECURITY DEFINER RPC so role changes work even when JWT context
+    // is present and RLS/triggers would otherwise block direct updates.
+    const { data: rpcData, error: rpcError } = await supabase.rpc("admin_set_profile_role", {
+      target_user_id: userId,
+      new_role: role,
+    });
+
+    if (!rpcError && rpcData) {
+      const row = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+      if (row) return row as Profile;
+    }
+
+    // Fallback for environments that have not applied migration 014 yet.
+    if (rpcError) {
+      const message = rpcError.message ?? "";
+      const missingFn =
+        rpcError.code === "PGRST202" ||
+        rpcError.code === "42883" ||
+        message.toLowerCase().includes("admin_set_profile_role") ||
+        message.toLowerCase().includes("could not find the function");
+      if (!missingFn) {
+        throw Object.assign(new Error(message || "Unable to update role"), {
+          code: rpcError.code ?? "PROFILE_ROLE_UPDATE_FAILED",
+          statusCode: 400,
+          expose: true,
+        });
+      }
+    }
+
     const { data, error } = await supabase
       .from("profiles")
       .update({ role })
       .eq("id", userId)
       .select("*")
       .single();
-    if (error) throw error;
+    if (error) {
+      throw Object.assign(new Error(error.message || "Unable to update role"), {
+        code: error.code ?? "PROFILE_ROLE_UPDATE_FAILED",
+        statusCode: 400,
+        expose: true,
+      });
+    }
     return data as Profile;
   }
 

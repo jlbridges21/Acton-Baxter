@@ -86,6 +86,27 @@ export function toPublicError(error: unknown): {
     };
   }
 
+  // Surface safe PostgREST / Postgres role-management failures to admins.
+  if (error && typeof error === "object") {
+    const record = error as {
+      message?: string;
+      code?: string;
+      statusCode?: number;
+      expose?: boolean;
+    };
+    const message = record.message ?? "";
+    if (
+      record.expose ||
+      /only admins|super-admin|invalid role|profile not found|unable to update role/i.test(message)
+    ) {
+      return {
+        message: message || "Unable to update role",
+        code: record.code ?? "PROFILE_ROLE_UPDATE_FAILED",
+        statusCode: record.statusCode ?? 400,
+      };
+    }
+  }
+
   return {
     message: "An unexpected error occurred",
     code: "INTERNAL_ERROR",

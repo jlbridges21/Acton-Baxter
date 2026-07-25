@@ -547,7 +547,10 @@ export function GoogleConnectorClient({
           selected knowledge synchronized. Access is read-only.
         </p>
         <p className="mt-2 text-sm">
-          <Link href="/admin/knowledge" className="font-semibold text-[var(--acton-navy)] underline">
+          <Link
+            href="/admin/knowledge"
+            className="font-semibold text-[var(--acton-navy)] underline"
+          >
             ← Back to Knowledge Center
           </Link>
         </p>
