@@ -49,8 +49,8 @@ export function shouldIgnoreSlackEvent(event: SlackIncomingEvent): boolean {
 
 /**
  * Stable conversation keys:
- * - DM: team:channel:user
- * - Channel thread: team:channel:thread_ts
+ * - DM: team:channel:user (does not use Slack thread_ts)
+ * - Channel thread: team:channel:root_thread_ts
  */
 export function buildSlackExternalThreadId(input: {
   teamId: string | null;
@@ -64,6 +64,19 @@ export function buildSlackExternalThreadId(input: {
     return `${team}:${input.channelId}:${input.userId ?? "unknown"}`;
   }
   return `${team}:${input.channelId}:${input.threadTs}`;
+}
+
+/**
+ * Slack posting thread target:
+ * - DMs: omit thread_ts so replies stay in the main DM timeline
+ * - Channel mentions: thread under event.thread_ts ?? event.ts
+ */
+export function resolveSlackReplyThreadTs(
+  event: SlackIncomingEvent,
+  isDm: boolean,
+): string | undefined {
+  if (isDm) return undefined;
+  return event.thread_ts ?? event.ts ?? undefined;
 }
 
 export function isDirectMessageEvent(event: SlackIncomingEvent): boolean {
@@ -250,8 +263,10 @@ export async function handleBaxterSlackEvent(
     return;
   }
 
-  const threadTs = event.thread_ts || event.ts || null;
-  if (!threadTs) {
+  // Channel mentions must thread under the mention (or existing thread).
+  // DMs must post top-level — never pass thread_ts for message.im.
+  const replyThreadTs = resolveSlackReplyThreadTs(event, access.isDm);
+  if (!access.isDm && !replyThreadTs) {
     if (eventId) {
       await updateSlackEventReceipt({
         eventId,
@@ -262,12 +277,17 @@ export async function handleBaxterSlackEvent(
     return;
   }
 
+  // Conversation memory key: DMs use team+channel+user; channels use root thread ts.
+  const conversationRootTs = access.isDm
+    ? event.ts || event.event_ts || "dm"
+    : (replyThreadTs as string);
+
   // Empty mention (just @Baxter) — reply with a short prompt, no AI call.
   if (!text) {
     try {
       await postSlackMessage({
         channel,
-        threadTs,
+        ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: "*Baxter*\nAsk me a question about Acton procedures, general work help, or what I can do.",
       });
       if (eventId) {
@@ -283,7 +303,7 @@ export async function handleBaxterSlackEvent(
     teamId,
     channelId: channel,
     userId: event.user ?? null,
-    threadTs,
+    threadTs: conversationRootTs,
     isDm: access.isDm,
   });
 
@@ -301,7 +321,7 @@ export async function handleBaxterSlackEvent(
     for (const segment of segments) {
       await postSlackMessage({
         channel,
-        threadTs,
+        ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: segment.text,
         blocks: segment.blocks,
       });
@@ -328,7 +348,8 @@ export async function handleBaxterSlackEvent(
       code,
       eventId: eventId ?? null,
       channelId: channel,
-      threadTs,
+      threadTs: replyThreadTs ?? null,
+      isDm: access.isDm,
       slackError: error instanceof SlackClientError ? error.slackError : null,
       httpStatus: error instanceof SlackClientError ? error.httpStatus : null,
     });
@@ -336,7 +357,7 @@ export async function handleBaxterSlackEvent(
     try {
       await postSlackMessage({
         channel,
-        threadTs,
+        ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: employeeFacingSlackError(code),
       });
     } catch (postError) {
@@ -344,7 +365,8 @@ export async function handleBaxterSlackEvent(
         code: SLACK_ERROR_CODES.POST_FAILED,
         eventId: eventId ?? null,
         channelId: channel,
-        threadTs,
+        threadTs: replyThreadTs ?? null,
+        isDm: access.isDm,
         slackError: postError instanceof SlackClientError ? postError.slackError : null,
       });
     }

@@ -59,8 +59,9 @@ async function postOnce(
     body: JSON.stringify({
       channel: input.channel,
       text: input.text,
-      blocks: input.blocks,
-      thread_ts: input.threadTs,
+      ...(input.blocks ? { blocks: input.blocks } : {}),
+      ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+      // Never broadcast threaded replies into the channel.
       unfurl_links: false,
       unfurl_media: false,
     }),
