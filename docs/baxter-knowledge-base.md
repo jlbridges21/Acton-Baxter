@@ -6,13 +6,14 @@ The Knowledge Base stores Acton ADU institutional knowledge so Baxter can answer
 
 ## Admin home
 
-**`/admin/knowledge`** is the Knowledge Management landing page.
+**`/admin/knowledge`** is the **Knowledge Center** — see `docs/knowledge-center.md`.
 
 Primary actions:
 
-- **Add knowledge** → `/admin/knowledge/new` (title + content only)
-- **Upload documents** → `/admin/knowledge/upload`
-- **Connect Google Drive** → `/admin/connectors/google`
+- **New Entry** → `/admin/knowledge/new` (title + content only)
+- **Upload Files** → `/admin/knowledge/upload`
+- **Google Workspace** → `/admin/connectors/google`
+- **Settings** → `/admin/knowledge/settings`
 
 ## Roles
 

@@ -105,4 +105,7 @@ export function formatRelativeUpdated(iso: string | null): string {
 }
 
 export const INSUFFICIENT_KNOWLEDGE_ANSWER =
-  "I don’t have enough approved Acton knowledge to answer that confidently. An admin can add the missing procedure or policy to the Knowledge Base.";
+  "I couldn’t find an approved Acton source covering that.";
+
+export const GENERAL_KNOWLEDGE_NOTE =
+  "This answer is based on general knowledge rather than an approved Acton source.";

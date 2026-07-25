@@ -1,8 +1,10 @@
 import "server-only";
 
 import { searchApprovedKnowledge } from "@/lib/knowledge/queries";
+import { normalizeSearchText } from "@/lib/knowledge/retrieval";
 import type { KnowledgeSearchResult } from "@/lib/knowledge/types";
-import type { BaxterContextItem } from "./types";
+import type { BaxterContextItem, BaxterHistoryMessage } from "./types";
+import { retrievalQueryFromHistory } from "./memory";
 
 export const BAXTER_CONTEXT_LIMIT = 6;
 export const BAXTER_MAX_EXCERPT_CHARS = 700;
@@ -12,7 +14,8 @@ export function toBaxterContextItems(
   options?: { limit?: number },
 ): BaxterContextItem[] {
   const limit = options?.limit ?? BAXTER_CONTEXT_LIMIT;
-  return results.slice(0, limit).map((result, index) => ({
+  const deduped = dedupeSearchResults(results);
+  return deduped.slice(0, limit).map((result, index) => ({
     number: index + 1,
     id: result.id,
     title: result.title,
@@ -30,10 +33,37 @@ export function toBaxterContextItems(
   }));
 }
 
-export async function retrieveBaxterContext(question: string): Promise<BaxterContextItem[]> {
+/**
+ * Remove near-duplicate KB hits (same external id / near-identical titles & excerpts).
+ */
+export function dedupeSearchResults(results: KnowledgeSearchResult[]): KnowledgeSearchResult[] {
+  const out: KnowledgeSearchResult[] = [];
+  const seenIds = new Set<string>();
+  const seenFingerprints = new Set<string>();
+
+  for (const result of results) {
+    if (seenIds.has(result.id)) continue;
+    const fingerprint = [
+      normalizeSearchText(result.title),
+      normalizeSearchText((result.contentExcerpt ?? "").slice(0, 120)),
+      result.sourceUrl ?? "",
+    ].join("|");
+    if (seenFingerprints.has(fingerprint)) continue;
+    seenIds.add(result.id);
+    seenFingerprints.add(fingerprint);
+    out.push(result);
+  }
+  return out;
+}
+
+export async function retrieveBaxterContext(
+  question: string,
+  history?: BaxterHistoryMessage[],
+): Promise<BaxterContextItem[]> {
+  const query = history?.length ? retrievalQueryFromHistory(question, history) : question;
   const results = await searchApprovedKnowledge({
-    query: question,
-    limit: BAXTER_CONTEXT_LIMIT,
+    query,
+    limit: BAXTER_CONTEXT_LIMIT + 4,
     visibility: "internal",
   });
   return toBaxterContextItems(results);

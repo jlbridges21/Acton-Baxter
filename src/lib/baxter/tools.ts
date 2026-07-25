@@ -32,11 +32,11 @@ export const BAXTER_TOOLS: BaxterTool[] = [
 export const BAXTER_ADMIN_CARDS = [
   {
     key: "knowledge-base",
-    name: "Knowledge",
+    name: "Knowledge Center",
     description:
-      "Add, upload, approve, and manage the knowledge Baxter uses when answering employees.",
+      "Search, approve, upload, and manage everything Baxter uses when answering employees.",
     href: "/admin/knowledge",
-    ctaLabel: "Manage Knowledge",
+    ctaLabel: "Open Knowledge Center",
     icon: BookOpen,
   },
   {
@@ -49,10 +49,10 @@ export const BAXTER_ADMIN_CARDS = [
   },
   {
     key: "google-drive",
-    name: "Google Drive",
-    description: "Select Google Docs and Sheets for Baxter and keep them synchronized.",
+    name: "Google Workspace",
+    description: "Connect Acton Drive, select Docs and Sheets, and keep knowledge synchronized.",
     href: "/admin/connectors/google",
-    ctaLabel: "Manage Google Drive",
+    ctaLabel: "Open Google Workspace",
     icon: Cloud,
   },
 ] as const;

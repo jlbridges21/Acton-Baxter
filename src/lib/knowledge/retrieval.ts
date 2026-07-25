@@ -82,12 +82,27 @@ const SYNONYM_EXPAND: Record<string, string[]> = {
   baxter: ["baxter", "assistant", "teammate", "digital employee", "ai agent", "operations agent"],
   acton: ["acton", "acton adu", "company"],
   adu: ["adu", "accessory dwelling", "accessory dwelling unit"],
-  pem: ["pem", "partnership evaluation", "partnership evaluation meeting"],
+  pem: ["pem", "partnership evaluation", "partnership evaluation meeting", "partnership eval"],
+  partnership: ["partnership", "pem", "partnership evaluation meeting"],
+  evaluation: ["evaluation", "pem", "partnership evaluation meeting"],
   raci: ["raci", "responsible", "accountable", "consulted", "informed"],
   process: ["process", "procedure", "workflow", "steps"],
   procedure: ["procedure", "process", "workflow", "sop"],
   policy: ["policy", "handbook", "guideline"],
+  feasibility: ["feasibility", "adu feasibility", "feasibility study"],
 };
+
+function lightStem(token: string): string[] {
+  const out = [token];
+  if (token.endsWith("ies") && token.length > 4) out.push(`${token.slice(0, -3)}y`);
+  else if (token.endsWith("ing") && token.length > 5) out.push(token.slice(0, -3));
+  else if (token.endsWith("ed") && token.length > 4) out.push(token.slice(0, -2));
+  else if (token.endsWith("ses") && token.length > 4) out.push(token.slice(0, -2));
+  else if (token.endsWith("s") && !token.endsWith("ss") && token.length > 3) {
+    out.push(token.slice(0, -1));
+  }
+  return out;
+}
 
 export function normalizeSearchText(value: string): string {
   return value
@@ -109,15 +124,16 @@ export function tokenizeQuery(query: string): string[] {
   for (const token of raw) {
     if (STOP_WORDS.has(token)) continue;
     if (token.length < 2) continue;
-    terms.push(token);
-    // light plural stripping
-    if (token.endsWith("ies") && token.length > 4) terms.push(`${token.slice(0, -3)}y`);
-    else if (token.endsWith("ses") && token.length > 4) terms.push(token.slice(0, -2));
-    else if (token.endsWith("s") && !token.endsWith("ss") && token.length > 3) {
-      terms.push(token.slice(0, -1));
-    }
+    terms.push(...lightStem(token));
     const expanded = SYNONYM_EXPAND[token];
-    if (expanded) terms.push(...expanded);
+    if (expanded) {
+      for (const phrase of expanded) {
+        for (const part of phrase.split(/\s+/)) {
+          if (part.length >= 2 && !STOP_WORDS.has(part)) terms.push(part);
+        }
+        terms.push(phrase);
+      }
+    }
   }
   return Array.from(new Set(terms));
 }
@@ -195,9 +211,21 @@ function scoreTerms(entry: KnowledgeEntry, terms: string[], fullQuery: string): 
     if (content.includes(fullQuery)) score += 8;
   }
 
-  // Phrase boost for "digital employee", "operations agent", etc.
-  for (const phrase of ["digital employee", "operations agent", "acton adu", "knowledge base"]) {
-    if (fullQuery.includes(phrase.split(" ")[0]!) && content.includes(phrase)) score += 10;
+  // Phrase boost for common Acton vocabulary
+  for (const phrase of [
+    "digital employee",
+    "operations agent",
+    "acton adu",
+    "knowledge base",
+    "partnership evaluation meeting",
+    "partnership evaluation",
+  ]) {
+    if (
+      (fullQuery.includes(phrase) || terms.some((t) => phrase.includes(t) && t.length >= 3)) &&
+      (title.includes(phrase) || summary.includes(phrase) || content.includes(phrase))
+    ) {
+      score += 14;
+    }
   }
 
   return score;

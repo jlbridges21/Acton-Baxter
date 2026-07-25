@@ -68,10 +68,11 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       home,
       {
         href: "/admin/knowledge",
-        label: "All Knowledge",
+        label: "Knowledge Center",
         icon: BookOpen,
         match: (pathname) =>
           pathname === "/admin/knowledge" ||
+          pathname.startsWith("/admin/knowledge/settings") ||
           (/^\/admin\/knowledge\/[^/]+$/.test(pathname) &&
             !pathname.includes("/upload") &&
             !pathname.includes("/new") &&
@@ -81,13 +82,13 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       },
       {
         href: "/admin/knowledge/new",
-        label: "Add Entry",
+        label: "New Entry",
         icon: PlusCircle,
         match: (pathname) => pathname === "/admin/knowledge/new",
       },
       {
         href: "/admin/knowledge/upload",
-        label: "Upload Documents",
+        label: "Uploads",
         icon: Upload,
         match: (pathname) => pathname.startsWith("/admin/knowledge/upload"),
       },
@@ -105,7 +106,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     home,
     {
       href: "/admin/knowledge",
-      label: "Knowledge",
+      label: "Knowledge Center",
       icon: BookOpen,
       match: (pathname) => pathname.startsWith("/admin/knowledge"),
     },

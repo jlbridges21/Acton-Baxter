@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { KnowledgeUploadClient } from "@/components/admin/knowledge-upload-client";
@@ -9,7 +10,9 @@ export default async function AdminKnowledgeUploadPage() {
   if (!isAdminRole(user.profile.role)) redirect("/");
   return (
     <AppShell user={user}>
-      <KnowledgeUploadClient />
+      <Suspense fallback={<div className="text-sm text-[var(--acton-muted)]">Loading…</div>}>
+        <KnowledgeUploadClient />
+      </Suspense>
     </AppShell>
   );
 }

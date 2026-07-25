@@ -8,7 +8,11 @@ import {
   toPublicAnswer,
 } from "./conversations";
 import { retrieveBaxterContext } from "./context";
-import { INSUFFICIENT_KNOWLEDGE_ANSWER, mapUsedSourceNumbers } from "./citations";
+import {
+  INSUFFICIENT_KNOWLEDGE_ANSWER,
+  GENERAL_KNOWLEDGE_NOTE,
+  mapUsedSourceNumbers,
+} from "./citations";
 import { getBaxterLlmProvider } from "./openai-provider";
 import {
   BaxterConfigError,
@@ -67,7 +71,11 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   }
 
   // Fast path: identity questions with no need for OpenAI when KB is empty.
-  const contextItems = await retrieveBaxterContext(question);
+  const historyEarly = await getRecentConversationHistory(conversation.id, {
+    limit: 10,
+    excludeLastUser: true,
+  });
+  const contextItems = await retrieveBaxterContext(question, historyEarly);
   if (
     questionClass === "baxter_identity" &&
     contextItems.length === 0 &&
@@ -100,10 +108,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     // identity layer in the prompt remains authoritative
   }
 
-  const history = await getRecentConversationHistory(conversation.id, {
-    limit: 10,
-    excludeLastUser: true,
-  });
+  const history = historyEarly;
 
   const openaiConfigured = Boolean((getEnv().OPENAI_API_KEY ?? "").trim());
 
@@ -171,21 +176,21 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       (questionClass === "acton_company_specific" || questionClass === "acton_process_specific") &&
       sources.length === 0
     ) {
-      // Official Acton answer unavailable — prefer mixed/general labeled response.
-      insufficientKnowledge = true;
+      // Prefer answering with clearly labeled general guidance when the model produced one.
+      insufficientKnowledge = !answerText;
       answerMode = answerText ? "mixed" : "mixed";
       if (!answerText) {
         answerText = [
           INSUFFICIENT_KNOWLEDGE_ANSWER,
           "",
-          "If this is a general concept question, ask me in general terms and I can share clearly labeled general guidance.",
+          "If helpful, ask me as a general concept question and I can share labeled general guidance.",
         ].join("\n");
       } else if (
-        !/general guidance|not an approved acton|don’t have an approved|do not have an approved|doesn't have an approved|approved acton/i.test(
+        !/general knowledge|general guidance|not an approved acton|couldn.?t find an approved|approved acton source/i.test(
           answerText,
         )
       ) {
-        answerText = `${answerText}\n\nNote: I don’t have an approved Acton source for this yet, so treat any general explanation as guidance—not official Acton policy.`;
+        answerText = `${answerText}\n\n${GENERAL_KNOWLEDGE_NOTE}`;
         answerMode = "mixed";
       }
       sources = [];
@@ -194,9 +199,20 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       if (answerMode === "identity") answerMode = "grounded";
       insufficientKnowledge = false;
     } else {
-      // General / conversational with no sources
+      // General / conversational with no sources — answer normally.
       insufficientKnowledge = false;
       if (answerMode === "grounded") answerMode = "general";
+      if (
+        answerMode === "general" &&
+        answerText &&
+        !/general knowledge|approved Acton source/i.test(answerText)
+      ) {
+        // Soft label only when it reads like company advice without sources
+        if (/\b(acton|our policy|our process|we require)\b/i.test(answerText)) {
+          answerText = `${answerText}\n\n${GENERAL_KNOWLEDGE_NOTE}`;
+          answerMode = "mixed";
+        }
+      }
       sources = [];
     }
 

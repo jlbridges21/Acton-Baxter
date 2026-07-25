@@ -57,8 +57,7 @@
 
 - Initial Acton employee Slack pilot (Jackson, Milan, Maxx, James — see `docs/slack-setup.md` section 21)
 - Knowledge Management Rework Prompt 2: Google Workspace OAuth (done in app; Jackson must configure Cloud OAuth + Vercel vars + migration 013)
-- Knowledge Management Rework Prompt 3: polish / remaining KB UX
-- Knowledge Management Rework Prompt 3: polish and rollout
+- Knowledge Management Rework Prompt 3: Knowledge Center UX + retrieval/answer quality (done)
 
 ## Future
 

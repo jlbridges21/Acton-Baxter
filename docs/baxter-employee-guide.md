@@ -52,7 +52,7 @@ Baxter researches the address and sends a link to the full PEM report. Sign in o
 | **General guidance** | Useful context from Baxter’s AI — **not** official Acton policy.                                                                                               |
 | **Mixed**            | Official answer not found; Baxter provides labeled general help.                                                                                               |
 
-If Baxter says it does not have approved knowledge for an Acton-specific policy, do **not** treat general guidance as company policy. Ask your manager or check the official source.
+If Baxter says it could not find an approved Acton source for a company-specific question, do **not** treat any general guidance as company policy. Ask your manager or check the official source. For general questions (for example “What is an ADU?”), Baxter may answer from general knowledge and will say so when appropriate.
 
 ---
 

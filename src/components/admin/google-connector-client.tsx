@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import type { ConnectorHealth } from "@/lib/connectors/types";
 import type { GoogleSyncFolder } from "@/lib/connectors/google/types";
@@ -264,6 +265,7 @@ export function GoogleConnectorClient({
   const [folderId, setFolderId] = useState("");
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [syncPhase, setSyncPhase] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [friendlyResult, setFriendlyResult] = useState<FriendlyResult | null>(null);
   const [showTechnical, setShowTechnical] = useState(false);
@@ -426,8 +428,12 @@ export function GoogleConnectorClient({
 
   async function runSyncNow() {
     setBusy(true);
+    setBusyAction("sync");
     setMessage(null);
+    setSyncPhase("Scanning selected sources…");
     try {
+      await new Promise((r) => setTimeout(r, 400));
+      setSyncPhase("Reading Google files…");
       const response = await fetch("/api/admin/connectors/google/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -436,10 +442,13 @@ export function GoogleConnectorClient({
           processImmediately: true,
         }),
       });
+      setSyncPhase("Parsing and updating Knowledge…");
       const payload = await response.json();
       if (!response.ok) {
         setMessage(payload.error?.message ?? "Sync failed");
+        setSyncPhase(null);
       } else {
+        setSyncPhase("Finished.");
         setMessage(
           payload.message ??
             `Sync ${payload.status}${payload.jobId ? ` (job ${payload.jobId})` : ""}`,
@@ -448,8 +457,11 @@ export function GoogleConnectorClient({
       await refresh();
     } catch {
       setMessage("Sync request failed");
+      setSyncPhase(null);
     } finally {
       setBusy(false);
+      setBusyAction(null);
+      setTimeout(() => setSyncPhase(null), 2500);
     }
   }
 
@@ -534,7 +546,21 @@ export function GoogleConnectorClient({
           Connect Baxter to an Acton ADU Google account to browse approved Drive files and keep
           selected knowledge synchronized. Access is read-only.
         </p>
+        <p className="mt-2 text-sm">
+          <Link href="/admin/knowledge" className="font-semibold text-[var(--acton-navy)] underline">
+            ← Back to Knowledge Center
+          </Link>
+        </p>
       </div>
+
+      {syncPhase ? (
+        <Card className="border-sky-200 bg-sky-50/70">
+          <CardTitle className="text-base">{syncPhase}</CardTitle>
+          <p className="mt-1 text-sm text-[var(--acton-muted)]">
+            Sync progress — stay on this page until finished.
+          </p>
+        </Card>
+      ) : null}
 
       {oauthSuccess ? (
         <Card className="border-emerald-200 bg-emerald-50/70">

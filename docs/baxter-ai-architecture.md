@@ -5,9 +5,11 @@
 Baxter is Acton ADU’s internal AI assistant. It combines:
 
 1. Built-in identity (`identity.ts`)
-2. Approved Knowledge Base retrieval (manual + Google-synced via Workspace OAuth or service-account fallback)
-3. Conversation history
-4. OpenAI general assistance
+2. Approved Knowledge Base retrieval (manual + uploads + Google-synced) with deduped, synonym-aware ranking
+3. Conversation memory for follow-ups and pronouns
+4. Clearly labeled general answers when no Acton source matches
+5. Conversation history
+6. OpenAI general assistance
 
 Web chat (`POST /api/baxter/chat`) and Slack Events (`POST /api/slack/events`) both call `answerBaxterQuestion()` with `channel: "web"` or `channel: "slack"`.
 

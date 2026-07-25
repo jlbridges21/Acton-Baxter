@@ -115,7 +115,7 @@ describe("Baxter AI grounding and citations", () => {
     });
     expect(result.insufficientKnowledge).toBe(true);
     expect(result.sources).toEqual([]);
-    expect(result.answer.toLowerCase()).toContain("approved acton knowledge");
+    expect(result.answer.toLowerCase()).toContain("approved acton source");
     expect(result.conversationId).toBeTruthy();
   });
 
