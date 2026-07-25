@@ -5,9 +5,23 @@ import { normalizeSearchText } from "@/lib/knowledge/retrieval";
 import type { KnowledgeSearchResult } from "@/lib/knowledge/types";
 import type { BaxterContextItem, BaxterHistoryMessage } from "./types";
 import { retrievalQueryFromHistory } from "./memory";
+import {
+  planKnowledgeQuery,
+  searchStructuredKnowledge,
+  structuredHitsToContextItems,
+  buildStructuredEvidencePackage,
+  type StructuredSearchResult,
+} from "@/lib/knowledge-index";
 
 export const BAXTER_CONTEXT_LIMIT = 6;
-export const BAXTER_MAX_EXCERPT_CHARS = 700;
+export const BAXTER_MAX_EXCERPT_CHARS = 900;
+
+export type BaxterRetrievalBundle = {
+  contextItems: BaxterContextItem[];
+  structured: StructuredSearchResult | null;
+  evidencePackage: string | null;
+  queryMode: string;
+};
 
 export function toBaxterContextItems(
   results: KnowledgeSearchResult[],
@@ -60,13 +74,59 @@ export async function retrieveBaxterContext(
   question: string,
   history?: BaxterHistoryMessage[],
 ): Promise<BaxterContextItem[]> {
+  const bundle = await retrieveBaxterEvidence(question, history);
+  return bundle.contextItems;
+}
+
+/**
+ * Hybrid retrieval: structured lookup/aggregate + document keyword search.
+ */
+export async function retrieveBaxterEvidence(
+  question: string,
+  history?: BaxterHistoryMessage[],
+): Promise<BaxterRetrievalBundle> {
   const query = history?.length ? retrievalQueryFromHistory(question, history) : question;
-  const results = await searchApprovedKnowledge({
+  const plan = planKnowledgeQuery(query);
+
+  let structured: StructuredSearchResult | null = null;
+  let structuredItems: BaxterContextItem[] = [];
+  let evidencePackage: string | null = null;
+
+  if (plan.mode !== "document") {
+    structured = await searchStructuredKnowledge(query, plan);
+    structuredItems = structuredHitsToContextItems(structured, 1);
+    evidencePackage = buildStructuredEvidencePackage(structured);
+  }
+
+  const docResults = await searchApprovedKnowledge({
     query,
     limit: BAXTER_CONTEXT_LIMIT + 4,
     visibility: "internal",
   });
-  return toBaxterContextItems(results);
+  const docItems = toBaxterContextItems(docResults, { limit: BAXTER_CONTEXT_LIMIT });
+
+  // Prefer structured hits first; fill remaining slots with docs not already cited
+  const seen = new Set(structuredItems.map((i) => i.id));
+  const merged: BaxterContextItem[] = [...structuredItems];
+  for (const item of docItems) {
+    if (merged.length >= BAXTER_CONTEXT_LIMIT) break;
+    if (seen.has(item.id)) {
+      // Enrich existing structured item's excerpt if document excerpt is longer? keep structured
+      continue;
+    }
+    merged.push({ ...item, number: merged.length + 1 });
+    seen.add(item.id);
+  }
+
+  // Renumber
+  const contextItems = merged.map((item, index) => ({ ...item, number: index + 1 }));
+
+  return {
+    contextItems,
+    structured,
+    evidencePackage,
+    queryMode: plan.mode,
+  };
 }
 
 function truncateExcerpt(value: string): string {

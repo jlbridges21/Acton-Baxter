@@ -73,6 +73,7 @@ export async function parseGoogleDriveFile(
       contentText: structured.contentText,
       contentHash: hashContent(structured.contentText),
       parseMode: "full_text",
+      workbook: structured.workbook,
     };
   }
 

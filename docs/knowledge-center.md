@@ -32,6 +32,8 @@ Google-managed Knowledge entries can be removed directly from the Knowledge Cent
 
 Supported Google imports include Docs, Sheets, Markdown, Text, PDF, DOCX, CSV, and **XLSX**.
 
+Spreadsheet entries render as a table viewer (sheet tabs, sticky headers, search) when workbook grids are indexed. Use **Rebuild Baxter index** after migration `016`.
+
 ## Settings
 
 `/admin/knowledge/settings` — upload limits, model, Google connection, Slack note, knowledge totals.

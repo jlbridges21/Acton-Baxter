@@ -4,9 +4,11 @@
 
 The Knowledge Base stores Acton ADU institutional knowledge so Baxter can answer employees from **approved + internal** sources only.
 
-## Admin home
+## Structured knowledge
 
-**`/admin/knowledge`** is the **Knowledge Center** — see `docs/knowledge-center.md`.
+Spreadsheets are indexed as structured rows (not only flattened text). See `docs/structured-knowledge.md`.
+
+Baxter retrieves exact fields (for example Lori Harris → Agreement Amount) before calling OpenAI when structured evidence matches.
 
 Primary actions:
 

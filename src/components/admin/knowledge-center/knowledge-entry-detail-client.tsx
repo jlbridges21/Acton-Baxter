@@ -7,11 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
+import { SpreadsheetKnowledgeViewer } from "@/components/admin/knowledge-center/spreadsheet-knowledge-viewer";
 import type { KnowledgeEntry, KnowledgeEntryRevision } from "@/lib/knowledge/types";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
-type Tab = "content" | "history" | "sources" | "usage";
+type Tab = "content" | "history" | "sources" | "usage" | "index";
 
 export function KnowledgeEntryDetailClient({
   entry: initialEntry,
@@ -42,11 +43,19 @@ export function KnowledgeEntryDetailClient({
         ? meta.googleLastSyncedAt
         : null;
 
+  const isSpreadsheet = Boolean(
+    meta.workbook ||
+    meta.structuredIndexed ||
+    (meta.google as { mimeType?: string } | undefined)?.mimeType?.includes("spreadsheet") ||
+    /\.(xlsx|csv)$/i.test(String(meta.originalFilename ?? "")),
+  );
+
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: "content", label: "Content" },
+    { id: "content", label: isSpreadsheet ? "Spreadsheet" : "Content" },
     { id: "history", label: "History" },
     { id: "sources", label: "Sources" },
     { id: "usage", label: "Baxter Usage" },
+    { id: "index", label: "Index" },
   ];
 
   async function removeFromBaxter() {
@@ -253,14 +262,35 @@ export function KnowledgeEntryDetailClient({
           <div className="mt-6">
             {tab === "content" ? (
               <div className="space-y-4">
-                {entry.summary ? (
-                  <p className="text-base leading-relaxed text-[var(--acton-muted)]">
-                    {entry.summary}
-                  </p>
-                ) : null}
-                <div className="prose prose-sm max-w-none whitespace-pre-wrap text-[var(--acton-navy)]">
-                  {entry.content}
-                </div>
+                {isSpreadsheet && meta.workbook ? (
+                  <SpreadsheetKnowledgeViewer
+                    title={entry.title}
+                    workbook={
+                      meta.workbook as {
+                        title?: string;
+                        sheets?: Array<{ name: string; gid?: number | null; grid: string[][] }>;
+                      }
+                    }
+                    sourceUrl={entry.source_url}
+                  />
+                ) : (
+                  <>
+                    {entry.summary ? (
+                      <p className="text-base leading-relaxed text-[var(--acton-muted)]">
+                        {entry.summary}
+                      </p>
+                    ) : null}
+                    <div className="prose prose-sm max-w-none whitespace-pre-wrap text-[var(--acton-navy)]">
+                      {entry.content}
+                    </div>
+                    {isSpreadsheet ? (
+                      <p className="text-sm text-amber-800">
+                        Structured table view unavailable until this source is re-synced or
+                        reindexed.
+                      </p>
+                    ) : null}
+                  </>
+                )}
               </div>
             ) : null}
 
@@ -345,6 +375,46 @@ export function KnowledgeEntryDetailClient({
                   Past answers keep frozen source titles and links even if this entry is removed
                   from active Knowledge.
                 </p>
+              </div>
+            ) : null}
+
+            {tab === "index" ? (
+              <div className="space-y-3 text-sm">
+                <p className="text-[var(--acton-muted)]">
+                  Rebuild retrieval units for this source without re-importing from Google.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy === "reindex"}
+                  onClick={async () => {
+                    setBusy("reindex");
+                    setError(null);
+                    try {
+                      const response = await fetch("/api/admin/knowledge/reindex", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ entryId: entry.id }),
+                      });
+                      const payload = (await response.json()) as {
+                        error?: { message?: string };
+                        result?: { unitCount?: number; rowCount?: number };
+                      };
+                      if (!response.ok) throw new Error(payload.error?.message ?? "Reindex failed");
+                      setMessage(
+                        `Indexed ${payload.result?.unitCount ?? 0} units` +
+                          (payload.result?.rowCount ? ` (${payload.result.rowCount} rows)` : ""),
+                      );
+                      router.refresh();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Reindex failed");
+                    } finally {
+                      setBusy(null);
+                    }
+                  }}
+                >
+                  {busy === "reindex" ? "Reindexing…" : "Reindex"}
+                </Button>
               </div>
             ) : null}
           </div>

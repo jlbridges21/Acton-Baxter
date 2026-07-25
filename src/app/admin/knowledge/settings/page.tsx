@@ -7,8 +7,10 @@ import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getKnowledgeAnalytics } from "@/lib/knowledge/analytics";
 import { getGoogleAdminOverview } from "@/lib/connectors/google/diagnostics";
+import { KnowledgeReindexClient } from "@/components/admin/knowledge-reindex-client";
 import { getEnv } from "@/lib/env";
 import { isGoogleOAuthConfigured } from "@/lib/connectors/google/oauth-config";
+import { KNOWLEDGE_INDEX_VERSION } from "@/lib/knowledge-index";
 
 export default async function KnowledgeSettingsPage() {
   const user = await requireActiveUser();
@@ -121,6 +123,7 @@ export default async function KnowledgeSettingsPage() {
                 Slack from Admin → Slack.
               </CardDescription>
             </Card>
+            <KnowledgeReindexClient currentVersion={KNOWLEDGE_INDEX_VERSION} />
           </div>
         </KnowledgeCenterShell>
       </Suspense>

@@ -417,6 +417,21 @@ export class GoogleWorkspaceConnector implements KnowledgeConnector {
             managed: true,
           },
           googleManaged: true,
+          ...(parsed.workbook
+            ? {
+                workbook: {
+                  title: parsed.workbook.title,
+                  sheets: parsed.workbook.sheets.map((s) => ({
+                    name: s.name,
+                    gid: s.gid,
+                    grid: s.rawGrid,
+                  })),
+                  warnings: parsed.workbook.warnings,
+                  truncated: parsed.workbook.truncated,
+                },
+                structuredIndexed: true,
+              }
+            : {}),
         };
 
         let knowledgeEntryId: string | null = existing?.id ?? null;
@@ -504,6 +519,38 @@ export class GoogleWorkspaceConnector implements KnowledgeConnector {
           );
           result.created += 1;
           knowledgeEntryId = created.id;
+        }
+
+        // Rebuild retrieval units from structured workbook / document content
+        if (knowledgeEntryId) {
+          try {
+            const { indexKnowledgeEntry } = await import("@/lib/knowledge-index/reindex");
+            const { getKnowledgeEntry } = await import("@/lib/knowledge/store");
+            const entryForIndex = await getKnowledgeEntry(knowledgeEntryId);
+            if (entryForIndex) {
+              // Ensure workbook metadata is present for indexing
+              if (parsed.workbook && !entryForIndex.metadata?.workbook) {
+                await patchKnowledgeEntrySyncFields(knowledgeEntryId, {
+                  metadata: {
+                    ...entryForIndex.metadata,
+                    ...meta,
+                  },
+                });
+                const refreshed = await getKnowledgeEntry(knowledgeEntryId);
+                if (refreshed) await indexKnowledgeEntry(refreshed);
+              } else {
+                await indexKnowledgeEntry({
+                  ...entryForIndex,
+                  metadata: { ...entryForIndex.metadata, ...meta },
+                  content: parsed.contentText ?? entryForIndex.content,
+                });
+              }
+            }
+          } catch (indexError) {
+            result.errors.push(
+              `${file.name}: indexed with warnings (${indexError instanceof Error ? indexError.message.slice(0, 120) : "index failed"})`,
+            );
+          }
         }
 
         await upsertSyncedFile({

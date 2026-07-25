@@ -72,7 +72,10 @@ Additional database tasks:
 - [ ] Drive browser opens automatically when OAuth + Shared Drive root already exist
 - [ ] **Add selected to Baxter** creates Knowledge entries (including XLSX) without a separate sync step
 - [ ] Google entries can be removed from Knowledge Center (**Remove from Baxter**)
-- [ ] Migration `015_google_knowledge_usability.sql` applied in Supabase
+- [ ] Migration `016_knowledge_units.sql` applied
+- [ ] Re-sync Sales Performance Report (or affected Sheets) then **Rebuild Baxter index**
+- [ ] Ask Baxter: “How much was the Lori Harris project agreement for?” → `$352,933`
+- [ ] Knowledge Center shows spreadsheet table viewer (not col2= text)
 - [ ] **Sync changes** completes; approved Google-managed entries appear in Knowledge Base
 - [ ] Advanced diagnostics (optional): dry-run / repair Google knowledge
 - [ ] Scheduled sync: Vercel Cron registered for `/api/internal/process-jobs` (Production only)

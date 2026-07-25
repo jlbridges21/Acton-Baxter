@@ -34,9 +34,39 @@ export async function POST(request: Request) {
           "test_dynamic_answer",
           "test_rate_limit_classification",
           "bootstrap_overview",
+          "inspect_retrieval",
         ]),
+        question: z.string().optional(),
       })
       .parse(body);
+
+    if (parsed.action === "inspect_retrieval") {
+      const question =
+        parsed.question?.trim() || "How much was the Lori Harris project agreement for?";
+      const { planKnowledgeQuery, searchStructuredKnowledge, buildStructuredEvidencePackage } =
+        await import("@/lib/knowledge-index");
+      const plan = planKnowledgeQuery(question);
+      const structured = await searchStructuredKnowledge(question, plan);
+      const hit = structured.lookups[0];
+      return jsonOk({
+        result: {
+          question,
+          queryMode: plan.mode,
+          entities: plan.entities,
+          requestedFields: plan.requestedFields,
+          aggregation: plan.aggregation,
+          matchedSource: hit?.entryTitle ?? structured.aggregates[0]?.entryTitle ?? null,
+          matchedSheet: hit?.sheetName ?? null,
+          matchedEntity: hit?.entityLabel ?? null,
+          requestedField: hit?.requestedField ?? null,
+          value: hit?.directValue ?? structured.aggregates[0]?.displayValue ?? null,
+          ambiguous: structured.ambiguous,
+          evidence: buildStructuredEvidencePackage(structured),
+          lookupCount: structured.lookups.length,
+          aggregateCount: structured.aggregates.length,
+        },
+      });
+    }
 
     if (parsed.action === "test_openai") {
       return jsonOk({ result: await runOpenAiDiagnosticTest() });

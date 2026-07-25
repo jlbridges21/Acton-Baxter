@@ -62,6 +62,10 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
   const [snapshot, setSnapshot] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [inspectQuestion, setInspectQuestion] = useState(
+    "How much was the Lori Harris project agreement for?",
+  );
+  const [inspectResult, setInspectResult] = useState<string | null>(null);
 
   async function refresh() {
     const response = await fetch("/api/admin/baxter/diagnostics");
@@ -87,6 +91,28 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
       }
     } catch {
       setResult("Diagnostic request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function inspectRetrieval() {
+    setBusy(true);
+    setInspectResult(null);
+    try {
+      const response = await fetch("/api/admin/baxter/diagnostics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "inspect_retrieval", question: inspectQuestion }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setInspectResult(payload.error?.message ?? "Inspection failed");
+      } else {
+        setInspectResult(JSON.stringify(payload.result, null, 2));
+      }
+    } catch {
+      setInspectResult("Inspection request failed");
     } finally {
       setBusy(false);
     }
@@ -265,6 +291,29 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             </dd>
           </div>
         </dl>
+      </Card>
+
+      <Card>
+        <CardTitle>Retrieval inspector</CardTitle>
+        <CardDescription className="mt-2">
+          Deterministic structured retrieval decisions (no hidden chain-of-thought).
+        </CardDescription>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <input
+            className="min-w-[240px] flex-1 rounded-md border border-[var(--acton-border)] px-3 py-2 text-sm"
+            value={inspectQuestion}
+            onChange={(e) => setInspectQuestion(e.target.value)}
+            aria-label="Question to inspect"
+          />
+          <Button disabled={busy} onClick={() => void inspectRetrieval()}>
+            Inspect retrieval
+          </Button>
+        </div>
+        {inspectResult ? (
+          <pre className="mt-4 overflow-x-auto rounded-md bg-[var(--acton-gray-50)] p-3 text-xs text-[var(--acton-navy)]">
+            {inspectResult}
+          </pre>
+        ) : null}
       </Card>
 
       <Card>

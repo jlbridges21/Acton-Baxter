@@ -7,11 +7,12 @@ import {
   getRecentConversationHistory,
   toPublicAnswer,
 } from "./conversations";
-import { retrieveBaxterContext } from "./context";
+import { retrieveBaxterEvidence } from "./context";
 import {
   INSUFFICIENT_KNOWLEDGE_ANSWER,
   GENERAL_KNOWLEDGE_NOTE,
   mapUsedSourceNumbers,
+  contextItemToSourceReference,
 } from "./citations";
 import { getBaxterLlmProvider } from "./openai-provider";
 import {
@@ -24,6 +25,7 @@ import { classifyBaxterQuestion } from "./classify";
 import { answerFromBaxterIdentity, buildBaxterIdentityContext } from "./identity";
 import { getEnv } from "@/lib/env";
 import type { BaxterAnswer, BaxterAnswerMode, BaxterQuestionInput } from "./types";
+import { draftDirectStructuredAnswer } from "@/lib/knowledge-index";
 
 /**
  * Shared Baxter answering entry point for web and Slack.
@@ -75,7 +77,50 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     limit: 10,
     excludeLastUser: true,
   });
-  const contextItems = await retrieveBaxterContext(question, historyEarly);
+  const evidence = await retrieveBaxterEvidence(question, historyEarly);
+  const contextItems = evidence.contextItems;
+
+  // Deterministic structured answer when we have a direct field value
+  const direct =
+    evidence.structured && !evidence.structured.ambiguous
+      ? draftDirectStructuredAnswer(question, evidence.structured)
+      : evidence.structured?.ambiguous
+        ? evidence.structured.clarificationPrompt
+        : null;
+
+  if (
+    direct &&
+    evidence.structured &&
+    (evidence.structured.lookups[0]?.directValue ||
+      evidence.structured.aggregates[0] ||
+      evidence.structured.ambiguous)
+  ) {
+    const sources = contextItems.slice(0, 1).map((item) => contextItemToSourceReference(item));
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: direct,
+      insufficientKnowledge: false,
+      confidence: evidence.structured.ambiguous ? "medium" : "high",
+      modelProvider: "structured-index",
+      modelName: "knowledge-units-v1",
+      sources,
+      sourceEntryIds: sources.map((s, index) => ({
+        id: s.knowledgeEntryId!,
+        relevanceScore: contextItems[index]?.relevanceScore ?? null,
+        order: index + 1,
+      })),
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer: direct,
+      sources,
+      confidence: evidence.structured.ambiguous ? "medium" : "high",
+      insufficientKnowledge: false,
+      answerMode: evidence.structured.ambiguous ? "clarification" : "grounded",
+    });
+  }
+
   if (
     questionClass === "baxter_identity" &&
     contextItems.length === 0 &&

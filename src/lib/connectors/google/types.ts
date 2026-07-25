@@ -26,6 +26,7 @@ export type ParsedGoogleDocument = {
   contentHash: string;
   parseMode: "full_text" | "metadata_only" | "unsupported";
   folderId: string | null;
+  workbook?: import("@/lib/knowledge-index/types").ParsedWorkbook;
 };
 
 export type GoogleSyncFolder = {

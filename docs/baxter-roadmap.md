@@ -56,7 +56,7 @@
 ## Current
 
 - Initial Acton employee Slack pilot (Jackson, Milan, Maxx, James — see `docs/slack-setup.md` section 21)
-- Knowledge Management: Google Drive picker UX + XLSX Google import + Knowledge Center Remove from Baxter (migration 015)
+- Knowledge Management: structured spreadsheet units + exact lookup (migration 016; re-sync Sheets then Rebuild Baxter index)
 - Knowledge Management Rework Prompt 3: Knowledge Center UX + retrieval/answer quality (done)
 
 ## Future

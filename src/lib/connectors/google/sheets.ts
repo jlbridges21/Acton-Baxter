@@ -2,10 +2,10 @@ import "server-only";
 
 import { exportDriveFile } from "./drive";
 import { googleFetch } from "./auth";
+import { parseWorkbookFromSheets } from "@/lib/knowledge-index/spreadsheet-parser";
+import type { ParsedWorkbook } from "@/lib/knowledge-index/types";
 
-const MAX_SHEETS = 10;
-const MAX_ROWS_PER_SHEET = 200;
-const MAX_COLS = 40;
+const MAX_SHEETS = 12;
 
 export type ParsedSheetTab = {
   title: string;
@@ -13,15 +13,19 @@ export type ParsedSheetTab = {
   rowCount: number;
   truncated: boolean;
   text: string;
+  gid: number | null;
+  grid: string[][];
 };
 
 /**
  * Prefer Sheets API values for structured tabs; fall back to CSV export.
+ * Uses header-row detection and produces human-readable Key: Value rows (not col2=).
  */
 export async function exportGoogleSheetStructured(fileId: string): Promise<{
   contentText: string;
   tabs: ParsedSheetTab[];
   truncated: boolean;
+  workbook: ParsedWorkbook;
 }> {
   try {
     const meta = await googleFetch<{
@@ -31,91 +35,96 @@ export async function exportGoogleSheetStructured(fileId: string): Promise<{
       `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(fileId)}?fields=properties.title,sheets.properties.title,sheets.properties.sheetId`,
     );
 
-    const sheetTitles = (meta.sheets ?? [])
-      .map((s) => s.properties?.title)
-      .filter((t): t is string => Boolean(t))
+    const sheetProps = (meta.sheets ?? [])
+      .map((s) => ({
+        title: s.properties?.title,
+        gid: s.properties?.sheetId ?? null,
+      }))
+      .filter((t): t is { title: string; gid: number | null } => Boolean(t.title))
       .slice(0, MAX_SHEETS);
 
-    if (sheetTitles.length === 0) {
+    if (sheetProps.length === 0) {
       const csv = await exportDriveFile(fileId, "text/csv");
+      const grid = csv
+        .split(/\r?\n/)
+        .filter((line) => line.length)
+        .map((line) => line.split(",").map((c) => c.replace(/^"|"$/g, "").trim()));
+      const workbook = parseWorkbookFromSheets(meta.properties?.title ?? fileId, [
+        { name: "Sheet1", gid: null, grid },
+      ]);
       return {
-        contentText: csv,
+        contentText: workbook.contentText,
         tabs: [
           {
             title: "Sheet1",
-            headers: [],
-            rowCount: csv.split("\n").length,
+            headers: workbook.sheets[0]?.tables[0]?.headers ?? [],
+            rowCount: grid.length,
             truncated: false,
-            text: csv,
+            text: workbook.contentText,
+            gid: null,
+            grid,
           },
         ],
-        truncated: false,
+        truncated: workbook.truncated,
+        workbook,
       };
     }
 
-    const tabs: ParsedSheetTab[] = [];
-    let anyTruncated = false;
-
-    for (const title of sheetTitles) {
-      const range = encodeURIComponent(`'${title.replace(/'/g, "''")}'`);
+    const sheetGrids: Array<{ name: string; gid: number | null; grid: string[][] }> = [];
+    for (const sheet of sheetProps) {
+      const range = encodeURIComponent(`'${sheet.title.replace(/'/g, "''")}'`);
       const valuesData = await googleFetch<{ values?: string[][] }>(
         `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(fileId)}/values/${range}?valueRenderOption=FORMATTED_VALUE&majorDimension=ROWS`,
       );
-      const rows = valuesData.values ?? [];
-      const truncated = rows.length > MAX_ROWS_PER_SHEET;
-      if (truncated) anyTruncated = true;
-      const limited = rows.slice(0, MAX_ROWS_PER_SHEET).map((row) => row.slice(0, MAX_COLS));
-      const headers = (limited[0] ?? []).map((cell) => String(cell ?? "").trim());
-      const body = limited.slice(1);
-      const lines: string[] = [];
-      lines.push(`## Sheet: ${title}`);
-      if (headers.length) lines.push(`Headers: ${headers.join(" | ")}`);
-      for (let i = 0; i < body.length; i += 1) {
-        const row = body[i] ?? [];
-        const cells = row.map((cell, idx) => {
-          const header = headers[idx] || `col${idx + 1}`;
-          return `${header}=${String(cell ?? "").trim()}`;
-        });
-        lines.push(`Row ${i + 1}: ${cells.join("; ")}`);
-      }
-      if (truncated) {
-        lines.push(`… truncated after ${MAX_ROWS_PER_SHEET} rows`);
-      }
-      const text = lines.join("\n");
-      tabs.push({
-        title,
-        headers,
-        rowCount: rows.length,
-        truncated,
-        text,
-      });
+      const rows = (valuesData.values ?? []).map((row) =>
+        row.map((cell) => String(cell ?? "").trim()),
+      );
+      sheetGrids.push({ name: sheet.title, gid: sheet.gid, grid: rows });
     }
 
-    if ((meta.sheets?.length ?? 0) > MAX_SHEETS) anyTruncated = true;
+    const workbook = parseWorkbookFromSheets(meta.properties?.title ?? fileId, sheetGrids);
 
-    const contentText = [
-      `Spreadsheet: ${meta.properties?.title ?? fileId}`,
-      ...tabs.map((tab) => tab.text),
-      anyTruncated ? "\n[Spreadsheet content truncated for Baxter indexing.]" : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const tabs: ParsedSheetTab[] = workbook.sheets.map((sheet) => {
+      const primary = sheet.tables[0];
+      return {
+        title: sheet.name,
+        headers: primary?.headers ?? [],
+        rowCount: sheet.rawGrid.length,
+        truncated: false,
+        text: sheet.tables.flatMap((t) => t.rows.map((r) => r.displayLines)).join("\n\n"),
+        gid: sheet.gid,
+        grid: sheet.rawGrid,
+      };
+    });
 
-    return { contentText, tabs, truncated: anyTruncated };
+    return {
+      contentText: workbook.contentText,
+      tabs,
+      truncated: workbook.truncated || (meta.sheets?.length ?? 0) > MAX_SHEETS,
+      workbook,
+    };
   } catch {
     const csv = await exportDriveFile(fileId, "text/csv");
+    const grid = csv
+      .split(/\r?\n/)
+      .filter((line) => line.length)
+      .map((line) => line.split(",").map((c) => c.replace(/^"|"$/g, "").trim()));
+    const workbook = parseWorkbookFromSheets("Export", [{ name: "Export", gid: null, grid }]);
     return {
-      contentText: csv,
+      contentText: workbook.contentText || csv,
       tabs: [
         {
           title: "Export",
-          headers: [],
-          rowCount: csv.split("\n").length,
+          headers: workbook.sheets[0]?.tables[0]?.headers ?? [],
+          rowCount: grid.length,
           truncated: false,
-          text: csv,
+          text: workbook.contentText || csv,
+          gid: null,
+          grid,
         },
       ],
       truncated: false,
+      workbook,
     };
   }
 }
