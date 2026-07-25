@@ -51,13 +51,17 @@ Additional database tasks:
 
 ## Google Workspace connector
 
-- [ ] `GOOGLE_PROJECT_ID`, `GOOGLE_CLIENT_EMAIL`, `GOOGLE_PRIVATE_KEY` set in Vercel
-- [ ] Private key normalized (literal `\n` or real newlines; valid `BEGIN`/`END` markers)
-- [ ] Drive, Docs, and Sheets APIs enabled in Google Cloud
-- [ ] Root folder or sync folders shared with **`GOOGLE_CLIENT_EMAIL`** (service account), not only `baxter@actonadu.com`
-- [ ] Shared Drive folders: service account added as Shared Drive member (if applicable)
-- [ ] `GOOGLE_DRIVE_ROOT_FOLDER` or admin-added folders configured at `/admin/connectors/google`
-- [ ] Apply migration **011** (`google_source_selections`, `google_synced_files`, `google_sync_runs`)
+- [ ] `GOOGLE_AUTH_MODE=workspace_oauth`
+- [ ] `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` set
+- [ ] Redirect URI exact match: `https://acton-baxter.vercel.app/api/admin/connectors/google/oauth/callback`
+- [ ] `GOOGLE_TOKEN_ENCRYPTION_KEY` set (server-only; `openssl rand -base64 32`)
+- [ ] `GOOGLE_OAUTH_ALLOWED_DOMAINS=actonadu.com` and allowlisted emails
+- [ ] Apply migration **013** (`google_connections`, `google_oauth_states`)
+- [ ] Drive, Docs, and Sheets APIs enabled (Library search — Google Enterprise API)
+- [ ] Admin connected as `baxter@actonadu.com` via **Connect Google Workspace**
+- [ ] Shared Drive listed without relying on external service-account membership
+- [ ] Optional SA vars only if intentionally using `service_account` mode
+- [ ] Apply migration **011** (`google_source_selections`, `google_synced_files`, `google_sync_runs`) if not already
 - [ ] Select at least one file or managed folder in the Drive browser (do not rely on “see everything”)
 - [ ] **Preview** a Google Doc before first import
 - [ ] `GOOGLE_SYNC_ENABLED=true` (default) — controls scheduled sync only

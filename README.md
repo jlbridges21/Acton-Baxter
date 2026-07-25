@@ -80,7 +80,8 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 
 ## Google Workspace + Slack
 
-- Google Docs/Sheets sync: `/admin/connectors/google` — see `docs/google-connector.md`
+- Google Workspace OAuth + Drive Knowledge Manager: `/admin/connectors/google` — see `docs/google-workspace-oauth-setup.md` and `docs/google-connector.md`
+  - Prefer connecting as `baxter@actonadu.com` (service account is often blocked from Acton Shared Drives)
   - Scheduled sync: `GOOGLE_SYNC_ENABLED`, `GOOGLE_SYNC_INTERVAL_MINUTES` (default 180)
 - Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`
 - Slack `/property` command: Property Research from Slack
@@ -103,6 +104,9 @@ In Supabase SQL Editor, run each file completely:
 8. `supabase/migrations/008_google_sync_and_slack_events.sql`
 9. `supabase/migrations/009_slack_production.sql`
 10. `supabase/migrations/010_baxter_feedback.sql`
+11. `supabase/migrations/011_google_knowledge_manager.sql` (if present in your tree)
+12. `supabase/migrations/012_knowledge_uploads.sql`
+13. `supabase/migrations/013_google_workspace_oauth.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 

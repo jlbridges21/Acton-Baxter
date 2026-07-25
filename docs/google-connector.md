@@ -4,33 +4,54 @@
 
 Google Docs and Sheets are the **source of truth**. Baxter syncs their text into the Knowledge Base so answers are fast and always cite the original Google URL.
 
-Admin UI: **`/admin/connectors/google`**
+Admin UI: **`/admin/connectors/google`** (labeled **Google Workspace**)
+
+**Primary production auth:** Google Workspace OAuth as `baxter@actonadu.com`  
+See **`docs/google-workspace-oauth-setup.md`**.
+
+---
+
+## Why service accounts often fail on Acton Shared Drives
+
+`baxter@baxter-503419.iam.gserviceaccount.com` is **external** to Acton ADU Workspace. Google blocks adding it to internal-only Shared Drives. SA token mint can succeed while Shared Drive listing still fails — use Workspace OAuth instead.
+
+---
+
+## Auth modes (`GOOGLE_AUTH_MODE`)
+
+| Mode                        | Description                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `workspace_oauth` (default) | Admin connects an Acton Workspace user; refresh token encrypted at rest      |
+| `service_account`           | JWT with `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY`                        |
+| `domain_wide_delegation`    | Only when SA + `GOOGLE_IMPERSONATED_USER` + Workspace DWD are fully verified |
 
 ---
 
 ## Service account vs `baxter@actonadu.com`
 
-| Identity                  | Role                                                                                                       |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **`GOOGLE_CLIENT_EMAIL`** | Service account principal that calls Google APIs (e.g. `baxter-sync@project.iam.gserviceaccount.com`)      |
-| **`baxter@actonadu.com`** | Google Workspace **user** identity — useful as an admin contact, **not** automatically the service account |
+| Identity                  | Role                                                                   |
+| ------------------------- | ---------------------------------------------------------------------- |
+| **Connected OAuth user**  | Preferred API caller for Shared Drives (e.g. `baxter@actonadu.com`)    |
+| **`GOOGLE_CLIENT_EMAIL`** | Optional SA principal for My Drive shares / orgs that allow SA members |
 
-**Sharing folders only with `baxter@actonadu.com` is not enough** unless that address is also the service account email or domain-wide delegation is configured for the SA.
-
-Baxter never stores Google OAuth user tokens in the database.
+Refresh tokens are stored **encrypted** in `google_connections` (migration `013`). They are never returned to the browser.
 
 ---
 
-## Setup
+## Setup (OAuth — recommended)
 
-1. In Google Cloud, create or use an Acton project.
-2. Enable **Google Drive API**, **Google Docs API**, and **Google Sheets API**.
-3. Create a **service account** and JSON key.
-4. Copy to Vercel:
-   - `client_email` → `GOOGLE_CLIENT_EMAIL`
-   - `private_key` → `GOOGLE_PRIVATE_KEY`
-   - project id → `GOOGLE_PROJECT_ID`
-5. Share Drive folders with **`GOOGLE_CLIENT_EMAIL`** (Viewer is enough).
+Follow `docs/google-workspace-oauth-setup.md`, then:
+
+1. Apply `supabase/migrations/013_google_workspace_oauth.sql`
+2. Set Vercel OAuth + `GOOGLE_TOKEN_ENCRYPTION_KEY` vars
+3. Redeploy → **Connect Google Workspace**
+
+## Setup (service account — fallback)
+
+1. Enable Drive, Docs, Sheets APIs.
+2. Create a service account JSON key.
+3. Set `GOOGLE_AUTH_MODE=service_account` plus `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY`.
+4. Share **My Drive** folders with the SA (Shared Drives may still reject external SAs).
 
 ---
 
@@ -51,20 +72,22 @@ Redeploy after changing the key.
 
 ## Shared Drive vs My Drive
 
-| Location                     | Access requirement                                                                                            |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **My Drive / shared folder** | Share folder with `GOOGLE_CLIENT_EMAIL` (Viewer+)                                                             |
-| **Shared Drive**             | Add the service account as a **Shared Drive member**, or share the specific folder with `GOOGLE_CLIENT_EMAIL` |
+| Location                          | Recommended approach                                        |
+| --------------------------------- | ----------------------------------------------------------- |
+| **Shared Drive (Acton internal)** | Workspace OAuth as `baxter@actonadu.com` → Connect as root  |
+| **My Drive / shared folder**      | OAuth user access, or share with SA in service-account mode |
 
-The admin **Test root folder** diagnostic reports whether a Shared Drive was detected and shows guidance.
+Do **not** assume the Cloud service account can join an Acton Shared Drive.
 
 Common errors:
 
-| Code                                       | Meaning                      |
-| ------------------------------------------ | ---------------------------- |
-| `BAXTER_GOOGLE_SHARED_DRIVE_ACCESS_DENIED` | SA not a Shared Drive member |
-| `BAXTER_GOOGLE_FOLDER_ACCESS_DENIED`       | Folder not shared with SA    |
-| `BAXTER_GOOGLE_FOLDER_NOT_FOUND`           | Wrong folder ID              |
+| Code                                     | Meaning                                 |
+| ---------------------------------------- | --------------------------------------- |
+| `BAXTER_GOOGLE_DRIVE_API_DISABLED`       | Enable Drive API via Library search     |
+| `BAXTER_GOOGLE_PERMISSION_DENIED`        | Connected account lacks access          |
+| `BAXTER_GOOGLE_SHARED_DRIVE_NOT_VISIBLE` | Drive not visible / external SA blocked |
+| `BAXTER_GOOGLE_REAUTHORIZATION_REQUIRED` | Reconnect Google Workspace              |
+| `BAXTER_GOOGLE_FOLDER_NOT_FOUND`         | Wrong folder ID                         |
 
 ---
 

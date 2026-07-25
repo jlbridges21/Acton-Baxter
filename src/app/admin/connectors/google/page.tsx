@@ -5,10 +5,19 @@ import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getGoogleAdminOverview } from "@/lib/connectors/google/diagnostics";
 
-export default async function AdminGoogleConnectorPage() {
+export default async function AdminGoogleConnectorPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await requireActiveUser();
   if (!isAdminRole(user.profile.role)) redirect("/");
   const overview = await getGoogleAdminOverview();
+  const params = await searchParams;
+  const pick = (key: string) => {
+    const value = params[key];
+    return Array.isArray(value) ? value[0] : value;
+  };
   return (
     <AppShell user={user}>
       <GoogleConnectorClient
@@ -17,6 +26,12 @@ export default async function AdminGoogleConnectorPage() {
         initialConfig={overview.config}
         initialAuthenticated={overview.authenticated}
         initialManagerHealth={overview.managerHealth}
+        oauthNotice={{
+          success: pick("oauth_success") === "1",
+          connectedAs: pick("connected_as") ?? null,
+          error: pick("oauth_error") ?? null,
+          message: pick("oauth_message") ?? null,
+        }}
       />
     </AppShell>
   );

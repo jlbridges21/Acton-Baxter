@@ -5,7 +5,7 @@
 Baxter is Acton ADU’s internal AI assistant. It combines:
 
 1. Built-in identity (`identity.ts`)
-2. Approved Knowledge Base retrieval (manual + Google-synced)
+2. Approved Knowledge Base retrieval (manual + Google-synced via Workspace OAuth or service-account fallback)
 3. Conversation history
 4. OpenAI general assistance
 

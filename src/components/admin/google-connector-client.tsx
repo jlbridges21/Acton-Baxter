@@ -8,6 +8,8 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 type GoogleConfig = {
   configured: boolean;
+  authMode?: string;
+  oauthConfigured?: boolean;
   projectIdPresent: boolean;
   clientEmail: string | null;
   privateKeyFormatValid: boolean;
@@ -17,6 +19,30 @@ type GoogleConfig = {
   syncEnabled?: boolean;
   syncIntervalMinutes?: number;
   identityNote?: string;
+  serviceAccountExternalWarning?: string;
+  domainWideDelegationAvailable?: boolean;
+  connection?: {
+    id: string;
+    auth_mode: string;
+    google_account_email: string | null;
+    hosted_domain: string | null;
+    status: string;
+    connected_at: string | null;
+    last_success_at: string | null;
+    last_error_code: string | null;
+    last_error_message_safe: string | null;
+    granted_scopes: string[];
+    hasRefreshToken: boolean;
+  } | null;
+};
+
+type SharedDrive = { id: string; name: string };
+
+type FriendlyResult = {
+  title: string;
+  lines: Array<{ label: string; value: string }>;
+  guidance?: string[];
+  technical?: unknown;
 };
 
 type ManagerHealth = { state: string; label: string; details: string };
@@ -119,18 +145,106 @@ function selectionStatus(
   return "directly_selected";
 }
 
+function formatActionResult(action: string, result: Record<string, unknown>): FriendlyResult {
+  if (action === "test_auth") {
+    return {
+      title: result.pass ? "Connection successful" : "Connection failed",
+      lines: [
+        { label: "Authenticated as", value: String(result.email ?? result.clientEmail ?? "—") },
+        { label: "Authentication", value: String(result.authMode ?? "—") },
+        { label: "Access", value: String(result.access ?? "Read-only") },
+        { label: "Google Drive", value: String(result.driveAccess ?? "—") },
+        { label: "Google Docs", value: String(result.docsAccess ?? "—") },
+        { label: "Google Sheets", value: String(result.sheetsAccess ?? "—") },
+      ],
+      guidance: Array.isArray(result.guidance) ? (result.guidance as string[]) : undefined,
+      technical: result,
+    };
+  }
+  if (action === "test_root_folder") {
+    return {
+      title: result.pass ? "Root folder accessible" : "Root folder test failed",
+      lines: [
+        { label: "Folder", value: String(result.folderName ?? result.folderId ?? "—") },
+        { label: "Shared Drive", value: result.sharedDrive ? "Yes" : "No" },
+        { label: "Sample items", value: String(result.sampleItemCount ?? "—") },
+        ...(result.code ? [{ label: "Error code", value: String(result.code) }] : []),
+      ],
+      guidance: Array.isArray(result.guidance)
+        ? (result.guidance as string[])
+        : typeof result.guidance === "string"
+          ? [result.guidance]
+          : undefined,
+      technical: result,
+    };
+  }
+  if (action === "list_shared_drives") {
+    const drives = (result.drives as SharedDrive[] | undefined) ?? [];
+    return {
+      title: result.pass ? "Shared Drives" : "Could not list Shared Drives",
+      lines: [
+        { label: "Count", value: String(drives.length) },
+        { label: "Message", value: String(result.message ?? "") },
+        ...(result.code ? [{ label: "Error code", value: String(result.code) }] : []),
+      ],
+      technical: result,
+    };
+  }
+  if (action === "list_sample_files") {
+    const files = (result.files as unknown[] | undefined) ?? [];
+    return {
+      title: result.pass ? "Sample files" : "Could not list sample files",
+      lines: [
+        { label: "Files found", value: String(files.length) },
+        { label: "Message", value: String(result.message ?? "OK") },
+      ],
+      technical: result,
+    };
+  }
+  if (action === "dry_run_sync") {
+    return {
+      title: result.pass ? "Dry-run complete" : "Dry-run failed",
+      lines: [
+        { label: "Discovered", value: String(result.discovered ?? 0) },
+        { label: "Would create", value: String(result.wouldCreate ?? 0) },
+        { label: "Would update", value: String(result.wouldUpdate ?? 0) },
+        { label: "Unchanged", value: String(result.unchanged ?? 0) },
+      ],
+      technical: result,
+    };
+  }
+  return {
+    title: result.pass === false ? "Action failed" : "Done",
+    lines: Object.entries(result)
+      .filter(([key]) => !["technical", "items", "files", "drives", "guidance"].includes(key))
+      .slice(0, 8)
+      .map(([label, value]) => ({
+        label,
+        value: typeof value === "string" ? value : JSON.stringify(value),
+      })),
+    technical: result,
+  };
+}
+
 export function GoogleConnectorClient({
   initialHealth,
   initialFolders,
   initialConfig,
   initialAuthenticated,
   initialManagerHealth,
+  oauthNotice,
 }: {
   initialHealth: ConnectorHealth;
   initialFolders: GoogleSyncFolder[];
   initialConfig: GoogleConfig;
   initialAuthenticated: boolean;
   initialManagerHealth?: ManagerHealth;
+  oauthNotice?: {
+    success?: boolean;
+    connectedAs?: string | null;
+    error?: string | null;
+    message?: string | null;
+  };
 }) {
   const [health, setHealth] = useState(initialHealth);
   const [managerHealth, setManagerHealth] = useState<ManagerHealth>(
@@ -149,8 +263,15 @@ export function GoogleConnectorClient({
   const [cron, setCron] = useState<CronInfo | null>(null);
   const [folderId, setFolderId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [diagResult, setDiagResult] = useState<string | null>(null);
+  const [friendlyResult, setFriendlyResult] = useState<FriendlyResult | null>(null);
+  const [showTechnical, setShowTechnical] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showOauthSetup, setShowOauthSetup] = useState(false);
+  const [sharedDrives, setSharedDrives] = useState<SharedDrive[]>([]);
+  const [disconnectConfirm, setDisconnectConfirm] = useState(false);
+  const [archiveOnDisconnect, setArchiveOnDisconnect] = useState(false);
 
   const [browseRootId, setBrowseRootId] = useState<string | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -164,6 +285,15 @@ export function GoogleConnectorClient({
   );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<string | null>(null);
+
+  const oauthSuccess = Boolean(oauthNotice?.success);
+  const oauthConnectedAs = oauthNotice?.connectedAs ?? null;
+  const oauthError = oauthNotice?.error ?? null;
+  const oauthMessage = oauthNotice?.message ?? null;
+
+  const connection = config.connection;
+  const isOauthConnected =
+    connection?.status === "connected" || connection?.status === "reauthorization_required";
 
   const activeRoot = useMemo(
     () => folders.find((f) => f.id === browseRootId) ?? folders.find((f) => f.status === "active"),
@@ -183,13 +313,18 @@ export function GoogleConnectorClient({
       setSyncedStats(payload.syncedStats ?? null);
       setRuns(payload.runs ?? []);
       setCron(payload.cron ?? null);
+    } else {
+      setMessage(payload.error?.message ?? "Refresh failed");
     }
   }, [managerHealth]);
 
   async function runAction(body: Record<string, unknown>) {
+    const action = String(body.action ?? "action");
     setBusy(true);
+    setBusyAction(action);
     setMessage(null);
-    setDiagResult(null);
+    setFriendlyResult(null);
+    setShowTechnical(false);
     try {
       const response = await fetch("/api/admin/connectors/google", {
         method: "POST",
@@ -199,6 +334,14 @@ export function GoogleConnectorClient({
       const payload = await response.json();
       if (!response.ok) {
         setMessage(payload.error?.message ?? "Request failed");
+        setFriendlyResult({
+          title: "Action failed",
+          lines: [
+            { label: "Code", value: String(payload.error?.code ?? "ERROR") },
+            { label: "Message", value: String(payload.error?.message ?? "Request failed") },
+          ],
+          technical: payload,
+        });
         return payload;
       }
       if (payload.result && payload.result.created !== undefined) {
@@ -206,7 +349,6 @@ export function GoogleConnectorClient({
           `Sync finished: ${payload.result.created} created, ${payload.result.updated} updated, ${payload.result.unchanged} unchanged.`,
         );
       } else if (payload.result) {
-        setDiagResult(JSON.stringify(payload.result, null, 2));
         if (payload.result.items) {
           setItems(payload.result.items);
           setBreadcrumbs(payload.result.breadcrumbs ?? []);
@@ -214,23 +356,71 @@ export function GoogleConnectorClient({
           setAccessWarning(payload.result.accessWarning ?? null);
           if (payload.result.rootId) setBrowseRootId(payload.result.rootId);
           if (payload.result.selections) setSelections(payload.result.selections);
-        }
-        if (payload.result.previewText !== undefined) {
+          setMessage(
+            payload.result.pass === false
+              ? (payload.result.message ?? "Browse failed")
+              : `Loaded ${payload.result.items.length} item(s).`,
+          );
+          if (payload.result.pass === false) {
+            setFriendlyResult(formatActionResult(action, payload.result));
+          }
+        } else if (payload.result.drives) {
+          setSharedDrives(payload.result.drives as SharedDrive[]);
+          setFriendlyResult(formatActionResult(action, payload.result));
+          setMessage(String(payload.result.message ?? "Shared Drives loaded."));
+        } else if (payload.result.previewText !== undefined) {
           setPreview(JSON.stringify(payload.result, null, 2));
+          setMessage("Preview ready.");
+        } else {
+          setFriendlyResult(formatActionResult(action, payload.result));
+          setMessage(payload.result.pass === false ? "Action reported a problem." : "Done.");
         }
-        setMessage("Done.");
       } else if (payload.jobId) {
         setMessage(`Job ${payload.jobId}: ${payload.status ?? "queued"}`);
+      } else if (payload.folder) {
+        setMessage(`Root connected: ${payload.folder.folder_name}`);
       } else {
         setMessage("Saved.");
       }
       await refresh();
       return payload;
-    } catch {
-      setMessage("Request failed");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Request failed");
+      setFriendlyResult({
+        title: "Request failed",
+        lines: [
+          { label: "Error", value: error instanceof Error ? error.message : "Network error" },
+        ],
+      });
       return null;
     } finally {
       setBusy(false);
+      setBusyAction(null);
+    }
+  }
+
+  async function disconnectGoogle() {
+    setBusy(true);
+    setBusyAction("disconnect");
+    try {
+      const response = await fetch("/api/admin/connectors/google/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true, archiveKnowledge: archiveOnDisconnect }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setMessage(payload.error?.message ?? "Disconnect failed");
+      } else {
+        setMessage(payload.message ?? "Disconnected");
+        setDisconnectConfirm(false);
+      }
+      await refresh();
+    } catch {
+      setMessage("Disconnect failed");
+    } finally {
+      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -339,14 +529,293 @@ export function GoogleConnectorClient({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-[var(--acton-navy)]">
-          Google Drive Knowledge Manager
-        </h1>
+        <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Google Workspace</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Browse Acton Drive folders, select what Baxter may use, preview imports, and sync into the
-          approved Knowledge Base. Google remains read-only.
+          Connect Baxter to an Acton ADU Google account to browse approved Drive files and keep
+          selected knowledge synchronized. Access is read-only.
         </p>
       </div>
+
+      {oauthSuccess ? (
+        <Card className="border-emerald-200 bg-emerald-50/70">
+          <CardTitle className="text-base text-emerald-900">Connected</CardTitle>
+          <p className="mt-2 text-sm">
+            Connected as: <strong>{oauthConnectedAs ?? connection?.google_account_email}</strong>
+          </p>
+          <p className="mt-1 text-sm text-[var(--acton-muted)]">
+            Access: Google Drive, Google Docs, Google Sheets — read only
+          </p>
+        </Card>
+      ) : null}
+      {oauthError ? (
+        <Card className="border-red-200 bg-red-50/70">
+          <CardTitle className="text-base text-red-800">Could not connect Google</CardTitle>
+          <p className="mt-2 text-sm">{oauthMessage ?? oauthError}</p>
+          <p className="mt-1 text-xs text-[var(--acton-muted)]">Code: {oauthError}</p>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardTitle>Google Workspace connection</CardTitle>
+        {!isOauthConnected && config.authMode !== "service_account" ? (
+          <>
+            <CardDescription className="mt-2">
+              Sign in as <strong>baxter@actonadu.com</strong> (or another allowlisted Acton
+              Workspace user). The Google Cloud service account is external to Acton ADU and cannot
+              join Shared Drives restricted to internal members.
+            </CardDescription>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <a href="/api/admin/connectors/google/oauth/start">
+                <Button disabled={busy || !config.oauthConfigured} type="button">
+                  Connect Google Workspace
+                </Button>
+              </a>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setShowOauthSetup((v) => !v)}
+              >
+                {showOauthSetup ? "Hide setup guide" : "Setup guide"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                Advanced setup
+              </Button>
+            </div>
+            {!config.oauthConfigured ? (
+              <p className="mt-3 text-sm text-amber-800">
+                OAuth is not fully configured in Vercel yet. Open the setup guide, add the OAuth
+                variables and encryption key, redeploy, then connect.
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+              <div>
+                Connected account:{" "}
+                <strong>
+                  {connection?.google_account_email ?? (authenticated ? config.clientEmail : "—")}
+                </strong>
+              </div>
+              <div>
+                Authentication:{" "}
+                <strong>
+                  {connection?.auth_mode === "workspace_oauth"
+                    ? "Google Workspace OAuth"
+                    : config.authMode === "service_account"
+                      ? "Service account"
+                      : String(config.authMode ?? "—")}
+                </strong>
+              </div>
+              <div>
+                Access: <strong>Read-only</strong>
+              </div>
+              <div>
+                Status: <strong>{connection?.status ?? managerHealth.label}</strong>
+              </div>
+              <div>
+                Last verified:{" "}
+                {connection?.last_success_at
+                  ? new Date(connection.last_success_at).toLocaleString()
+                  : "—"}
+              </div>
+            </dl>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                disabled={busy}
+                onClick={() => void runAction({ action: "list_shared_drives" })}
+              >
+                {busyAction === "list_shared_drives" ? "Loading…" : "Browse Google Drive"}
+              </Button>
+              <Button
+                disabled={busy}
+                variant="secondary"
+                onClick={() => void runAction({ action: "test_auth" })}
+              >
+                {busyAction === "test_auth" ? "Testing…" : "Test connection"}
+              </Button>
+              <a href="/api/admin/connectors/google/reconnect">
+                <Button type="button" variant="secondary" disabled={busy}>
+                  Reconnect
+                </Button>
+              </a>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setDisconnectConfirm(true)}
+              >
+                Disconnect
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                Advanced details
+              </Button>
+            </div>
+            {connection?.status === "reauthorization_required" ? (
+              <p className="mt-3 text-sm text-amber-800">
+                Reauthorization required. Click Reconnect and sign in again.
+                {connection.last_error_message_safe
+                  ? ` (${connection.last_error_message_safe})`
+                  : ""}
+              </p>
+            ) : null}
+          </>
+        )}
+
+        {disconnectConfirm ? (
+          <div className="mt-4 rounded-md border border-red-200 bg-red-50/60 p-3 text-sm">
+            <p className="font-medium text-red-900">Disconnect Google?</p>
+            <p className="mt-1 text-[var(--acton-muted)]">
+              Refresh tokens are removed. Google files are never deleted. Knowledge entries stay
+              unless you choose to archive them.
+            </p>
+            <label className="mt-2 flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={archiveOnDisconnect}
+                onChange={(e) => setArchiveOnDisconnect(e.target.checked)}
+              />
+              Also archive Google-managed Knowledge entries
+            </label>
+            <div className="mt-3 flex gap-2">
+              <Button disabled={busy} onClick={() => void disconnectGoogle()}>
+                Confirm disconnect
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setDisconnectConfirm(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {showOauthSetup ? (
+          <div className="mt-4 space-y-2 rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-3 text-sm">
+            <p className="font-medium">Google Cloud OAuth checklist</p>
+            <ol className="list-decimal space-y-1 pl-5 text-[var(--acton-muted)]">
+              <li>Select or create the Google Cloud project.</li>
+              <li>
+                APIs &amp; Services → Library → search <em>Google Drive API</em> (Google Enterprise
+                API) → Enable. Repeat for Docs API and Sheets API.
+              </li>
+              <li>
+                Configure OAuth consent screen (Internal if available; else External testing).
+              </li>
+              <li>Create OAuth Client ID → Web application.</li>
+              <li>
+                Add redirect URI:{" "}
+                <code className="text-xs">
+                  https://acton-baxter.vercel.app/api/admin/connectors/google/oauth/callback
+                </code>
+              </li>
+              <li>
+                Set Vercel vars: GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET,
+                GOOGLE_OAUTH_REDIRECT_URI, GOOGLE_TOKEN_ENCRYPTION_KEY,
+                GOOGLE_AUTH_MODE=workspace_oauth
+              </li>
+              <li>Redeploy, then click Connect Google Workspace as baxter@actonadu.com.</li>
+            </ol>
+            <p className="text-xs">
+              Full guide: <code>docs/google-workspace-oauth-setup.md</code>
+            </p>
+          </div>
+        ) : null}
+
+        {showAdvanced ? (
+          <div className="mt-4 space-y-3 rounded-md border border-[var(--acton-border)] p-3 text-sm">
+            <p className="font-medium">Service account (advanced)</p>
+            <p className="text-[var(--acton-muted)]">
+              {config.serviceAccountExternalWarning ??
+                "This service account is external to the Acton ADU Workspace unless domain-wide delegation is configured. It may not be able to access Shared Drives restricted to internal members."}
+            </p>
+            <dl className="grid gap-1 sm:grid-cols-2">
+              <div>
+                Project ID present: <YesNo value={config.projectIdPresent} />
+              </div>
+              <div>Client email: {config.clientEmail ?? "—"}</div>
+              <div>
+                Private key valid: <YesNo value={config.privateKeyFormatValid} />
+              </div>
+              <div>
+                Domain-wide delegation available:{" "}
+                <YesNo value={Boolean(config.domainWideDelegationAvailable)} />
+              </div>
+              <div>Auth mode setting: {config.authMode ?? "workspace_oauth"}</div>
+              <div>
+                OAuth env configured: <YesNo value={Boolean(config.oauthConfigured)} />
+              </div>
+            </dl>
+          </div>
+        ) : null}
+      </Card>
+
+      {sharedDrives.length > 0 ? (
+        <Card>
+          <CardTitle>Shared Drives</CardTitle>
+          <CardDescription className="mt-2">
+            Visible to the connected Google account. Connect a drive or folder as a Knowledge root
+            without pasting IDs.
+          </CardDescription>
+          <ul className="mt-4 space-y-2">
+            {sharedDrives.map((drive) => (
+              <li
+                key={drive.id}
+                className="flex flex-col gap-2 rounded-md border border-[var(--acton-border)] p-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <div className="font-medium text-[var(--acton-navy)]">{drive.name}</div>
+                  <div className="text-xs text-[var(--acton-muted)]">Drive ID: {drive.id}</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    disabled={busy}
+                    variant="secondary"
+                    onClick={() =>
+                      void runAction({ action: "browse_shared_drive", driveId: drive.id })
+                    }
+                  >
+                    Open
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    onClick={() =>
+                      void runAction({ action: "add_folder", folderId: drive.id }).then(() =>
+                        setMessage(`Connected Shared Drive “${drive.name}” as a Knowledge root.`),
+                      )
+                    }
+                  >
+                    Connect as root
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3">
+            <Button
+              disabled={busy}
+              variant="secondary"
+              onClick={() => void runAction({ action: "browse_my_drive" })}
+            >
+              Open My Drive
+            </Button>
+          </div>
+        </Card>
+      ) : null}
 
       <Card className="border-amber-200 bg-amber-50/60">
         <CardTitle className="text-base">Cron route note</CardTitle>
@@ -414,67 +883,41 @@ export function GoogleConnectorClient({
       </div>
 
       <Card>
-        <CardTitle>Configuration</CardTitle>
-        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-          <div>
-            Project ID present: <YesNo value={config.projectIdPresent} />
-          </div>
-          <div>Client email: {config.clientEmail ?? "—"}</div>
-          <div>
-            Private key valid format: <YesNo value={config.privateKeyFormatValid} />
-          </div>
-          <div>
-            Root folder configured: <YesNo value={config.rootFolderConfigured} />
-          </div>
-          <div>
-            Authenticated: <YesNo value={authenticated} />
-          </div>
-          <div>
-            Sync enabled: <YesNo value={Boolean(config.syncEnabled)} /> (
-            {config.syncIntervalMinutes ?? 180} min due logic)
-          </div>
-          <div>
-            Cron secret configured: <YesNo value={Boolean(cron?.cronSecretConfigured)} />
-          </div>
-          <div>Canonical cron var: {cron?.canonicalVariable ?? "—"}</div>
-          <div>Cron schedule: {cron?.schedule ?? "—"}</div>
-        </dl>
-        <p className="mt-3 text-xs text-[var(--acton-muted)]">
-          Google API access is performed by <strong>GOOGLE_CLIENT_EMAIL</strong>. Ensure the
-          selected folder or Shared Drive is shared with that service-account address unless
-          domain-wide delegation is configured.
-        </p>
-      </Card>
-
-      <Card>
         <CardTitle>Safe tests & sync</CardTitle>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button disabled={busy} onClick={() => void runAction({ action: "test_auth" })}>
-            Test credentials
+            {busyAction === "test_auth" ? "Testing…" : "Test credentials"}
           </Button>
           <Button
             disabled={busy}
             variant="secondary"
             onClick={() => void runAction({ action: "test_root_folder" })}
           >
-            Test root folder
+            {busyAction === "test_root_folder" ? "Testing…" : "Test root folder"}
+          </Button>
+          <Button
+            disabled={busy}
+            variant="secondary"
+            onClick={() => void runAction({ action: "list_shared_drives" })}
+          >
+            {busyAction === "list_shared_drives" ? "Loading…" : "List Shared Drives"}
           </Button>
           <Button
             disabled={busy}
             variant="secondary"
             onClick={() => void runAction({ action: "list_sample_files" })}
           >
-            List sample files
+            {busyAction === "list_sample_files" ? "Loading…" : "List sample files"}
           </Button>
           <Button disabled={busy} variant="secondary" onClick={() => void browse()}>
-            Browse files
+            {busyAction === "browse" ? "Loading…" : "Browse files"}
           </Button>
           <Button
             disabled={busy}
             variant="secondary"
             onClick={() => void runAction({ action: "dry_run_sync" })}
           >
-            Dry-run sync
+            {busyAction === "dry_run_sync" ? "Running…" : "Dry-run sync"}
           </Button>
           <Button disabled={busy} onClick={() => void runSyncNow()}>
             Run sync now
@@ -494,18 +937,44 @@ export function GoogleConnectorClient({
             Test through Baxter
           </Button>
         </div>
-        {diagResult ? (
-          <pre className="mt-4 max-h-64 overflow-auto rounded-md bg-[var(--acton-gray-50)] p-3 text-xs">
-            {diagResult}
-          </pre>
+        {message ? <p className="mt-3 text-sm text-[var(--acton-navy)]">{message}</p> : null}
+        {friendlyResult ? (
+          <div className="mt-4 rounded-md border border-[var(--acton-border)] bg-white p-3 text-sm">
+            <div className="font-semibold text-[var(--acton-navy)]">{friendlyResult.title}</div>
+            <dl className="mt-2 space-y-1">
+              {friendlyResult.lines.map((line) => (
+                <div key={line.label}>
+                  <span className="text-[var(--acton-muted)]">{line.label}:</span> {line.value}
+                </div>
+              ))}
+            </dl>
+            {friendlyResult.guidance?.length ? (
+              <ol className="mt-3 list-decimal space-y-1 pl-5 text-[var(--acton-muted)]">
+                {friendlyResult.guidance.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            ) : null}
+            <button
+              type="button"
+              className="mt-3 text-xs font-medium text-[var(--acton-navy)] underline"
+              onClick={() => setShowTechnical((v) => !v)}
+            >
+              {showTechnical ? "Hide technical details" : "View technical details"}
+            </button>
+            {showTechnical ? (
+              <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-[var(--acton-gray-50)] p-3 text-xs">
+                {JSON.stringify(friendlyResult.technical, null, 2)}
+              </pre>
+            ) : null}
+          </div>
         ) : null}
       </Card>
 
       <Card>
         <CardTitle>Connect Drive root</CardTitle>
         <CardDescription className="mt-2">
-          Paste a folder ID or full Drive folder URL. Shared Drive folders are supported when shared
-          with the service account.
+          Prefer Shared Drives above. Manual folder URL or ID entry is available for advanced cases.
         </CardDescription>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <input
@@ -522,7 +991,7 @@ export function GoogleConnectorClient({
               )
             }
           >
-            Add folder
+            {busyAction === "add_folder" ? "Adding…" : "Add folder"}
           </Button>
         </div>
         <div className="mt-4 space-y-2">

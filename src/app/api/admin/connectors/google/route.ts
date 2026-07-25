@@ -10,6 +10,7 @@ import {
   dryRunGoogleSync,
   getGoogleAdminOverview,
   listGoogleSampleFiles,
+  listGoogleSharedDrivesDiagnostic,
   testGoogleAuthentication,
   testGoogleRootFolder,
   testGoogleSourceThroughBaxter,
@@ -31,11 +32,13 @@ import {
 import { getCronConfigDiagnostics } from "@/lib/jobs/cron-auth";
 import { getCronMetricsSnapshot } from "@/lib/jobs/cron-metrics";
 import { parseGoogleDriveFile } from "@/lib/connectors/google/parser";
-import { getDriveFile } from "@/lib/connectors/google/drive";
+import { getDriveFile, listMyDriveRoot, listSharedDriveRoot } from "@/lib/connectors/google/drive";
 import { enqueueOrRunGoogleSync, resolveAndAddFolder } from "@/lib/connectors/google/sync";
 import { claimNextJob } from "@/lib/jobs/queue";
 import { processJob } from "@/lib/jobs/process";
 import { getGoogleCredentialStatus } from "@/lib/connectors/google/auth";
+import { isSupportedGoogleMime } from "@/lib/connectors/google/parser";
+import { GOOGLE_FOLDER_MIME } from "@/lib/connectors/google/types";
 
 export async function GET() {
   try {
@@ -56,7 +59,9 @@ export async function GET() {
       runs,
       cron: { ...cron, ...cronMetrics },
       identityNotice:
-        "Google API access is performed by GOOGLE_CLIENT_EMAIL. Ensure the selected folder or Shared Drive is shared with that service-account address unless domain-wide delegation is configured.",
+        overview.config.authMode === "workspace_oauth"
+          ? "Google API access uses the connected Workspace account (preferred for Acton Shared Drives)."
+          : "Google API access uses GOOGLE_CLIENT_EMAIL. Shared Drives restricted to Acton members often reject external service accounts — use Workspace OAuth instead.",
     });
   } catch (error) {
     return jsonError(error, "GET /api/admin/connectors/google");
@@ -78,9 +83,12 @@ export async function POST(request: Request) {
           "test_auth",
           "test_root_folder",
           "list_sample_files",
+          "list_shared_drives",
           "dry_run_sync",
           "test_google_through_baxter",
           "browse",
+          "browse_my_drive",
+          "browse_shared_drive",
           "add_selection",
           "exclude_selection",
           "remove_selection",
@@ -90,6 +98,7 @@ export async function POST(request: Request) {
           "process_one_job",
         ]),
         folderId: z.string().optional(),
+        driveId: z.string().optional().nullable(),
         id: z.string().uuid().optional(),
         rootId: z.string().uuid().optional(),
         currentFolderId: z.string().optional(),
@@ -102,7 +111,6 @@ export async function POST(request: Request) {
         includeFutureFiles: z.boolean().optional(),
         title: z.string().optional(),
         mimeType: z.string().optional(),
-        driveId: z.string().optional().nullable(),
         parentFileId: z.string().optional().nullable(),
         defaultCategory: z.string().optional().nullable(),
         defaultTags: z.array(z.string()).optional(),
@@ -152,11 +160,94 @@ export async function POST(request: Request) {
     if (parsed.action === "list_sample_files") {
       return jsonOk({ result: await listGoogleSampleFiles() });
     }
+    if (parsed.action === "list_shared_drives") {
+      return jsonOk({ result: await listGoogleSharedDrivesDiagnostic() });
+    }
     if (parsed.action === "dry_run_sync") {
       return jsonOk({ result: await dryRunGoogleSync() });
     }
     if (parsed.action === "test_google_through_baxter") {
       return jsonOk({ result: await testGoogleSourceThroughBaxter(user.id) });
+    }
+
+    if (parsed.action === "browse_my_drive") {
+      try {
+        const files = await listMyDriveRoot();
+        return jsonOk({
+          result: {
+            pass: true,
+            location: "my_drive",
+            currentFolderId: "root",
+            breadcrumbs: [{ id: "root", name: "My Drive" }],
+            items: files.map((f) => ({
+              id: f.id,
+              name: f.name,
+              mimeType: f.mimeType,
+              isFolder: f.mimeType === GOOGLE_FOLDER_MIME,
+              modifiedTime: f.modifiedTime ?? null,
+              webViewLink: f.webViewLink ?? null,
+              owner: f.owners?.[0]?.emailAddress ?? null,
+              driveId: f.driveId ?? null,
+              supported: isSupportedGoogleMime(f.mimeType),
+              parseModeHint: isSupportedGoogleMime(f.mimeType) ? "full_text" : "unsupported",
+            })),
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            code:
+              error && typeof error === "object" && "code" in error
+                ? String((error as { code?: string }).code)
+                : "BAXTER_GOOGLE_PERMISSION_DENIED",
+            message:
+              error instanceof Error ? error.message.slice(0, 240) : "My Drive browse failed",
+            items: [],
+          },
+        });
+      }
+    }
+
+    if (parsed.action === "browse_shared_drive") {
+      if (!parsed.driveId) throw new Error("driveId is required");
+      try {
+        const files = await listSharedDriveRoot(parsed.driveId);
+        return jsonOk({
+          result: {
+            pass: true,
+            location: "shared_drive",
+            driveId: parsed.driveId,
+            currentFolderId: parsed.driveId,
+            breadcrumbs: [{ id: parsed.driveId, name: "Shared Drive" }],
+            items: files.map((f) => ({
+              id: f.id,
+              name: f.name,
+              mimeType: f.mimeType,
+              isFolder: f.mimeType === GOOGLE_FOLDER_MIME,
+              modifiedTime: f.modifiedTime ?? null,
+              webViewLink: f.webViewLink ?? null,
+              owner: f.owners?.[0]?.emailAddress ?? null,
+              driveId: f.driveId ?? parsed.driveId,
+              supported: isSupportedGoogleMime(f.mimeType),
+              parseModeHint: isSupportedGoogleMime(f.mimeType) ? "full_text" : "unsupported",
+            })),
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            code:
+              error && typeof error === "object" && "code" in error
+                ? String((error as { code?: string }).code)
+                : "BAXTER_GOOGLE_SHARED_DRIVE_NOT_VISIBLE",
+            message:
+              error instanceof Error ? error.message.slice(0, 240) : "Shared Drive browse failed",
+            items: [],
+          },
+        });
+      }
     }
 
     if (parsed.action === "browse") {

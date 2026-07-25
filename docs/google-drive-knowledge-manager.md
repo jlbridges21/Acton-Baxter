@@ -1,17 +1,44 @@
 # Google Drive Knowledge Manager
 
-Baxter does **not** ingest every Drive file the service account can see. Administrators explicitly select files and folders in `/admin/connectors/google`, preview them, then sync into the approved Knowledge Base.
+Baxter does **not** ingest every Drive file the connected account can see. Administrators explicitly select files and folders in `/admin/connectors/google`, preview them, then sync into the approved Knowledge Base.
+
+## Authentication (Prompt 2)
+
+**Preferred:** Google Workspace OAuth (`GOOGLE_AUTH_MODE=workspace_oauth`) as `baxter@actonadu.com`.
+
+The Cloud service account is often **external** to Acton ADU and cannot join internal Shared Drives. Full setup: `docs/google-workspace-oauth-setup.md`.
+
+| Variable                | Role                                                 |
+| ----------------------- | ---------------------------------------------------- |
+| Connected OAuth account | API caller for browse/sync when OAuth mode is active |
+| `GOOGLE_CLIENT_EMAIL`   | Optional service-account fallback                    |
+
+---
+
+## Sharing model
+
+1. Connect Google Workspace in Baxter.
+2. Ensure `baxter@actonadu.com` can open the Acton Shared Drive in drive.google.com.
+3. In Baxter, list Shared Drives → **Connect as root** → select files → sync.
+
+## Shared Drive
+
+1. Prefer OAuth (not SA membership).
+2. Browse Shared Drives from the Google Workspace admin page.
+3. Connect the drive or a folder as a Knowledge root (no manual ID paste required for the primary flow).
+
+If the root folder metadata is visible but children fail to list, the connected account lacks folder permission — fix in Google Drive sharing for that Workspace user.
 
 Google Drive remains **read-only**. Baxter never creates, edits, deletes, or changes sharing on Google files.
 
-## Service account vs `baxter@actonadu.com`
+## Service account vs Workspace OAuth
 
-| Identity              | Role                                                                    |
-| --------------------- | ----------------------------------------------------------------------- |
-| `GOOGLE_CLIENT_EMAIL` | Service-account principal used for Drive/Docs/Sheets API calls          |
-| `baxter@actonadu.com` | Normal Workspace user (chat identity). Not automatically the API caller |
+| Identity                                     | Role                                         |
+| -------------------------------------------- | -------------------------------------------- |
+| Connected OAuth user (`baxter@actonadu.com`) | Preferred API caller for Acton Shared Drives |
+| `GOOGLE_CLIENT_EMAIL`                        | Optional SA fallback for My Drive shares     |
 
-Share folders / Shared Drives with **`GOOGLE_CLIENT_EMAIL`**, not only with `baxter@actonadu.com`, unless domain-wide delegation is configured.
+See `docs/google-workspace-oauth-setup.md` for why the SA is rejected as external to Acton ADU.
 
 ## Required Google APIs
 
@@ -25,24 +52,18 @@ Enable in the Google Cloud project:
 
 The connector mints tokens for read scopes only (Drive metadata/content read, Docs/Sheets read). Write scopes are not requested.
 
-## Sharing a My Drive folder
+## Sharing a My Drive folder (service-account fallback)
 
 1. Find `GOOGLE_CLIENT_EMAIL` in Vercel env (or Google Cloud → service accounts).
 2. In Drive, share the folder with that email (Viewer is enough).
-3. Copy the folder ID or full folder URL into `GOOGLE_DRIVE_ROOT_FOLDER` and/or **Add folder** in the admin UI.
+3. Copy the folder ID or full folder URL into **Add folder** (Advanced) in the admin UI.
 
-## Shared Drive
-
-1. Add the service-account email as a member of the Shared Drive (Content manager or Viewer).
-2. Browse from that Shared Drive folder in the Knowledge Manager.
-3. API calls use `supportsAllDrives` / `includeItemsFromAllDrives`.
-
-If the root folder metadata is visible but children are empty or fail to list, share the Shared Drive (or child folders) with the service account.
+For Acton Shared Drives, prefer Workspace OAuth instead of SA membership.
 
 ## Finding a folder ID / URL
 
 - URL form: `https://drive.google.com/drive/folders/<FOLDER_ID>`
-- Paste either the ID or the full URL — Baxter normalizes it.
+- Paste either the ID or the full URL — Baxter normalizes it (advanced path only).
 
 ## Selecting sources
 

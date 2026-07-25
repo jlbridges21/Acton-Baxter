@@ -18,7 +18,7 @@ import { formatDate } from "@/lib/utils";
 
 function statusTone(status: string) {
   if (status === "approved") return "green" as const;
-  if (status === "archived") return "gray" as const;
+  if (status === "archived") return "red" as const;
   return "amber" as const;
 }
 
@@ -76,7 +76,11 @@ export function KnowledgeListClient({ initialEntries }: { initialEntries: Knowle
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     let rows = entries.filter((entry) => {
-      if (status !== "all" && entry.status !== status) return false;
+      // Default "all" hides archived; "__all_including_archived" shows everything.
+      if (status === "all" && entry.status === "archived") return false;
+      if (status !== "all" && status !== "__all_including_archived" && entry.status !== status) {
+        return false;
+      }
       if (category !== "all" && entry.category !== category) return false;
       if (sourceType === "manual" && entry.source_type === "uploaded_document") return false;
       if (sourceType === "manual" && entry.source_type === "Google Drive") return false;
@@ -301,12 +305,13 @@ export function KnowledgeListClient({ initialEntries }: { initialEntries: Knowle
             onChange={(event) => setStatus(event.target.value)}
             aria-label="Status filter"
           >
-            <option value="all">All statuses</option>
+            <option value="all">Active (hide archived)</option>
             {KNOWLEDGE_STATUSES.map((value) => (
               <option key={value} value={value}>
-                {value}
+                {value === "archived" ? "Archived only" : value}
               </option>
             ))}
+            <option value="__all_including_archived">All including archived</option>
           </select>
           <select
             className="h-10 rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm"

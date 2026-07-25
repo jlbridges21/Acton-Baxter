@@ -26,18 +26,43 @@ export function normalizeTags(input: string[] | string | undefined | null): stri
   return tags;
 }
 
+const optionalTrimmedString = z.preprocess(
+  (value) => (value == null || value === "" ? undefined : value),
+  z.string().trim().max(2000).optional(),
+);
+
+const optionalCategory = z.preprocess(
+  (value) => (value == null || value === "" ? undefined : value),
+  z.string().trim().max(120).optional(),
+);
+
+const optionalSourceName = z.preprocess(
+  (value) => (value == null || value === "" ? undefined : value),
+  z.string().trim().max(200).optional(),
+);
+
+const optionalSourceUrl = z.preprocess(
+  (value) => (value == null || value === "" ? undefined : value),
+  z.string().trim().max(2000).optional(),
+);
+
+const optionalChangeNote = z.preprocess(
+  (value) => (value == null || value === "" ? undefined : value),
+  z.string().trim().max(1000).optional(),
+);
+
 export const knowledgeEntryWriteSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(300),
   content: z.string().trim().min(1, "Content is required").max(100_000),
-  summary: z.string().trim().max(2000).optional().nullable(),
-  category: z.string().trim().max(120).optional().nullable(),
+  summary: optionalTrimmedString.nullable().optional(),
+  category: optionalCategory.nullable().optional(),
   tags: z.union([z.array(z.string()), z.string()]).optional(),
-  source_name: z.string().trim().max(200).optional().nullable(),
+  source_name: optionalSourceName.nullable().optional(),
   source_type: knowledgeSourceTypeSchema.optional().default("manual"),
-  source_url: z.string().trim().max(2000).optional().nullable(),
+  source_url: optionalSourceUrl.nullable().optional(),
   visibility: knowledgeVisibilitySchema.optional().default("internal"),
   status: knowledgeStatusSchema.optional(),
-  change_note: z.string().trim().max(1000).optional().nullable(),
+  change_note: optionalChangeNote.nullable().optional(),
 });
 
 export const knowledgeSourceWriteSchema = z.object({

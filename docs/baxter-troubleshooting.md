@@ -75,20 +75,23 @@ Baxter normalizes keys (strips quotes, converts `\n`, validates BEGIN/END marker
 
 ### Shared Drive and folder access
 
-| Symptom                          | Code                                       | Fix                                                                         |
-| -------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
-| Folder not found                 | `BAXTER_GOOGLE_FOLDER_NOT_FOUND`           | Verify folder ID or URL                                                     |
-| Permission denied (My Drive)     | `BAXTER_GOOGLE_FOLDER_ACCESS_DENIED`       | Share folder with **`GOOGLE_CLIENT_EMAIL`**, not only `baxter@actonadu.com` |
-| Permission denied (Shared Drive) | `BAXTER_GOOGLE_SHARED_DRIVE_ACCESS_DENIED` | Add service account as **Shared Drive member**                              |
-| APIs disabled                    | `BAXTER_GOOGLE_API_DISABLED`               | Enable Drive, Docs, Sheets APIs                                             |
+| Symptom                  | Code                                     | Fix                                                          |
+| ------------------------ | ---------------------------------------- | ------------------------------------------------------------ |
+| Folder not found         | `BAXTER_GOOGLE_FOLDER_NOT_FOUND`         | Verify folder ID or URL                                      |
+| Drive API disabled       | `BAXTER_GOOGLE_DRIVE_API_DISABLED`       | Library → enable Google Drive API                            |
+| Permission denied        | `BAXTER_GOOGLE_PERMISSION_DENIED`        | Confirm connected Workspace user can open the folder         |
+| Shared Drive not visible | `BAXTER_GOOGLE_SHARED_DRIVE_NOT_VISIBLE` | Use Workspace OAuth as an Acton member; SA is often external |
+| Reauth required          | `BAXTER_GOOGLE_REAUTHORIZATION_REQUIRED` | Admin → Google Workspace → Reconnect                         |
 
-Run **Test root folder** for Shared Drive detection and inline guidance.
+Prefer **Connect Google Workspace** as `baxter@actonadu.com`. See `docs/google-workspace-oauth-setup.md`.
+
+Run **Test connection** / **Test root folder** for friendly guidance (not raw JSON).
 
 ### Cron / process-jobs
 
 Opening `/api/internal/process-jobs` in a browser returns **Invalid cron secret** / 401. That is expected — browsers do not send `Authorization: Bearer`. Use **Run sync now** on `/admin/connectors/google`. Prefer `CRON_SECRET` in Vercel; `INTERNAL_CRON_SECRET` is a legacy alias.
 
-Full Google setup: **`docs/google-connector.md`** and **`docs/google-drive-knowledge-manager.md`**
+Full Google setup: **`docs/google-workspace-oauth-setup.md`**, **`docs/google-connector.md`**, and **`docs/google-drive-knowledge-manager.md`**
 
 ---
 

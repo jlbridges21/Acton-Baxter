@@ -93,7 +93,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
       },
       {
         href: "/admin/connectors/google",
-        label: "Google Drive",
+        label: "Google Workspace",
         icon: Cloud,
         match: (pathname) => pathname.startsWith("/admin/connectors/google"),
       },
@@ -117,7 +117,7 @@ function linksForContext(context: NavContext, isAdmin: boolean): NavLink[] {
     },
     {
       href: "/admin/connectors/google",
-      label: "Google Drive",
+      label: "Google Workspace",
       icon: Cloud,
       match: (pathname) => pathname.startsWith("/admin/connectors/google"),
     },

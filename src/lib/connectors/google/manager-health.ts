@@ -1,22 +1,31 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
-import { isGoogleWorkspaceConfigured, getGoogleCredentialStatus } from "./auth";
+import { getGoogleCredentialStatus, isGoogleWorkspaceConfigured } from "./auth";
 import { listGoogleSyncFolders } from "./folders";
 import { listAllEnabledSelections } from "./selections";
 import { getSyncedFileStats } from "./synced-files";
+import { getActiveGoogleConnectionPublic } from "./connections";
+import { getGoogleAuthMode, isGoogleOAuthConfigured } from "./oauth-config";
 
 export type GoogleManagerHealthState =
-  | "disabled"
-  | "not_configured"
-  | "authentication_failed"
-  | "root_inaccessible"
+  | "disconnected"
+  | "oauth_not_configured"
+  | "connection_pending"
+  | "connected"
+  | "access_limited"
+  | "needs_root"
   | "needs_selection"
   | "ready"
   | "syncing"
   | "warning"
-  | "stale"
-  | "offline";
+  | "reauthorization_required"
+  | "offline"
+  | "disabled"
+  | "not_configured"
+  | "authentication_failed"
+  | "root_inaccessible"
+  | "stale";
 
 export async function computeGoogleManagerHealth(input?: {
   authenticated?: boolean;
@@ -36,16 +45,60 @@ export async function computeGoogleManagerHealth(input?: {
     // defaults
   }
 
+  const mode = getGoogleAuthMode();
   const creds = getGoogleCredentialStatus();
-  if (!creds.configured) {
+  const connection = await getActiveGoogleConnectionPublic().catch(() => null);
+
+  if (mode === "disconnected" || connection?.status === "disconnected") {
+    if (!connection && mode === "workspace_oauth" && !isGoogleOAuthConfigured()) {
+      return {
+        state: "oauth_not_configured",
+        label: "OAuth not configured",
+        details:
+          "Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REDIRECT_URI, and GOOGLE_TOKEN_ENCRYPTION_KEY.",
+      };
+    }
+    if (!connection && mode === "workspace_oauth") {
+      return {
+        state: "disconnected",
+        label: "Disconnected",
+        details: "Click Connect Google Workspace and sign in as baxter@actonadu.com.",
+      };
+    }
+  }
+
+  if (connection?.status === "reauthorization_required") {
     return {
-      state: "not_configured",
-      label: "Not configured",
-      details: "Add GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY.",
+      state: "reauthorization_required",
+      label: "Reauthorization required",
+      details: connection.last_error_message_safe ?? "Reconnect Google Workspace.",
     };
   }
 
-  if (!creds.privateKeyFormatValid) {
+  if (mode === "workspace_oauth") {
+    if (!isGoogleOAuthConfigured() && !connection) {
+      return {
+        state: "oauth_not_configured",
+        label: "OAuth not configured",
+        details: "Google OAuth environment variables are missing.",
+      };
+    }
+    if (!connection) {
+      return {
+        state: "disconnected",
+        label: "Disconnected",
+        details: "Connect Google Workspace to browse Shared Drives.",
+      };
+    }
+  } else if (!creds.configured) {
+    return {
+      state: "not_configured",
+      label: "Not configured",
+      details: "Add service-account credentials or switch to workspace_oauth.",
+    };
+  }
+
+  if (mode === "service_account" && !creds.privateKeyFormatValid) {
     return {
       state: "authentication_failed",
       label: "Authentication failed",
@@ -57,7 +110,7 @@ export async function computeGoogleManagerHealth(input?: {
     return {
       state: "authentication_failed",
       label: "Authentication failed",
-      details: "Service-account token mint failed.",
+      details: "Could not obtain a Google access token.",
     };
   }
 
@@ -73,9 +126,9 @@ export async function computeGoogleManagerHealth(input?: {
   const active = folders.filter((f) => f.status === "active");
   if (active.length === 0 && !creds.rootFolderConfigured) {
     return {
-      state: "root_inaccessible",
-      label: "Root inaccessible",
-      details: "No Drive root folder is connected.",
+      state: "needs_root",
+      label: "Needs root",
+      details: "Browse Shared Drives or My Drive and connect a Knowledge root.",
     };
   }
 
@@ -132,7 +185,7 @@ export async function computeGoogleManagerHealth(input?: {
     };
   }
 
-  if (!isGoogleWorkspaceConfigured()) {
+  if (!isGoogleWorkspaceConfigured() && !connection) {
     return {
       state: "offline",
       label: "Offline",

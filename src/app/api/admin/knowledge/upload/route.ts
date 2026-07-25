@@ -48,17 +48,24 @@ export async function POST(request: Request) {
     }
 
     if (action === "import") {
+      const formString = z.preprocess(
+        (value) => (value == null || value === "" ? undefined : String(value)),
+        z.string().optional(),
+      );
       const parsed = z
         .object({
-          status: z.enum(["draft", "approved"]).default("draft"),
-          category: z.string().optional().nullable(),
-          tags: z.string().optional().nullable(),
-          titles: z.string().optional().nullable(),
-          allowEmpty: z.string().optional(),
-          allowDuplicate: z.string().optional(),
+          status: z.preprocess(
+            (value) => (value == null || value === "" ? "draft" : String(value)),
+            z.enum(["draft", "approved"]),
+          ),
+          category: formString,
+          tags: formString,
+          titles: formString,
+          allowEmpty: formString,
+          allowDuplicate: formString,
         })
         .parse({
-          status: form.get("status") ?? "draft",
+          status: form.get("status"),
           category: form.get("category"),
           tags: form.get("tags"),
           titles: form.get("titles"),
@@ -84,7 +91,7 @@ export async function POST(request: Request) {
           userId: user.id,
           title: titles[file.name] ?? null,
           status: parsed.status,
-          category: parsed.category,
+          category: parsed.category ?? "General",
           tags,
           allowEmpty: parsed.allowEmpty === "true",
           allowDuplicate: parsed.allowDuplicate === "true",

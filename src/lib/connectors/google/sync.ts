@@ -609,13 +609,30 @@ export async function resolveAndAddFolder(input: { folderId: string; userId: str
       "BAXTER_GOOGLE_ROOT_INVALID",
     );
   }
-  const meta = await getFolderMetadata(folderId);
-  return addGoogleSyncFolder({
-    folderId: meta.id,
-    folderName: meta.name,
-    driveId: meta.driveId ?? null,
-    userId: input.userId,
-  });
+  try {
+    const meta = await getFolderMetadata(folderId);
+    return addGoogleSyncFolder({
+      folderId: meta.id,
+      folderName: meta.name,
+      driveId: meta.driveId ?? null,
+      userId: input.userId,
+    });
+  } catch (error) {
+    // Shared Drive IDs equal their root folder IDs when accessible; if metadata fails,
+    // try matching against drives.list for the connected account.
+    const { listSharedDrives } = await import("./drive");
+    const drives = await listSharedDrives().catch(() => []);
+    const drive = drives.find((d) => d.id === folderId);
+    if (drive) {
+      return addGoogleSyncFolder({
+        folderId: drive.id,
+        folderName: drive.name,
+        driveId: drive.id,
+        userId: input.userId,
+      });
+    }
+    throw error;
+  }
 }
 
 export async function enqueueOrRunGoogleSync(input: {

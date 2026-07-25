@@ -72,3 +72,57 @@ export async function getFolderMetadata(folderId: string): Promise<GoogleDriveFi
   }
   return file;
 }
+
+export type GoogleSharedDrive = {
+  id: string;
+  name: string;
+};
+
+export async function listSharedDrives(): Promise<GoogleSharedDrive[]> {
+  const drives: GoogleSharedDrive[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      pageSize: "50",
+      fields: "nextPageToken,drives(id,name)",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const data = await googleFetch<{
+      drives?: GoogleSharedDrive[];
+      nextPageToken?: string;
+    }>(`https://www.googleapis.com/drive/v3/drives?${params.toString()}`);
+    drives.push(...(data.drives ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return drives;
+}
+
+/** List top-level items in My Drive (root). */
+export async function listMyDriveRoot(): Promise<GoogleDriveFile[]> {
+  return listFilesInFolder("root");
+}
+
+/** List children of a Shared Drive root (driveId as corpus). */
+export async function listSharedDriveRoot(driveId: string): Promise<GoogleDriveFile[]> {
+  const files: GoogleDriveFile[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      q: `'${driveId.replace(/'/g, "\\'")}' in parents and trashed = false`,
+      fields: FILE_FIELDS,
+      pageSize: "100",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+      corpora: "drive",
+      driveId,
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const data = await googleFetch<{
+      files?: GoogleDriveFile[];
+      nextPageToken?: string;
+    }>(`https://www.googleapis.com/drive/v3/files?${params.toString()}`);
+    files.push(...(data.files ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return files;
+}
