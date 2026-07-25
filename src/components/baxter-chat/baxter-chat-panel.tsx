@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { BaxterAvatar } from "./baxter-avatar";
 import { BaxterChatInput } from "./baxter-chat-input";
 import { BaxterChatMessage, type ChatUiMessage } from "./baxter-chat-message";
@@ -39,13 +39,19 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
 
   async function sendQuestion(question: string) {
     if (pending || inFlightRef.current) return;
+    const trimmed = question.trim();
+    if (!trimmed) return;
+
+    // Local /clear without waiting on network when possible — still call API for audit
+    const isClear = trimmed === "/clear";
+
     inFlightRef.current = true;
     setShowSuggestions(false);
     const clientRequestId = crypto.randomUUID();
     const userMessage: ChatUiMessage = {
       id: `user-${clientRequestId}`,
       role: "user",
-      content: question,
+      content: trimmed,
     };
     startTransition(() => {
       setMessages((prev) => [...prev, userMessage]);
@@ -57,8 +63,8 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          question,
-          conversationId,
+          question: trimmed,
+          conversationId: isClear ? conversationId : conversationId,
           clientRequestId,
         }),
       });
@@ -86,6 +92,22 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
               payload.error?.message ?? "Baxter couldn’t answer that right now. Please try again.",
             isError: true,
             conversationId: conversationId,
+          },
+        ]);
+        return;
+      }
+
+      if (isClear) {
+        setConversationId(payload.conversationId ?? null);
+        setShowSuggestions(true);
+        setMessages([
+          GREETING,
+          {
+            id: payload.message?.id ?? `clear-${crypto.randomUUID()}`,
+            role: "assistant",
+            content: payload.message?.answer ?? "Conversation cleared.",
+            answerMode: "identity",
+            conversationId: payload.conversationId ?? null,
           },
         ]);
         return;
@@ -133,16 +155,31 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
             <p className="truncate text-xs text-white/80">Acton ADU teammate</p>
           </div>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="h-8 w-8 shrink-0 bg-white/10 p-0 text-white hover:bg-white/20"
-          onClick={onClose}
-          aria-label="Close Baxter chat"
-        >
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8 gap-1 bg-white/10 px-2 text-xs text-white hover:bg-white/20"
+            onClick={() => void sendQuestion("/clear")}
+            disabled={pending}
+            aria-label="New chat"
+            title="New chat"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">New chat</span>
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8 w-8 shrink-0 bg-white/10 p-0 text-white hover:bg-white/20"
+            onClick={onClose}
+            aria-label="Close Baxter chat"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div
@@ -176,7 +213,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
 
       <p className="shrink-0 border-t border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-3 py-1.5 text-[10px] leading-snug text-[var(--acton-muted)]">
         Official Acton answers cite Sources. General help is labeled. Verify important decisions
-        with your team.
+        with your team. Type /clear to start fresh.
       </p>
 
       <div className="shrink-0">

@@ -59,8 +59,9 @@
 ## Current
 
 - Initial Acton employee Slack pilot (Jackson, Milan, Maxx, James — see `docs/slack-setup.md` section 21)
-- Knowledge Management: structured spreadsheet units + exact lookup (migration 016; re-sync Sheets then Rebuild Baxter index)
-- Knowledge Management Rework Prompt 3: Knowledge Center UX + retrieval/answer quality (done)
+- Baxter Intelligence Prompt 1: structured knowledge units + spreadsheet exact lookup (migration 016)
+- Baxter Intelligence Prompt 2: hybrid retrieval, embeddings, multimodal, Anthropic fallback, eval foundation (migration 017)
+- Baxter Intelligence Prompt 3: conversation context policy, `/clear`, temporal sales aggregation, eval suite, multimodal viewers (migration 018) — done
 
 ## Future
 
@@ -68,7 +69,6 @@
 - GoHighLevel sync
 - Domo sync
 - Full admin conversation analytics expansion
-- Semantic retrieval / embeddings
 - Proactive project monitoring
 - RACI enforcement in answers
 

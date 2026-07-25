@@ -27,6 +27,9 @@ export const COLUMN_ALIASES: Record<string, string[]> = {
     "lead value",
     "sale amount",
     "sold amount",
+    "sold",
+    "sales",
+    "revenue sold",
   ],
   "internal cost est": [
     "internal cost est",
@@ -112,7 +115,7 @@ export function inferRequestedFieldsFromQuestion(question: string): string[] {
 
   const checks: Array<[RegExp, string]> = [
     [
-      /\bagreement\b|\bcontract (amount|value)\b|\blead value\b|\bhow much\b.*\b(project|agreement|sold)\b|\bwas the .+ (for|agreement)\b/,
+      /\bagreement\b|\bcontract (amount|value)\b|\blead value\b|\bhow much\b.*\b(project|agreement|sold|sell)\b|\bwas the .+ (for|agreement)\b|\b(have|did|do) we (sold|sell)\b|\bsold this\b|\bsales (this|last|in)\b/,
       "Agreement Amount",
     ],
     [

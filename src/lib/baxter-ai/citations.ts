@@ -61,18 +61,27 @@ export function contextItemToSourceReference(item: BaxterContextItem): BaxterSou
     sourceUrl = `/knowledge/${item.id}`;
   }
 
+  let citationLabel = item.citationLabel;
+  if (item.pageNumber != null && !/page\s+\d+/i.test(citationLabel)) {
+    citationLabel = `${citationLabel} — Page ${item.pageNumber}`;
+  } else if (item.slideNumber != null && !/slide\s+\d+/i.test(citationLabel)) {
+    citationLabel = `${citationLabel} — Slide ${item.slideNumber}`;
+  }
+
   return {
     title: item.title,
     sourceName: item.sourceName,
     category: item.category,
     sourceUrl,
-    citationLabel: item.citationLabel,
+    citationLabel,
     sourceKind,
     openLabel: resolveOpenLabel(sourceKind),
     lastUpdated: item.updatedAt,
     relevanceScore: item.relevanceScore,
     availability: sourceUrl ? "available" : "unavailable",
     knowledgeEntryId: item.id,
+    pageNumber: item.pageNumber ?? null,
+    slideNumber: item.slideNumber ?? null,
   };
 }
 

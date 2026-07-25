@@ -18,6 +18,7 @@ import { classifyOpenAiHttpError, employeeFacingErrorMessage, openaiAdminGuidanc
 import { getBaxterProviderDiagnostics } from "./providers";
 import { getEmbeddingConfig } from "@/lib/knowledge-index/embeddings";
 import { getBaxterVisionProvider } from "./vision";
+import { getKnowledgeHealthSummary } from "./knowledge-health";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
@@ -56,6 +57,7 @@ export async function getBaxterDiagnosticsSnapshot() {
   }
 
   const openaiMetrics = getOpenAiMetricsSnapshot();
+  const knowledgeHealth = await getKnowledgeHealthSummary();
 
   return {
     config: {
@@ -100,6 +102,7 @@ export async function getBaxterDiagnosticsSnapshot() {
           .sort()
           .at(-1) ?? null,
     },
+    knowledgeHealth,
     conversations: {
       last24h: recent.length,
       successfulAssistantResponses: successful,

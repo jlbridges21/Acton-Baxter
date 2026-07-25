@@ -4,7 +4,8 @@ import { searchApprovedKnowledge } from "@/lib/knowledge/queries";
 import { normalizeSearchText } from "@/lib/knowledge/retrieval";
 import type { KnowledgeSearchResult } from "@/lib/knowledge/types";
 import type { BaxterContextItem, BaxterHistoryMessage } from "./types";
-import { retrievalQueryFromHistory } from "./memory";
+import { buildRetrievalQuery } from "./memory";
+import type { ConversationContextDecision } from "./conversation-context";
 import {
   planKnowledgeQuery,
   searchStructuredKnowledge,
@@ -34,6 +35,8 @@ export type RankedEvidenceCandidate = {
   channel: "structured" | "lexical" | "semantic" | "document";
   sourceUrl?: string | null;
   updatedAt?: string | null;
+  pageNumber?: number | null;
+  slideNumber?: number | null;
 };
 
 export type BaxterRetrievalBundle = {
@@ -47,6 +50,9 @@ export type BaxterRetrievalBundle = {
   semanticHits: SemanticHit[];
   ranked: RankedEvidenceCandidate[];
   conflicts: Array<{ field: string; values: string[]; entryIds: string[] }>;
+  contextDecision: ConversationContextDecision | null;
+  inheritEntities: string[];
+  retrievalQuery: string;
 };
 
 export function toBaxterContextItems(
@@ -113,8 +119,27 @@ export async function retrieveBaxterEvidence(
   question: string,
   history?: BaxterHistoryMessage[],
 ): Promise<BaxterRetrievalBundle> {
-  const query = history?.length ? retrievalQueryFromHistory(question, history) : question;
-  const plan = planKnowledgeQuery(query);
+  const retrieval = history?.length
+    ? buildRetrievalQuery(question, history)
+    : {
+        query: question,
+        inheritEntities: [] as string[],
+        decision: null as ConversationContextDecision | null,
+      };
+
+  // Plan from the original question when not inheriting — prevents entity bleed into aggregates.
+  // When inheriting, plan from the enriched retrieval query so pronouns resolve.
+  const planSource =
+    retrieval.decision?.inheritPriorEntities === false ? question : retrieval.query;
+  const plan = planKnowledgeQuery(planSource);
+  // If we inherited entities and planner didn't extract them, inject them for follow-ups
+  if (retrieval.inheritEntities.length && plan.entities.length === 0) {
+    plan.entities = [...retrieval.inheritEntities];
+    if (plan.mode === "document" || plan.mode === "hybrid") {
+      plan.mode = "structured_lookup";
+      plan.intent = "structured_lookup";
+    }
+  }
 
   let structured: StructuredSearchResult | null = null;
   let structuredItems: BaxterContextItem[] = [];
@@ -128,11 +153,12 @@ export async function retrieveBaxterEvidence(
     plan.intent === "structured_aggregation";
 
   if (runStructured) {
-    structured = await searchStructuredKnowledge(query, plan);
+    structured = await searchStructuredKnowledge(planSource, plan);
     structuredItems = structuredHitsToContextItems(structured, 1);
     evidencePackage = buildStructuredEvidencePackage(structured);
   }
 
+  const query = planSource;
   const docResults = await searchApprovedKnowledge({
     query,
     limit: BAXTER_CONTEXT_LIMIT + 6,
@@ -227,8 +253,14 @@ export async function retrieveBaxterEvidence(
       sourceType: "knowledge_unit",
       mimeType: null,
       updatedAt: candidate.updatedAt ?? new Date().toISOString(),
-      citationLabel: candidate.title,
+      citationLabel: formatLocatorCitation(
+        candidate.title,
+        candidate.pageNumber,
+        candidate.slideNumber,
+      ),
       relevanceScore: candidate.score,
+      pageNumber: candidate.pageNumber ?? null,
+      slideNumber: candidate.slideNumber ?? null,
     });
     seen.add(candidate.entryId);
   }
@@ -264,6 +296,9 @@ export async function retrieveBaxterEvidence(
     semanticHits,
     ranked,
     conflicts,
+    contextDecision: retrieval.decision,
+    inheritEntities: retrieval.inheritEntities,
+    retrievalQuery: query,
   };
 }
 
@@ -321,6 +356,7 @@ function rankAndDedupeEvidence(input: {
     if (seenUnits.has(hit.unit.id)) continue;
     // Structured already answered this entry with high confidence — demote lexical
     const demote = seenEntries.has(hit.unit.knowledge_entry_id) ? 0.3 : 1;
+    const locators = unitLocators(hit.unit);
     candidates.push({
       entryId: hit.unit.knowledge_entry_id,
       unitId: hit.unit.id,
@@ -331,6 +367,8 @@ function rankAndDedupeEvidence(input: {
       reason: hit.reason,
       channel: "lexical",
       sourceUrl: (hit.unit.metadata?.sourceUrl as string | undefined) ?? null,
+      pageNumber: locators.pageNumber,
+      slideNumber: locators.slideNumber,
     });
     seenUnits.add(hit.unit.id);
   }
@@ -339,6 +377,7 @@ function rankAndDedupeEvidence(input: {
     if (seenUnits.has(hit.unit.id)) continue;
     // Never let semantic override a direct structured match on same entry
     const demote = seenEntries.has(hit.unit.knowledge_entry_id) ? 0.2 : 1;
+    const locators = unitLocators(hit.unit);
     candidates.push({
       entryId: hit.unit.knowledge_entry_id,
       unitId: hit.unit.id,
@@ -349,6 +388,8 @@ function rankAndDedupeEvidence(input: {
       reason: hit.reason,
       channel: "semantic",
       sourceUrl: (hit.unit.metadata?.sourceUrl as string | undefined) ?? null,
+      pageNumber: locators.pageNumber,
+      slideNumber: locators.slideNumber,
     });
     seenUnits.add(hit.unit.id);
   }
@@ -422,4 +463,39 @@ function truncateExcerpt(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= BAXTER_MAX_EXCERPT_CHARS) return trimmed;
   return `${trimmed.slice(0, BAXTER_MAX_EXCERPT_CHARS - 1).trimEnd()}…`;
+}
+
+function unitLocators(unit: KnowledgeUnitRecord): {
+  pageNumber: number | null;
+  slideNumber: number | null;
+} {
+  const structured = (unit.structured_data ?? {}) as Record<string, unknown>;
+  const meta = (unit.metadata ?? {}) as Record<string, unknown>;
+  const page =
+    typeof structured.pageNumber === "number"
+      ? structured.pageNumber
+      : typeof meta.pageNumber === "number"
+        ? meta.pageNumber
+        : null;
+  const slide =
+    typeof structured.slideNumber === "number"
+      ? structured.slideNumber
+      : typeof meta.slideNumber === "number"
+        ? meta.slideNumber
+        : null;
+  return { pageNumber: page, slideNumber: slide };
+}
+
+function formatLocatorCitation(
+  title: string,
+  pageNumber?: number | null,
+  slideNumber?: number | null,
+): string {
+  if (pageNumber != null && !/page\s+\d+/i.test(title)) {
+    return `${title} — Page ${pageNumber}`;
+  }
+  if (slideNumber != null && !/slide\s+\d+/i.test(title)) {
+    return `${title} — Slide ${slideNumber}`;
+  }
+  return title;
 }

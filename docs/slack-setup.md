@@ -16,6 +16,7 @@ Baxter is Acton ADU’s internal AI assistant. In Slack it:
 | --------------------- | ----------------------------------------------------------------------------------------------------------- |
 | **Q&A (DMs)**         | Message Baxter directly — no `@Baxter` required in DMs                                                      |
 | **Q&A (channels)**    | `@Baxter <question>` in an allowed channel; replies appear **in a thread**                                  |
+| **Clear context**     | Send `/clear` in a DM or thread — starts a fresh conversation (plain text; no slash-command config needed)  |
 | **Property Research** | `/property [address]` — same PEM research as the web tool; returns a login-protected link (no PDF in Slack) |
 
 Baxter reuses the same `answerBaxterQuestion()` backend as web chat. Answers may include **Sources** (approved Knowledge Base / Google-synced docs) or clearly labeled **general guidance**. Baxter never invents official Acton policy or fake URLs.

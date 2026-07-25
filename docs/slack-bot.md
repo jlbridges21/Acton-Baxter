@@ -83,6 +83,8 @@ Job type: `slack_baxter_reply` on the existing `report_jobs` queue.
 
 Follow-ups in the **same DM** reuse the conversation automatically.
 
+Send plain-text **`/clear`** in a DM or thread to close that Baxter conversation and start fresh (no Slack slash-command registration required). Historical messages remain for admin diagnostics.
+
 In **channels**, follow-ups require another `@Baxter` mention (mention-required default) because the app does not subscribe to broad channel history events.
 
 Conversations are stored with `user_id = null` and `external_user_id` set to the Slack user ID.

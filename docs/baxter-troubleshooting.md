@@ -24,11 +24,23 @@ Baxter should still help with identity and general questions even when the Knowl
 
 ## Retrieval
 
-Deterministic keyword search with normalization (curly apostrophes), stop-word filtering, light stemming, and small synonym expansion. No embeddings yet.
+Hybrid retrieval: structured units → lexical → semantic embeddings. Exact spreadsheet facts outrank vector similarity. See `docs/baxter-retrieval.md`.
 
 ## Conversation history
 
-Recent messages from the same user conversation (about 10) are passed into the model for follow-ups.
+Recent messages from the same conversation help true follow-ups (pronouns, short field questions). New subjects, company-wide aggregations, and time filters (**“this year”**) reset prior entity context.
+
+Send **`/clear`** (web or Slack) or use **New chat** on web to start fresh. If Baxter still answers about an old project after a new topic, clear context and ask again.
+
+## Common errors
+
+| Code                             | Meaning                               |
+| -------------------------------- | ------------------------------------- |
+| `BAXTER_STRUCTURED_QUERY_FAILED` | Structured planner/search error       |
+| `BAXTER_AGGREGATION_FAILED`      | Temporal/sales aggregate failed       |
+| `BAXTER_VECTOR_SEARCH_FAILED`    | Embedding/semantic search error       |
+| `BAXTER_CONTEXT_RESET_FAILED`    | `/clear` could not reset conversation |
+| `BAXTER_MULTIMODAL_INDEX_FAILED` | Image/PDF/slide indexing error        |
 
 ---
 

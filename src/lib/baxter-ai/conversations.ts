@@ -176,7 +176,8 @@ async function findConversationByExternalThread(
   if (shouldUseMemoryStore()) {
     return (
       Array.from(getMemory().conversations.values()).find(
-        (conversation) => conversation.external_thread_id === externalThreadId,
+        (conversation) =>
+          conversation.external_thread_id === externalThreadId && conversation.status === "active",
       ) ?? null
     );
   }
@@ -186,6 +187,7 @@ async function findConversationByExternalThread(
     .select("*")
     .eq("external_thread_id", externalThreadId)
     .eq("channel", "slack")
+    .eq("status", "active")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -193,13 +195,131 @@ async function findConversationByExternalThread(
     if (isMissingTableError(error)) {
       return (
         Array.from(getMemory().conversations.values()).find(
-          (conversation) => conversation.external_thread_id === externalThreadId,
+          (conversation) =>
+            conversation.external_thread_id === externalThreadId &&
+            conversation.status === "active",
         ) ?? null
       );
     }
     throw error;
   }
   return (data as BaxterConversation | null) ?? null;
+}
+
+/**
+ * Close the current conversation and start a fresh one (Prompt 3 /clear).
+ * Prior messages remain stored for admin diagnostics.
+ */
+export async function resetBaxterConversation(input: {
+  previousConversationId?: string | null;
+  userId: string | null;
+  userName?: string | null;
+  channel: "web" | "slack";
+  externalThreadId?: string | null;
+  externalUserId?: string | null;
+}): Promise<{
+  previousConversationId: string | null;
+  conversation: BaxterConversation;
+}> {
+  const previousId = input.previousConversationId ?? null;
+  let previousExternal: string | null = input.externalThreadId ?? null;
+
+  if (previousId) {
+    const previous = await getConversationForUser(previousId, input.userId ?? "slack-service", {
+      allowSlackService: input.channel === "slack",
+    }).catch(() => null);
+    if (previous) {
+      previousExternal = previous.external_thread_id ?? previousExternal;
+      await closeConversationForReset(previous, {
+        resetBy: input.userId ?? input.externalUserId ?? "unknown",
+        channel: input.channel,
+      });
+    }
+  } else if (input.channel === "slack" && input.externalThreadId) {
+    const byThread = await findConversationByExternalThread(input.externalThreadId);
+    if (byThread) {
+      await closeConversationForReset(byThread, {
+        resetBy: input.externalUserId ?? "unknown",
+        channel: "slack",
+      });
+    }
+  }
+
+  const conversation = await getOrCreateConversation({
+    userId: input.userId,
+    userName: input.userName,
+    channel: input.channel,
+    externalThreadId: previousExternal,
+    externalUserId: input.externalUserId,
+    // Force create — do not reuse closed conversationId
+    conversationId: null,
+  });
+
+  // Audit metadata on the new conversation
+  conversation.metadata = {
+    ...(conversation.metadata ?? {}),
+    conversation_reset_at: nowIso(),
+    previous_conversation_id: previousId,
+    reset_channel: input.channel,
+  };
+  await patchConversationMetadata(conversation.id, conversation.metadata);
+
+  return { previousConversationId: previousId, conversation };
+}
+
+async function closeConversationForReset(
+  conversation: BaxterConversation,
+  meta: { resetBy: string; channel: string },
+): Promise<void> {
+  const updated: BaxterConversation = {
+    ...conversation,
+    status: "closed",
+    updated_at: nowIso(),
+    metadata: {
+      ...(conversation.metadata ?? {}),
+      conversation_reset_at: nowIso(),
+      reset_by: meta.resetBy,
+      reset_channel: meta.channel,
+    },
+  };
+  getMemory().conversations.set(conversation.id, updated);
+
+  if (shouldPersistInMemory(conversation.id)) return;
+
+  try {
+    const supabase = createServiceClient();
+    // Relinquish external_thread_id so a new active conversation can reuse it
+    await supabase
+      .from("baxter_conversations")
+      .update({
+        status: "closed",
+        external_thread_id: conversation.external_thread_id
+          ? `${conversation.external_thread_id}:closed:${Date.now()}`
+          : null,
+        metadata: updated.metadata,
+        updated_at: updated.updated_at,
+      })
+      .eq("id", conversation.id);
+  } catch {
+    // best-effort
+  }
+}
+
+async function patchConversationMetadata(
+  conversationId: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const existing = getMemory().conversations.get(conversationId);
+  if (existing) {
+    getMemory().conversations.set(conversationId, { ...existing, metadata });
+  }
+  if (shouldPersistInMemory(conversationId)) return;
+  try {
+    const supabase = createServiceClient();
+    await supabase.from("baxter_conversations").update({ metadata }).eq("id", conversationId);
+  } catch {
+    // ignore
+  }
 }
 
 export async function getConversationForUser(

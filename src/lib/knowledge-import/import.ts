@@ -126,6 +126,7 @@ export async function importKnowledgeUpload(input: {
         mimeType: preview.mimeType,
         extractionStatus: preview.extractionStatus,
         extractionWarnings: preview.warnings,
+        ...(preview.metadata ?? {}),
       },
     });
   } catch {

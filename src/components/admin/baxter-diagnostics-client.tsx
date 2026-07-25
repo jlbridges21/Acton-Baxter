@@ -48,6 +48,20 @@ type Snapshot = {
     manual: number;
     lastGoogleSync: string | null;
   };
+  knowledgeHealth?: {
+    sources: number;
+    approvedSources: number;
+    indexedUnits: number;
+    embeddingCoverage: { withEmbedding: number; embeddable: number; percent: number };
+    structuredTables: number;
+    spreadsheetRows: number;
+    multimodalSources: number;
+    indexFailures: number;
+    lastReindexAt: string | null;
+    lastEvaluationAt: string | null;
+    evalPassRate: number | null;
+    indexVersion: number;
+  };
   conversations: {
     last24h: number;
     successfulAssistantResponses: number;
@@ -303,6 +317,57 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             </dd>
           </div>
         </dl>
+        {snapshot.knowledgeHealth ? (
+          <dl className="mt-4 grid gap-2 border-t border-[var(--acton-border)] pt-3 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-[var(--acton-muted)]">Indexed units</dt>
+              <dd>{snapshot.knowledgeHealth.indexedUnits}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Embedding coverage</dt>
+              <dd>
+                {snapshot.knowledgeHealth.embeddingCoverage.percent}% (
+                {snapshot.knowledgeHealth.embeddingCoverage.withEmbedding}/
+                {snapshot.knowledgeHealth.embeddingCoverage.embeddable})
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Structured tables / rows</dt>
+              <dd>
+                {snapshot.knowledgeHealth.structuredTables} /{" "}
+                {snapshot.knowledgeHealth.spreadsheetRows}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Multimodal sources</dt>
+              <dd>{snapshot.knowledgeHealth.multimodalSources}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Index failures</dt>
+              <dd>{snapshot.knowledgeHealth.indexFailures}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Index version</dt>
+              <dd>{snapshot.knowledgeHealth.indexVersion}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Last reindex</dt>
+              <dd>
+                {snapshot.knowledgeHealth.lastReindexAt
+                  ? new Date(snapshot.knowledgeHealth.lastReindexAt).toLocaleString()
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[var(--acton-muted)]">Eval pass rate</dt>
+              <dd>
+                {snapshot.knowledgeHealth.evalPassRate != null
+                  ? `${Math.round(snapshot.knowledgeHealth.evalPassRate * 100)}%`
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+        ) : null}
       </Card>
 
       <Card>

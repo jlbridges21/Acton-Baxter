@@ -288,7 +288,7 @@ export async function handleBaxterSlackEvent(
       await postSlackMessage({
         channel,
         ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
-        text: "*Baxter*\nAsk me a question about Acton procedures, general work help, or what I can do.",
+        text: "*Baxter*\nAsk me a question about Acton procedures, general work help, or what I can do. Send `/clear` to start a fresh conversation.",
       });
       if (eventId) {
         await updateSlackEventReceipt({ eventId, status: "completed" });
@@ -307,13 +307,25 @@ export async function handleBaxterSlackEvent(
     isDm: access.isDm,
   });
 
+  // For DM continuity, threadTs in the key is stable — rebuildSlackExternalThreadId for DMs
+  // ignores per-message ts and uses user id. Use a stable DM key:
+  const stableExternalThreadId = access.isDm
+    ? buildSlackExternalThreadId({
+        teamId,
+        channelId: channel,
+        userId: event.user ?? null,
+        threadTs: "dm",
+        isDm: true,
+      })
+    : externalThreadId;
+
   try {
     const result = await answerBaxterQuestion({
       question: text,
       userId: null,
       userName: event.user ? `Slack user ${event.user}` : "Slack user",
       channel: "slack",
-      externalThreadId,
+      externalThreadId: stableExternalThreadId,
       externalUserId: event.user ?? null,
     });
 

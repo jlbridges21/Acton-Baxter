@@ -5,6 +5,7 @@ import {
   appendUserMessage,
   getOrCreateConversation,
   getRecentConversationHistory,
+  resetBaxterConversation,
   toPublicAnswer,
 } from "./conversations";
 import { retrieveBaxterEvidence } from "./context";
@@ -26,12 +27,84 @@ import { answerFromBaxterIdentity, buildBaxterIdentityContext } from "./identity
 import { getEnv } from "@/lib/env";
 import type { BaxterAnswer, BaxterAnswerMode, BaxterQuestionInput } from "./types";
 import { draftDirectStructuredAnswer } from "@/lib/knowledge-index";
+import {
+  baxterHelpText,
+  CLEAR_RESPONSE_SLACK,
+  CLEAR_RESPONSE_WEB,
+  parseChatCommand,
+} from "./commands";
+import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./conversation-context";
 
 /**
  * Shared Baxter answering entry point for web and Slack.
  */
 export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<BaxterAnswer> {
   const question = input.question.trim();
+  const command = parseChatCommand(question);
+
+  if (command.type === "clear") {
+    const reset = await resetBaxterConversation({
+      previousConversationId: input.conversationId,
+      userId: input.userId,
+      userName: input.userName,
+      channel: input.channel,
+      externalThreadId: input.externalThreadId,
+      externalUserId: input.externalUserId,
+    });
+    const content = input.channel === "slack" ? CLEAR_RESPONSE_SLACK : CLEAR_RESPONSE_WEB;
+    const message = await appendAssistantMessage({
+      conversationId: reset.conversation.id,
+      content,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "command",
+      modelName: "clear",
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: reset.conversation.id,
+      messageId: message.id,
+      answer: content,
+      sources: [],
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "identity",
+    });
+  }
+
+  if (command.type === "help") {
+    const conversation = await getOrCreateConversation({
+      userId: input.userId,
+      userName: input.userName,
+      conversationId: input.conversationId,
+      channel: input.channel,
+      externalThreadId: input.externalThreadId,
+      externalUserId: input.externalUserId,
+    });
+    await appendUserMessage({ conversationId: conversation.id, content: question });
+    const content = baxterHelpText(input.channel);
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "command",
+      modelName: "help",
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer: content,
+      sources: [],
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "identity",
+    });
+  }
+
   const questionClass = classifyBaxterQuestion(question);
 
   const conversation = await getOrCreateConversation({
@@ -128,6 +201,34 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       confidence: evidence.structured.ambiguous ? "medium" : "high",
       insufficientKnowledge: false,
       answerMode: evidence.structured.ambiguous ? "clarification" : "grounded",
+    });
+  }
+
+  // After /clear or a standalone field question with no entity — ask which project.
+  if (
+    needsEntityClarification(question, evidence.inheritEntities) &&
+    !evidence.structured?.lookups[0]?.directValue &&
+    !evidence.structured?.aggregates[0]
+  ) {
+    const answer = ENTITY_CLARIFICATION_PROMPT;
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: answer,
+      insufficientKnowledge: false,
+      confidence: "medium",
+      modelProvider: "context-policy",
+      modelName: "entity-clarification",
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer,
+      sources: [],
+      confidence: "medium",
+      insufficientKnowledge: false,
+      answerMode: "clarification",
     });
   }
 

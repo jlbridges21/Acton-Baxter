@@ -121,7 +121,7 @@ describe("Lori Harris structured retrieval", () => {
       avg.aggregates[0]?.displayValue;
     expect(avgValue).toMatch(/28\.9%/);
 
-    // Count: row aggregation over indexed spreadsheet rows (fixture has 3 sales rows)
+    // Count: row aggregation over indexed spreadsheet rows
     const { listAllSpreadsheetRowUnits } = await import("@/lib/knowledge-index");
     const rows = (await listAllSpreadsheetRowUnits()).filter(
       (u) => u.unit_type === "spreadsheet_row",

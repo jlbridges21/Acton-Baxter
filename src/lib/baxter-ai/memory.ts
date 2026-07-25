@@ -1,20 +1,19 @@
 import type { BaxterHistoryMessage } from "./types";
-
-const FOLLOW_UP =
-  /\b(it|that|those|this|them|they|these|the (same|previous|last)|tell me more|what about|and (also|what)|how about|why|when|who)\b/i;
+import { decideConversationContext, extractPriorEntitiesFromHistory } from "./conversation-context";
 
 /**
- * Expand short / pronoun-heavy follow-ups using recent conversation turns
- * so retrieval and the model share the same resolved intent.
+ * Expand short / pronoun-heavy follow-ups for the LLM prompt only.
+ * Does NOT append prior entity text into retrieval queries blindly.
  */
 export function expandQuestionWithHistory(
   question: string,
   history: BaxterHistoryMessage[],
 ): string {
   const trimmed = question.trim();
-  if (!trimmed) return trimmed;
-  if (history.length === 0) return trimmed;
-  if (!FOLLOW_UP.test(trimmed) && trimmed.split(/\s+/).length > 8) return trimmed;
+  if (!trimmed || history.length === 0) return trimmed;
+
+  const decision = decideConversationContext(trimmed, history);
+  if (!decision.inheritPriorEntities) return trimmed;
 
   const recent = history
     .slice(-6)
@@ -23,7 +22,8 @@ export function expandQuestionWithHistory(
 
   return [
     "Follow-up question in an ongoing conversation.",
-    "Resolve pronouns (it/that/those/this) using the recent turns below.",
+    "Resolve pronouns (she/he/they/it/that) using the recent turns below.",
+    "Do not invent a new subject if the follow-up clearly refers to the prior entity.",
     "",
     "Recent turns:",
     recent,
@@ -33,28 +33,52 @@ export function expandQuestionWithHistory(
   ].join("\n");
 }
 
-/** Compact query for KB search (not the full LLM prompt expansion). */
+export type RetrievalQueryResult = {
+  query: string;
+  inheritEntities: string[];
+  decision: ReturnType<typeof decideConversationContext>;
+};
+
+/**
+ * Compact query for KB / structured retrieval.
+ * New subjects, aggregations, and time filters do NOT inherit prior entities.
+ */
 export function retrievalQueryFromHistory(
   question: string,
   history: BaxterHistoryMessage[],
 ): string {
+  return buildRetrievalQuery(question, history).query;
+}
+
+export function buildRetrievalQuery(
+  question: string,
+  history: BaxterHistoryMessage[],
+): RetrievalQueryResult {
   const trimmed = question.trim();
-  if (!trimmed || history.length === 0) return trimmed;
-  if (!FOLLOW_UP.test(trimmed) && trimmed.split(/\s+/).length > 6) return trimmed;
-
-  const priorUser = [...history]
-    .reverse()
-    .find((m) => m.role === "user" && m.content.trim().length > 0);
-  const priorAssistant = [...history]
-    .reverse()
-    .find((m) => m.role === "assistant" && m.content.trim().length > 0);
-
-  const parts = [trimmed];
-  if (priorUser) parts.push(priorUser.content.slice(0, 240));
-  if (priorAssistant) {
-    // Prefer first sentence of prior answer for topical anchors
-    const first = priorAssistant.content.split(/[.!?\n]/)[0]?.trim();
-    if (first) parts.push(first.slice(0, 160));
+  const decision = decideConversationContext(trimmed, history);
+  if (!trimmed || history.length === 0) {
+    return { query: trimmed, inheritEntities: [], decision };
   }
-  return parts.join(" ");
+
+  if (!decision.inheritPriorEntities) {
+    return { query: trimmed, inheritEntities: [], decision };
+  }
+
+  const inheritEntities = extractPriorEntitiesFromHistory(history);
+  // Prefer appending entity names only — not the full prior answer — to avoid bleed
+  const parts = [trimmed];
+  if (inheritEntities.length) {
+    parts.push(`(regarding ${inheritEntities.join(", ")})`);
+  } else {
+    const priorUser = [...history]
+      .reverse()
+      .find((m) => m.role === "user" && m.content.trim().length > 0);
+    if (priorUser) parts.push(priorUser.content.slice(0, 160));
+  }
+
+  return {
+    query: parts.join(" "),
+    inheritEntities,
+    decision,
+  };
 }

@@ -125,7 +125,17 @@ export type KnowledgeQueryPlan = {
   entities: string[];
   requestedFields: string[];
   filters: Array<{ field: string; value: string }>;
+  /** Close Date (or similar) range for temporal aggregations. */
+  timeRange?: {
+    field: string;
+    fromIso: string;
+    toIso: string;
+    label: string;
+    year?: number;
+  } | null;
   aggregation?: "count" | "sum" | "average" | "min" | "max" | null;
+  /** Weighted margin = sum(margin $) / sum(agreement) when true. */
+  weightedMargin?: boolean;
   keywords: string[];
   rawQuestion: string;
 };

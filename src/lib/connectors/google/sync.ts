@@ -417,6 +417,8 @@ export class GoogleWorkspaceConnector implements KnowledgeConnector {
             managed: true,
           },
           googleManaged: true,
+          mimeType: parsed.mimeType,
+          originalFilename: parsed.title,
           ...(parsed.workbook
             ? {
                 workbook: {
@@ -432,6 +434,17 @@ export class GoogleWorkspaceConnector implements KnowledgeConnector {
                 structuredIndexed: true,
               }
             : {}),
+          ...(parsed.imageUnits?.length
+            ? {
+                imageUnits: parsed.imageUnits,
+                imageMeta: parsed.imageMeta ?? {},
+              }
+            : {}),
+          ...(parsed.imageMeta && !parsed.imageUnits?.length
+            ? { imageMeta: parsed.imageMeta }
+            : {}),
+          ...(parsed.slideUnits?.length ? { slideUnits: parsed.slideUnits } : {}),
+          ...(parsed.pdfPages?.length ? { pdfPages: parsed.pdfPages } : {}),
         };
 
         let knowledgeEntryId: string | null = existing?.id ?? null;

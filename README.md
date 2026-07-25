@@ -70,9 +70,12 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 
 - Answers identity and general questions even when the Knowledge Base is empty
 - Uses approved Acton Knowledge Base / Google-synced entries for company-specific facts
-- Cites real sources (model cannot invent URLs)
+- Cites real sources (model cannot invent URLs); PDF/slide citations include page/slide when indexed
+- `/clear` or **New chat** starts a fresh conversation; `/help` lists commands
+- Temporal sales questions (e.g. “How much have we sold this year?”) aggregate from the Sales Performance Report in code
 - Thumbs up/down feedback on assistant messages
-- Admin diagnostics: `/admin/baxter/diagnostics`
+- Admin diagnostics: `/admin/baxter/diagnostics` (retrieval inspector + knowledge health)
+- Evaluations: `/admin/baxter/evaluations`
 - Launch readiness: `/admin/baxter/launch-readiness`
 - Feedback review: `/admin/baxter/feedback`
 - Employee guide: `docs/baxter-employee-guide.md`
@@ -110,6 +113,8 @@ In Supabase SQL Editor, run each file completely:
 14. `supabase/migrations/014_admin_role_management.sql`
 15. `supabase/migrations/015_google_knowledge_usability.sql`
 16. `supabase/migrations/016_knowledge_units.sql`
+17. `supabase/migrations/017_hybrid_retrieval_and_evals.sql`
+18. `supabase/migrations/018_conversation_reset_and_eval_indexes.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 

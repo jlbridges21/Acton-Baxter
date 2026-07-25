@@ -73,9 +73,15 @@ Additional database tasks:
 - [ ] **Add selected to Baxter** creates Knowledge entries (including XLSX) without a separate sync step
 - [ ] Google entries can be removed from Knowledge Center (**Remove from Baxter**)
 - [ ] Migration `016_knowledge_units.sql` applied
+- [ ] Migration `017_hybrid_retrieval_and_evals.sql` applied
+- [ ] Migration `018_conversation_reset_and_eval_indexes.sql` applied
 - [ ] Re-sync Sales Performance Report (or affected Sheets) then **Rebuild Baxter index**
 - [ ] Ask Baxter: “How much was the Lori Harris project agreement for?” → `$352,933`
-- [ ] Knowledge Center shows spreadsheet table viewer (not col2= text)
+- [ ] Follow-up: “When did she close?” → March 27, 2025
+- [ ] Then: “How much have we sold this year?” → current-year total (not Lori’s amount)
+- [ ] `/clear` then “What was the margin?” → asks which project
+- [ ] Knowledge Center shows spreadsheet / image / PDF / presentation viewers
+- [ ] `/admin/baxter/evaluations` golden suite runnable
 - [ ] **Sync changes** completes; approved Google-managed entries appear in Knowledge Base
 - [ ] Advanced diagnostics (optional): dry-run / repair Google knowledge
 - [ ] Scheduled sync: Vercel Cron registered for `/api/internal/process-jobs` (Production only)

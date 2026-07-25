@@ -7,12 +7,77 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
+import {
+  ImageKnowledgeViewer,
+  imageViewerPropsFromMeta,
+} from "@/components/admin/knowledge-center/image-knowledge-viewer";
+import {
+  PdfKnowledgeViewer,
+  pdfPagesFromMeta,
+} from "@/components/admin/knowledge-center/pdf-knowledge-viewer";
+import {
+  PresentationKnowledgeViewer,
+  slidesFromMeta,
+} from "@/components/admin/knowledge-center/presentation-knowledge-viewer";
 import { SpreadsheetKnowledgeViewer } from "@/components/admin/knowledge-center/spreadsheet-knowledge-viewer";
 import type { KnowledgeEntry, KnowledgeEntryRevision } from "@/lib/knowledge/types";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 type Tab = "content" | "history" | "sources" | "usage" | "index";
+
+type EntryWithIndex = KnowledgeEntry & {
+  index_status?: string | null;
+  indexed_at?: string | null;
+  index_version?: number | null;
+  index_warnings?: string[] | null;
+};
+
+function contentTabLabel(kind: string): string {
+  if (kind === "spreadsheet") return "Spreadsheet";
+  if (kind === "image") return "Image";
+  if (kind === "pdf") return "PDF";
+  if (kind === "presentation") return "Slides";
+  return "Content";
+}
+
+function detectViewerKind(entry: KnowledgeEntry, meta: Record<string, unknown>): string {
+  const googleMime = String((meta.google as { mimeType?: string } | undefined)?.mimeType ?? "");
+  const mime = String(meta.mimeType ?? googleMime ?? "").toLowerCase();
+  const filename = String(meta.originalFilename ?? entry.title ?? "");
+
+  const isSpreadsheet = Boolean(
+    meta.workbook ||
+    meta.structuredIndexed ||
+    mime.includes("spreadsheet") ||
+    /\.(xlsx|csv)$/i.test(filename),
+  );
+  if (isSpreadsheet) return "spreadsheet";
+
+  if (
+    mime.startsWith("image/") ||
+    Array.isArray(meta.imageUnits) ||
+    meta.imageMeta ||
+    /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(filename)
+  ) {
+    return "image";
+  }
+
+  if (mime === "application/pdf" || Array.isArray(meta.pdfPages) || /\.pdf$/i.test(filename)) {
+    return "pdf";
+  }
+
+  if (
+    mime.includes("presentation") ||
+    googleMime.includes("presentation") ||
+    Array.isArray(meta.slideUnits) ||
+    /\.(pptx?|ppt)$/i.test(filename)
+  ) {
+    return "presentation";
+  }
+
+  return "document";
+}
 
 export function KnowledgeEntryDetailClient({
   entry: initialEntry,
@@ -29,8 +94,10 @@ export function KnowledgeEntryDetailClient({
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  const entryIndex = entry as EntryWithIndex;
   const isGoogle = entry.source_type === "Google Drive" || Boolean(meta.googleManaged);
   const isUpload = entry.source_type === "uploaded_document";
 
@@ -41,17 +108,15 @@ export function KnowledgeEntryDetailClient({
       ? meta.lastSyncedAt
       : typeof meta.googleLastSyncedAt === "string"
         ? meta.googleLastSyncedAt
-        : null;
+        : typeof (meta.google as { lastSyncedAt?: string } | undefined)?.lastSyncedAt === "string"
+          ? (meta.google as { lastSyncedAt: string }).lastSyncedAt
+          : null;
 
-  const isSpreadsheet = Boolean(
-    meta.workbook ||
-    meta.structuredIndexed ||
-    (meta.google as { mimeType?: string } | undefined)?.mimeType?.includes("spreadsheet") ||
-    /\.(xlsx|csv)$/i.test(String(meta.originalFilename ?? "")),
-  );
+  const viewerKind = detectViewerKind(entry, meta);
+  const isSpreadsheet = viewerKind === "spreadsheet";
 
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: "content", label: isSpreadsheet ? "Spreadsheet" : "Content" },
+    { id: "content", label: contentTabLabel(viewerKind) },
     { id: "history", label: "History" },
     { id: "sources", label: "Sources" },
     { id: "usage", label: "Baxter Usage" },
@@ -262,7 +327,7 @@ export function KnowledgeEntryDetailClient({
           <div className="mt-6">
             {tab === "content" ? (
               <div className="space-y-4">
-                {isSpreadsheet && meta.workbook ? (
+                {viewerKind === "spreadsheet" && meta.workbook ? (
                   <SpreadsheetKnowledgeViewer
                     title={entry.title}
                     workbook={
@@ -271,6 +336,36 @@ export function KnowledgeEntryDetailClient({
                         sheets?: Array<{ name: string; gid?: number | null; grid: string[][] }>;
                       }
                     }
+                    sourceUrl={entry.source_url}
+                  />
+                ) : viewerKind === "image" ? (
+                  <ImageKnowledgeViewer
+                    {...imageViewerPropsFromMeta({
+                      title: entry.title,
+                      sourceUrl: entry.source_url,
+                      sourceExternalId: entry.source_external_id,
+                      summary: entry.summary,
+                      metadata: meta,
+                      indexStatus: entryIndex.index_status ?? null,
+                    })}
+                  />
+                ) : viewerKind === "pdf" ? (
+                  <PdfKnowledgeViewer
+                    title={entry.title}
+                    pages={pdfPagesFromMeta(meta, entry.content)}
+                    sourceUrl={entry.source_url}
+                    ocrStatus={
+                      Array.isArray(meta.pdfPages) && (meta.pdfPages as unknown[]).length
+                        ? "Text extracted"
+                        : entryIndex.index_status === "ready"
+                          ? "Indexed"
+                          : (entryIndex.index_status ?? null)
+                    }
+                  />
+                ) : viewerKind === "presentation" ? (
+                  <PresentationKnowledgeViewer
+                    title={entry.title}
+                    slides={slidesFromMeta(meta, entry.content)}
                     sourceUrl={entry.source_url}
                   />
                 ) : (
@@ -291,6 +386,78 @@ export function KnowledgeEntryDetailClient({
                     ) : null}
                   </>
                 )}
+
+                <div className="border-t border-[var(--acton-border)] pt-4">
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-[var(--acton-navy)] underline"
+                    onClick={() => setAdvancedOpen((open) => !open)}
+                  >
+                    {advancedOpen ? "Hide Advanced / Index Details" : "Advanced / Index Details"}
+                  </button>
+                  {advancedOpen ? (
+                    <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="font-semibold">Index status</dt>
+                        <dd className="text-[var(--acton-muted)]">
+                          {entryIndex.index_status ??
+                            (typeof meta.index_status === "string" ? meta.index_status : "—")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold">Index version</dt>
+                        <dd className="text-[var(--acton-muted)]">
+                          {entryIndex.index_version ??
+                            (typeof meta.indexVersion === "number" ? meta.indexVersion : "—")}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold">Indexed at</dt>
+                        <dd className="text-[var(--acton-muted)]">
+                          {entryIndex.indexed_at
+                            ? formatDate(entryIndex.indexed_at)
+                            : typeof meta.indexed_at === "string"
+                              ? formatDate(meta.indexed_at)
+                              : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-semibold">MIME type</dt>
+                        <dd className="text-[var(--acton-muted)]">
+                          {String(
+                            meta.mimeType ??
+                              (meta.google as { mimeType?: string } | undefined)?.mimeType ??
+                              "—",
+                          )}
+                        </dd>
+                      </div>
+                      {(entryIndex.index_warnings?.length ||
+                        (Array.isArray(meta.index_warnings) &&
+                          (meta.index_warnings as unknown[]).length) ||
+                        (Array.isArray(meta.extractionWarnings) &&
+                          (meta.extractionWarnings as unknown[]).length)) && (
+                        <div className="sm:col-span-2">
+                          <dt className="font-semibold">Warnings</dt>
+                          <dd className="text-amber-800">
+                            <ul className="mt-1 list-disc space-y-1 pl-5">
+                              {[
+                                ...(entryIndex.index_warnings ?? []),
+                                ...(Array.isArray(meta.index_warnings)
+                                  ? (meta.index_warnings as string[])
+                                  : []),
+                                ...(Array.isArray(meta.extractionWarnings)
+                                  ? (meta.extractionWarnings as string[])
+                                  : []),
+                              ].map((w, i) => (
+                                <li key={`${i}-${w.slice(0, 24)}`}>{w}</li>
+                              ))}
+                            </ul>
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 

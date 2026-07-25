@@ -9,6 +9,14 @@ type SuiteSummary = {
   passed: number;
   failed: number;
   byCategory: Record<string, { passed: number; failed: number }>;
+  accuracy?: {
+    fact: number | null;
+    retrieval: number | null;
+    citation: number | null;
+    aggregation: number | null;
+    conversation: number | null;
+    multimodal: number | null;
+  };
   results: Array<{
     caseId: string;
     question: string;
@@ -45,24 +53,28 @@ export function BaxterEvaluationsClient({
     setCases(data.cases ?? []);
   }
 
-  async function runSuite() {
+  async function runAction(action: string, category?: string) {
     setBusy(true);
     setError(null);
     try {
       const res = await fetch("/api/admin/baxter/evaluations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "run_suite" }),
+        body: JSON.stringify({ action, category }),
       });
       const data = (await res.json()) as SuiteSummary & { error?: string };
       if (!res.ok) {
-        setError(data.error ?? "Suite failed");
+        setError(data.error ?? "Run failed");
         return;
       }
       setSummary(data);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function runSuite() {
+    await runAction("run_suite");
   }
 
   async function runOne(caseId: string) {
@@ -106,26 +118,65 @@ export function BaxterEvaluationsClient({
           <Button disabled={busy} onClick={() => void runSuite()}>
             Run enabled suite
           </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => void runAction("run_golden")}>
+            Run golden suite
+          </Button>
           <Button variant="secondary" disabled={busy} onClick={() => void loadCases()}>
             Refresh cases
           </Button>
         </div>
         {error ? <p className="text-sm text-red-700">{error}</p> : null}
         {summary ? (
-          <div className="grid gap-2 text-sm sm:grid-cols-3">
-            <div>
-              <span className="text-[var(--acton-muted)]">Total</span>
-              <p className="font-semibold">{summary.total}</p>
+          <>
+            <div className="grid gap-2 text-sm sm:grid-cols-3">
+              <div>
+                <span className="text-[var(--acton-muted)]">Total</span>
+                <p className="font-semibold">{summary.total}</p>
+              </div>
+              <div>
+                <span className="text-[var(--acton-muted)]">Passed</span>
+                <p className="font-semibold text-emerald-700">{summary.passed}</p>
+              </div>
+              <div>
+                <span className="text-[var(--acton-muted)]">Failed</span>
+                <p className="font-semibold text-red-700">{summary.failed}</p>
+              </div>
             </div>
-            <div>
-              <span className="text-[var(--acton-muted)]">Passed</span>
-              <p className="font-semibold text-emerald-700">{summary.passed}</p>
-            </div>
-            <div>
-              <span className="text-[var(--acton-muted)]">Failed</span>
-              <p className="font-semibold text-red-700">{summary.failed}</p>
-            </div>
-          </div>
+            {summary.accuracy ? (
+              <div className="grid gap-2 text-xs sm:grid-cols-3">
+                {(
+                  [
+                    ["Fact", summary.accuracy.fact],
+                    ["Aggregation", summary.accuracy.aggregation],
+                    ["Retrieval", summary.accuracy.retrieval],
+                    ["Citation", summary.accuracy.citation],
+                    ["Conversation", summary.accuracy.conversation],
+                    ["Multimodal", summary.accuracy.multimodal],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label}>
+                    <span className="text-[var(--acton-muted)]">{label}</span>
+                    <p className="font-medium">{value == null ? "—" : `${value}%`}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {Object.keys(summary.byCategory).length ? (
+              <div className="flex flex-wrap gap-2">
+                {Object.keys(summary.byCategory).map((cat) => (
+                  <Button
+                    key={cat}
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => void runAction("run_category", cat)}
+                  >
+                    Run {cat}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </Card>
 

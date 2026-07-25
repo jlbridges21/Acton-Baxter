@@ -100,6 +100,13 @@ async function parseImageUpload(
       imageUnits: units,
       documentType: analysis.documentType,
       extractedText: analysis.extractedText,
+      importantFacts: analysis.importantFacts,
+      imageMeta: {
+        mimeType: mime,
+        filename,
+        documentType: analysis.documentType,
+        warnings: analysis.warnings,
+      },
     },
     extractionStatus: units.length ? "success" : "empty",
   };

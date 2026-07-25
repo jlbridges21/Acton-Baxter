@@ -35,9 +35,13 @@ Classification controls whether Baxter can answer without KB hits, must ground i
 
 ## Retrieval
 
-`searchApprovedKnowledge()` scores approved internal entries with normalized tokens, stop-word filtering, light stemming, and small synonym expansion. No embeddings yet.
+Hybrid pipeline (see `docs/baxter-retrieval.md`): conversation context policy → structured units (including temporal aggregates) → lexical → semantic embeddings → ranked evidence with page/slide citations.
 
-## OpenAI
+## Conversation memory
+
+True follow-ups inherit entities; new subjects / “sold this year” style aggregations reset them. `/clear` and web **New chat** start a fresh conversation without deleting diagnostic history.
+
+## OpenAI / providers
 
 HTTP chat/completions with JSON object responses. Lenient parsing keeps a usable answer when optional metadata fails.
 

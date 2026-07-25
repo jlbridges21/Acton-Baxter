@@ -5,7 +5,7 @@ Baxter now supports **two kinds of knowledge**:
 1. **Document knowledge** — procedures, policies, Docs, PDFs, manuals (chunked by headings/paragraphs)
 2. **Structured data** — Google Sheets, XLSX, CSV (tables, rows, summary metrics)
 
-**Prompt 2** adds multimodal units (images, PDF pages, slides), embeddings, and hybrid retrieval. See [baxter-retrieval.md](./baxter-retrieval.md). Index version is **`KNOWLEDGE_INDEX_VERSION = 2`**.
+**Prompt 2** adds multimodal units (images, PDF pages, slides), embeddings, and hybrid retrieval. **Prompt 3** adds conversation context policy (`/clear`), temporal sales aggregation, and evaluation hardening. See [baxter-retrieval.md](./baxter-retrieval.md). Index version is **`KNOWLEDGE_INDEX_VERSION = 2`**.
 
 ## Knowledge entries vs units
 
@@ -29,7 +29,7 @@ Raw `col2=` flattening is no longer the primary representation.
 
 Web and Slack share the same path via `retrieveBaxterEvidence`.
 
-Embeddings are **not** used for exact spreadsheet lookup (Prompt 3).
+Embeddings are **not** used for exact spreadsheet lookup; temporal aggregates (e.g. sold this year) run in code against Close Date + Agreement Amount.
 
 ## Reindex
 

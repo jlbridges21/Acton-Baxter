@@ -144,7 +144,24 @@ export function draftDirectStructuredAnswer(
 
   const agg = result.aggregates[0];
   if (agg) {
-    return `${agg.displayValue}\n\nSource: ${agg.entryTitle}`;
+    const label = result.plan.timeRange?.label;
+    let answer: string;
+
+    if (label && result.plan.weightedMargin) {
+      answer = `Based on the Sales Performance Report, gross margin for ${label} is ${agg.displayValue} (weighted by agreement value).`;
+    } else if (label && agg.operation === "count") {
+      answer = `We've sold ${agg.matchedRowCount} projects in ${label}.`;
+    } else if (label && agg.operation === "sum" && /agreement amount/i.test(agg.field ?? "")) {
+      answer = `Based on the Sales Performance Report, Acton has sold ${agg.displayValue} in agreement value across ${agg.matchedRowCount} projects in ${label}.`;
+    } else if (label && agg.operation === "average") {
+      answer = `Based on the Sales Performance Report, the average ${humanizeField(agg.field ?? "value").toLowerCase()} in ${label} is ${agg.displayValue} across ${agg.matchedRowCount} projects.`;
+    } else if (label) {
+      answer = `Based on the Sales Performance Report, ${agg.operation}${agg.field ? ` of ${humanizeField(agg.field)}` : ""} for ${label} is ${agg.displayValue}.`;
+    } else {
+      answer = agg.displayValue;
+    }
+
+    return `${answer}\n\nSource: ${agg.entryTitle}`;
   }
 
   return null;

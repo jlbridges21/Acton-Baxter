@@ -24,6 +24,14 @@ export function BaxterSourceList({ sources }: { sources: BaxterSourceReference[]
             className="text-xs text-[var(--acton-navy)]"
           >
             <p className="font-semibold">{source.citationLabel}</p>
+            {(source.pageNumber != null || source.slideNumber != null) &&
+            !/page\s+\d+|slide\s+\d+/i.test(source.citationLabel) ? (
+              <p className="text-[var(--acton-muted)]">
+                {source.pageNumber != null
+                  ? `Page ${source.pageNumber}`
+                  : `Slide ${source.slideNumber}`}
+              </p>
+            ) : null}
             <p className="text-[var(--acton-muted)]">
               {source.sourceKind.replace("_", " ")} · {formatRelativeUpdated(source.lastUpdated)} ·{" "}
               {confidenceLabel(source.relevanceScore)}

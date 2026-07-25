@@ -53,15 +53,26 @@ export async function POST(request: Request) {
         parsed.question?.trim() || "How much was the Lori Harris project agreement for?";
       const evidence = await retrieveBaxterEvidence(question);
       const hit = evidence.structured?.lookups[0];
+      const entitiesReset = Boolean(
+        evidence.contextDecision &&
+        !evidence.contextDecision.inheritPriorEntities &&
+        evidence.contextDecision.reason !== "no_history",
+      );
       return jsonOk({
         result: {
           question,
           intent: evidence.intent,
           queryMode: evidence.queryMode,
+          contextDecision: evidence.contextDecision,
+          inheritEntities: evidence.inheritEntities,
+          entitiesReset,
+          timeRange: evidence.plan.timeRange ?? null,
+          retrievalQuery: evidence.retrievalQuery,
           plan: {
             entities: evidence.plan.entities,
             requestedFields: evidence.plan.requestedFields,
             aggregation: evidence.plan.aggregation,
+            timeRange: evidence.plan.timeRange ?? null,
           },
           structured: {
             matchedSource:

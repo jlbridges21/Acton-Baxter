@@ -1,34 +1,40 @@
 # Baxter evaluations
 
-Admin evaluation foundation (Prompt 2). Prompt 3 expands judging and coverage.
+Production-oriented evaluation suite for Baxter Intelligence (Prompts 2–3).
 
 ## Storage
 
-Migration `017_hybrid_retrieval_and_evals.sql` adds:
-
-- `baxter_eval_cases`
-- `baxter_eval_runs`
-
-Dev/mock mode also seeds in-memory cases (Lori Harris structured facts, semantic, multimodal).
+- Migration `017_hybrid_retrieval_and_evals.sql` — `baxter_eval_cases`, `baxter_eval_runs`
+- Migration `018_conversation_reset_and_eval_indexes.sql` — eval run + active thread indexes
+- Dev/mock mode seeds in-memory golden cases
 
 ## Categories
 
-`identity`, `procedure`, `policy`, `structured_lookup`, `structured_aggregation`, `semantic_lookup`, `cross_source`, `multimodal`, `general`, `knowledge_gap`
+`structured_lookup`, `structured_aggregation`, `semantic_lookup`, `cross_source`, `multimodal`, `conversation_continuity`, `context_reset`, `citation`, `knowledge_gap`, plus earlier identity/procedure/policy/general.
 
-## Runner
+## Checks
 
-Server-side deterministic checks:
+Deterministic (no LLM judge required):
 
-- expected numeric/date/phrase facts
-- expected source IDs when provided
-- retrieval mode / latency / provider metadata
+- **Facts** — phrase / date presence
+- **Numeric** — extract amount from answer vs expected (e.g. `352933`, year sold totals)
+- **Sources** — expected source IDs when configured
+- **Answer mode** — e.g. `clarification` after `/clear`
+- **Forbidden phrases** — e.g. must not repeat Lori amount on year-sold follow-up
+- **Multi-turn** — scripted turns including `/clear`
 
-No LLM-as-judge required for these checks.
+## Golden suite
+
+Admin actions:
+
+- Run enabled suite
+- Run golden suite
+- Run one / run category
+
+IDs include Lori agreement/close, current-year sold + count, semantic procedure, cross-source, multimodal, PDF citation smoke, context reset, follow-up continuity, knowledge gap.
 
 ## Admin UI
 
 `/admin/baxter/evaluations`
 
-- Run one case
-- Run enabled suite
-- Pass/fail by category
+Shows pass/fail (failures first), category accuracy labels, and recent results.

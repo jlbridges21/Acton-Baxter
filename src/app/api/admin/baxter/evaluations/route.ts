@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/session";
 import { jsonError } from "@/lib/api";
-import { listEvalCases, runEnabledEvalSuite, runEvalCase } from "@/lib/baxter-ai/evaluations";
+import {
+  listEvalCases,
+  runEnabledEvalSuite,
+  runEvalCase,
+  runEvalCategory,
+  runGoldenEvalSuite,
+  categoryAccuracyLabels,
+  type EvalCategory,
+} from "@/lib/baxter-ai/evaluations";
 
 export async function GET() {
   try {
@@ -24,10 +32,33 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     await requireAdmin();
-    const body = (await request.json()) as { action?: string; caseId?: string };
+    const body = (await request.json()) as {
+      action?: string;
+      caseId?: string;
+      category?: string;
+    };
     if (body.action === "run_suite") {
       const summary = await runEnabledEvalSuite({ useFullAnswer: false });
-      return NextResponse.json(summary);
+      return NextResponse.json({
+        ...summary,
+        accuracy: categoryAccuracyLabels(summary.byCategory),
+      });
+    }
+    if (body.action === "run_golden") {
+      const summary = await runGoldenEvalSuite({ useFullAnswer: false });
+      return NextResponse.json({
+        ...summary,
+        accuracy: categoryAccuracyLabels(summary.byCategory),
+      });
+    }
+    if (body.action === "run_category" && body.category) {
+      const summary = await runEvalCategory(body.category as EvalCategory, {
+        useFullAnswer: false,
+      });
+      return NextResponse.json({
+        ...summary,
+        accuracy: categoryAccuracyLabels(summary.byCategory),
+      });
     }
     if (body.action === "run_one" && body.caseId) {
       const cases = await listEvalCases();

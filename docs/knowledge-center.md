@@ -32,7 +32,7 @@ Google-managed Knowledge entries can be removed directly from the Knowledge Cent
 
 Supported Google imports include Docs, Sheets, Markdown, Text, PDF, DOCX, CSV, and **XLSX**.
 
-Spreadsheet entries render as a table viewer (sheet tabs, sticky headers, search) when workbook grids are indexed. Use **Rebuild Baxter index** after migration `016`.
+Spreadsheet entries render as a table viewer (sheet tabs, sticky headers, search) when workbook grids are indexed. Images, PDFs, and presentations have read-only viewers (extracted text, page/slide navigation, OCR/description metadata). Use **Rebuild Baxter index** after migrations `016`–`018`.
 
 ## Settings
 

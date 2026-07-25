@@ -12,11 +12,16 @@ Baxter is Acton ADU’s internal AI assistant. It helps employees with company p
 2. Click **Ask Baxter** (bottom-right on the home page).
 3. Ask your question in plain language.
 
+**Start fresh:** click **New chat** in the chat header, or send `/clear`. Baxter replies “Conversation cleared.” and stops using prior context.
+
+**Help:** send `/help` for a short command list.
+
 **Examples:**
 
 - “Who is Baxter?”
 - “What is our process for X?” (when documented in approved sources)
 - “What is an ADU?” (general knowledge)
+- “How much have we sold this year?” (from approved Sales Performance Report)
 
 Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins.
 
@@ -28,9 +33,13 @@ Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins
 
 Open Baxter’s DM and ask anything. You do **not** need to `@Baxter` in DMs.
 
+Send `/clear` in a DM to start a fresh conversation. Baxter replies: “Conversation cleared. We’re starting fresh.”
+
 ### In a channel
 
 Type `@Baxter` followed by your question. Baxter replies in a **thread** under your message.
+
+In a thread, send `/clear` (with `@Baxter` if required by channel rules) to reset that thread’s Baxter conversation only.
 
 **Important:** In channels, Baxter only sees messages that **@mention** it. For follow-ups, **`@Baxter` again** in the thread.
 

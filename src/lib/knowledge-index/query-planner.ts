@@ -1,6 +1,7 @@
 import { inferRequestedFieldsFromQuestion } from "./aliases";
 import type { KnowledgeQueryPlan } from "./types";
 import { normalizeEntityText } from "./values";
+import { parseTimeRangeFromQuestion } from "./temporal";
 
 const STOP = new Set([
   "a",
@@ -32,37 +33,76 @@ const STOP = new Set([
   "two",
   "year",
   "years",
+  "sold",
+  "sell",
+  "have",
+  "this",
+  "last",
 ]);
 
 /**
  * Deterministic knowledge query planner — never turns user text into SQL.
  */
-export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
+export function planKnowledgeQuery(question: string, now: Date = new Date()): KnowledgeQueryPlan {
   const raw = question.trim();
   const q = raw.toLowerCase();
   const requestedFields = inferRequestedFieldsFromQuestion(raw);
   if (/\bhow many (projects|contracts)\b|\bnumber of projects\b/i.test(raw)) {
     if (!requestedFields.includes("Total Contracts")) requestedFields.unshift("Total Contracts");
   }
+
+  // Sales language → Agreement Amount sum (not "recognized revenue")
+  const soldIntent =
+    /\b(how much (have|did|do) we (sold|sell)|we sold|sold this|sold (in|during|last)|sales (this|last|in)|total (sales|sold)|agreement value sold|revenue sold|contract value)\b/i.test(
+      q,
+    );
+  if (soldIntent && !requestedFields.includes("Agreement Amount")) {
+    requestedFields.unshift("Agreement Amount");
+  }
+
+  const timeRange = parseTimeRangeFromQuestion(raw, now);
   const entities = extractEntities(raw);
   const keywords = tokenize(raw);
 
   const wantsAggregate =
-    /\b(how many|average|avg|total|sum|largest|highest|lowest|smallest|min|max)\b/i.test(q) ||
+    soldIntent ||
+    Boolean(timeRange) ||
+    /\b(how many|average|avg|total|sum|largest|highest|lowest|smallest|min|max|how much (have|did|do) we)\b/i.test(
+      q,
+    ) ||
     requestedFields.some((f) => /total |avg |average /i.test(f));
 
   const wantsStructured =
     entities.length > 0 ||
     requestedFields.length > 0 ||
+    soldIntent ||
+    Boolean(timeRange) ||
     /\b(agreement|margin|sq\.?\s*ft|close date|custom|build ready|lori|harris)\b/i.test(q) ||
     wantsAggregate;
 
   let aggregation: KnowledgeQueryPlan["aggregation"] = null;
   if (/\bhow many\b|\bcount\b|\btotal contracts\b|\bnumber of\b/i.test(q)) aggregation = "count";
-  else if (/\baverage\b|\bavg\b/i.test(q)) aggregation = "average";
+  else if (/\baverage\b|\bavg\b/i.test(q) && !/\bmargin\b/i.test(q)) aggregation = "average";
   else if (/\blargest\b|\bhighest\b|\bmax\b/i.test(q)) aggregation = "max";
   else if (/\bsmallest\b|\blowest\b|\bmin\b/i.test(q)) aggregation = "min";
-  else if (/\btotal\b|\bsum\b/i.test(q) && !/\btotal contracts\b/i.test(q)) aggregation = "sum";
+  else if (soldIntent || (/\b(total|sum|how much)\b/i.test(q) && !/\btotal contracts\b/i.test(q))) {
+    aggregation = "sum";
+  }
+
+  const weightedMargin =
+    /\b(gross margin (percentage|percent|%)|margin %|our (gross )?margin)\b/i.test(q) &&
+    (Boolean(timeRange) || wantsAggregate) &&
+    !/\baverage project margin\b/i.test(q);
+
+  if (weightedMargin) {
+    if (!requestedFields.includes("Estimated Gross Margin $")) {
+      requestedFields.unshift("Estimated Gross Margin $");
+    }
+    if (!requestedFields.includes("Agreement Amount")) {
+      requestedFields.push("Agreement Amount");
+    }
+    aggregation = "sum";
+  }
 
   const filters: KnowledgeQueryPlan["filters"] = [];
   if (
@@ -94,10 +134,41 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
   let mode: KnowledgeQueryPlan["mode"] = "document";
   let intent: KnowledgeQueryPlan["intent"] = "document_lookup";
 
-  if (wantsStructured && aggregation && entities.length === 0) {
+  const personLike = entities.filter(
+    (e) => !/trailing|report|agreement|margin|total|average|project/i.test(e),
+  );
+
+  // Company-wide sold / temporal aggregates: never keep spurious entities
+  if (soldIntent || timeRange) {
+    const realPeople = personLike.filter(
+      (e) =>
+        !/\b(we|sell|sold|this|last|year|have|did|do|much|many|in)\b/i.test(e) &&
+        /[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(e) &&
+        !/^(How|What|When|Our|The)\b/i.test(e),
+    );
+    if (realPeople.length === 0) {
+      mode = "structured_aggregate";
+      intent = "structured_aggregation";
+      if (!aggregation) aggregation = soldIntent ? "sum" : aggregation;
+      return {
+        mode,
+        intent,
+        entities: [],
+        requestedFields,
+        filters,
+        timeRange,
+        aggregation: aggregation ?? "sum",
+        weightedMargin,
+        keywords,
+        rawQuestion: raw,
+      };
+    }
+  }
+
+  if (wantsStructured && aggregation && personLike.length === 0) {
     mode = "structured_aggregate";
     intent = "structured_aggregation";
-  } else if (wantsStructured && entities.length > 0) {
+  } else if (wantsStructured && personLike.length > 0) {
     mode = "structured_lookup";
     intent = "structured_lookup";
   } else if (wantsStructured) {
@@ -114,16 +185,11 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
     intent = "acton_factual";
   }
 
-  // Summary metric style questions without a person name
-  if (entities.length === 0 && requestedFields.some((f) => /total |avg /i.test(f))) {
+  if (personLike.length === 0 && requestedFields.some((f) => /total |avg /i.test(f))) {
     mode = "structured_aggregate";
     intent = "structured_aggregation";
   }
 
-  // If the only entities look like report nouns, treat as aggregate
-  const personLike = entities.filter(
-    (e) => !/trailing|report|agreement|margin|total|average|project/i.test(e),
-  );
   if (
     personLike.length === 0 &&
     requestedFields.some((f) => /total |avg |average /i.test(f) || f === "Total Contracts")
@@ -136,7 +202,9 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
       entities: [],
       requestedFields,
       filters,
+      timeRange,
       aggregation: aggregation ?? (requestedFields.includes("Total Contracts") ? "count" : null),
+      weightedMargin,
       keywords,
       rawQuestion: raw,
     };
@@ -153,7 +221,9 @@ export function planKnowledgeQuery(question: string): KnowledgeQueryPlan {
     entities: personLike.length ? personLike : entities,
     requestedFields,
     filters,
+    timeRange,
     aggregation,
+    weightedMargin,
     keywords,
     rawQuestion: raw,
   };
@@ -171,13 +241,11 @@ function tokenize(question: string): string[] {
 export function extractEntities(question: string): string[] {
   const entities: string[] = [];
 
-  // Quoted names
   const quoted = question.match(/"([^"]+)"|'([^']+)'/g);
   if (quoted) {
     for (const q of quoted) entities.push(q.replace(/['"]/g, "").trim());
   }
 
-  // "Lori Harris project" / "for Lori Harris" / "Lori Harris's"
   const patterns = [
     /\b(?:for|on|about|did|was|were)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})(?:['’]s)?\b/i,
     /\b([A-Z][a-z]+\s+[A-Z][a-z]+)(?:['’]s)?\b/,
@@ -193,7 +261,6 @@ export function extractEntities(question: string): string[] {
     }
   }
 
-  // Lowercase fallback: "lori harris" — strip leading interrogatives
   let lower = question.toLowerCase();
   lower = lower.replace(/^(what|when|how|which|was|were|did|does|is|are|who)\s+/g, "");
   lower = lower.replace(/^(what|when|how|which|was|were|did|does|is|are|who)\s+/g, "");
@@ -214,11 +281,24 @@ export function extractEntities(question: string): string[] {
       "agreement amount",
       "build ready",
       "or custom",
+      "this year",
+      "last year",
+      "have we",
+      "did we",
+      "we sold",
+      "we sell",
+      "sell in",
+      "sold in",
+      "all year",
+      "much did",
+      "much have",
     ]);
     const pair = `${nameLike[1]} ${nameLike[2]}`;
     if (
       !skipPairs.has(pair) &&
-      !/^(how|what|when|which|much|many|was|did|the|our|for|build|ready)\b/.test(pair)
+      !/^(how|what|when|which|much|many|was|did|the|our|for|build|ready|this|last|have|sold)\b/.test(
+        pair,
+      )
     ) {
       entities.push(
         pair
@@ -229,7 +309,6 @@ export function extractEntities(question: string): string[] {
     }
   }
 
-  // Dedupe and clean: drop trailing role words that aren't part of a person name
   const seen = new Set<string>();
   const out: string[] = [];
   for (const e of entities) {

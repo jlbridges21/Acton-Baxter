@@ -21,6 +21,8 @@ export type BaxterSourceReference = {
   relevanceScore: number;
   availability: "available" | "unavailable";
   knowledgeEntryId?: string;
+  pageNumber?: number | null;
+  slideNumber?: number | null;
 };
 
 export type BaxterQuestionInput = {
@@ -60,6 +62,8 @@ export type BaxterContextItem = {
   updatedAt: string;
   citationLabel: string;
   relevanceScore: number;
+  pageNumber?: number | null;
+  slideNumber?: number | null;
 };
 
 export type BaxterHistoryMessage = {
