@@ -23,6 +23,7 @@ export * from "./present";
 export * from "./reference-data";
 export * from "./admin-views";
 export * from "./opportunity-ranking";
+export * from "./pipeline-board";
 
 export * as ghlResources from "./resources";
 export * as ghlActions from "./actions";

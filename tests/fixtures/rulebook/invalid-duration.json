@@ -1,0 +1,35 @@
+{
+  "sheets": {
+    "Roles": [
+      {
+        "role_key": "project_manager",
+        "display_name": "Project Manager"
+      }
+    ],
+    "Stages": [
+      {
+        "stage_key": "stage_one",
+        "display_name": "Stage One",
+        "order_index": "0",
+        "duration_days_budget": "-5"
+      }
+    ],
+    "Steps": [
+      {
+        "step_key": "step_one",
+        "stage_key": "stage_one",
+        "display_name": "Step One",
+        "order_index": "0",
+        "duration_days_budget": "0"
+      }
+    ],
+    "RACI": [
+      {
+        "step_key": "step_one",
+        "role_key": "project_manager",
+        "raci": "R"
+      }
+    ],
+    "DataRequirements": []
+  }
+}

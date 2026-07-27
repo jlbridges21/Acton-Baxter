@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BookOpen,
+  BookMarked,
   Cloud,
   LayoutDashboard,
   MessageSquare,
@@ -63,6 +64,12 @@ export function getAdminNavLinks(): AdminNavLink[] {
       label: "Governance",
       icon: Settings,
       match: (pathname) => pathname.startsWith("/admin/baxter/governance"),
+    },
+    {
+      href: "/admin/baxter/rulebook",
+      label: "Rulebook",
+      icon: BookMarked,
+      match: (pathname) => pathname.startsWith("/admin/baxter/rulebook"),
     },
     {
       href: "/admin/baxter/evaluations",

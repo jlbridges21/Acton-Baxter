@@ -1,0 +1,59 @@
+{
+  "sheets": {
+    "Roles": [
+      {
+        "role_key": "project_manager",
+        "display_name": "Project Manager"
+      }
+    ],
+    "Stages": [
+      {
+        "stage_key": "stage_one",
+        "display_name": "Stage One",
+        "order_index": "0"
+      },
+      {
+        "stage_key": "stage_one",
+        "display_name": "Stage One Duplicate",
+        "order_index": "1"
+      }
+    ],
+    "Steps": [
+      {
+        "step_key": "step_one",
+        "stage_key": "stage_one",
+        "display_name": "Step One",
+        "order_index": "0"
+      },
+      {
+        "step_key": "step_one",
+        "stage_key": "stage_one",
+        "display_name": "Step One Duplicate",
+        "order_index": "1"
+      }
+    ],
+    "RACI": [
+      {
+        "step_key": "step_one",
+        "role_key": "project_manager",
+        "raci": "R"
+      }
+    ],
+    "DataRequirements": [
+      {
+        "step_key": "step_one",
+        "field_key": "field_one",
+        "display_name": "Field One",
+        "source_system": "manual",
+        "required": "true"
+      },
+      {
+        "step_key": "step_one",
+        "field_key": "field_one",
+        "display_name": "Field One Duplicate",
+        "source_system": "manual",
+        "required": "true"
+      }
+    ]
+  }
+}

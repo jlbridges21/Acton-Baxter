@@ -344,6 +344,18 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     }
   }
 
+  // Merge Process Rulebook evidence for responsibility/process questions.
+  const { retrieveRulebookEvidence } = await import("@/lib/rulebook");
+  const rulebookEvidence = await retrieveRulebookEvidence(question).catch(() => []);
+  if (rulebookEvidence.length > 0) {
+    const currentOffset = contextItems.length;
+    const rulebookItems = rulebookEvidence.map((item, index) => ({
+      ...item,
+      number: currentOffset + index + 1,
+    }));
+    contextItems = [...contextItems, ...rulebookItems].slice(0, 8);
+  }
+
   // Deterministic structured answer when we have a direct field value
   let direct =
     evidence.structured && !evidence.structured.ambiguous

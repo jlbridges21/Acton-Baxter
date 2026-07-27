@@ -1,0 +1,125 @@
+{
+  "sheets": {
+    "Roles": [
+      {
+        "role_key": "project_manager",
+        "display_name": "Project Manager",
+        "description": "Oversees project execution"
+      },
+      {
+        "role_key": "sales_lead",
+        "display_name": "Sales Lead",
+        "description": "Manages customer relationships"
+      },
+      {
+        "role_key": "operations_manager",
+        "display_name": "Operations Manager",
+        "description": "Coordinates operational activities"
+      }
+    ],
+    "Stages": [
+      {
+        "stage_key": "pre_construction",
+        "display_name": "Pre-Construction",
+        "external_stage_name": "Preconstruction",
+        "order_index": "0",
+        "duration_days_budget": "30",
+        "description": "Initial planning phase"
+      },
+      {
+        "stage_key": "construction",
+        "display_name": "Construction",
+        "external_stage_name": "Construction",
+        "order_index": "1",
+        "duration_days_budget": "90",
+        "description": "Active construction phase"
+      }
+    ],
+    "Steps": [
+      {
+        "step_key": "conduct_pem",
+        "stage_key": "pre_construction",
+        "display_name": "Conduct PEM",
+        "order_index": "0",
+        "duration_days_budget": "7",
+        "description": "Conduct Pre-Construction Engineering Meeting"
+      },
+      {
+        "step_key": "finalize_plans",
+        "stage_key": "pre_construction",
+        "display_name": "Finalize Plans",
+        "order_index": "1",
+        "duration_days_budget": "14",
+        "description": "Finalize construction plans"
+      },
+      {
+        "step_key": "begin_construction",
+        "stage_key": "construction",
+        "display_name": "Begin Construction",
+        "order_index": "0",
+        "duration_days_budget": "30",
+        "description": "Start construction activities"
+      }
+    ],
+    "RACI": [
+      {
+        "step_key": "conduct_pem",
+        "role_key": "project_manager",
+        "raci": "R"
+      },
+      {
+        "step_key": "conduct_pem",
+        "role_key": "sales_lead",
+        "raci": "A"
+      },
+      {
+        "step_key": "finalize_plans",
+        "role_key": "project_manager",
+        "raci": "R"
+      },
+      {
+        "step_key": "finalize_plans",
+        "role_key": "operations_manager",
+        "raci": "A"
+      },
+      {
+        "step_key": "begin_construction",
+        "role_key": "operations_manager",
+        "raci": "R"
+      },
+      {
+        "step_key": "begin_construction",
+        "role_key": "project_manager",
+        "raci": "A"
+      }
+    ],
+    "DataRequirements": [
+      {
+        "step_key": "conduct_pem",
+        "field_key": "customer_name",
+        "display_name": "Customer Name",
+        "source_system": "ghl",
+        "source_field_path": "contact.full_name",
+        "required": "true",
+        "description": "Full name of the customer"
+      },
+      {
+        "step_key": "conduct_pem",
+        "field_key": "property_address",
+        "display_name": "Property Address",
+        "source_system": "ghl",
+        "source_field_path": "opportunity.custom_fields.property_address",
+        "required": "true",
+        "description": "Full property address"
+      },
+      {
+        "step_key": "finalize_plans",
+        "field_key": "engineering_notes",
+        "display_name": "Engineering Notes",
+        "source_system": "manual",
+        "required": "false",
+        "description": "Notes from engineering review"
+      }
+    ]
+  }
+}

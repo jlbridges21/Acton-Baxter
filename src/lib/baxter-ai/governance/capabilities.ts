@@ -1,4 +1,5 @@
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
+import { isActiveRulebookKnown } from "@/lib/rulebook/capabilities";
 
 /**
  * Current Baxter capabilities — only claim what is actually connected.
@@ -36,6 +37,14 @@ export function buildCapabilitiesBlock(): string {
     limitations.unshift("No live Buildertrend or Domo access yet");
   } else {
     limitations.unshift("No live Buildertrend, GoHighLevel, or Domo access yet");
+  }
+
+  // Claim only when evidence path (or admin) has confirmed an active rulebook exists.
+  // Avoid async DB inside system-prompt assembly (breaks OpenAI retry tests that stub fetch).
+  if (isActiveRulebookKnown()) {
+    capabilities.push(
+      "Answer responsibility and required-data questions from Acton's active Process Rulebook",
+    );
   }
 
   return [

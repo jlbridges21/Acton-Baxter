@@ -46,6 +46,7 @@ import {
   buildOpportunityDetailView,
   buildConversationDetailView,
 } from "@/lib/connectors/ghl/admin-views";
+import { buildPipelineBoard } from "@/lib/connectors/ghl/pipeline-board";
 import { createServiceClient } from "@/lib/supabase/admin";
 
 export async function GET() {
@@ -73,6 +74,8 @@ export async function POST(request: Request) {
           "refresh_data",
           "refresh_capabilities",
           "list_recent_actions",
+          "list_pipelines_for_opportunities",
+          "get_pipeline_board",
           "get_contact_detail",
           "get_opportunity_detail",
           "get_conversation_detail",
@@ -109,6 +112,9 @@ export async function POST(request: Request) {
         conversationId: z.string().optional(),
         assignedTo: z.string().optional(),
         status: z.enum(["open", "won", "lost", "abandoned", "all"]).optional(),
+        source: z.string().optional(),
+        stageId: z.string().optional(),
+        perStageLimit: z.number().optional(),
         resourceType: z
           .enum(["pipelines", "custom_fields", "tags", "users", "calendars", "phone_numbers"])
           .optional(),
@@ -315,6 +321,59 @@ export async function POST(request: Request) {
                 ? String((error as { code?: string }).code)
                 : "BAXTER_GHL_API_UNAVAILABLE",
             message: error instanceof Error ? error.message.slice(0, 240) : "Browse failed",
+          },
+        });
+      }
+    }
+
+    if (parsed.action === "list_pipelines_for_opportunities") {
+      try {
+        const pipelines = await listPipelines();
+        return jsonOk({
+          result: {
+            pass: true,
+            pipelines: pipelines.map((p) => ({
+              id: p.id,
+              name: p.name,
+              stageCount: p.stages.length,
+            })),
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            code: "BAXTER_GHL_API_UNAVAILABLE",
+            message:
+              error instanceof Error ? error.message.slice(0, 240) : "Failed to list pipelines",
+          },
+        });
+      }
+    }
+
+    if (parsed.action === "get_pipeline_board") {
+      if (!parsed.pipelineId) {
+        return jsonOk({ result: { pass: false, message: "pipelineId is required." } });
+      }
+      try {
+        const board = await buildPipelineBoard(parsed.pipelineId, {
+          q: parsed.query,
+          status: parsed.status,
+          assignedTo: parsed.assignedTo,
+          source: parsed.source,
+          perStageLimit: parsed.perStageLimit,
+          stagePages: parsed.stageId && parsed.page ? { [parsed.stageId]: parsed.page } : undefined,
+        });
+        return jsonOk({ result: { pass: true, data: board } });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            code: "BAXTER_GHL_API_UNAVAILABLE",
+            message:
+              error instanceof Error
+                ? error.message.slice(0, 240)
+                : "Failed to load pipeline board",
           },
         });
       }

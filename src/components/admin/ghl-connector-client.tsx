@@ -22,20 +22,6 @@ type ContactRow = {
   updatedLabel?: string | null;
 };
 
-type OpportunityRow = {
-  id: string;
-  name: string;
-  contactId?: string | null;
-  contactName?: string | null;
-  pipelineName?: string | null;
-  stageName?: string | null;
-  valueLabel?: string | null;
-  ownerName?: string | null;
-  status?: string;
-  source?: string | null;
-  updatedLabel?: string | null;
-};
-
 type ConversationRow = {
   id: string;
   contactId?: string;
@@ -54,6 +40,12 @@ type BrowsePayload = {
   pageLimit: number;
   hasMore: boolean;
   filters?: Record<string, unknown>;
+};
+
+type PipelineCard = {
+  id: string;
+  name: string;
+  stageCount: number;
 };
 
 type AuditRow = Record<string, unknown>;
@@ -317,10 +309,10 @@ export function GhlConnectorClient({
 
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [oppStatus, setOppStatus] = useState<"all" | "open" | "won" | "lost">("open");
   const [page, setPage] = useState(1);
 
   const [browse, setBrowse] = useState<BrowsePayload | null>(null);
+  const [pipelines, setPipelines] = useState<PipelineCard[] | null>(null);
   const [actions, setActions] = useState<ActionsPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<LoadError | null>(null);
@@ -425,6 +417,34 @@ export function GhlConnectorClient({
     [postAction],
   );
 
+  const loadPipelines = useCallback(async () => {
+    const seq = ++requestSeq.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const { data } = await postAction({ action: "list_pipelines_for_opportunities" });
+      if (seq !== requestSeq.current) return;
+      if (data.result?.pass) {
+        setPipelines(data.result.pipelines || []);
+      } else {
+        setPipelines(null);
+        setLoadError({
+          message: "Couldn't load pipelines.",
+          technical: data.result?.message || data.result?.code || undefined,
+        });
+      }
+    } catch (error) {
+      if (seq !== requestSeq.current) return;
+      setPipelines(null);
+      setLoadError({
+        message: "Couldn't load pipelines.",
+        technical: error instanceof Error ? error.message : "Request failed",
+      });
+    } finally {
+      if (seq === requestSeq.current) setLoading(false);
+    }
+  }, [postAction]);
+
   const loadActions = useCallback(async () => {
     const seq = ++requestSeq.current;
     setLoading(true);
@@ -459,10 +479,16 @@ export function GhlConnectorClient({
     setPage(1);
     if (tab === "overview" || tab === "advanced") {
       setBrowse(null);
+      setPipelines(null);
       setActions(null);
     } else if (tab === "actions") {
       setBrowse(null);
+      setPipelines(null);
+    } else if (tab === "opportunities") {
+      setBrowse(null);
+      setActions(null);
     } else {
+      setPipelines(null);
       setActions(null);
     }
   }, []);
@@ -475,23 +501,22 @@ export function GhlConnectorClient({
         void loadActions();
         return;
       }
-      if (
-        activeTab === "contacts" ||
-        activeTab === "opportunities" ||
-        activeTab === "conversations"
-      ) {
+      if (activeTab === "opportunities") {
+        void loadPipelines();
+        return;
+      }
+      if (activeTab === "contacts" || activeTab === "conversations") {
         setPage(1);
         void loadBrowse(activeTab, {
           page: 1,
           query: debouncedQuery,
-          status: oppStatus,
         });
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [activeTab, debouncedQuery, oppStatus, loadActions, loadBrowse]);
+  }, [activeTab, debouncedQuery, loadActions, loadBrowse, loadPipelines]);
 
   const testConnection = useCallback(async () => {
     setBusy("test_connection");
@@ -631,21 +656,19 @@ export function GhlConnectorClient({
       void loadActions();
       return;
     }
-    if (
-      activeTab === "contacts" ||
-      activeTab === "opportunities" ||
-      activeTab === "conversations"
-    ) {
+    if (activeTab === "opportunities") {
+      void loadPipelines();
+      return;
+    }
+    if (activeTab === "contacts" || activeTab === "conversations") {
       void loadBrowse(activeTab, {
         page,
         query: debouncedQuery,
-        status: oppStatus,
       });
     }
   };
 
   const contactRows = (browse?.rows ?? []) as ContactRow[];
-  const opportunityRows = (browse?.rows ?? []) as OpportunityRow[];
   const conversationRows = (browse?.rows ?? []) as ConversationRow[];
 
   return (
@@ -829,9 +852,7 @@ export function GhlConnectorClient({
               </div>
             ) : null}
 
-            {activeTab === "contacts" ||
-            activeTab === "opportunities" ||
-            activeTab === "conversations" ? (
+            {activeTab === "contacts" || activeTab === "conversations" ? (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-end gap-3">
                   <label className="min-w-[220px] flex-1 text-sm">
@@ -840,32 +861,11 @@ export function GhlConnectorClient({
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder={
-                        activeTab === "contacts"
-                          ? "Name, email, phone…"
-                          : activeTab === "opportunities"
-                            ? "Opportunity or contact…"
-                            : "Contact or preview…"
+                        activeTab === "contacts" ? "Name, email, phone…" : "Contact or preview…"
                       }
                       className="h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm text-[var(--acton-fg)] outline-none focus:ring-2 focus:ring-[var(--acton-navy)]"
                     />
                   </label>
-                  {activeTab === "opportunities" ? (
-                    <label className="text-sm">
-                      <span className="mb-1 block text-xs text-[var(--acton-muted)]">Status</span>
-                      <select
-                        value={oppStatus}
-                        onChange={(e) =>
-                          setOppStatus(e.target.value as "all" | "open" | "won" | "lost")
-                        }
-                        className="h-9 rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm text-[var(--acton-fg)] outline-none focus:ring-2 focus:ring-[var(--acton-navy)]"
-                      >
-                        <option value="open">Open</option>
-                        <option value="won">Won</option>
-                        <option value="lost">Lost</option>
-                        <option value="all">All</option>
-                      </select>
-                    </label>
-                  ) : null}
                 </div>
 
                 {loading ? <LoadingState label={`Loading ${activeTab}…`} /> : null}
@@ -982,117 +982,6 @@ export function GhlConnectorClient({
                   )
                 ) : null}
 
-                {!loading && !loadError && activeTab === "opportunities" ? (
-                  opportunityRows.length === 0 ? (
-                    <EmptyState message="No opportunities found." />
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="hidden overflow-x-auto md:block">
-                        <table className="w-full min-w-[800px] text-left text-sm">
-                          <thead className="border-b border-[var(--acton-border)] text-xs text-[var(--acton-muted)]">
-                            <tr>
-                              <th className="py-2 pr-3 font-medium">Opportunity</th>
-                              <th className="py-2 pr-3 font-medium">Contact</th>
-                              <th className="py-2 pr-3 font-medium">Pipeline</th>
-                              <th className="py-2 pr-3 font-medium">Value</th>
-                              <th className="py-2 pr-3 font-medium">Owner</th>
-                              <th className="py-2 pr-3 font-medium">Status</th>
-                              <th className="py-2 font-medium" />
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {opportunityRows.map((row) => (
-                              <tr key={row.id} className="border-b border-[var(--acton-border)]/70">
-                                <td className="py-3 pr-3">
-                                  <p className="font-medium text-[var(--acton-fg)]">
-                                    {row.name || "Untitled opportunity"}
-                                  </p>
-                                  <p className="mt-0.5 text-xs text-[var(--acton-muted)]">
-                                    {row.stageName || "—"}
-                                    {row.updatedLabel ? ` · ${row.updatedLabel}` : ""}
-                                  </p>
-                                </td>
-                                <td className="py-3 pr-3 text-[var(--acton-muted)]">
-                                  {row.contactName || "—"}
-                                </td>
-                                <td className="py-3 pr-3 text-[var(--acton-muted)]">
-                                  {row.pipelineName || "—"}
-                                </td>
-                                <td className="py-3 pr-3 text-[var(--acton-fg)]">
-                                  {row.valueLabel || "—"}
-                                </td>
-                                <td className="py-3 pr-3 text-[var(--acton-muted)]">
-                                  {row.ownerName || "—"}
-                                </td>
-                                <td className="py-3 pr-3 text-[var(--acton-muted)] capitalize">
-                                  {row.status || "—"}
-                                </td>
-                                <td className="py-3 text-right">
-                                  <Link
-                                    href={`/admin/connectors/ghl/opportunities/${row.id}`}
-                                    className="text-sm font-medium text-sky-700 hover:underline"
-                                  >
-                                    Open
-                                  </Link>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="space-y-2 md:hidden">
-                        {opportunityRows.map((row) => (
-                          <div
-                            key={row.id}
-                            className="rounded-md border border-[var(--acton-border)] px-3 py-3"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-medium text-[var(--acton-fg)]">
-                                  {row.name || "Untitled opportunity"}
-                                </p>
-                                <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                                  {row.contactName || "No contact"} · {row.valueLabel || "—"}
-                                </p>
-                              </div>
-                              <Link
-                                href={`/admin/connectors/ghl/opportunities/${row.id}`}
-                                className="text-sm font-medium text-sky-700"
-                              >
-                                Open
-                              </Link>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <PaginationBar
-                        page={page}
-                        hasMore={Boolean(browse?.hasMore)}
-                        total={browse?.total ?? null}
-                        busy={loading}
-                        onPrev={() => {
-                          const next = Math.max(1, page - 1);
-                          setPage(next);
-                          void loadBrowse("opportunities", {
-                            page: next,
-                            query: debouncedQuery,
-                            status: oppStatus,
-                          });
-                        }}
-                        onNext={() => {
-                          const next = page + 1;
-                          setPage(next);
-                          void loadBrowse("opportunities", {
-                            page: next,
-                            query: debouncedQuery,
-                            status: oppStatus,
-                          });
-                        }}
-                      />
-                    </div>
-                  )
-                ) : null}
-
                 {!loading && !loadError && activeTab === "conversations" ? (
                   conversationRows.length === 0 ? (
                     <EmptyState message="No conversations found." />
@@ -1155,6 +1044,48 @@ export function GhlConnectorClient({
                           });
                         }}
                       />
+                    </div>
+                  )
+                ) : null}
+              </div>
+            ) : null}
+
+            {activeTab === "opportunities" ? (
+              <div className="space-y-4">
+                {loading ? <LoadingState label="Loading pipelines…" /> : null}
+
+                {!loading && loadError ? (
+                  <ErrorPanel title={loadError.message} error={loadError} onRetry={retryActive} />
+                ) : null}
+
+                {!loading && !loadError && pipelines ? (
+                  pipelines.length === 0 ? (
+                    <EmptyState message="No pipelines found." />
+                  ) : (
+                    <div>
+                      <h3 className="mb-3 text-sm font-medium text-[var(--acton-fg)]">
+                        Choose a pipeline
+                      </h3>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {pipelines.map((pipeline) => (
+                          <Link
+                            key={pipeline.id}
+                            href={`/admin/connectors/ghl/opportunities/pipeline/${pipeline.id}`}
+                            className="block"
+                          >
+                            <Card className="p-4 transition-colors hover:bg-[var(--acton-bg)]">
+                              <CardTitle className="text-base">{pipeline.name}</CardTitle>
+                              <CardDescription className="mt-1">
+                                {pipeline.stageCount}{" "}
+                                {pipeline.stageCount === 1 ? "stage" : "stages"}
+                              </CardDescription>
+                              <Button size="sm" variant="secondary" className="mt-3">
+                                Open Pipeline
+                              </Button>
+                            </Card>
+                          </Link>
+                        ))}
+                      </div>
                     </div>
                   )
                 ) : null}

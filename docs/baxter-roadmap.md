@@ -68,6 +68,8 @@
 - GoHighLevel Prompt 2: capability health, live CRM evidence in Baxter, confirmed contact/opportunity writes, migration **021** — done
 - GoHighLevel Prompt 3: v3 API contracts, opportunity search fix, coherent health, entity graph, read-only insights, `/clear` cancels pending actions — done
 - GoHighLevel CRM UX: human-readable admin CRM (Contacts/Opportunities/Conversations/Actions), contact `pageLimit` contract, reference cache auto-warm, ID hydration, opportunity ranking for multi-opp contacts — done
+- GoHighLevel CRM UX: human-readable admin CRM + **pipeline-first Opportunities kanban** — done
+- Process Rulebook: versioned RACI + required data definitions, admin UI, Google Sheet import, Q&A integration, role assignments — done
 
 ## Future
 

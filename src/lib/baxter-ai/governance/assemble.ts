@@ -32,6 +32,8 @@ export function assembleBaxterRuntime(
   const includeJson = options.includeJsonContract !== false;
   const includeValueProp = questionNeedsValueProposition(options.question ?? "");
 
+  const capabilitiesBlock = buildCapabilitiesBlock();
+
   const sections = [
     buildIdentityRuntimeBlock(),
     "",
@@ -57,7 +59,7 @@ export function assembleBaxterRuntime(
     "",
     includeValueProp ? buildValuePropositionRuntimeBlock() : null,
     includeValueProp ? "" : null,
-    buildCapabilitiesBlock(),
+    capabilitiesBlock,
     "",
     buildStyleRuntimeBlock(),
   ].filter((line) => line !== null);

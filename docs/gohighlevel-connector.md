@@ -239,7 +239,19 @@ Admin → Connectors → GoHighLevel → Advanced tab:
 
 ---
 
-## Admin CRM UI (Acton view)
+## Pipeline-first Opportunities CRM
+
+Opportunities tab shows available GHL pipelines (not a flat all-opportunity dump).
+
+Open a pipeline → `/admin/connectors/ghl/opportunities/pipeline/[pipelineId]` kanban board:
+
+- Columns follow GHL stage `position` order
+- Cards hydrated (name, value, owner, status)
+- Per-stage bounded load (default 25) + Load more
+- Search/filters scoped to the selected pipeline
+- Stage moves use governed propose → confirm (no immediate write)
+
+Pipelines remain **not** a primary nav tab.
 
 Primary tabs on `/admin/connectors/ghl`:
 
