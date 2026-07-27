@@ -239,7 +239,36 @@ Admin → Connectors → GoHighLevel → Advanced tab:
 
 ---
 
-## API versions (Prompt 3)
+## Admin CRM UI (Acton view)
+
+Primary tabs on `/admin/connectors/ghl`:
+
+- Overview
+- Contacts
+- Opportunities
+- Conversations
+- Actions
+- Advanced
+
+Pipelines, calendars, and users remain **backend reference data** (for ID hydration, appointments, write previews). They are not primary UI tabs.
+
+### Contact search contract
+
+```
+POST /contacts/search
+Version: v3
+Body: { locationId, query?, email?, phone?, page?, pageLimit? }
+```
+
+Do **not** send `limit` (causes HTTP 422).
+
+### Reference data
+
+`getGhlReferenceData()` / `warmGhlReferenceCache()` populate pipelines, users, custom fields, tags, calendars automatically after connect/refresh and on admin overview load.
+
+---
+
+## API versions
 
 HighLevel marketplace docs use **`Version: v3`** for CRM families (contacts, opportunities, pipelines, calendars, conversations, users, locations).
 

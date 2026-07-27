@@ -32,6 +32,8 @@ Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins
 
 Baxter can look up live contacts and opportunities. CRM answers cite **GoHighLevel** as a source (not Knowledge Base). Authorized users can ask Baxter to prepare CRM updates; Baxter never writes until you reply **confirm** (or cancel). Reply **cancel** to discard a pending update. Confirmations expire in about 10 minutes.
 
+Admins can also browse Acton CRM at **Integrations → GoHighLevel** (`/admin/connectors/ghl`): Contacts, Opportunities, Conversations, and Actions. Edits there use the same confirmation flow as Baxter chat.
+
 ---
 
 ## Slack

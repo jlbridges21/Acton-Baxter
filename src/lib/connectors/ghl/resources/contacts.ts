@@ -4,11 +4,13 @@ import { ghlGet, ghlPost } from "../client";
 import { ghlContactsSearchResponseSchema, ghlContactSchema, type GhlContact } from "../types";
 import { normalizeContact, rankContactMatches, type AmbiguousContactMatch } from "../normalize";
 import { requireGhlLocationId } from "../config";
+import { buildContactSearchBody } from "../request-contracts";
 
 export type ContactSearchOptions = {
   query?: string;
   email?: string;
   phone?: string;
+  /** Mapped to HighLevel pageLimit — never sent as "limit". */
   limit?: number;
   page?: number;
 };
@@ -17,45 +19,44 @@ export type ContactSearchResult = {
   contacts: GhlContact[];
   total: number | null;
   hasMore: boolean;
+  page: number;
+  pageLimit: number;
 };
 
 export async function searchContacts(
   options: ContactSearchOptions = {},
 ): Promise<ContactSearchResult> {
   const locationId = requireGhlLocationId();
+  const page = options.page && options.page > 0 ? options.page : 1;
+  const pageLimit = options.limit && options.limit > 0 ? Math.min(options.limit, 100) : 25;
 
-  const body: Record<string, unknown> = {
+  const body = buildContactSearchBody({
     locationId,
-  };
+    query: options.query,
+    email: options.email,
+    phone: options.phone,
+    page,
+    limit: pageLimit,
+  });
 
-  if (options.query) {
-    body.query = options.query;
-  }
-  if (options.email) {
-    body.email = options.email;
-  }
-  if (options.phone) {
-    body.phone = options.phone;
-  }
-  if (options.limit) {
-    body.limit = Math.min(options.limit, 100);
-  }
-  if (options.page) {
-    body.page = options.page;
-  }
-
-  const response = await ghlPost("/contacts/search", body, { resource: "contacts" });
+  const response = await ghlPost("/contacts/search", body, {
+    resource: "contacts",
+    injectLocationId: false,
+  });
   const parsed = ghlContactsSearchResponseSchema.safeParse(response);
 
   if (!parsed.success) {
     console.warn("[GHL Contacts] Response validation warning:", parsed.error.message);
-    const raw = response as { contacts?: unknown[]; meta?: { total?: number } };
+    const raw = response as { contacts?: unknown[]; meta?: { total?: number; nextPage?: boolean } };
+    const contacts = Array.isArray(raw.contacts)
+      ? (raw.contacts as Record<string, unknown>[]).map((c) => normalizeContact(c, locationId))
+      : [];
     return {
-      contacts: Array.isArray(raw.contacts)
-        ? (raw.contacts as Record<string, unknown>[]).map((c) => normalizeContact(c, locationId))
-        : [],
+      contacts,
       total: raw.meta?.total ?? null,
-      hasMore: false,
+      hasMore: Boolean(raw.meta?.nextPage) || contacts.length >= pageLimit,
+      page,
+      pageLimit,
     };
   }
 
@@ -65,6 +66,8 @@ export async function searchContacts(
     ),
     total: parsed.data.meta?.total ?? null,
     hasMore: Boolean(parsed.data.meta?.nextPage),
+    page,
+    pageLimit,
   };
 }
 
@@ -120,4 +123,18 @@ export async function findContactsFuzzy(
 export async function listRecentContacts(limit = 20): Promise<GhlContact[]> {
   const result = await searchContacts({ limit });
   return result.contacts;
+}
+
+export async function getContactsByIds(contactIds: string[]): Promise<Map<string, GhlContact>> {
+  const unique = [...new Set(contactIds.filter(Boolean))];
+  const map = new Map<string, GhlContact>();
+  const concurrency = 5;
+  for (let i = 0; i < unique.length; i += concurrency) {
+    const batch = unique.slice(i, i + concurrency);
+    const results = await Promise.all(batch.map((id) => getContactById(id)));
+    results.forEach((contact, idx) => {
+      if (contact) map.set(batch[idx]!, contact);
+    });
+  }
+  return map;
 }

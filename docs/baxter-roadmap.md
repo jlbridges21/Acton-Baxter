@@ -67,6 +67,7 @@
 - GoHighLevel Prompt 1: secure connector, PIT default, resource clients, migration **020**
 - GoHighLevel Prompt 2: capability health, live CRM evidence in Baxter, confirmed contact/opportunity writes, migration **021** — done
 - GoHighLevel Prompt 3: v3 API contracts, opportunity search fix, coherent health, entity graph, read-only insights, `/clear` cancels pending actions — done
+- GoHighLevel CRM UX: human-readable admin CRM (Contacts/Opportunities/Conversations/Actions), contact `pageLimit` contract, reference cache auto-warm, ID hydration, opportunity ranking for multi-opp contacts — done
 
 ## Future
 

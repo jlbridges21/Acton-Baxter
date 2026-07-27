@@ -19,6 +19,10 @@ export * from "./pagination";
 export * from "./request-diagnostics";
 export * from "./entity-graph";
 export * from "./insights";
+export * from "./present";
+export * from "./reference-data";
+export * from "./admin-views";
+export * from "./opportunity-ranking";
 
 export * as ghlResources from "./resources";
 export * as ghlActions from "./actions";

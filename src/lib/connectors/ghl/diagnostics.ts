@@ -28,6 +28,12 @@ export async function getGhlAdminOverview(): Promise<GhlAdminOverview> {
   const runtimeConfig = getGhlRuntimeConfig();
   const connection = await getActiveGhlConnectionPublic().catch(() => null);
 
+  // Best-effort warm of reference data so UI hydration has names without a manual click.
+  if (runtimeConfig.enabled && runtimeConfig.locationId) {
+    const { getGhlReferenceData } = await import("./reference-data");
+    await getGhlReferenceData().catch(() => null);
+  }
+
   let health: GhlHealthStatus;
   let authenticated = false;
   let authCode: string | null = null;

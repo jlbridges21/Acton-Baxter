@@ -50,11 +50,21 @@ Prompt 2 adds controlled write operations to the GoHighLevel connector. All writ
 
 ---
 
-## Conversation safety
+## Admin CRM UI writes
 
-- Pending actions are scoped to **conversation + user** (and Slack external user when present).
-- `/clear` **cancels** pending GHL actions for that conversation before starting a new one.
-- Confirm in another thread/DM does **not** execute a different conversation’s pending action.
+Contact and opportunity detail pages on `/admin/connectors/ghl` use the **same** pending-action engine:
+
+1. `propose_admin_action` → creates pending row + preview
+2. Admin confirms → `confirm_admin_action` → execute + audit
+3. Only the proposing user may confirm (same actor rules as Baxter)
+
+Do **not** add direct PATCH routes that bypass confirmation.
+
+## Admin CRM UI (human-readable)
+
+Primary tabs: Overview · Contacts · Opportunities · Conversations · Actions · Advanced
+
+Pipelines / calendars / users are reference data only (ID hydration), not primary tabs.
 
 ## Not enabled (deferred)
 

@@ -112,10 +112,13 @@ Full Google setup: **`docs/google-workspace-oauth-setup.md`**, **`docs/google-co
 | Symptom                                               | Likely cause                                                   | Fix                                                                                                                            |
 | ----------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Opportunity search 422 (`locationId` / `location_id`) | Version/param contract mismatch                                | Use `Version: v3` + `locationId` only. See Advanced diagnostics. Mapped as `BAXTER_GHL_CONTRACT_ERROR` (warning), not Offline. |
+| Contact search 422 (`limit` / `pageLimit`)            | Deprecated `limit` body field                                  | Body must use `pageLimit` only (never `limit`). See `buildContactSearchBody`.                                                  |
+| Overview shows Connected (Limited) only for location  | Optional `locations.readonly` missing                          | Expected for PIT without that scope — primary status should still be **Connected** when core CRM checks pass.                  |
 | Entire connector Offline when Voice AI / docs fail    | Fixed in Prompt 2                                              | Core CRM (contacts/pipelines/opportunities) can succeed while optional caps warn                                               |
 | OAuth client ID/secret required in PIT mode           | Misconfiguration                                               | PIT needs only token + `GHL_LOCATION_ID`. Leave OAuth vars blank.                                                              |
 | Writes refused                                        | Missing `contacts.write` / `opportunities.write`, or user role | Admins allowed by default; sales need `ENABLE_GHL_WRITES_FOR_SALES=true`                                                       |
 | Confirm does nothing                                  | Pending action expired (~10 min) or stale CRM state            | Ask Baxter to propose the change again                                                                                         |
+| Actions tab shows health JSON                         | Wrong browse action                                            | Actions tab calls `list_recent_actions` (audit + pending), not overview.                                                       |
 
 Full guide: **`docs/gohighlevel-connector.md`**, actions: **`docs/gohighlevel-actions.md`**.
 

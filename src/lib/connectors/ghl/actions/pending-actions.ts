@@ -322,3 +322,24 @@ export async function getPendingActionForActor(input: {
   }
   return pending;
 }
+
+/**
+ * List recent pending actions across users (admin Actions tab).
+ */
+export async function listRecentPendingActions(options?: {
+  limit?: number;
+}): Promise<GhlPendingAction[]> {
+  const supabase = await createServiceClient();
+  const { data, error } = await supabase
+    .from("ghl_pending_actions")
+    .select()
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(options?.limit ?? 30);
+
+  if (error || !data) {
+    return [];
+  }
+  return (data as GhlPendingActionRow[]).map(toGhlPendingAction);
+}

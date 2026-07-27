@@ -15,6 +15,8 @@ Web chat (`POST /api/baxter/chat`) and Slack Events (`POST /api/slack/events`) b
 
 GHL intent detection, entity resolution, and confirmation live in `ghl-intent.ts` / `ghl-runtime.ts` plus `src/lib/baxter-data/ghl/` and `src/lib/connectors/ghl/`. See `docs/gohighlevel-connector.md` and `docs/gohighlevel-actions.md`.
 
+Live CRM evidence uses the entity graph + customer snapshot (hydrated pipeline/stage/owner names). When a contact has multiple close-ranked opportunities, Baxter lists them and asks which pipeline/stage to use rather than guessing Marketing vs project pipelines. Hybrid answers combine GHL stage with approved Knowledge Base process docs (“what happens next”).
+
 ## Query classification
 
 Deterministic classes in `classify.ts`:

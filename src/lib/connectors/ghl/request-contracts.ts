@@ -136,9 +136,21 @@ export const contactSearchBodySchema = z
     phone: z.string().trim().optional(),
     page: z.number().int().positive().optional(),
     pageLimit: z.number().int().positive().max(100).optional(),
-    limit: z.number().int().positive().max(100).optional(),
   })
-  .passthrough();
+  .strict();
+
+/** Deprecated contact search body keys that must never be sent. */
+export const DEPRECATED_CONTACT_SEARCH_BODY_KEYS = ["limit"] as const;
+
+export function assertNoDeprecatedContactSearchBody(body: Record<string, unknown>): void {
+  for (const key of DEPRECATED_CONTACT_SEARCH_BODY_KEYS) {
+    if (key in body && body[key] !== undefined && body[key] !== null) {
+      throw new Error(
+        `Deprecated contact search body field "${key}" is not allowed. Use pageLimit.`,
+      );
+    }
+  }
+}
 
 export function buildContactSearchBody(input: {
   locationId: string;
@@ -153,8 +165,9 @@ export function buildContactSearchBody(input: {
   if (input.email?.trim()) body.email = input.email.trim();
   if (input.phone?.trim()) body.phone = input.phone.trim();
   if (input.page && input.page > 0) body.page = input.page;
-  if (input.limit && input.limit > 0) {
-    body.pageLimit = Math.min(input.limit, 100);
-  }
+  // HighLevel POST /contacts/search uses pageLimit — never "limit"
+  const pageLimit = input.limit && input.limit > 0 ? Math.min(input.limit, 100) : undefined;
+  if (pageLimit) body.pageLimit = pageLimit;
+  assertNoDeprecatedContactSearchBody(body);
   return contactSearchBodySchema.parse(body);
 }

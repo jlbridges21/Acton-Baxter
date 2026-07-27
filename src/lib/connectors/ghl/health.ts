@@ -398,17 +398,24 @@ export async function evaluateGhlHealth(): Promise<GhlHealthStatus> {
       details = "Core CRM check failed.";
     }
   } else if (optionalWarnings.length > 0) {
-    const scopeWarnings = optionalWarnings.filter((c) => c.isScopeIssue);
-    const contractWarnings = optionalWarnings.filter((c) => c.isContractIssue);
-    if (scopeWarnings.length > 0) {
+    // Location metadata is optional for PIT — do not mark Connected (Limited) for location alone.
+    const materialWarnings = optionalWarnings.filter((c) => c.check !== "location");
+    const scopeWarnings = materialWarnings.filter((c) => c.isScopeIssue);
+    const contractWarnings = materialWarnings.filter((c) => c.isContractIssue);
+    if (materialWarnings.length === 0) {
+      overall = "connected";
+      details = locationCheck.ok
+        ? null
+        : "Connected. Location metadata unavailable (locations.readonly not required for CRM).";
+    } else if (scopeWarnings.length > 0) {
       overall = "connected_limited";
-      details = `Connected with limited capabilities. Optional missing: ${optionalWarnings.map((c) => c.check).join(", ")}.`;
+      details = `Connected with limited capabilities. Optional missing: ${materialWarnings.map((c) => c.check).join(", ")}.`;
     } else if (contractWarnings.length > 0) {
       overall = "warning";
       details = `Optional resource contract issues: ${contractWarnings.map((c) => c.check).join(", ")}`;
     } else {
       overall = "connected_limited";
-      details = `Optional resources unavailable: ${optionalWarnings.map((c) => c.check).join(", ")}`;
+      details = `Optional resources unavailable: ${materialWarnings.map((c) => c.check).join(", ")}`;
     }
   } else {
     overall = "connected";

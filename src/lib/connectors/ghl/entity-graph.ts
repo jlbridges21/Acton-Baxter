@@ -15,12 +15,16 @@ import { listCustomFields } from "./resources/custom-fields";
 import { listEventsForContact } from "./resources/calendars";
 import { searchConversations, getConversationMessages } from "./resources/conversations";
 import { resolveContact } from "@/lib/baxter-data/ghl/resolve";
+import { rankOpportunitiesForContact, opportunitiesNeedClarification } from "./opportunity-ranking";
+import type { GhlReferenceData } from "./reference-data";
 
 export type GhlEntityGraph = {
   retrievedAt: string;
   query: string;
   ambiguous: boolean;
   clarificationMessage: string | null;
+  /** True when multiple opportunities are close in rank and stage/value questions need disambiguation. */
+  opportunityAmbiguous: boolean;
   contact: GhlContact | null;
   opportunities: Array<{
     opportunity: GhlOpportunity;
@@ -61,6 +65,7 @@ export async function resolveGhlEntityGraph(
     query,
     ambiguous: false,
     clarificationMessage: null,
+    opportunityAmbiguous: false,
     contact: null,
     opportunities: [],
     nextAppointment: null,
@@ -125,6 +130,7 @@ async function enrichGraph(
       query,
       ambiguous: false,
       clarificationMessage: null,
+      opportunityAmbiguous: false,
       contact: null,
       opportunities: [],
       nextAppointment: null,
@@ -148,7 +154,16 @@ async function enrichGraph(
     customFieldLabels[f.id] = f.name;
   }
 
-  const opportunities = opps.map((opportunity) => {
+  const refsForRank: Pick<GhlReferenceData, "pipelineNameById"> = {
+    pipelineNameById: new Map(pipelines.map((p) => [p.id, p.name])),
+  };
+  const rankedOpps = rankOpportunitiesForContact(opps, refsForRank as GhlReferenceData);
+  const opportunityAmbiguous = opportunitiesNeedClarification(
+    rankedOpps,
+    refsForRank as GhlReferenceData,
+  );
+
+  const opportunities = rankedOpps.map((opportunity) => {
     const pipeline = pipelineById.get(opportunity.pipelineId);
     const stage = pipeline?.stages.find((s) => s.id === opportunity.pipelineStageId);
     const owner = opportunity.assignedTo ? userById.get(opportunity.assignedTo) : null;
@@ -186,11 +201,25 @@ async function enrichGraph(
     }
   }
 
+  let clarificationMessage: string | null = null;
+  if (opportunityAmbiguous && opportunities.length > 1) {
+    const labels = opportunities
+      .slice(0, 4)
+      .map((item) => {
+        const stage = item.stageName || "Unknown stage";
+        const pipe = item.pipelineName || "Unknown pipeline";
+        return `• ${pipe} — ${stage}`;
+      })
+      .join("\n");
+    clarificationMessage = `This contact has multiple relevant opportunities:\n${labels}\nWhich pipeline/stage should I use?`;
+  }
+
   return {
     retrievedAt,
     query,
     ambiguous: false,
-    clarificationMessage: null,
+    clarificationMessage,
+    opportunityAmbiguous,
     contact,
     opportunities,
     nextAppointment,
@@ -222,7 +251,11 @@ export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
 
   if (graph.opportunities.length) {
     lines.push("");
-    for (const item of graph.opportunities.slice(0, 3)) {
+    if (graph.opportunityAmbiguous && graph.clarificationMessage) {
+      lines.push(graph.clarificationMessage);
+      lines.push("");
+    }
+    for (const item of graph.opportunities.slice(0, 5)) {
       const o = item.opportunity;
       lines.push("Opportunity");
       lines.push(o.name || "Untitled opportunity");

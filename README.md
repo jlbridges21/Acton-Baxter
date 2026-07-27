@@ -89,8 +89,10 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
   - Scheduled sync: `GOOGLE_SYNC_ENABLED`, `GOOGLE_SYNC_INTERVAL_MINUTES` (default 180)
 - GoHighLevel CRM connector: `/admin/connectors/ghl` — see `docs/gohighlevel-connector.md` and `docs/gohighlevel-actions.md`
   - Auth default: Private Integration Token (`GHL_AUTH_MODE=private_integration`) — **no** `GHL_CLIENT_ID` / `GHL_CLIENT_SECRET` required
+  - Admin CRM UI: Overview, Contacts, Opportunities, Conversations, Actions, Advanced (hydrated names — not raw API JSON)
   - Live CRM reads in Baxter answers + hybrid with approved Knowledge
   - Controlled contact/opportunity writes with confirmation (admins; sales only if `ENABLE_GHL_WRITES_FOR_SALES=true`)
+  - Contact search uses `pageLimit` (never `limit`) on `POST /contacts/search`
   - Customer CRM data is **not** embedded into the Knowledge Base
 - Knowledge Center still links directly to Google Workspace and Upload Files where useful
 - Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`

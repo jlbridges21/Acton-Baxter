@@ -571,6 +571,10 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     }
     if (graph?.contact) {
       const snapshot = formatCustomerSnapshot(graph);
+      const ambiguityWarning =
+        graph.opportunityAmbiguous && graph.clarificationMessage
+          ? graph.clarificationMessage
+          : undefined;
       return {
         items: [
           {
@@ -595,6 +599,7 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
           },
         ],
         contextText: snapshot,
+        ambiguityWarning,
         intent,
       };
     }

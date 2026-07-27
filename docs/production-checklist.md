@@ -168,6 +168,7 @@ Additional database tasks:
 - [ ] Collect wrong/incomplete answers; improve approved Knowledge Base and Google sync
 - [ ] Confirm employees understand **Sources** vs **general guidance** labels
 - [ ] GoHighLevel (when enabled): apply migrations **020** + **021**; set PIT env (`ENABLE_GHL_INTEGRATION`, `GHL_AUTH_MODE=private_integration`, `GHL_PRIVATE_INTEGRATION_TOKEN`, `GHL_LOCATION_ID`) — **no** OAuth client ID/secret required for PIT
-- [ ] Admin → Connectors → GoHighLevel → **Test connection** shows Connected (optional scopes may warn)
-- [ ] Spot-check live CRM ask + one confirmed write from an admin; verify audit on Recent Actions
-- [ ] **Not in this version:** Buildertrend, Domo, autonomous GHL monitoring (Prompt 3)
+- [ ] Admin → Connectors → GoHighLevel → **Test connection** shows **Connected** when core CRM works (missing `locations.readonly` alone must not force Connected Limited)
+- [ ] Contacts browse works (no 422); Opportunities/Conversations show names not raw IDs; Actions shows audit rows
+- [ ] Spot-check live CRM ask + one confirmed write from an admin; verify audit on Actions tab
+- [ ] **Not in this version:** Buildertrend, Domo, autonomous GHL monitoring; message send / calendar book from Baxter
