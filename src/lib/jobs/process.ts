@@ -108,6 +108,23 @@ async function processSlackBaxterReply(job: ReportJob): Promise<void> {
   await processSlackBaxterReplyJob(job.metadata);
 }
 
+async function processBaxterMonitorSweep(_job: ReportJob): Promise<void> {
+  const { runMonitoringSweep } = await import("@/lib/monitoring");
+  await runMonitoringSweep({
+    trigger: "job",
+  });
+}
+
+async function processBaxterAlertDelivery(_job: ReportJob): Promise<void> {
+  const { deliverPendingAlerts } = await import("@/lib/monitoring");
+  await deliverPendingAlerts();
+}
+
+async function processSlackMonitoringReaction(job: ReportJob): Promise<void> {
+  const { handleMonitoringReaction } = await import("@/lib/slack/baxter-events");
+  await handleMonitoringReaction(job.metadata);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -118,6 +135,12 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processGoogleKnowledgeSync(job);
     } else if (job.jobType === "slack_baxter_reply") {
       await processSlackBaxterReply(job);
+    } else if (job.jobType === "baxter_monitor_sweep") {
+      await processBaxterMonitorSweep(job);
+    } else if (job.jobType === "baxter_alert_delivery") {
+      await processBaxterAlertDelivery(job);
+    } else if (job.jobType === "slack_monitoring_reaction") {
+      await processSlackMonitoringReaction(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

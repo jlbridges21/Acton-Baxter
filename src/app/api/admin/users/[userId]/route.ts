@@ -4,8 +4,7 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { AppError, ValidationError } from "@/lib/errors";
 import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
-
-const SUPER_ADMIN_EMAIL = "baxter@actonadu.com";
+import { BOOTSTRAP_SUPER_ADMIN_EMAIL, isSuperAdminEmail } from "@/lib/auth/super-admin";
 
 const updateRoleSchema = z.object({
   role: z.enum(["admin", "salesperson", "new_user"]),
@@ -30,16 +29,16 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     const nextRole = parsed.data.role;
-    const isSuperAdmin = admin.email.trim().toLowerCase() === SUPER_ADMIN_EMAIL;
+    const adminIsSuperAdmin = isSuperAdminEmail(admin.email);
 
-    if (nextRole === "admin" && !isSuperAdmin) {
+    if (nextRole === "admin" && !adminIsSuperAdmin) {
       throw new AppError(
-        "Only the super-admin (baxter@actonadu.com) can grant admin access. You can grant salesperson access.",
+        `Only the super-admin (${BOOTSTRAP_SUPER_ADMIN_EMAIL}) can grant admin access. You can grant salesperson access.`,
         { code: "SUPER_ADMIN_REQUIRED", statusCode: 403, expose: true },
       );
     }
 
-    if (userId === admin.id && nextRole !== "admin" && isSuperAdmin) {
+    if (userId === admin.id && nextRole !== "admin" && adminIsSuperAdmin) {
       throw new AppError("The super-admin account cannot demote itself.", {
         code: "SUPER_ADMIN_PROTECTED",
         statusCode: 400,

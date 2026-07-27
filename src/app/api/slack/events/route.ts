@@ -76,6 +76,35 @@ export async function POST(request: Request) {
         return jsonOk({ ok: true, ignored: true, code: SLACK_ERROR_CODES.EVENT_UNSUPPORTED });
       }
 
+      // Check if this is a reaction event for a monitoring finding
+      const event = payload.event;
+      const isReactionEvent = event.type?.startsWith("reaction_");
+
+      if (isReactionEvent) {
+        const { findBySlackMessage } = await import("@/lib/monitoring");
+        const { enqueueJob } = await import("@/lib/jobs/queue");
+
+        const item = (event as { item?: { channel?: string; ts?: string } }).item;
+        const channel = item?.channel;
+        const ts = item?.ts;
+        const reaction = (event as { reaction?: string }).reaction;
+        const user = event.user;
+
+        if (channel && ts) {
+          const finding = await findBySlackMessage(channel, ts);
+          if (finding) {
+            await enqueueJob({
+              reportId: null,
+              jobType: "slack_monitoring_reaction",
+              metadata: { channel, ts, reaction, user },
+            });
+            return jsonOk({ ok: true });
+          }
+        }
+
+        return jsonOk({ ok: true, ignored: true, code: SLACK_ERROR_CODES.EVENT_UNSUPPORTED });
+      }
+
       const accepted = await acceptBaxterSlackEvent({
         eventId,
         teamId,

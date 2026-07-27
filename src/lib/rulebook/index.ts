@@ -42,3 +42,35 @@ export {
   isActiveRulebookKnown,
   noteActiveRulebookPresence,
 } from "./capabilities";
+
+export { slugifyKey, ensureUniqueKey } from "./keys";
+export { recordRulebookAudit } from "./audit";
+export type { RulebookAuditParams } from "./audit";
+
+export {
+  createDraftFromVersion,
+  createEmptyDraft,
+  assertDraftEditable,
+  addStage,
+  updateStage,
+  deleteStage,
+  reorderStages,
+  addStep,
+  updateStep,
+  deleteStep,
+  reorderSteps,
+  moveStep,
+  setStepRaci,
+  addDataRequirement,
+  updateDataRequirement,
+  deleteDataRequirement,
+  createRole,
+  updateRole,
+  retireRole,
+} from "./draft";
+
+export { exportRulebookAsSheets } from "./export";
+export type { SheetRow, SheetExport } from "./export";
+
+export { listMappings, upsertMapping, deleteMapping } from "./mappings";
+export type { GhlRulebookMapping } from "./mappings";

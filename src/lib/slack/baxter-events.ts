@@ -47,13 +47,43 @@ export function stripBotMention(text: string): string {
 export function shouldIgnoreSlackEvent(event: SlackIncomingEvent): boolean {
   if (event.bot_id) return true;
   if (event.subtype === "bot_message") return true;
-  // Reaction events must never enter the Q&A pipeline (even if subscribed later).
+  // Reaction events handled separately (monitoring reactions) — never enter Q&A pipeline.
   if (typeof event.type === "string" && event.type.startsWith("reaction_")) return true;
   if (event.type !== "message" && event.type !== "app_mention") return true;
   if (event.type === "message" && event.subtype && event.subtype !== "file_share") {
     if (event.subtype !== "thread_broadcast") return true;
   }
   return false;
+}
+
+/**
+ * Handle Slack reaction to monitoring finding.
+ * ✅ = acknowledge
+ * ❌ = dismiss as false positive
+ */
+export async function handleMonitoringReaction(metadata: Record<string, unknown>): Promise<void> {
+  const { findBySlackMessage, acknowledgeFinding, dismissFalsePositive } =
+    await import("@/lib/monitoring");
+
+  const channel = typeof metadata.channel === "string" ? metadata.channel : null;
+  const ts = typeof metadata.ts === "string" ? metadata.ts : null;
+  const reaction = typeof metadata.reaction === "string" ? metadata.reaction : null;
+  const user = typeof metadata.user === "string" ? metadata.user : null;
+
+  if (!channel || !ts || !reaction || !user) {
+    throw new Error("slack_monitoring_reaction job missing required metadata");
+  }
+
+  const finding = await findBySlackMessage(channel, ts);
+  if (!finding) {
+    return;
+  }
+
+  if (reaction === "white_check_mark") {
+    await acknowledgeFinding(finding.id, user);
+  } else if (reaction === "x") {
+    await dismissFalsePositive(finding.id, user);
+  }
 }
 
 /**

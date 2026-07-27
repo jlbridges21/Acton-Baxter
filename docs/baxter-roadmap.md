@@ -70,13 +70,32 @@
 - GoHighLevel CRM UX: human-readable admin CRM (Contacts/Opportunities/Conversations/Actions), contact `pageLimit` contract, reference cache auto-warm, ID hydration, opportunity ranking for multi-opp contacts — done
 - GoHighLevel CRM UX: human-readable admin CRM + **pipeline-first Opportunities kanban** — done
 - Process Rulebook: versioned RACI + required data definitions, admin UI, Google Sheet import, Q&A integration, role assignments — done
+- **Process Rulebook Prompt 2: Visual web editor for draft management** — done
+  - Three-column draft editor (Stages → Steps → Details)
+  - CRUD operations for stages, steps, RACI, data requirements
+  - GHL custom field picker integration
+  - Inline validation with error/warning display
+  - Version history and draft activation
+  - GHL pipeline → rulebook step mappings UI
+- **Process Monitoring: Automated compliance checks** — done
+  - Deterministic rule-based checks (no LLM decision-making)
+  - GHL-only implementation (unowned opportunities, stale deals, missing required data)
+  - Slack delivery with reaction-based acknowledgment
+  - Admin dashboard with findings, runs, settings, mappings
+  - Configuration UI for monitored pipelines, quiet hours, delivery modes
+  - `/admin/baxter/monitoring` interface
 
 ## Future
 
-- GoHighLevel: message send / calendar book / autonomous monitoring (future initiative)
-- Buildertrend sync
+- GoHighLevel: message send / calendar book (future initiative)
+- Domo sync
+
+## Shelved/Blocked
+
+- **Buildertrend integration**: **Shelved / blocked** pending a supported private integration or official API access path. Do **not** build scraping, browser automation, credential-based login automation, or unofficial workarounds. Schema fields (e.g. `external_stage_name`) remain for future compatibility only.
 - Domo sync
 - Full admin conversation analytics expansion
 - RACI enforcement in answers
+- Autonomous GHL remediation from monitoring (recommend only; humans confirm actions)
 
 Baxter answers company-specific questions from **approved** Acton knowledge when available, cites sources, uses clearly labeled general guidance when safe, and explains itself even when the Knowledge Base is sparse.

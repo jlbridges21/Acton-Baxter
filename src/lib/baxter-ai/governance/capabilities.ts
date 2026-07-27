@@ -22,6 +22,23 @@ export const BAXTER_CURRENT_LIMITATIONS = [
   "Does not evaluate individuals or speculate about intent",
 ] as const;
 
+let monitoringCapabilityCached: boolean = false;
+
+/**
+ * Note that proactive monitoring is enabled.
+ * Called when admin enables monitoring. Uses sync cache pattern like rulebook.
+ */
+export function noteMonitoringCapability(enabled: boolean): void {
+  monitoringCapabilityCached = enabled;
+}
+
+/**
+ * Check if monitoring capability should be claimed (sync for prompt assembly).
+ */
+export function isMonitoringCapabilityKnown(): boolean {
+  return monitoringCapabilityCached;
+}
+
 export function buildCapabilitiesBlock(): string {
   const capabilities: string[] = [...BAXTER_CURRENT_CAPABILITIES];
   const limitations: string[] = [...BAXTER_CURRENT_LIMITATIONS];
@@ -44,6 +61,13 @@ export function buildCapabilitiesBlock(): string {
   if (isActiveRulebookKnown()) {
     capabilities.push(
       "Answer responsibility and required-data questions from Acton's active Process Rulebook",
+    );
+  }
+
+  // Claim proactive monitoring when enabled
+  if (isMonitoringCapabilityKnown()) {
+    capabilities.push(
+      "Proactive monitoring: detect unowned opportunities, stale deals, missing required data, and config health issues (GHL only)",
     );
   }
 

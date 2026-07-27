@@ -14,8 +14,32 @@ import {
   listRoleAssignments,
   upsertRoleAssignment,
 } from "@/lib/rulebook";
+import {
+  createDraftFromVersion,
+  createEmptyDraft,
+  addStage,
+  updateStage,
+  deleteStage,
+  reorderStages,
+  addStep,
+  updateStep,
+  deleteStep,
+  reorderSteps,
+  moveStep,
+  setStepRaci,
+  addDataRequirement,
+  updateDataRequirement,
+  deleteDataRequirement,
+  createRole,
+  updateRole,
+  retireRole,
+} from "@/lib/rulebook/draft";
+import { exportRulebookAsSheets } from "@/lib/rulebook/export";
+import { listMappings, upsertMapping, deleteMapping } from "@/lib/rulebook/mappings";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { exportGoogleSheetStructured } from "@/lib/connectors/google/sheets";
+import { listCustomFields } from "@/lib/connectors/ghl/resources/custom-fields";
+import { listPipelines } from "@/lib/connectors/ghl/resources/pipelines";
 
 const ActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("list_versions") }),
@@ -56,6 +80,169 @@ const ActionSchema = z.discriminatedUnion("action", [
     action: z.literal("import_from_google_sheet"),
     fileId: z.string(),
   }),
+  // Draft creation
+  z.object({
+    action: z.literal("create_draft_from_active"),
+  }),
+  z.object({
+    action: z.literal("create_draft_from_version"),
+    versionId: z.string(),
+  }),
+  z.object({
+    action: z.literal("create_empty_draft"),
+  }),
+  // Stage CRUD
+  z.object({
+    action: z.literal("add_stage"),
+    versionId: z.string(),
+    displayName: z.string(),
+    description: z.string().optional(),
+    durationDaysBudget: z.number().optional(),
+    externalStageName: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("update_stage"),
+    versionId: z.string(),
+    stageId: z.string(),
+    displayName: z.string().optional(),
+    description: z.string().optional(),
+    durationDaysBudget: z.number().optional(),
+    externalStageName: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("delete_stage"),
+    versionId: z.string(),
+    stageId: z.string(),
+  }),
+  z.object({
+    action: z.literal("reorder_stages"),
+    versionId: z.string(),
+    orderedStageIds: z.array(z.string()),
+  }),
+  // Step CRUD
+  z.object({
+    action: z.literal("add_step"),
+    versionId: z.string(),
+    stageId: z.string(),
+    displayName: z.string(),
+    description: z.string().optional(),
+    durationDaysBudget: z.number().optional(),
+  }),
+  z.object({
+    action: z.literal("update_step"),
+    versionId: z.string(),
+    stepId: z.string(),
+    displayName: z.string().optional(),
+    description: z.string().optional(),
+    durationDaysBudget: z.number().optional(),
+  }),
+  z.object({
+    action: z.literal("delete_step"),
+    versionId: z.string(),
+    stepId: z.string(),
+  }),
+  z.object({
+    action: z.literal("reorder_steps"),
+    versionId: z.string(),
+    stageId: z.string(),
+    orderedStepIds: z.array(z.string()),
+  }),
+  z.object({
+    action: z.literal("move_step"),
+    versionId: z.string(),
+    stepId: z.string(),
+    toStageId: z.string(),
+  }),
+  // RACI
+  z.object({
+    action: z.literal("set_step_raci"),
+    versionId: z.string(),
+    stepId: z.string(),
+    responsibleRoleKey: z.string().nullable(),
+    accountableRoleKey: z.string().nullable(),
+    consultedRoleKeys: z.array(z.string()),
+    informedRoleKeys: z.array(z.string()),
+  }),
+  // Data requirements
+  z.object({
+    action: z.literal("add_data_requirement"),
+    versionId: z.string(),
+    stepId: z.string(),
+    fieldKey: z.string(),
+    displayName: z.string(),
+    sourceSystem: z.enum(["ghl", "buildertrend", "knowledge", "manual"]),
+    sourceFieldPath: z.string().optional(),
+    required: z.boolean().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("update_data_requirement"),
+    versionId: z.string(),
+    requirementId: z.string(),
+    fieldKey: z.string().optional(),
+    displayName: z.string().optional(),
+    sourceSystem: z.enum(["ghl", "buildertrend", "knowledge", "manual"]).optional(),
+    sourceFieldPath: z.string().optional(),
+    required: z.boolean().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("delete_data_requirement"),
+    versionId: z.string(),
+    requirementId: z.string(),
+  }),
+  // Roles
+  z.object({
+    action: z.literal("create_role"),
+    roleKey: z.string().optional(),
+    displayName: z.string(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("update_role"),
+    roleKey: z.string(),
+    displayName: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("retire_role"),
+    roleKey: z.string(),
+  }),
+  // Validation
+  z.object({
+    action: z.literal("validate_draft"),
+    versionId: z.string(),
+  }),
+  // Export
+  z.object({
+    action: z.literal("export_version"),
+    versionId: z.string(),
+  }),
+  // Mappings
+  z.object({
+    action: z.literal("list_mappings"),
+  }),
+  z.object({
+    action: z.literal("upsert_mapping"),
+    ghlPipelineId: z.string(),
+    ghlPipelineName: z.string().optional(),
+    ghlStageId: z.string(),
+    ghlStageName: z.string().optional(),
+    rulebookStageKey: z.string(),
+    rulebookStepKey: z.string().optional(),
+    enabled: z.boolean().optional(),
+  }),
+  z.object({
+    action: z.literal("delete_mapping"),
+    mappingId: z.string(),
+  }),
+  // GHL reference data
+  z.object({
+    action: z.literal("list_ghl_custom_fields"),
+  }),
+  z.object({
+    action: z.literal("list_ghl_pipelines"),
+  }),
 ]);
 
 export async function GET() {
@@ -65,7 +252,22 @@ export async function GET() {
     const active = await getActiveRulebook();
     const versions = await listRulebookVersions();
 
+    const supabase = createServiceClient();
+
+    // Get counts
+    const [draftCountResult, mappingCountResult] = await Promise.all([
+      supabase
+        .from("rulebook_versions")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "draft"),
+      supabase.from("ghl_rulebook_mappings").select("id", { count: "exact", head: true }),
+    ]);
+
     if (!active) {
+      const rolesResult = await supabase
+        .from("process_roles")
+        .select("id", { count: "exact", head: true });
+
       return NextResponse.json({
         success: true,
         activeVersion: null,
@@ -79,12 +281,12 @@ export async function GET() {
         })),
         stagesCount: 0,
         stepsCount: 0,
-        rolesCount: 0,
+        rolesCount: rolesResult.count ?? 0,
+        draftCount: draftCountResult.count ?? 0,
+        mappingCount: mappingCountResult.count ?? 0,
         validation: null,
       });
     }
-
-    const supabase = createServiceClient();
 
     const [stagesResult, stepsResult, rolesResult] = await Promise.all([
       supabase
@@ -119,6 +321,8 @@ export async function GET() {
       stagesCount: stagesResult.count ?? 0,
       stepsCount: stepsResult.count ?? 0,
       rolesCount: rolesResult.count ?? 0,
+      draftCount: draftCountResult.count ?? 0,
+      mappingCount: mappingCountResult.count ?? 0,
       validation: active.validation_report_json,
     });
   } catch (error) {
@@ -352,6 +556,281 @@ export async function POST(request: Request) {
               ],
               warnings: [],
             },
+          });
+        }
+      }
+
+      // Draft creation
+      case "create_draft_from_active": {
+        const active = await getActiveRulebook();
+        if (!active) {
+          return NextResponse.json({ success: false, error: "No active version" }, { status: 404 });
+        }
+        const result = await createDraftFromVersion(active.id, user.id);
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "create_draft_from_version": {
+        const result = await createDraftFromVersion(parsed.versionId, user.id);
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "create_empty_draft": {
+        const result = await createEmptyDraft(user.id);
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      // Stage CRUD
+      case "add_stage": {
+        const result = await addStage(
+          parsed.versionId,
+          {
+            displayName: parsed.displayName,
+            description: parsed.description,
+            durationDaysBudget: parsed.durationDaysBudget,
+            externalStageName: parsed.externalStageName,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "update_stage": {
+        await updateStage(
+          parsed.versionId,
+          parsed.stageId,
+          {
+            displayName: parsed.displayName,
+            description: parsed.description,
+            durationDaysBudget: parsed.durationDaysBudget,
+            externalStageName: parsed.externalStageName,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true });
+      }
+
+      case "delete_stage": {
+        await deleteStage(parsed.versionId, parsed.stageId, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      case "reorder_stages": {
+        await reorderStages(parsed.versionId, parsed.orderedStageIds, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      // Step CRUD
+      case "add_step": {
+        const result = await addStep(
+          parsed.versionId,
+          parsed.stageId,
+          {
+            displayName: parsed.displayName,
+            description: parsed.description,
+            durationDaysBudget: parsed.durationDaysBudget,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "update_step": {
+        await updateStep(
+          parsed.versionId,
+          parsed.stepId,
+          {
+            displayName: parsed.displayName,
+            description: parsed.description,
+            durationDaysBudget: parsed.durationDaysBudget,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true });
+      }
+
+      case "delete_step": {
+        await deleteStep(parsed.versionId, parsed.stepId, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      case "reorder_steps": {
+        await reorderSteps(parsed.versionId, parsed.stageId, parsed.orderedStepIds, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      case "move_step": {
+        await moveStep(parsed.versionId, parsed.stepId, parsed.toStageId, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      // RACI
+      case "set_step_raci": {
+        await setStepRaci(
+          parsed.versionId,
+          parsed.stepId,
+          {
+            responsibleRoleKey: parsed.responsibleRoleKey,
+            accountableRoleKey: parsed.accountableRoleKey,
+            consultedRoleKeys: parsed.consultedRoleKeys,
+            informedRoleKeys: parsed.informedRoleKeys,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true });
+      }
+
+      // Data requirements
+      case "add_data_requirement": {
+        const result = await addDataRequirement(
+          parsed.versionId,
+          parsed.stepId,
+          {
+            fieldKey: parsed.fieldKey,
+            displayName: parsed.displayName,
+            sourceSystem: parsed.sourceSystem,
+            sourceFieldPath: parsed.sourceFieldPath,
+            required: parsed.required,
+            description: parsed.description,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "update_data_requirement": {
+        await updateDataRequirement(
+          parsed.versionId,
+          parsed.requirementId,
+          {
+            fieldKey: parsed.fieldKey,
+            displayName: parsed.displayName,
+            sourceSystem: parsed.sourceSystem,
+            sourceFieldPath: parsed.sourceFieldPath,
+            required: parsed.required,
+            description: parsed.description,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true });
+      }
+
+      case "delete_data_requirement": {
+        await deleteDataRequirement(parsed.versionId, parsed.requirementId, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      // Roles
+      case "create_role": {
+        const result = await createRole(
+          {
+            roleKey: parsed.roleKey,
+            displayName: parsed.displayName,
+            description: parsed.description,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "update_role": {
+        await updateRole(
+          parsed.roleKey,
+          {
+            displayName: parsed.displayName,
+            description: parsed.description,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true });
+      }
+
+      case "retire_role": {
+        await retireRole(parsed.roleKey, user.id);
+        return NextResponse.json({ success: true });
+      }
+
+      // Validation
+      case "validate_draft": {
+        const tree = await loadRulebookTree(parsed.versionId);
+        if (!tree) {
+          return NextResponse.json({ success: false, error: "Version not found" }, { status: 404 });
+        }
+
+        return NextResponse.json({
+          success: true,
+          validation: tree.validation_report_json,
+        });
+      }
+
+      // Export
+      case "export_version": {
+        const sheets = await exportRulebookAsSheets(parsed.versionId);
+        return NextResponse.json({
+          success: true,
+          sheets,
+        });
+      }
+
+      // Mappings
+      case "list_mappings": {
+        const mappings = await listMappings();
+        return NextResponse.json({
+          success: true,
+          mappings,
+        });
+      }
+
+      case "upsert_mapping": {
+        const result = await upsertMapping(
+          {
+            ghlPipelineId: parsed.ghlPipelineId,
+            ghlPipelineName: parsed.ghlPipelineName,
+            ghlStageId: parsed.ghlStageId,
+            ghlStageName: parsed.ghlStageName,
+            rulebookStageKey: parsed.rulebookStageKey,
+            rulebookStepKey: parsed.rulebookStepKey,
+            enabled: parsed.enabled,
+          },
+          user.id,
+        );
+        return NextResponse.json({ success: true, ...result });
+      }
+
+      case "delete_mapping": {
+        await deleteMapping(parsed.mappingId);
+        return NextResponse.json({ success: true });
+      }
+
+      // GHL reference data
+      case "list_ghl_custom_fields": {
+        try {
+          const fields = await listCustomFields();
+          return NextResponse.json({
+            success: true,
+            fields,
+          });
+        } catch (error) {
+          console.error("Error listing GHL custom fields:", error);
+          return NextResponse.json({
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to list custom fields",
+          });
+        }
+      }
+
+      case "list_ghl_pipelines": {
+        try {
+          const pipelines = await listPipelines();
+          return NextResponse.json({
+            success: true,
+            pipelines,
+          });
+        } catch (error) {
+          console.error("Error listing GHL pipelines:", error);
+          return NextResponse.json({
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to list pipelines",
           });
         }
       }

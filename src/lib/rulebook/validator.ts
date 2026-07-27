@@ -3,7 +3,13 @@
  * Returns errors and warnings according to specified rules.
  */
 
-import type { ParsedRulebook, ValidationReport, ValidationError, ValidationWarning } from "./types";
+import type {
+  ParsedRulebook,
+  ValidationReport,
+  ValidationError,
+  ValidationWarning,
+  ProcessRole,
+} from "./types";
 import {
   ParsedRoleSchema,
   ParsedStageSchema,
@@ -19,10 +25,22 @@ import {
 export class RulebookValidator {
   private errors: ValidationError[] = [];
   private warnings: ValidationWarning[] = [];
+  private roleStatuses?: Map<string, "active" | "retired">;
 
-  validate(rulebook: ParsedRulebook): ValidationReport {
+  validate(rulebook: ParsedRulebook, options?: { roleStatuses?: ProcessRole[] }): ValidationReport {
     this.errors = [];
     this.warnings = [];
+
+    // Build role status map if provided
+    if (options?.roleStatuses) {
+      this.roleStatuses = new Map();
+      for (const role of options.roleStatuses) {
+        this.roleStatuses.set(
+          role.role_key,
+          (role as { status?: string }).status === "retired" ? "retired" : "active",
+        );
+      }
+    }
 
     // Schema validation
     this.validateSchemas(rulebook);
@@ -314,6 +332,20 @@ export class RulebookValidator {
           context: { step_key },
         });
       }
+
+      // Check for retired responsible role
+      if (this.roleStatuses && responsibles.length > 0) {
+        for (const responsible of responsibles) {
+          if (this.roleStatuses.get(responsible.role_key) === "retired") {
+            this.warnings.push({
+              type: "retired_role_used",
+              message: `Step "${step_key}" has retired role "${responsible.role_key}" as Responsible (R)`,
+              location: `raci`,
+              context: { step_key, role_key: responsible.role_key },
+            });
+          }
+        }
+      }
     }
   }
 
@@ -333,6 +365,16 @@ export class RulebookValidator {
             context: { step_key: req.step_key, field_key: req.field_key },
           });
         }
+      }
+
+      // Buildertrend warning (not yet connected)
+      if (req.source_system === "buildertrend") {
+        this.warnings.push({
+          type: "buildertrend_not_connected",
+          message: `Buildertrend field "${req.field_key}" in step "${req.step_key}" — Buildertrend not connected, cannot monitor`,
+          location: `data_requirements`,
+          context: { step_key: req.step_key, field_key: req.field_key },
+        });
       }
     }
   }
@@ -412,7 +454,10 @@ export class RulebookValidator {
 // Exported function
 // ============================================================================
 
-export function validateParsedRulebook(rulebook: ParsedRulebook): ValidationReport {
+export function validateParsedRulebook(
+  rulebook: ParsedRulebook,
+  options?: { roleStatuses?: ProcessRole[] },
+): ValidationReport {
   const validator = new RulebookValidator();
-  return validator.validate(rulebook);
+  return validator.validate(rulebook, options);
 }

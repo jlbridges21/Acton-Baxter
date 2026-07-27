@@ -11,6 +11,7 @@ export type ProcessRole = {
   role_key: string;
   display_name: string;
   description: string | null;
+  status?: "active" | "retired";
   created_at: string;
   updated_at: string;
 };
@@ -108,7 +109,12 @@ export type ValidationErrorType =
   | "duplicate_field_key";
 
 export type ValidationWarningType =
-  "missing_duration" | "missing_accountable" | "unused_role" | "missing_external_stage_name";
+  | "missing_duration"
+  | "missing_accountable"
+  | "unused_role"
+  | "missing_external_stage_name"
+  | "buildertrend_not_connected"
+  | "retired_role_used";
 
 export type ValidationError = {
   type: ValidationErrorType;

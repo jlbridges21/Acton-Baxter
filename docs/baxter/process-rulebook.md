@@ -126,6 +126,104 @@ The rulebook can be imported from a Google Sheet with the following tabs:
 4. **Review Diff**: If there's an active version, compare changes
 5. **Activate**: If validation passes, activate the new version
 
+## Web Editor
+
+The Process Rulebook includes a visual web editor for managing drafts without requiring Google Sheets or JSON import.
+
+### Creating a Draft
+
+From the Overview tab:
+
+1. Click **Edit Rulebook** to create a draft from the current active version
+2. Or click **Import New** → **Create Draft** to start from scratch
+
+### Editor Interface
+
+The editor provides a three-column layout:
+
+#### Left Column: Stages
+
+- View all stages in order
+- **Add Stage**: Create new stage with name and optional description
+- **Move Up/Down**: Reorder stages
+- **Edit**: Rename or update stage details
+- **Delete**: Remove stage and all its steps (with confirmation)
+- Click a stage to view its steps
+
+#### Middle Column: Steps
+
+- View steps within the selected stage
+- **Add Step**: Create new step in current stage
+- **Move Up/Down**: Reorder steps within stage
+- **Edit**: Rename or update step details
+- **Delete**: Remove step (with confirmation)
+- Click a step to edit its details
+
+#### Right Column: Step Details
+
+When a step is selected, configure:
+
+**RACI Assignments:**
+
+- **Responsible**: Single-select dropdown (required)
+- **Accountable**: Single-select dropdown (optional)
+- **Consulted**: Multi-select with "Add..." dropdown
+- **Informed**: Multi-select with "Add..." dropdown
+
+**Required Data:**
+
+- **Add** requirement with display name
+- **Source System**: Select from:
+  - GoHighLevel (GHL)
+  - Buildertrend (shows "Not Connected" warning)
+  - Knowledge
+  - Manual
+- **GHL Field Picker**: When GHL is selected, searchable dropdown of custom fields
+- **Delete**: Remove requirement
+
+### Validation
+
+Click **Validate** to check:
+
+- Required fields presence
+- Unique keys
+- RACI completeness (every step needs Responsible)
+- GHL field path validity
+- Data requirement constraints
+
+Validation shows:
+
+- **Errors** (red): Block activation, must be fixed
+- **Warnings** (yellow): Allow activation but recommend review
+
+### Activation
+
+Once validation passes:
+
+1. Click **Activate** button
+2. Confirm activation in modal
+3. Draft becomes the new active version
+4. Previous active version is superseded
+
+### Version History
+
+View all versions under the **Version History** tab:
+
+- See version number, status, created/activated dates
+- View validation status
+- **Edit** button for draft versions
+- **Duplicate** to create a new draft from any version
+
+### GHL Mappings
+
+Map GoHighLevel pipeline stages to rulebook steps:
+
+1. Navigate to **Mappings** tab
+2. Select GHL pipeline and stage
+3. Choose corresponding rulebook stage and step
+4. Toggle enabled/disabled
+5. Used for monitoring to determine which rulebook step an opportunity is in
+
 ## Validation
 
 The system performs comprehensive validation:
@@ -232,12 +330,64 @@ All rulebook operations are handled through:
 
 Supported actions:
 
-- `list_versions`
-- `get_version`
-- `get_diff`
-- `import_sheets`
-- `import_from_google_sheet`
-- `activate`
-- `list_role_assignments`
-- `upsert_role_assignment`
-- `list_profiles`
+### Version Management
+
+- `list_versions`: List all rulebook versions
+- `get_version`: Get full tree for a version
+- `get_diff`: Compare draft vs active
+- `import_sheets`: Import from structured JSON
+- `import_from_google_sheet`: Import from Google Sheet ID
+- `activate`: Activate a draft version
+
+### Draft Editing
+
+- `create_draft_from_active`: Create draft from current active
+- `create_draft_from_version`: Create draft from specific version
+- `create_empty_draft`: Create new empty draft
+- `validate_draft`: Run validation on draft
+
+### Stage CRUD
+
+- `add_stage`: Add new stage to draft
+- `update_stage`: Update stage properties
+- `delete_stage`: Remove stage and all steps
+- `reorder_stages`: Reorder stages by ID array
+
+### Step CRUD
+
+- `add_step`: Add step to stage
+- `update_step`: Update step properties
+- `delete_step`: Remove step
+- `reorder_steps`: Reorder steps within stage
+- `move_step`: Move step to different stage
+
+### RACI
+
+- `set_step_raci`: Set all RACI assignments for step
+
+### Data Requirements
+
+- `add_data_requirement`: Add required field to step
+- `update_data_requirement`: Update requirement properties
+- `delete_data_requirement`: Remove requirement
+
+### Roles
+
+- `create_role`: Create new process role
+- `update_role`: Update role properties
+- `retire_role`: Retire a role
+- `list_role_assignments`: List role assignments
+- `upsert_role_assignment`: Assign role to profile
+- `list_profiles`: List available profiles
+
+### Mappings
+
+- `list_mappings`: List GHL pipeline mappings
+- `upsert_mapping`: Create/update mapping
+- `delete_mapping`: Remove mapping
+- `list_ghl_custom_fields`: List GHL fields
+- `list_ghl_pipelines`: List GHL pipelines
+
+### Export
+
+- `export_version`: Export version as sheets structure

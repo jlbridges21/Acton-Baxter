@@ -53,16 +53,17 @@ export async function buildPipelineBoard(
   let columns: PipelineBoardColumn[];
 
   if (options.q) {
-    const searchResult = await searchOpportunities({
+    const searchResult = (await searchOpportunities({
       pipelineId,
       q: options.q,
       status,
       assignedTo: options.assignedTo,
       limit: 200,
-    });
+    })) ?? { opportunities: [], hasMore: false, total: 0 };
 
-    const opportunities = searchResult.opportunities;
+    const opportunities = searchResult.opportunities ?? [];
     let hydrated = await hydrateOpportunityRows(opportunities);
+    if (!Array.isArray(hydrated)) hydrated = [];
 
     if (options.source) {
       const sourceLower = options.source.toLowerCase();
@@ -108,24 +109,22 @@ export async function buildPipelineBoard(
       const results = await Promise.all(
         group.map(async (stage) => {
           const page = options.stagePages?.[stage.id] ?? 1;
-          const result = await searchOpportunities({
+          const result = (await searchOpportunities({
             pipelineId,
             pipelineStageId: stage.id,
             status,
             assignedTo: options.assignedTo,
             limit: perStageLimit,
             page,
-          });
+          })) ?? { opportunities: [], hasMore: false, total: null };
 
-          let opportunities = result.opportunities;
+          const opportunities = result.opportunities ?? [];
+          const hydratedRaw = await hydrateOpportunityRows(opportunities);
+          let hydrated = Array.isArray(hydratedRaw) ? hydratedRaw : [];
           if (options.source) {
             const sourceLower = options.source.toLowerCase();
-            opportunities = opportunities.filter((o) =>
-              o.source?.toLowerCase().includes(sourceLower),
-            );
+            hydrated = hydrated.filter((h) => h.source?.toLowerCase().includes(sourceLower));
           }
-
-          const hydrated = await hydrateOpportunityRows(opportunities);
 
           return {
             stageId: stage.id,

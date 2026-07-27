@@ -475,6 +475,14 @@ export async function evaluateGhlHealthWithCapabilities(): Promise<GhlHealthStat
   };
 }
 
+/**
+ * Sync config check used by monitoring (does not probe the network).
+ * Prefer evaluateGhlHealth for live status.
+ */
+export function isGhlCoreConfiguredForMonitoring(): boolean {
+  return isGhlConfigured();
+}
+
 export async function GhlConnectorHealth(): Promise<ConnectorHealth> {
   try {
     const health = await evaluateGhlHealth();

@@ -2,11 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { buildPipelineBoard } from "@/lib/connectors/ghl/pipeline-board";
 import type { GhlPipeline, GhlOpportunity } from "@/lib/connectors/ghl/types";
 
-vi.mock("@/lib/connectors/ghl/resources/pipelines");
-vi.mock("@/lib/connectors/ghl/resources/opportunities");
-vi.mock("@/lib/connectors/ghl/admin-views");
-vi.mock("@/lib/connectors/ghl/reference-data");
-
 const mockGetPipelineById = vi.hoisted(() => vi.fn());
 const mockSearchOpportunities = vi.hoisted(() => vi.fn());
 const mockHydrateOpportunityRows = vi.hoisted(() => vi.fn());
@@ -45,23 +40,23 @@ describe("buildPipelineBoard", () => {
       total: 0,
     });
 
-    mockHydrateOpportunityRows.mockImplementation(async (opps: GhlOpportunity[]) =>
-      opps.map((o) => ({
+    mockHydrateOpportunityRows.mockImplementation(async (opps?: GhlOpportunity[] | null) =>
+      (opps ?? []).map((o) => ({
         id: o.id,
         name: o.name,
-        contactId: o.contactId,
+        contactId: o.contactId ?? null,
         contactName: o.name,
-        pipelineId: o.pipelineId,
+        pipelineId: o.pipelineId ?? "pipeline1",
         pipelineName: "Sales Pipeline",
-        stageId: o.pipelineStageId,
+        stageId: o.pipelineStageId ?? "stage1",
         stageName: "Stage",
-        monetaryValue: o.monetaryValue,
+        monetaryValue: o.monetaryValue ?? null,
         valueLabel: o.monetaryValue != null ? `$${o.monetaryValue}` : null,
-        ownerId: o.assignedTo,
+        ownerId: o.assignedTo ?? null,
         ownerName: o.assignedTo ? "Owner" : null,
         status: o.status ?? "open",
-        source: o.source,
-        updatedAt: o.dateUpdated,
+        source: o.source ?? null,
+        updatedAt: o.dateUpdated ?? null,
         updatedLabel: null,
       })),
     );

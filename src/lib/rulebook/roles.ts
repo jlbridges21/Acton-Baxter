@@ -10,13 +10,18 @@ import type { ProcessRole, ProcessRoleAssignment, RoleAssignmentWithProfile } fr
 /**
  * List all process roles.
  */
-export async function listProcessRoles(): Promise<ProcessRole[]> {
+export async function listProcessRoles(options?: {
+  status?: "active" | "retired";
+}): Promise<ProcessRole[]> {
   const supabase = createServiceClient();
 
-  const { data, error } = await supabase
-    .from("process_roles")
-    .select("*")
-    .order("role_key", { ascending: true });
+  let query = supabase.from("process_roles").select("*").order("role_key", { ascending: true });
+
+  if (options?.status) {
+    query = query.eq("status", options.status);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw error;
@@ -48,6 +53,7 @@ export async function listRoleAssignments(roleKey?: string): Promise<ProcessRole
 
 /**
  * Upsert a role assignment.
+ * Closes any previous open assignment for the same role before inserting.
  */
 export async function upsertRoleAssignment(
   assignment: Omit<ProcessRoleAssignment, "id" | "created_at" | "updated_at">,
@@ -55,6 +61,16 @@ export async function upsertRoleAssignment(
   const supabase = createServiceClient();
 
   try {
+    const now = new Date().toISOString();
+
+    // Close any previous open assignments for this role
+    await supabase
+      .from("process_role_assignments")
+      .update({ effective_to: now })
+      .eq("role_key", assignment.role_key)
+      .is("effective_to", null);
+
+    // Insert new assignment
     const { data, error } = await supabase
       .from("process_role_assignments")
       .insert({

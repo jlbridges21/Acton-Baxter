@@ -124,6 +124,31 @@ export default async function KnowledgeSettingsPage() {
               </CardDescription>
             </Card>
             <KnowledgeReindexClient currentVersion={KNOWLEDGE_INDEX_VERSION} />
+            <Card>
+              <CardTitle className="text-base">Process Rulebook</CardTitle>
+              <CardDescription className="mt-2">
+                Manage versioned RACI matrix and required data definitions for opportunity
+                processes.
+              </CardDescription>
+              <a
+                href="/admin/baxter/rulebook"
+                className="mt-3 inline-block text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+              >
+                Go to Rulebook →
+              </a>
+            </Card>
+            <Card>
+              <CardTitle className="text-base">Process Monitoring</CardTitle>
+              <CardDescription className="mt-2">
+                Automated compliance checks for opportunities against the process rulebook.
+              </CardDescription>
+              <a
+                href="/admin/baxter/monitoring"
+                className="mt-3 inline-block text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+              >
+                Go to Monitoring →
+              </a>
+            </Card>
           </div>
         </KnowledgeCenterShell>
       </Suspense>

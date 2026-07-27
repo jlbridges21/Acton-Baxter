@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Archive,
+  Bell,
+  BookMarked,
   BookOpen,
   CheckCircle2,
   Cloud,
@@ -26,7 +28,9 @@ export type KnowledgeCenterView =
   | "archived"
   | "failed"
   | "settings"
-  | "health";
+  | "health"
+  | "rulebook"
+  | "monitoring";
 
 const NAV: Array<{
   view: KnowledgeCenterView;
@@ -74,6 +78,18 @@ const NAV: Array<{
     icon: Activity,
   },
   {
+    view: "rulebook",
+    label: "Process Rulebook",
+    href: "/admin/baxter/rulebook",
+    icon: BookMarked,
+  },
+  {
+    view: "monitoring",
+    label: "Process Monitoring",
+    href: "/admin/baxter/monitoring",
+    icon: Bell,
+  },
+  {
     view: "settings",
     label: "Settings",
     href: "/admin/knowledge/settings",
@@ -93,6 +109,12 @@ export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeC
     }
     if (item.href.startsWith("/admin/knowledge/settings")) {
       return pathname.startsWith("/admin/knowledge/settings");
+    }
+    if (item.href.startsWith("/admin/baxter/rulebook")) {
+      return pathname.startsWith("/admin/baxter/rulebook");
+    }
+    if (item.href.startsWith("/admin/baxter/monitoring")) {
+      return pathname.startsWith("/admin/baxter/monitoring");
     }
     if (pathname === "/admin/knowledge" || pathname.startsWith("/admin/knowledge?")) {
       if (item.view === "all") return !searchParams.get("view");

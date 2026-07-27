@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Bell,
   BookOpen,
   BookMarked,
   Cloud,
@@ -70,6 +71,12 @@ export function getAdminNavLinks(): AdminNavLink[] {
       label: "Rulebook",
       icon: BookMarked,
       match: (pathname) => pathname.startsWith("/admin/baxter/rulebook"),
+    },
+    {
+      href: "/admin/baxter/monitoring",
+      label: "Monitoring",
+      icon: Bell,
+      match: (pathname) => pathname.startsWith("/admin/baxter/monitoring"),
     },
     {
       href: "/admin/baxter/evaluations",
