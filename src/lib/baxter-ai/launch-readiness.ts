@@ -92,8 +92,16 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
         authMode: ghlHealth?.authMode ?? null,
         healthy:
           ghlHealth?.overall === "healthy" ||
+          ghlHealth?.overall === "connected" ||
           ghlHealth?.overall === "warning" ||
           ghlHealth?.overall === "connected_limited",
+        readiness: !ghlConfigured
+          ? "not_configured"
+          : ghlHealth?.overall === "connected" || ghlHealth?.overall === "healthy"
+            ? "read_ready"
+            : ghlHealth?.overall === "connected_limited" || ghlHealth?.overall === "warning"
+              ? "needs_attention"
+              : "needs_attention",
       }
     : null;
 

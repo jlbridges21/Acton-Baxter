@@ -50,7 +50,28 @@ Prompt 2 adds controlled write operations to the GoHighLevel connector. All writ
 
 ---
 
-## Confirmation Flow
+## Conversation safety
+
+- Pending actions are scoped to **conversation + user** (and Slack external user when present).
+- `/clear` **cancels** pending GHL actions for that conversation before starting a new one.
+- Confirm in another thread/DM does **not** execute a different conversation’s pending action.
+
+## Not enabled (deferred)
+
+- Sending customer messages
+- Calendar booking
+- Document/contract mutation
+- Voice AI mutation
+- Autonomous multi-step CRM workflows
+
+## Insight reports (read-only)
+
+Supported questions (deterministic filters):
+
+- Open opportunities without an owner
+- Stale open opportunities (caller-supplied day threshold; default 14 in insight path)
+- Appointments this week
+- Unread conversations **only if** API exposes `unreadCount` reliably
 
 ### 1. User Request
 

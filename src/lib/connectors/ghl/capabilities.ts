@@ -7,7 +7,15 @@ import type { GhlErrorCode } from "./errors";
 import { classifyGhlApiError } from "./errors";
 
 export type GhlCapabilityStatus =
-  "available" | "missing_scope" | "unsupported_for_auth_mode" | "not_tested" | "error" | "disabled";
+  | "available"
+  | "missing_scope"
+  | "unsupported_for_pit"
+  | "unsupported_for_auth_mode"
+  | "deprecated_endpoint"
+  | "integration_error"
+  | "not_tested"
+  | "error"
+  | "disabled";
 
 export type GhlCapabilityName =
   | "contacts.read"
@@ -85,9 +93,10 @@ type ProbeConfig = {
   path: string;
   query?: Record<string, string>;
   body?: Record<string, unknown>;
-  injectLocationId?: boolean;
+  /** How to attach location — v3 uses locationId camelCase */
+  locationMode: "query_locationId" | "body_locationId" | "path" | "none";
   optional?: boolean;
-  writeCapability?: boolean;
+  apiVersion?: string;
 };
 
 const PROBE_CONFIGS: ProbeConfig[] = [
@@ -96,70 +105,80 @@ const PROBE_CONFIGS: ProbeConfig[] = [
     method: "POST",
     path: "/contacts/search",
     body: { pageLimit: 1 },
-    injectLocationId: true,
+    locationMode: "body_locationId",
+    apiVersion: "v3",
   },
   {
     capability: "opportunities.read",
     method: "GET",
     path: "/opportunities/search",
     query: { limit: "1" },
-    injectLocationId: true,
+    locationMode: "query_locationId",
+    apiVersion: "v3",
   },
   {
     capability: "pipelines.read",
     method: "GET",
     path: "/opportunities/pipelines",
-    injectLocationId: true,
+    locationMode: "query_locationId",
+    apiVersion: "v3",
   },
   {
     capability: "calendars.read",
     method: "GET",
     path: "/calendars/",
-    injectLocationId: true,
+    locationMode: "query_locationId",
     optional: true,
+    apiVersion: "v3",
   },
   {
     capability: "conversations.read",
     method: "GET",
     path: "/conversations/search",
     query: { limit: "1" },
-    injectLocationId: true,
+    locationMode: "query_locationId",
     optional: true,
+    apiVersion: "v3",
   },
   {
     capability: "users.read",
     method: "GET",
     path: "/users/",
-    injectLocationId: true,
+    locationMode: "query_locationId",
     optional: true,
+    apiVersion: "v3",
   },
   {
     capability: "customFields.read",
     method: "GET",
     path: "/locations/{locationId}/customFields",
-    injectLocationId: false, // locationId is in path
+    locationMode: "path",
     optional: true,
+    apiVersion: "v3",
   },
   {
     capability: "tags.read",
     method: "GET",
     path: "/locations/{locationId}/tags",
-    injectLocationId: false,
+    locationMode: "path",
     optional: true,
+    apiVersion: "v3",
   },
   {
     capability: "phoneNumbers.read",
     method: "GET",
-    path: "/phone-numbers/",
-    injectLocationId: true,
+    path: "/phone-system/numbers/location/{locationId}",
+    locationMode: "path",
     optional: true,
+    apiVersion: "v3",
   },
   {
     capability: "location.read",
     method: "GET",
     path: "/locations/{locationId}",
-    injectLocationId: false,
+    locationMode: "path",
     optional: true,
+    apiVersion: "v3",
   },
 ];
 
@@ -177,26 +196,30 @@ async function probeCapability(
 
     if (config.query) {
       for (const [key, value] of Object.entries(config.query)) {
-        url.searchParams.set(key, value);
+        if (value !== undefined && value !== "") {
+          url.searchParams.set(key, value);
+        }
       }
     }
 
-    if (config.injectLocationId) {
+    if (config.locationMode === "query_locationId") {
       url.searchParams.set("locationId", locationId);
+      url.searchParams.delete("location_id");
     }
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
-      Version: "2021-07-28",
+      Version: config.apiVersion ?? "v3",
       Accept: "application/json",
     };
 
     let body: string | undefined;
     if (config.body) {
       headers["Content-Type"] = "application/json";
-      const bodyObj = { ...config.body };
-      if (config.injectLocationId) {
+      const bodyObj: Record<string, unknown> = { ...config.body };
+      if (config.locationMode === "body_locationId") {
         bodyObj.locationId = locationId;
+        delete bodyObj.location_id;
       }
       body = JSON.stringify(bodyObj);
     }
@@ -234,6 +257,16 @@ async function probeCapability(
         status: "missing_scope",
         errorCode,
         message: `Missing scope for ${config.capability}`,
+        testedAt,
+      };
+    }
+
+    if (errorCode === "BAXTER_GHL_CONTRACT_ERROR" || response.status === 422) {
+      return {
+        capability: config.capability,
+        status: "integration_error",
+        errorCode: "BAXTER_GHL_CONTRACT_ERROR",
+        message: `Contract/validation error (${response.status}): ${text.slice(0, 120)}`,
         testedAt,
       };
     }

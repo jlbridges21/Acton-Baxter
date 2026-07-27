@@ -11,6 +11,7 @@ export type GhlErrorCode =
   | "BAXTER_GHL_RESOURCE_UNAVAILABLE"
   | "BAXTER_GHL_RATE_LIMITED"
   | "BAXTER_GHL_BAD_REQUEST"
+  | "BAXTER_GHL_CONTRACT_ERROR"
   | "BAXTER_GHL_NOT_FOUND"
   | "BAXTER_GHL_API_UNAVAILABLE"
   | "BAXTER_GHL_RESPONSE_INVALID"
@@ -145,6 +146,11 @@ export function classifyGhlApiError(status: number, bodyText: string): GhlErrorC
     return "BAXTER_GHL_BAD_REQUEST";
   }
 
+  // 422 = request contract / validation mismatch (Baxter bug or version mismatch) — NOT offline
+  if (status === 422) {
+    return "BAXTER_GHL_CONTRACT_ERROR";
+  }
+
   if (status === 404) {
     if (lower.includes("location")) {
       return "BAXTER_GHL_LOCATION_INVALID";
@@ -201,6 +207,15 @@ export function isScopeError(error: unknown): boolean {
   return false;
 }
 
+/** Client/request contract bugs (422) — not proof the connector is offline. */
+export function isContractError(error: unknown): boolean {
+  if (error instanceof GhlConnectorError) {
+    const code = error.code as GhlErrorCode;
+    return code === "BAXTER_GHL_CONTRACT_ERROR" || code === "BAXTER_GHL_BAD_REQUEST";
+  }
+  return false;
+}
+
 /**
  * User-facing error messages with actionable PIT guidance.
  */
@@ -232,6 +247,10 @@ const USER_FACING_MESSAGES: Record<GhlErrorCode, (resource?: string) => string> 
     "GoHighLevel rate limit exceeded. Please wait a moment and try again.",
   BAXTER_GHL_BAD_REQUEST: () =>
     "GoHighLevel received an invalid request. This may be a configuration issue.",
+  BAXTER_GHL_CONTRACT_ERROR: (resource) =>
+    `GoHighLevel rejected the request format${resource ? ` for ${resource}` : ""} (422). ` +
+    "This is usually a Baxter/API version parameter mismatch, not an offline HighLevel outage. " +
+    "Check Advanced diagnostics for the Version header and location parameter used.",
   BAXTER_GHL_NOT_FOUND: (resource) => `GoHighLevel ${resource || "resource"} not found.`,
   BAXTER_GHL_API_UNAVAILABLE: () =>
     "GoHighLevel API is temporarily unavailable. Please try again in a few minutes.",

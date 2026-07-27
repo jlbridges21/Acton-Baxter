@@ -67,7 +67,11 @@ export function GhlConnectorClient({
   const health = overview.health;
   const connection = overview.connection;
 
-  const isConnected = health.overall === "healthy" || health.overall === "warning";
+  const isConnected =
+    health.overall === "healthy" ||
+    health.overall === "connected" ||
+    health.overall === "warning" ||
+    health.overall === "connected_limited";
 
   const refreshOverview = useCallback(async () => {
     try {
@@ -198,30 +202,28 @@ export function GhlConnectorClient({
   }, [message]);
 
   const healthLabel =
-    health.overall === "healthy"
+    health.overall === "healthy" || health.overall === "connected"
       ? "Connected"
       : health.overall === "connected_limited"
         ? "Connected (Limited)"
-        : health.overall === "needs_attention"
+        : health.overall === "needs_attention" || health.overall === "warning"
           ? "Needs Attention"
-          : health.overall === "warning"
-            ? "Partial"
-            : health.overall === "not_configured"
+          : health.overall === "reauthorization_required"
+            ? "Reauthorization Required"
+            : health.overall === "not_configured" || health.overall === "disabled"
               ? "Not Configured"
               : "Offline";
 
   const healthColor =
-    health.overall === "healthy"
+    health.overall === "healthy" || health.overall === "connected"
       ? "text-emerald-700"
-      : health.overall === "connected_limited"
+      : health.overall === "connected_limited" ||
+          health.overall === "needs_attention" ||
+          health.overall === "warning"
         ? "text-amber-700"
-        : health.overall === "needs_attention"
-          ? "text-amber-700"
-          : health.overall === "warning"
-            ? "text-amber-700"
-            : health.overall === "not_configured"
-              ? "text-[var(--acton-muted)]"
-              : "text-red-700";
+        : health.overall === "not_configured" || health.overall === "disabled"
+          ? "text-[var(--acton-muted)]"
+          : "text-red-700";
 
   const capabilities = [];
   if (health.checks.find((c) => c.check === "contacts" && c.ok)) capabilities.push("Contacts");
@@ -272,6 +274,14 @@ export function GhlConnectorClient({
           </div>
 
           <div className="space-y-3 text-sm">
+            {(health.overall === "connected" ||
+              health.overall === "healthy" ||
+              health.overall === "connected_limited" ||
+              health.overall === "warning") && (
+              <p className="text-sm text-[var(--acton-muted)]">
+                Last verified: {formatWhen(health.lastVerifiedAt)}
+              </p>
+            )}
             {connection && (
               <>
                 <div className="flex justify-between">
@@ -420,6 +430,43 @@ export function GhlConnectorClient({
               <div className="space-y-4">
                 <div>
                   <h3 className="mb-2 text-sm font-medium text-[var(--acton-fg)]">
+                    Advanced diagnostics
+                  </h3>
+                  <p className="mb-3 text-xs text-[var(--acton-muted)]">
+                    Safe request metadata only (no tokens or PII bodies).
+                  </p>
+                  <div className="space-y-2">
+                    {(overview.recentRequests ?? []).length === 0 && (
+                      <p className="text-sm text-[var(--acton-muted)]">No recent requests yet.</p>
+                    )}
+                    {(overview.recentRequests ?? []).map((req) => (
+                      <div
+                        key={req.id}
+                        className="rounded border border-[var(--acton-border)] p-2 text-xs"
+                      >
+                        <div className="flex justify-between gap-2">
+                          <span className="font-medium text-[var(--acton-fg)]">
+                            {req.method} {req.path}
+                          </span>
+                          <span className={req.ok ? "text-emerald-700" : "text-amber-700"}>
+                            {req.statusCode ?? "—"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[var(--acton-muted)]">
+                          Version {req.apiVersion} · {req.latencyMs}ms
+                          {req.errorCode ? ` · ${req.errorCode}` : ""}
+                        </div>
+                        {req.errorSummary && (
+                          <div className="mt-1 truncate text-[var(--acton-muted)]">
+                            {req.errorSummary}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="mb-2 text-sm font-medium text-[var(--acton-fg)]">
                     Reference Cache
                   </h3>
                   <div className="space-y-2">
@@ -442,7 +489,7 @@ export function GhlConnectorClient({
                     className="mt-3"
                     disabled={busy === "refresh_cache"}
                   >
-                    {busy === "refresh_cache" ? "Refreshing..." : "Clear All Cache"}
+                    {busy === "refresh_cache" ? "Refreshing..." : "Refresh reference data"}
                   </Button>
                 </div>
               </div>

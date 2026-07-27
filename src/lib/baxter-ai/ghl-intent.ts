@@ -17,6 +17,10 @@ export type GhlIntentType =
   | "write_contact" // "Update John's phone number to..."
   | "write_opportunity" // "Mark the Smith opportunity as won"
   | "write_tag" // "Add the 'VIP' tag to John Smith"
+  | "insight_unowned" // open opportunities without owner
+  | "insight_stale" // stale opportunities
+  | "insight_appointments" // appointments this week/today
+  | "insight_unread" // unread conversations if supported
   | "general_crm" // Generic CRM question
   | "none"; // Not CRM related
 
@@ -172,6 +176,54 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
         };
       }
     }
+  }
+
+  // Read-only CRM insight reports (Prompt 3) — deterministic filters, not LLM over raw dumps
+  if (
+    /without\s+an?\s+owner|no\s+owner|unowned|missing\s+an?\s+owner/i.test(question) &&
+    /opportunit|deal|open/i.test(question)
+  ) {
+    return {
+      intent: "insight_unowned",
+      confidence: 0.92,
+      entities,
+      isWriteIntent: false,
+      requiresConfirmation: false,
+    };
+  }
+  if (
+    /stale|no\s+recent\s+activity|stuck\s+in/i.test(question) &&
+    /opportunit|deal|stage/i.test(question)
+  ) {
+    return {
+      intent: "insight_stale",
+      confidence: 0.85,
+      entities,
+      isWriteIntent: false,
+      requiresConfirmation: false,
+    };
+  }
+  if (
+    /appointments?\s+(today|this\s+week)|who\s+has\s+appointments|meetings?\s+(today|this\s+week)/i.test(
+      question,
+    )
+  ) {
+    return {
+      intent: "insight_appointments",
+      confidence: 0.88,
+      entities,
+      isWriteIntent: false,
+      requiresConfirmation: false,
+    };
+  }
+  if (/unread\s+messages?|who\s+responded\s+recently/i.test(question)) {
+    return {
+      intent: "insight_unread",
+      confidence: 0.8,
+      entities,
+      isWriteIntent: false,
+      requiresConfirmation: false,
+    };
   }
 
   // Stage / "what happens next" lookups

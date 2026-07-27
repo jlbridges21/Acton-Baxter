@@ -9,10 +9,12 @@ import {
   ghlPipelinesResponseSchema,
   ghlOpportunitiesSearchResponseSchema,
 } from "./types";
-import { GhlConnectorError, isScopeError } from "./errors";
+import { GhlConnectorError, isScopeError, isContractError } from "./errors";
 import { getActiveGhlConnection } from "./connections";
 import type { GhlCapabilityMatrix } from "./capabilities";
 import { probeGhlCapabilities } from "./capabilities";
+import { buildOpportunitySearchQuery } from "./request-contracts";
+import { requireGhlLocationId } from "./config";
 
 export type GhlHealthCheckResult = {
   check: string;
@@ -21,16 +23,34 @@ export type GhlHealthCheckResult = {
   message: string;
   optional?: boolean;
   isScopeIssue?: boolean;
+  isContractIssue?: boolean;
 };
 
+/**
+ * Canonical health states (Prompt 3).
+ * "healthy" retained as alias of connected for ConnectorHealth mapping.
+ */
+export type GhlHealthOverall =
+  | "disabled"
+  | "not_configured"
+  | "connected"
+  | "connected_limited"
+  | "warning"
+  | "reauthorization_required"
+  | "offline"
+  /** @deprecated use connected */
+  | "healthy"
+  /** @deprecated use warning */
+  | "needs_attention";
+
 export type GhlHealthStatus = {
-  overall:
-    "healthy" | "warning" | "offline" | "not_configured" | "connected_limited" | "needs_attention";
+  overall: GhlHealthOverall;
   checks: GhlHealthCheckResult[];
   locationId: string | null;
   authMode: string;
   details: string | null;
   capabilityMatrix?: GhlCapabilityMatrix;
+  lastVerifiedAt?: string;
 };
 
 async function checkAuth(): Promise<GhlHealthCheckResult> {
@@ -38,11 +58,15 @@ async function checkAuth(): Promise<GhlHealthCheckResult> {
     const provider = await resolveGhlCredentialProvider();
     const health = await provider.health();
 
-    // Check if this is a scope issue (not a true auth failure)
     const scopeIssue =
       health.code === "BAXTER_GHL_SCOPE_MISSING" ||
       health.code === "BAXTER_GHL_LOCATION_ACCESS_DENIED" ||
       health.code === "BAXTER_GHL_PERMISSION_DENIED";
+
+    const reauth =
+      health.code === "BAXTER_GHL_AUTH_FAILED" ||
+      health.code === "BAXTER_GHL_TOKEN_EXPIRED" ||
+      health.code === "BAXTER_GHL_REAUTH_REQUIRED";
 
     return {
       check: "authentication",
@@ -50,24 +74,22 @@ async function checkAuth(): Promise<GhlHealthCheckResult> {
       code: health.code,
       message: health.message,
       isScopeIssue: scopeIssue,
+      isContractIssue: health.code === "BAXTER_GHL_CONTRACT_ERROR",
+      ...(reauth && !health.ok ? {} : {}),
     };
   } catch (error) {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_AUTH_FAILED";
-    const scopeIssue = isScopeError(error);
     return {
       check: "authentication",
       ok: false,
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Authentication check failed",
-      isScopeIssue: scopeIssue,
+      isScopeIssue: isScopeError(error),
+      isContractIssue: isContractError(error),
     };
   }
 }
 
-/**
- * Check location access. For PIT mode, this is OPTIONAL.
- * Many PITs don't have locations.readonly scope but can still access contacts/opportunities.
- */
 async function checkLocation(): Promise<GhlHealthCheckResult> {
   const config = getGhlRuntimeConfig();
   const authMode = getGhlAuthMode();
@@ -82,7 +104,10 @@ async function checkLocation(): Promise<GhlHealthCheckResult> {
   }
 
   try {
-    await ghlGet(`/locations/${config.locationId}`, undefined, { injectLocationId: false });
+    await ghlGet(`/locations/${config.locationId}`, undefined, {
+      resource: "locations",
+      injectLocationId: false,
+    });
     return {
       check: "location",
       ok: true,
@@ -94,16 +119,16 @@ async function checkLocation(): Promise<GhlHealthCheckResult> {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_LOCATION_INVALID";
     const scopeIssue = isScopeError(error) || code === "BAXTER_GHL_LOCATION_ACCESS_DENIED";
 
-    // For PIT mode, location check failure due to scope is a warning, not an error
-    if (authMode === "private_integration" && scopeIssue) {
+    if (authMode === "private_integration" && (scopeIssue || isContractError(error))) {
       return {
         check: "location",
         ok: false,
         code,
         message:
-          "Location endpoint unavailable (locations.readonly scope not granted). This is optional for PIT mode.",
+          "Location endpoint unavailable (optional for PIT). Core CRM can still work without locations.readonly.",
         optional: true,
-        isScopeIssue: true,
+        isScopeIssue: scopeIssue,
+        isContractIssue: isContractError(error),
       };
     }
 
@@ -113,14 +138,14 @@ async function checkLocation(): Promise<GhlHealthCheckResult> {
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Location check failed",
       isScopeIssue: scopeIssue,
+      isContractIssue: isContractError(error),
     };
   }
 }
 
 async function checkContacts(): Promise<GhlHealthCheckResult> {
   try {
-    // Use POST /contacts/search which is more reliable than GET /contacts/
-    const response = await ghlPost("/contacts/search", { pageLimit: 1 });
+    const response = await ghlPost("/contacts/search", { pageLimit: 1 }, { resource: "contacts" });
     ghlContactsSearchResponseSchema.parse(response);
     return {
       check: "contacts",
@@ -130,20 +155,22 @@ async function checkContacts(): Promise<GhlHealthCheckResult> {
     };
   } catch (error) {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_API_UNAVAILABLE";
-    const scopeIssue = isScopeError(error);
     return {
       check: "contacts",
       ok: false,
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Contacts check failed",
-      isScopeIssue: scopeIssue,
+      isScopeIssue: isScopeError(error),
+      isContractIssue: isContractError(error),
     };
   }
 }
 
 async function checkPipelines(): Promise<GhlHealthCheckResult> {
   try {
-    const response = await ghlGet("/opportunities/pipelines");
+    const response = await ghlGet("/opportunities/pipelines", undefined, {
+      resource: "pipelines",
+    });
     ghlPipelinesResponseSchema.parse(response);
     return {
       check: "pipelines",
@@ -153,43 +180,48 @@ async function checkPipelines(): Promise<GhlHealthCheckResult> {
     };
   } catch (error) {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_API_UNAVAILABLE";
-    const scopeIssue = isScopeError(error);
     return {
       check: "pipelines",
       ok: false,
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Pipelines check failed",
-      isScopeIssue: scopeIssue,
+      isScopeIssue: isScopeError(error),
+      isContractIssue: isContractError(error),
     };
   }
 }
 
 async function checkOpportunities(): Promise<GhlHealthCheckResult> {
   try {
-    const response = await ghlGet("/opportunities/search", { limit: 1 });
+    const locationId = requireGhlLocationId();
+    const query = buildOpportunitySearchQuery({ locationId, limit: 1 });
+    const response = await ghlGet("/opportunities/search", query, {
+      resource: "opportunities",
+      injectLocationId: false,
+    });
     ghlOpportunitiesSearchResponseSchema.parse(response);
     return {
       check: "opportunities",
       ok: true,
       code: null,
-      message: "Opportunities API is accessible.",
+      message: "Opportunities API is accessible (v3 locationId).",
     };
   } catch (error) {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_API_UNAVAILABLE";
-    const scopeIssue = isScopeError(error);
     return {
       check: "opportunities",
       ok: false,
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Opportunities check failed",
-      isScopeIssue: scopeIssue,
+      isScopeIssue: isScopeError(error),
+      isContractIssue: isContractError(error),
     };
   }
 }
 
 async function checkCalendars(): Promise<GhlHealthCheckResult> {
   try {
-    await ghlGet("/calendars/");
+    await ghlGet("/calendars/", undefined, { resource: "calendars" });
     return {
       check: "calendars",
       ok: true,
@@ -199,21 +231,21 @@ async function checkCalendars(): Promise<GhlHealthCheckResult> {
     };
   } catch (error) {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_SCOPE_MISSING";
-    const scopeIssue = isScopeError(error);
     return {
       check: "calendars",
       ok: false,
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Calendars check failed",
       optional: true,
-      isScopeIssue: scopeIssue,
+      isScopeIssue: isScopeError(error),
+      isContractIssue: isContractError(error),
     };
   }
 }
 
 async function checkConversations(): Promise<GhlHealthCheckResult> {
   try {
-    await ghlGet("/conversations/search", { limit: 1 });
+    await ghlGet("/conversations/search", { limit: 1 }, { resource: "conversations" });
     return {
       check: "conversations",
       ok: true,
@@ -223,44 +255,47 @@ async function checkConversations(): Promise<GhlHealthCheckResult> {
     };
   } catch (error) {
     const code = error instanceof GhlConnectorError ? error.code : "BAXTER_GHL_SCOPE_MISSING";
-    const scopeIssue = isScopeError(error);
     return {
       check: "conversations",
       ok: false,
       code,
       message: error instanceof Error ? error.message.slice(0, 200) : "Conversations check failed",
       optional: true,
-      isScopeIssue: scopeIssue,
+      isScopeIssue: isScopeError(error),
+      isContractIssue: isContractError(error),
     };
   }
+}
+
+function isReauthCode(code: string | null): boolean {
+  return (
+    code === "BAXTER_GHL_AUTH_FAILED" ||
+    code === "BAXTER_GHL_TOKEN_EXPIRED" ||
+    code === "BAXTER_GHL_REAUTH_REQUIRED"
+  );
 }
 
 /**
  * Evaluate GHL health with staged core vs optional checks.
  *
- * For PIT mode:
- * - Location check failure due to missing locations.readonly is a WARNING, not an error
- * - Core CRM (contacts, pipelines, opportunities) determines Connected vs Offline
- * - Optional failures result in "Connected with limited capabilities"
- *
- * Overall status mapping:
- * - "connected" (healthy): all core available, most optional available
- * - "connected_limited" (warning): core available, some optional missing
- * - "needs_attention" (warning): core missing due to scope issues (fixable)
- * - "offline": core missing due to auth/API failure (not just scope)
- * - "not_configured": disabled or missing configuration
+ * Core: contacts, pipelines, opportunities (correct v3 contracts).
+ * 422/contract errors → warning (not offline).
+ * Scope missing → connected_limited / warning.
+ * Invalid token → reauthorization_required / offline.
  */
 export async function evaluateGhlHealth(): Promise<GhlHealthStatus> {
   const config = getGhlRuntimeConfig();
   const authMode = getGhlAuthMode();
+  const lastVerifiedAt = new Date().toISOString();
 
   if (!config.enabled) {
     return {
-      overall: "not_configured",
+      overall: "disabled",
       checks: [],
       locationId: config.locationId,
       authMode: config.authMode,
       details: "ENABLE_GHL_INTEGRATION is false.",
+      lastVerifiedAt,
     };
   }
 
@@ -274,24 +309,34 @@ export async function evaluateGhlHealth(): Promise<GhlHealthStatus> {
         config.authMode === "private_integration"
           ? "GHL_PRIVATE_INTEGRATION_TOKEN or GHL_LOCATION_ID is missing."
           : "GHL OAuth configuration is incomplete.",
+      lastVerifiedAt,
     };
   }
 
-  // Stage 1: Check auth (uses contacts search for PIT)
   const authCheck = await checkAuth();
 
-  // If auth completely fails (not a scope issue), we're offline
-  if (!authCheck.ok && !authCheck.isScopeIssue) {
+  if (!authCheck.ok && isReauthCode(authCheck.code)) {
+    return {
+      overall: "reauthorization_required",
+      checks: [authCheck],
+      locationId: config.locationId,
+      authMode: config.authMode,
+      details: authCheck.message,
+      lastVerifiedAt,
+    };
+  }
+
+  if (!authCheck.ok && !authCheck.isScopeIssue && !authCheck.isContractIssue) {
     return {
       overall: "offline",
       checks: [authCheck],
       locationId: config.locationId,
       authMode: config.authMode,
       details: authCheck.message,
+      lastVerifiedAt,
     };
   }
 
-  // Stage 2: Check core CRM capabilities (contacts, pipelines, opportunities)
   const [contactsCheck, pipelinesCheck, opportunitiesCheck] = await Promise.all([
     checkContacts(),
     checkPipelines(),
@@ -301,97 +346,116 @@ export async function evaluateGhlHealth(): Promise<GhlHealthStatus> {
   const coreChecks = [contactsCheck, pipelinesCheck, opportunitiesCheck];
   const coreOk = coreChecks.every((c) => c.ok);
   const coreScopeIssues = coreChecks.filter((c) => !c.ok && c.isScopeIssue);
-  const coreHardFailures = coreChecks.filter((c) => !c.ok && !c.isScopeIssue);
+  const coreContractIssues = coreChecks.filter((c) => !c.ok && c.isContractIssue);
+  const coreHardFailures = coreChecks.filter((c) => !c.ok && !c.isScopeIssue && !c.isContractIssue);
 
-  // Stage 3: Check optional capabilities (location is optional for PIT)
   const [locationCheck, calendarsCheck, conversationsCheck] = await Promise.all([
     checkLocation(),
     checkCalendars(),
     checkConversations(),
   ]);
 
-  // For PIT mode, location check is optional
   const effectiveLocationCheck =
     authMode === "private_integration" ? { ...locationCheck, optional: true } : locationCheck;
 
   const optionalChecks = [effectiveLocationCheck, calendarsCheck, conversationsCheck];
   const optionalWarnings = optionalChecks.filter((c) => !c.ok);
 
-  // Determine overall status
-  let overall: GhlHealthStatus["overall"];
+  let overall: GhlHealthOverall;
   let details: string | null = null;
 
   if (!coreOk) {
-    if (coreHardFailures.length > 0) {
-      // Hard failure (API error, not scope)
-      overall = "offline";
-      details = coreHardFailures[0]?.message ?? "Core API check failed.";
-    } else if (coreScopeIssues.length > 0) {
-      // Scope issue - fixable by updating PIT permissions
-      overall = "needs_attention";
+    if (
+      coreContractIssues.length > 0 &&
+      coreHardFailures.length === 0 &&
+      coreScopeIssues.length === 0
+    ) {
+      // Malformed Baxter request — connector may still be usable for other resources
+      const someCoreOk = coreChecks.some((c) => c.ok);
+      overall = someCoreOk ? "warning" : "warning";
       details =
-        `Missing scopes for core CRM: ${coreScopeIssues.map((c) => c.check).join(", ")}. ` +
-        "Edit your Private Integration in GHL to add the required scopes.";
+        `Integration request error (422/contract) on: ${coreContractIssues.map((c) => c.check).join(", ")}. ` +
+        "This is not an offline HighLevel outage — check API Version and locationId parameters.";
+    } else if (coreHardFailures.length > 0 && coreHardFailures.every((c) => isReauthCode(c.code))) {
+      overall = "reauthorization_required";
+      details = coreHardFailures[0]?.message ?? "Token invalid or revoked.";
+    } else if (coreHardFailures.length > 0 && coreChecks.every((c) => !c.ok)) {
+      overall = "offline";
+      details = coreHardFailures[0]?.message ?? "All core CRM checks failed.";
+    } else if (coreScopeIssues.length > 0 && coreHardFailures.length === 0) {
+      overall = "connected_limited";
+      details =
+        `Missing scopes for: ${coreScopeIssues.map((c) => c.check).join(", ")}. ` +
+        "Edit Private Integration permissions in HighLevel (token rotate usually not required).";
+    } else if (coreChecks.some((c) => c.ok)) {
+      overall = "warning";
+      details = `Partial core CRM failure: ${coreChecks
+        .filter((c) => !c.ok)
+        .map((c) => c.check)
+        .join(", ")}`;
     } else {
       overall = "offline";
       details = "Core CRM check failed.";
     }
   } else if (optionalWarnings.length > 0) {
-    // Core works, but optional features missing
     const scopeWarnings = optionalWarnings.filter((c) => c.isScopeIssue);
+    const contractWarnings = optionalWarnings.filter((c) => c.isContractIssue);
     if (scopeWarnings.length > 0) {
       overall = "connected_limited";
-      details = `Connected with limited capabilities. Missing scopes: ${optionalWarnings.map((c) => c.check).join(", ")}.`;
-    } else {
+      details = `Connected with limited capabilities. Optional missing: ${optionalWarnings.map((c) => c.check).join(", ")}.`;
+    } else if (contractWarnings.length > 0) {
       overall = "warning";
+      details = `Optional resource contract issues: ${contractWarnings.map((c) => c.check).join(", ")}`;
+    } else {
+      overall = "connected_limited";
       details = `Optional resources unavailable: ${optionalWarnings.map((c) => c.check).join(", ")}`;
     }
   } else {
-    overall = "healthy";
+    overall = "connected";
   }
-
-  const allChecks = [authCheck, ...coreChecks, ...optionalChecks];
 
   return {
     overall,
-    checks: allChecks,
+    checks: [authCheck, ...coreChecks, ...optionalChecks],
     locationId: config.locationId,
     authMode: config.authMode,
     details,
+    lastVerifiedAt,
   };
 }
 
-/**
- * Full capability probe with matrix. More detailed than evaluateGhlHealth.
- * Use for admin diagnostics and refresh permissions action.
- */
 export async function evaluateGhlHealthWithCapabilities(): Promise<GhlHealthStatus> {
   const basicHealth = await evaluateGhlHealth();
 
-  // Only probe capabilities if we have some connection
-  if (basicHealth.overall === "not_configured" || basicHealth.overall === "offline") {
+  if (
+    basicHealth.overall === "not_configured" ||
+    basicHealth.overall === "disabled" ||
+    basicHealth.overall === "offline" ||
+    basicHealth.overall === "reauthorization_required"
+  ) {
     return basicHealth;
   }
 
   const capabilityMatrix = await probeGhlCapabilities();
 
-  // Map capability status to health status
-  let overall: GhlHealthStatus["overall"];
+  let overall: GhlHealthOverall = basicHealth.overall;
   switch (capabilityMatrix.overallStatus) {
     case "connected":
-      overall = "healthy";
+      overall = basicHealth.overall === "warning" ? "warning" : "connected";
       break;
     case "connected_limited":
       overall = "connected_limited";
       break;
     case "needs_attention":
-      overall = "needs_attention";
+      overall = "warning";
       break;
     case "offline":
-      overall = "offline";
-      break;
-    case "not_configured":
-      overall = "not_configured";
+      // Capability probe offline should not override a working core health unless all core failed
+      if (basicHealth.overall === "connected" || basicHealth.overall === "connected_limited") {
+        overall = basicHealth.overall;
+      } else {
+        overall = "offline";
+      }
       break;
     default:
       overall = basicHealth.overall;
@@ -408,16 +472,15 @@ export async function GhlConnectorHealth(): Promise<ConnectorHealth> {
   try {
     const health = await evaluateGhlHealth();
 
-    // Avoid DB lookups when GHL is disabled/unconfigured (keeps connector list fast in tests).
-    if (health.overall !== "not_configured") {
+    if (health.overall !== "not_configured" && health.overall !== "disabled") {
       await getActiveGhlConnection().catch(() => null);
     }
 
-    // Map new status types to ConnectorHealth status
     let status: ConnectorHealth["status"];
     let label: string;
 
     switch (health.overall) {
+      case "connected":
       case "healthy":
         status = "healthy";
         label = "Connected";
@@ -426,49 +489,50 @@ export async function GhlConnectorHealth(): Promise<ConnectorHealth> {
         status = "warning";
         label = "Connected (Limited)";
         break;
+      case "warning":
       case "needs_attention":
         status = "warning";
         label = "Needs Attention";
         break;
-      case "warning":
-        status = "warning";
-        label = "Needs Attention";
+      case "reauthorization_required":
+        status = "offline";
+        label = "Reauthorization Required";
         break;
       case "offline":
         status = "offline";
         label = "Offline";
         break;
+      case "disabled":
       case "not_configured":
       default:
         status = "offline";
-        label = "Not Configured";
+        label = health.overall === "disabled" ? "Disabled" : "Not Configured";
         break;
     }
 
     return {
       key: "gohighlevel",
       name: "GoHighLevel",
-      status,
       label,
-      lastSyncAt: null,
-      lastError: health.details,
+      status,
+      details: health.details,
+      lastSyncAt: health.lastVerifiedAt ?? null,
+      lastError:
+        health.overall === "offline" || health.overall === "reauthorization_required"
+          ? health.details
+          : null,
       itemsSynced: null,
-      details:
-        health.overall === "not_configured"
-          ? "Acton's CRM, contacts, opportunities, calendars, conversations, and sales pipeline."
-          : health.details,
     };
-  } catch {
+  } catch (error) {
     return {
       key: "gohighlevel",
       name: "GoHighLevel",
+      label: "Error",
       status: "offline",
-      label: "Offline",
+      details: error instanceof Error ? error.message.slice(0, 200) : "Health check failed",
       lastSyncAt: null,
-      lastError: "Health check failed.",
+      lastError: error instanceof Error ? error.message.slice(0, 200) : "Health check failed",
       itemsSynced: null,
-      details:
-        "Acton's CRM, contacts, opportunities, calendars, conversations, and sales pipeline.",
     };
   }
 }

@@ -1,0 +1,269 @@
+import "server-only";
+
+import type {
+  GhlContact,
+  GhlOpportunity,
+  GhlCalendarEvent,
+  GhlConversation,
+  GhlMessage,
+} from "./types";
+import { getContactById, searchContacts } from "./resources/contacts";
+import { listOpportunitiesByContact, getOpportunityById } from "./resources/opportunities";
+import { listPipelines } from "./resources/pipelines";
+import { listUsers } from "./resources/users";
+import { listCustomFields } from "./resources/custom-fields";
+import { listEventsForContact } from "./resources/calendars";
+import { searchConversations, getConversationMessages } from "./resources/conversations";
+import { resolveContact } from "@/lib/baxter-data/ghl/resolve";
+
+export type GhlEntityGraph = {
+  retrievedAt: string;
+  query: string;
+  ambiguous: boolean;
+  clarificationMessage: string | null;
+  contact: GhlContact | null;
+  opportunities: Array<{
+    opportunity: GhlOpportunity;
+    pipelineName: string | null;
+    stageName: string | null;
+    ownerName: string | null;
+  }>;
+  nextAppointment: GhlCalendarEvent | null;
+  recentConversation: GhlConversation | null;
+  recentMessages: GhlMessage[];
+  customFieldLabels: Record<string, string>;
+};
+
+function looksLikeEmail(q: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q.trim());
+}
+
+function looksLikePhone(q: string): boolean {
+  const digits = q.replace(/\D/g, "");
+  return digits.length >= 7 && digits.length <= 15;
+}
+
+/**
+ * Resolve a CRM query into a linked contact → opportunities → appointments → conversations graph.
+ */
+export async function resolveGhlEntityGraph(
+  query: string,
+  options: {
+    includeAppointments?: boolean;
+    includeConversations?: boolean;
+    messageLimit?: number;
+    opportunityId?: string;
+  } = {},
+): Promise<GhlEntityGraph> {
+  const retrievedAt = new Date().toISOString();
+  const empty: GhlEntityGraph = {
+    retrievedAt,
+    query,
+    ambiguous: false,
+    clarificationMessage: null,
+    contact: null,
+    opportunities: [],
+    nextAppointment: null,
+    recentConversation: null,
+    recentMessages: [],
+    customFieldLabels: {},
+  };
+
+  if (options.opportunityId) {
+    const opp = await getOpportunityById(options.opportunityId);
+    if (!opp) return empty;
+    const contact = opp.contactId ? await getContactById(opp.contactId) : null;
+    return enrichGraph(query, retrievedAt, contact, [opp], options);
+  }
+
+  const trimmed = query.trim();
+  const resolution = await resolveContact({
+    email: looksLikeEmail(trimmed) ? trimmed : undefined,
+    phone: looksLikePhone(trimmed) ? trimmed : undefined,
+    name: !looksLikeEmail(trimmed) && !looksLikePhone(trimmed) ? trimmed : undefined,
+  });
+
+  if (resolution.ambiguous) {
+    return {
+      ...empty,
+      ambiguous: true,
+      clarificationMessage:
+        resolution.ambiguityMessage || "I found multiple matching contacts. Which one do you mean?",
+    };
+  }
+
+  if (resolution.resolved && resolution.entity) {
+    return enrichGraph(query, retrievedAt, resolution.entity, undefined, options);
+  }
+
+  const search = await searchContacts({ query: trimmed, limit: 5 });
+  if (search.contacts.length > 1) {
+    return {
+      ...empty,
+      ambiguous: true,
+      clarificationMessage: `I found ${search.contacts.length} contacts matching that. Which one do you mean?`,
+    };
+  }
+  if (search.contacts.length === 0) return empty;
+  return enrichGraph(query, retrievedAt, search.contacts[0]!, undefined, options);
+}
+
+async function enrichGraph(
+  query: string,
+  retrievedAt: string,
+  contact: GhlContact | null,
+  seedOpps: GhlOpportunity[] | undefined,
+  options: {
+    includeAppointments?: boolean;
+    includeConversations?: boolean;
+    messageLimit?: number;
+  },
+): Promise<GhlEntityGraph> {
+  if (!contact) {
+    return {
+      retrievedAt,
+      query,
+      ambiguous: false,
+      clarificationMessage: null,
+      contact: null,
+      opportunities: [],
+      nextAppointment: null,
+      recentConversation: null,
+      recentMessages: [],
+      customFieldLabels: {},
+    };
+  }
+
+  const [opps, pipelines, users, fields] = await Promise.all([
+    seedOpps ? Promise.resolve(seedOpps) : listOpportunitiesByContact(contact.id, { limit: 20 }),
+    listPipelines({ useCache: true }).catch(() => []),
+    listUsers({ useCache: true }).catch(() => []),
+    listCustomFields({ useCache: true }).catch(() => []),
+  ]);
+
+  const pipelineById = new Map(pipelines.map((p) => [p.id, p]));
+  const userById = new Map(users.map((u) => [u.id, u]));
+  const customFieldLabels: Record<string, string> = {};
+  for (const f of fields) {
+    customFieldLabels[f.id] = f.name;
+  }
+
+  const opportunities = opps.map((opportunity) => {
+    const pipeline = pipelineById.get(opportunity.pipelineId);
+    const stage = pipeline?.stages.find((s) => s.id === opportunity.pipelineStageId);
+    const owner = opportunity.assignedTo ? userById.get(opportunity.assignedTo) : null;
+    return {
+      opportunity,
+      pipelineName: pipeline?.name ?? null,
+      stageName: stage?.name ?? null,
+      ownerName: owner?.name ?? owner?.email ?? null,
+    };
+  });
+
+  let nextAppointment: GhlCalendarEvent | null = null;
+  if (options.includeAppointments !== false) {
+    const events = await listEventsForContact(contact.id).catch(() => []);
+    const now = Date.now();
+    const upcoming = events
+      .filter((e) => new Date(e.startTime).getTime() >= now)
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+    nextAppointment = upcoming[0] ?? null;
+  }
+
+  let recentConversation: GhlConversation | null = null;
+  let recentMessages: GhlMessage[] = [];
+  if (options.includeConversations !== false) {
+    const convResult = await searchConversations({ contactId: contact.id, limit: 5 }).catch(() => ({
+      conversations: [] as GhlConversation[],
+      total: null as number | null,
+    }));
+    recentConversation = convResult.conversations[0] ?? null;
+    if (recentConversation) {
+      const msgs = await getConversationMessages(recentConversation.id, {
+        limit: options.messageLimit ?? 8,
+      }).catch(() => ({ messages: [] as GhlMessage[], hasMore: false }));
+      recentMessages = msgs.messages;
+    }
+  }
+
+  return {
+    retrievedAt,
+    query,
+    ambiguous: false,
+    clarificationMessage: null,
+    contact,
+    opportunities,
+    nextAppointment,
+    recentConversation,
+    recentMessages,
+    customFieldLabels,
+  };
+}
+
+/** Concise live customer snapshot for Baxter answers (omit empty fields). */
+export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
+  if (graph.ambiguous && graph.clarificationMessage) {
+    return graph.clarificationMessage;
+  }
+  if (!graph.contact) {
+    return "I couldn't find a matching GoHighLevel contact.";
+  }
+
+  const c = graph.contact;
+  const lines: string[] = [];
+  const name = c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "Contact";
+  lines.push(name);
+  lines.push("");
+  lines.push("Contact");
+  if (c.phone) lines.push(`Phone: ${c.phone}`);
+  if (c.email) lines.push(`Email: ${c.email}`);
+  if (c.city) lines.push(`City: ${c.city}`);
+  if (c.tags?.length) lines.push(`Tags: ${c.tags.join(", ")}`);
+
+  if (graph.opportunities.length) {
+    lines.push("");
+    for (const item of graph.opportunities.slice(0, 3)) {
+      const o = item.opportunity;
+      lines.push("Opportunity");
+      lines.push(o.name || "Untitled opportunity");
+      if (item.pipelineName) lines.push(item.pipelineName);
+      if (item.stageName) lines.push(item.stageName);
+      if (o.monetaryValue != null) {
+        lines.push(`$${o.monetaryValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`);
+      }
+      if (item.ownerName) lines.push(`Owner: ${item.ownerName}`);
+      if (o.status) lines.push(`Status: ${o.status}`);
+      lines.push("");
+    }
+  }
+
+  if (graph.nextAppointment) {
+    const ev = graph.nextAppointment;
+    lines.push("Next Appointment");
+    lines.push(
+      new Date(ev.startTime).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }),
+    );
+    if (ev.title) lines.push(ev.title);
+    lines.push("");
+  }
+
+  if (graph.recentMessages.length) {
+    const last = [...graph.recentMessages].sort((a, b) => {
+      const ta = a.dateAdded ? new Date(a.dateAdded).getTime() : 0;
+      const tb = b.dateAdded ? new Date(b.dateAdded).getTime() : 0;
+      return tb - ta;
+    })[0];
+    if (last?.body) {
+      lines.push("Recent communication");
+      const who = last.direction === "inbound" ? "Last inbound" : "Last outbound";
+      lines.push(`${who}: ${last.body.slice(0, 200)}`);
+    }
+  }
+
+  lines.push("");
+  lines.push(`Retrieved: ${graph.retrievedAt}`);
+  return lines.filter((l, i, arr) => !(l === "" && arr[i - 1] === "")).join("\n");
+}

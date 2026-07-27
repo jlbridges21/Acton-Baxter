@@ -66,10 +66,11 @@
 - Baxter runtime governance v1.1: Acton culture/brand/value-prop distillation, evidence-as-data, change control, `/admin/baxter/governance`
 - GoHighLevel Prompt 1: secure connector, PIT default, resource clients, migration **020**
 - GoHighLevel Prompt 2: capability health, live CRM evidence in Baxter, confirmed contact/opportunity writes, migration **021** — done
+- GoHighLevel Prompt 3: v3 API contracts, opportunity search fix, coherent health, entity graph, read-only insights, `/clear` cancels pending actions — done
 
 ## Future
 
-- GoHighLevel Prompt 3: autonomous monitoring, proactive workflows, governed multi-step actions
+- GoHighLevel: message send / calendar book / autonomous monitoring (future initiative)
 - Buildertrend sync
 - Domo sync
 - Full admin conversation analytics expansion

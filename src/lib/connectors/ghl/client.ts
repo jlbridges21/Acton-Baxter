@@ -1,6 +1,6 @@
 import "server-only";
 
-import { GHL_API_VERSION, GHL_API_BASE_URL } from "./types";
+import { GHL_API_BASE_URL } from "./types";
 import { getGhlRuntimeConfig, requireGhlLocationId } from "./config";
 import { resolveGhlCredentialProvider } from "./auth";
 import {
@@ -9,14 +9,29 @@ import {
   classifyGhlApiError,
   isRetryableGhlError,
 } from "./errors";
+import {
+  type GhlApiResource,
+  inferGhlResourceFromPath,
+  resolveGhlApiVersion,
+} from "./api-versions";
+import { recordGhlRequestDiagnostic } from "./request-diagnostics";
 
 export type GhlRequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
-  query?: Record<string, string | number | boolean | undefined>;
+  query?: Record<string, string | number | boolean | undefined | null>;
   body?: unknown;
+  /** Explicit Version header override. Prefer `resource`. */
   version?: string;
+  /** Resource family for Version header resolution. */
+  resource?: GhlApiResource;
+  /**
+   * When true (default), inject locationId into query/body if missing.
+   * Opportunity search and most list endpoints need this.
+   * Set false when location is already in the path.
+   */
   injectLocationId?: boolean;
+  /** Param name for location injection. Default locationId (v3 camelCase). */
   locationIdParam?: "locationId" | "location_id";
   fetchImpl?: typeof fetch;
 };
@@ -38,10 +53,25 @@ function parseRetryAfter(header: string | null): number | null {
   return null;
 }
 
+/** Strip undefined/null/empty-string query values so we never send locationId= */
+export function sanitizeGhlQuery(
+  query?: Record<string, string | number | boolean | undefined | null>,
+): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  if (!query) return out;
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
   const config = getGhlRuntimeConfig();
   const baseUrl = config.apiBaseUrl || GHL_API_BASE_URL;
-  const version = options.version ?? GHL_API_VERSION;
+  const resource = options.resource ?? inferGhlResourceFromPath(options.path);
+  const version = options.version ?? resolveGhlApiVersion(resource);
   const method = options.method ?? "GET";
   const fetchFn = options.fetchImpl ?? fetch;
 
@@ -49,34 +79,49 @@ export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
   const token = await provider.getAccessToken();
 
   const locationId = requireGhlLocationId();
+  const locationParam = options.locationIdParam ?? "locationId";
 
   const url = new URL(options.path.startsWith("/") ? options.path : `/${options.path}`, baseUrl);
 
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) {
-      if (value !== undefined && value !== null) {
-        url.searchParams.set(key, String(value));
-      }
-    }
+  const sanitizedQuery = sanitizeGhlQuery(options.query);
+  for (const [key, value] of Object.entries(sanitizedQuery)) {
+    url.searchParams.set(key, String(value));
   }
 
   if (options.injectLocationId !== false) {
-    const paramName = options.locationIdParam ?? "locationId";
-    if (!url.searchParams.has(paramName) && !url.searchParams.has("location_id")) {
-      url.searchParams.set(paramName, locationId);
+    const hasLocation = url.searchParams.has("locationId") || url.searchParams.has("location_id");
+    if (!hasLocation) {
+      url.searchParams.set(locationParam, locationId);
     }
   }
 
+  // Never send both locationId and location_id
+  if (url.searchParams.has("locationId") && url.searchParams.has("location_id")) {
+    url.searchParams.delete("location_id");
+  }
+
   let body: string | undefined;
+  let bodyObj: Record<string, unknown> | undefined;
   if (options.body !== undefined) {
-    const bodyObj = options.body as Record<string, unknown>;
-    if (options.injectLocationId !== false) {
-      const paramName = options.locationIdParam ?? "locationId";
-      if (bodyObj && typeof bodyObj === "object" && !bodyObj[paramName] && !bodyObj.location_id) {
-        (bodyObj as Record<string, unknown>)[paramName] = locationId;
+    bodyObj =
+      options.body && typeof options.body === "object"
+        ? { ...(options.body as Record<string, unknown>) }
+        : undefined;
+    if (bodyObj && options.injectLocationId !== false) {
+      if (!bodyObj.locationId && !bodyObj.location_id) {
+        bodyObj[locationParam] = locationId;
+      }
+      if (bodyObj.locationId && bodyObj.location_id) {
+        delete bodyObj.location_id;
+      }
+      // Strip empty string fields from body
+      for (const [k, v] of Object.entries(bodyObj)) {
+        if (v === undefined || v === null || v === "") {
+          delete bodyObj[k];
+        }
       }
     }
-    body = JSON.stringify(bodyObj);
+    body = JSON.stringify(bodyObj ?? options.body);
   }
 
   const headers: Record<string, string> = {
@@ -90,6 +135,7 @@ export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
   }
 
   let lastError: Error | null = null;
+  const started = Date.now();
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -104,8 +150,20 @@ export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
       });
 
       clearTimeout(timeoutId);
+      const latencyMs = Date.now() - started;
 
       if (response.ok) {
+        recordGhlRequestDiagnostic({
+          resource,
+          method,
+          path: options.path,
+          apiVersion: version,
+          statusCode: response.status,
+          latencyMs,
+          errorCode: null,
+          errorSummary: null,
+          ok: true,
+        });
         const contentType = response.headers.get("content-type") ?? "";
         if (contentType.includes("application/json")) {
           return (await response.json()) as T;
@@ -115,6 +173,18 @@ export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
 
       const responseText = await response.text().catch(() => "");
       const errorCode = classifyGhlApiError(response.status, responseText);
+
+      recordGhlRequestDiagnostic({
+        resource,
+        method,
+        path: options.path,
+        apiVersion: version,
+        statusCode: response.status,
+        latencyMs,
+        errorCode,
+        errorSummary: responseText.slice(0, 200),
+        ok: false,
+      });
 
       if (response.status === 429) {
         const retryAfter = parseRetryAfter(response.headers.get("Retry-After"));
@@ -158,6 +228,17 @@ export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
           await sleep(RETRY_DELAY_BASE_MS * Math.pow(2, attempt));
           continue;
         }
+        recordGhlRequestDiagnostic({
+          resource,
+          method,
+          path: options.path,
+          apiVersion: version,
+          statusCode: 504,
+          latencyMs: Date.now() - started,
+          errorCode: "BAXTER_GHL_API_UNAVAILABLE",
+          errorSummary: "timeout",
+          ok: false,
+        });
         throw new GhlConnectorError(
           `GHL API ${method} ${options.path} timed out after ${DEFAULT_TIMEOUT_MS}ms`,
           { code: "BAXTER_GHL_API_UNAVAILABLE", statusCode: 504, expose: true },
@@ -182,7 +263,7 @@ export async function ghlRequest<T>(options: GhlRequestOptions): Promise<T> {
 
 export async function ghlGet<T>(
   path: string,
-  query?: Record<string, string | number | boolean | undefined>,
+  query?: Record<string, string | number | boolean | undefined | null>,
   options?: Partial<GhlRequestOptions>,
 ): Promise<T> {
   return ghlRequest<T>({ ...options, method: "GET", path, query });

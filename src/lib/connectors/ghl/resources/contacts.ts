@@ -44,7 +44,7 @@ export async function searchContacts(
     body.page = options.page;
   }
 
-  const response = await ghlPost("/contacts/search", body);
+  const response = await ghlPost("/contacts/search", body, { resource: "contacts" });
   const parsed = ghlContactsSearchResponseSchema.safeParse(response);
 
   if (!parsed.success) {
@@ -72,7 +72,10 @@ export async function getContactById(contactId: string): Promise<GhlContact | nu
   const locationId = requireGhlLocationId();
 
   try {
-    const response = await ghlGet(`/contacts/${contactId}`, undefined, { injectLocationId: false });
+    const response = await ghlGet(`/contacts/${contactId}`, undefined, {
+      resource: "contacts",
+      injectLocationId: false,
+    });
     const data = response as { contact?: unknown };
     const contact = data.contact ?? response;
 

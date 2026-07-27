@@ -22,7 +22,7 @@ export async function listCalendars(options: { useCache?: boolean } = {}): Promi
   }
 
   try {
-    const response = await ghlGet("/calendars/");
+    const response = await ghlGet("/calendars/", undefined, { resource: "calendars" });
     const parsed = ghlCalendarsResponseSchema.safeParse(response);
 
     let calendars: GhlCalendar[];
@@ -69,10 +69,18 @@ export async function listCalendarEvents(
 ): Promise<GhlCalendarEvent[]> {
   const locationId = requireGhlLocationId();
 
+  // HighLevel calendar events require startTime/endTime as unix ms
+  const startMs = Number.isFinite(Number(options.startTime))
+    ? Number(options.startTime)
+    : new Date(options.startTime).getTime();
+  const endMs = Number.isFinite(Number(options.endTime))
+    ? Number(options.endTime)
+    : new Date(options.endTime).getTime();
+
   const query: Record<string, string | number | boolean | undefined> = {
     locationId,
-    startTime: options.startTime,
-    endTime: options.endTime,
+    startTime: startMs,
+    endTime: endMs,
   };
 
   if (options.calendarId) {
@@ -83,7 +91,10 @@ export async function listCalendarEvents(
   }
 
   try {
-    const response = await ghlGet("/calendars/events", query);
+    const response = await ghlGet("/calendars/events", query, {
+      resource: "calendarEvents",
+      injectLocationId: false,
+    });
     const parsed = ghlCalendarEventsResponseSchema.safeParse(response);
 
     if (!parsed.success) {

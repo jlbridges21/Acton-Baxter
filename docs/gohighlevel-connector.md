@@ -239,16 +239,39 @@ Admin → Connectors → GoHighLevel → Advanced tab:
 
 ---
 
-## Prompt 2 — live CRM + controlled writes
+## API versions (Prompt 3)
+
+HighLevel marketplace docs use **`Version: v3`** for CRM families (contacts, opportunities, pipelines, calendars, conversations, users, locations).
+
+Baxter resolves versions centrally via `src/lib/connectors/ghl/api-versions.ts`.
+
+### Opportunity search contract (current)
+
+```
+GET /opportunities/search
+Version: v3
+Query: locationId=<GHL_LOCATION_ID>   # required, camelCase
+Optional: pipelineId, pipelineStageId, contactId, assignedTo, status, limit, page, startAfterId, …
+```
+
+**Do not send** `location_id`, `pipeline_id`, `stage_id`, or both `locationId` and `location_id`.
+
+A 422 like `"property locationId should not exist"` + `"location_id must be a string"` usually means the **legacy** `Version: 2021-07-28` contract was mixed with camelCase params (or the reverse). That is a **contract error**, not Offline.
+
+### Health states
+
+`disabled` · `not_configured` · `connected` · `connected_limited` · `warning` · `reauthorization_required` · `offline`
+
+Core probes: contacts search, pipelines list, opportunities search (v3). Optional failures do not flip Connected → Offline.
 
 Prompt 2 keeps GHL **out of** permanent Knowledge Base embeddings. Live CRM answers use on-demand retrieval.
 
-| Capability | Behavior |
-| ---------- | -------- |
-| Live reads | Contacts, opportunities, pipelines/stages, owners, custom fields, tags, calendars, conversations when scopes allow |
-| Hybrid answers | GHL current state + approved Knowledge process (e.g. “what happens next for Lori?”) |
-| Writes | Contacts + opportunities only, after explicit confirmation (see `docs/gohighlevel-actions.md`) |
-| Capability matrix | Core CRM success → Connected; optional missing scopes → Connected with limited capabilities |
+| Capability        | Behavior                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Live reads        | Contacts, opportunities, pipelines/stages, owners, custom fields, tags, calendars, conversations when scopes allow |
+| Hybrid answers    | GHL current state + approved Knowledge process (e.g. “what happens next for Lori?”)                                |
+| Writes            | Contacts + opportunities only, after explicit confirmation (see `docs/gohighlevel-actions.md`)                     |
+| Capability matrix | Core CRM success → Connected; optional missing scopes → Connected with limited capabilities                        |
 
 **Do not sync** customer messages / contact / opportunity state into `knowledge_units`.
 

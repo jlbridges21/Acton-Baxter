@@ -16,7 +16,7 @@ export async function listPipelines(options: { useCache?: boolean } = {}): Promi
     }
   }
 
-  const response = await ghlGet("/opportunities/pipelines");
+  const response = await ghlGet("/opportunities/pipelines", undefined, { resource: "pipelines" });
   const parsed = ghlPipelinesResponseSchema.safeParse(response);
 
   let pipelines: GhlPipeline[];

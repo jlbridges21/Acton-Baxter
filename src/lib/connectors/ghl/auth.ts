@@ -46,7 +46,7 @@ export class PrivateIntegrationCredentialProvider implements GhlCredentialProvid
       const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
-          Version: "2021-07-28",
+          Version: "v3",
           Accept: "application/json",
         },
       });
@@ -134,7 +134,7 @@ export class PrivateIntegrationCredentialProvider implements GhlCredentialProvid
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          Version: "2021-07-28",
+          Version: "v3",
           Accept: "application/json",
           "Content-Type": "application/json",
         },
@@ -217,7 +217,7 @@ export class PrivateIntegrationCredentialProvider implements GhlCredentialProvid
       const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
-          Version: "2021-07-28",
+          Version: "v3",
           Accept: "application/json",
         },
       });
@@ -331,7 +331,7 @@ export class OAuthCredentialProvider implements GhlCredentialProvider {
       const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
-          Version: "2021-07-28",
+          Version: "v3",
           Accept: "application/json",
         },
       });

@@ -13,6 +13,12 @@ export * from "./access-policy";
 export * from "./oauth-config";
 export * from "./oauth-state";
 export * from "./capabilities";
+export * from "./api-versions";
+export * from "./request-contracts";
+export * from "./pagination";
+export * from "./request-diagnostics";
+export * from "./entity-graph";
+export * from "./insights";
 
 export * as ghlResources from "./resources";
 export * as ghlActions from "./actions";

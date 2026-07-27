@@ -276,7 +276,7 @@ describe("GHL Write Permissions", () => {
   it("salespeople cannot write by default", () => {
     const permission = canUserWriteGhl(salespersonUser);
     expect(permission.canWrite).toBe(false);
-    expect(permission.reason).toContain("not enabled");
+    expect(permission.reason).toMatch(/restricted to admins|not enabled/i);
   });
 
   it("salespeople can write when ENABLE_GHL_WRITES_FOR_SALES is true", () => {

@@ -6,7 +6,7 @@ import {
   createPendingAction,
   confirmPendingAction,
   cancelPendingAction,
-  getPendingActionForConversation,
+  getPendingActionForActor,
   executeAction,
   recordActionAudit,
   type GhlPendingAction,
@@ -103,11 +103,16 @@ export async function handleGhlPendingConfirmation(input: {
   question: string;
   conversationId: string;
   userId: string | null;
+  externalUserId?: string | null;
   profile: Profile | null;
 }): Promise<GhlRuntimeHandleResult> {
   if (!isGhlConfigured()) return { handled: false };
 
-  const pending = await getPendingActionForConversation(input.conversationId).catch(() => null);
+  const pending = await getPendingActionForActor({
+    conversationId: input.conversationId,
+    userId: input.userId,
+    externalUserId: input.externalUserId ?? null,
+  }).catch(() => null);
   if (!pending) return { handled: false };
 
   if (isCancelMessage(input.question)) {
@@ -489,6 +494,7 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
   contextText: string;
   ambiguityWarning?: string;
   intent: GhlIntentDetection;
+  handledInsight?: boolean;
 }> {
   if (!isGhlConfigured()) {
     return {
@@ -504,18 +510,102 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     };
   }
 
+  const intent = detectGhlIntent(question);
+
+  if (String(intent.intent).startsWith("insight_")) {
+    const insightText = await runInsightReport(intent).catch(
+      (error) =>
+        `I couldn't run that CRM insight: ${error instanceof Error ? error.message.slice(0, 160) : "error"}`,
+    );
+    return {
+      items: [
+        {
+          number: 1,
+          id: "ghl-insight",
+          title: "GoHighLevel insight",
+          summary: null,
+          contentExcerpt: insightText.slice(0, 900),
+          category: "GoHighLevel",
+          tags: ["gohighlevel", "insight"],
+          sourceName: "GoHighLevel",
+          sourceUrl: null,
+          sourceType: "GoHighLevel",
+          mimeType: null,
+          updatedAt: new Date().toISOString(),
+          citationLabel: "GoHighLevel — CRM insight",
+          relevanceScore: 0.95,
+        },
+      ],
+      contextText: insightText,
+      intent,
+      handledInsight: true,
+    };
+  }
+
+  const name =
+    intent.entities.contactName ||
+    intent.entities.opportunityName ||
+    intent.entities.contactEmail ||
+    intent.entities.contactPhone;
+  if (
+    name &&
+    (intent.intent === "contact_lookup" ||
+      intent.intent === "opportunity_lookup" ||
+      intent.intent === "general_crm" ||
+      intent.intent === "conversation_lookup" ||
+      intent.intent === "calendar_query")
+  ) {
+    const { resolveGhlEntityGraph, formatCustomerSnapshot } =
+      await import("@/lib/connectors/ghl/entity-graph");
+    const graph = await resolveGhlEntityGraph(name, {
+      includeAppointments: true,
+      includeConversations: true,
+    }).catch(() => null);
+    if (graph?.ambiguous) {
+      return {
+        items: [],
+        contextText: "",
+        ambiguityWarning: graph.clarificationMessage ?? undefined,
+        intent,
+      };
+    }
+    if (graph?.contact) {
+      const snapshot = formatCustomerSnapshot(graph);
+      return {
+        items: [
+          {
+            number: 1,
+            id: graph.contact.id,
+            title: `GoHighLevel — ${graph.contact.name || name}`,
+            summary: null,
+            contentExcerpt: snapshot.slice(0, 900),
+            category: "GoHighLevel",
+            tags: ["gohighlevel", "contact"],
+            sourceName: "GoHighLevel",
+            sourceUrl: null,
+            sourceType: "GoHighLevel",
+            mimeType: null,
+            updatedAt: graph.retrievedAt,
+            citationLabel: `GoHighLevel — ${graph.contact.name || name}${
+              graph.opportunities[0]?.opportunity.name
+                ? ` — ${graph.opportunities[0].opportunity.name}`
+                : ""
+            }`,
+            relevanceScore: 0.95,
+          },
+        ],
+        contextText: snapshot,
+        intent,
+      };
+    }
+  }
+
   const result = await buildGhlContext(question).catch(() => null);
   if (!result || !result.hasData) {
     return {
       items: [],
       contextText: "",
-      intent: result?.intent ?? {
-        intent: "none",
-        confidence: 0,
-        entities: {},
-        isWriteIntent: false,
-        requiresConfirmation: false,
-      },
+      intent: result?.intent ?? intent,
       ambiguityWarning: result?.ambiguityWarning,
     };
   }
@@ -526,6 +616,76 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     ambiguityWarning: result.ambiguityWarning,
     intent: result.intent,
   };
+}
+
+async function runInsightReport(intent: GhlIntentDetection): Promise<string> {
+  const {
+    getUnownedOpportunities,
+    getStaleOpportunities,
+    getAppointmentsInRange,
+    getUnreadConversations,
+    formatInsightTable,
+  } = await import("@/lib/connectors/ghl/insights");
+
+  if (intent.intent === "insight_unowned") {
+    const report = await getUnownedOpportunities({ status: "open", maxItems: 50 });
+    return formatInsightTable(
+      "Open opportunities without an owner",
+      report.rows.map((r) => ({
+        Opportunity: r.opportunityName,
+        Contact: r.contactName,
+        Pipeline: r.pipelineName,
+        Stage: r.stageName,
+      })),
+    );
+  }
+
+  if (intent.intent === "insight_stale") {
+    const report = await getStaleOpportunities({
+      daysSinceUpdate: 14,
+      status: "open",
+      maxItems: 50,
+    });
+    return formatInsightTable(
+      "Open opportunities with no update in 14+ days (caller threshold, not Acton policy)",
+      report.rows.map((r) => ({
+        Opportunity: r.opportunityName,
+        Contact: r.contactName,
+        Stage: r.stageName,
+        Owner: r.ownerName,
+        "Days stale": r.daysStale,
+      })),
+    );
+  }
+
+  if (intent.intent === "insight_appointments") {
+    const report = await getAppointmentsInRange({ daysAhead: 7 });
+    return formatInsightTable(
+      "Upcoming appointments (next 7 days)",
+      report.events.map((e) => ({
+        Title: e.title,
+        When: new Date(e.startTime).toLocaleString(),
+        Status: e.appointmentStatus,
+      })),
+    );
+  }
+
+  if (intent.intent === "insight_unread") {
+    const report = await getUnreadConversations(40);
+    if (!report.supported) {
+      return "GoHighLevel did not expose reliable unread counts for conversations, so I cannot answer unread-message insights from this API response.";
+    }
+    return formatInsightTable(
+      "Conversations with unread messages",
+      report.conversations.map((c) => ({
+        Contact: c.contactId,
+        Unread: c.unreadCount,
+        Preview: c.lastMessageBody?.slice(0, 80) ?? null,
+      })),
+    );
+  }
+
+  return "Insight type not supported.";
 }
 
 /** Used by tests / diagnostics without hitting write paths. */

@@ -6,6 +6,7 @@ import { getActiveGhlConnectionPublic, listGhlConnections } from "./connections"
 import { evaluateGhlHealth, type GhlHealthStatus } from "./health";
 import { getCacheStatus } from "./cache";
 import { getMissingRequiredScopes, getMissingOptionalScopes } from "./scopes";
+import { getRecentGhlRequestDiagnostics } from "./request-diagnostics";
 
 export type GhlAdminOverview = {
   config: ReturnType<typeof getGhlConfigStatus>;
@@ -19,6 +20,7 @@ export type GhlAdminOverview = {
   missingOptionalScopes: string[];
   cacheStatus: Awaited<ReturnType<typeof getCacheStatus>>;
   guidance: string[];
+  recentRequests: ReturnType<typeof getRecentGhlRequestDiagnostics>;
 };
 
 export async function getGhlAdminOverview(): Promise<GhlAdminOverview> {
@@ -32,7 +34,12 @@ export async function getGhlAdminOverview(): Promise<GhlAdminOverview> {
 
   try {
     health = await evaluateGhlHealth();
-    if (health.overall === "healthy" || health.overall === "warning") {
+    if (
+      health.overall === "healthy" ||
+      health.overall === "warning" ||
+      health.overall === "connected" ||
+      health.overall === "connected_limited"
+    ) {
       authenticated = true;
     }
   } catch (error) {
@@ -70,6 +77,7 @@ export async function getGhlAdminOverview(): Promise<GhlAdminOverview> {
     missingOptionalScopes,
     cacheStatus,
     guidance,
+    recentRequests: getRecentGhlRequestDiagnostics(15),
   };
 }
 

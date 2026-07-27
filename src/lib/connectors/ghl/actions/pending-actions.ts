@@ -274,3 +274,51 @@ export async function hasPendingActionForResource(
 
   return (data?.length ?? 0) > 0;
 }
+
+/**
+ * Cancel all pending GHL actions for a conversation (e.g. on /clear).
+ */
+export async function cancelPendingActionsForConversation(conversationId: string): Promise<number> {
+  const supabase = await createServiceClient();
+  const { data, error } = await supabase
+    .from("ghl_pending_actions")
+    .update({
+      status: "cancelled",
+      error_code: "CANCELLED_ON_CLEAR",
+      error_message: "Cancelled because the conversation was cleared",
+    })
+    .eq("conversation_id", conversationId)
+    .eq("status", "pending")
+    .select("id");
+
+  if (error) {
+    console.error("Failed to cancel pending actions on clear:", error.message);
+    return 0;
+  }
+  return data?.length ?? 0;
+}
+
+/**
+ * Confirm a pending action only if it belongs to this conversation + actor.
+ * Prevents cross-thread / cross-user confirmation.
+ */
+export async function getPendingActionForActor(input: {
+  conversationId: string;
+  userId?: string | null;
+  externalUserId?: string | null;
+}): Promise<GhlPendingAction | null> {
+  const pending = await getPendingActionForConversation(input.conversationId);
+  if (!pending) return null;
+
+  if (input.userId && pending.userId && pending.userId !== input.userId) {
+    return null;
+  }
+  if (
+    input.externalUserId &&
+    pending.externalUserId &&
+    pending.externalUserId !== input.externalUserId
+  ) {
+    return null;
+  }
+  return pending;
+}

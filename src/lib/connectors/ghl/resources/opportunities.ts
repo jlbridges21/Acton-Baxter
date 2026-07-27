@@ -8,15 +8,23 @@ import {
 } from "../types";
 import { normalizeOpportunity } from "../normalize";
 import { requireGhlLocationId } from "../config";
+import { buildOpportunitySearchQuery } from "../request-contracts";
+import { parseGhlPageMeta, paginateGhl } from "../pagination";
 
 export type OpportunitySearchOptions = {
+  q?: string;
   pipelineId?: string;
+  /** Prefer pipelineStageId (v3). stageId kept as alias. */
+  pipelineStageId?: string;
   stageId?: string;
   status?: "open" | "won" | "lost" | "abandoned" | "all";
   contactId?: string;
   assignedTo?: string;
+  id?: string;
   limit?: number;
-  startAfter?: string;
+  page?: number;
+  startAfter?: string | number;
+  startAfterId?: string;
 };
 
 export type OpportunitySearchResult = {
@@ -24,71 +32,121 @@ export type OpportunitySearchResult = {
   total: number | null;
   hasMore: boolean;
   nextPageUrl: string | null;
+  startAfterId: string | null;
+  startAfter: string | number | null;
 };
 
+/**
+ * Search opportunities using current HighLevel contract:
+ * GET /opportunities/search
+ * Version: v3
+ * Required: locationId (camelCase)
+ * Filters: pipelineId, pipelineStageId, contactId, assignedTo, status, …
+ *
+ * Do NOT send location_id / pipeline_id / stage_id.
+ */
 export async function searchOpportunities(
   options: OpportunitySearchOptions = {},
 ): Promise<OpportunitySearchResult> {
   const locationId = requireGhlLocationId();
 
-  const query: Record<string, string | number | boolean | undefined> = {
-    location_id: locationId,
-  };
+  const query = buildOpportunitySearchQuery({
+    locationId,
+    q: options.q,
+    status: options.status,
+    pipelineId: options.pipelineId,
+    pipelineStageId: options.pipelineStageId ?? options.stageId,
+    contactId: options.contactId,
+    assignedTo: options.assignedTo,
+    id: options.id,
+    limit: options.limit ? Math.min(options.limit, 100) : undefined,
+    page: options.page,
+    startAfter: options.startAfter,
+    startAfterId: options.startAfterId,
+  });
 
-  if (options.pipelineId) {
-    query.pipeline_id = options.pipelineId;
-  }
-  if (options.stageId) {
-    query.stage_id = options.stageId;
-  }
-  if (options.status && options.status !== "all") {
-    query.status = options.status;
-  }
-  if (options.contactId) {
-    query.contact_id = options.contactId;
-  }
-  if (options.assignedTo) {
-    query.assigned_to = options.assignedTo;
-  }
-  if (options.limit) {
-    query.limit = Math.min(options.limit, 100);
-  }
-  if (options.startAfter) {
-    query.startAfter = options.startAfter;
-  }
-
-  const response = await ghlGet("/opportunities/search", query, { injectLocationId: false });
+  const response = await ghlGet("/opportunities/search", query, {
+    resource: "opportunities",
+    injectLocationId: false, // already in validated query
+    locationIdParam: "locationId",
+  });
   const parsed = ghlOpportunitiesSearchResponseSchema.safeParse(response);
 
   if (!parsed.success) {
     console.warn("[GHL Opportunities] Response validation warning:", parsed.error.message);
     const raw = response as {
       opportunities?: unknown[];
-      meta?: { total?: number; nextPageUrl?: string | null };
+      meta?: Record<string, unknown>;
     };
+    const meta = parseGhlPageMeta(raw.meta);
     return {
       opportunities: Array.isArray(raw.opportunities)
         ? (raw.opportunities as Record<string, unknown>[]).map(normalizeOpportunity)
         : [],
-      total: raw.meta?.total ?? null,
-      hasMore: Boolean(raw.meta?.nextPageUrl),
-      nextPageUrl: raw.meta?.nextPageUrl ?? null,
+      total: meta.total,
+      hasMore: meta.hasMore,
+      nextPageUrl: meta.nextPageUrl,
+      startAfterId: meta.startAfterId,
+      startAfter: meta.startAfter,
     };
   }
 
+  const meta = parseGhlPageMeta(parsed.data.meta);
   return {
     opportunities: parsed.data.opportunities.map((o) =>
       normalizeOpportunity(o as Record<string, unknown>),
     ),
-    total: parsed.data.meta?.total ?? null,
-    hasMore: Boolean(parsed.data.meta?.nextPageUrl),
-    nextPageUrl: parsed.data.meta?.nextPageUrl ?? null,
+    total: meta.total,
+    hasMore: meta.hasMore,
+    nextPageUrl: meta.nextPageUrl,
+    startAfterId: meta.startAfterId,
+    startAfter: meta.startAfter,
+  };
+}
+
+/**
+ * Search across multiple pages (bounded). Use for admin/insights — not for every chat turn.
+ */
+export async function searchOpportunitiesPaginated(
+  options: OpportunitySearchOptions & { maxPages?: number; maxItems?: number } = {},
+): Promise<{ opportunities: GhlOpportunity[]; total: number | null; truncated: boolean }> {
+  const result = await paginateGhl<GhlOpportunity>({
+    maxPages: options.maxPages ?? 5,
+    maxItems: options.maxItems ?? 200,
+    fetchPage: async ({ page, startAfterId, startAfter }) => {
+      const pageResult = await searchOpportunities({
+        ...options,
+        page,
+        startAfterId: startAfterId ?? undefined,
+        startAfter: startAfter ?? undefined,
+        limit: options.limit ?? 50,
+      });
+      return {
+        items: pageResult.opportunities,
+        meta: {
+          total: pageResult.total,
+          hasMore: pageResult.hasMore,
+          nextPageUrl: pageResult.nextPageUrl,
+          startAfterId: pageResult.startAfterId,
+          startAfter: pageResult.startAfter,
+          currentPage: page,
+          nextPage: pageResult.hasMore ? page + 1 : null,
+        },
+      };
+    },
+  });
+
+  return {
+    opportunities: result.items,
+    total: result.total,
+    truncated: result.truncated,
   };
 }
 
 export async function getOpportunityById(opportunityId: string): Promise<GhlOpportunity | null> {
   try {
     const response = await ghlGet(`/opportunities/${opportunityId}`, undefined, {
+      resource: "opportunities",
       injectLocationId: false,
     });
     const data = response as { opportunity?: unknown };
@@ -121,13 +179,14 @@ export async function listOpportunitiesByPipeline(
   pipelineId: string,
   options: {
     stageId?: string;
+    pipelineStageId?: string;
     status?: "open" | "won" | "lost" | "abandoned" | "all";
     limit?: number;
   } = {},
 ): Promise<GhlOpportunity[]> {
   const result = await searchOpportunities({
     pipelineId,
-    stageId: options.stageId,
+    pipelineStageId: options.pipelineStageId ?? options.stageId,
     status: options.status,
     limit: options.limit ?? 100,
   });

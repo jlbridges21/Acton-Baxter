@@ -519,7 +519,9 @@ export const ghlBusinessesResponseSchema = z
   })
   .passthrough();
 
-export const GHL_API_VERSION = "2021-07-28";
+export const GHL_API_VERSION = "v3";
+/** Prefer resolveGhlApiVersion from api-versions.ts; legacy date-style header. */
+export { GHL_LEGACY_API_VERSION } from "./api-versions";
 export const GHL_API_BASE_URL = "https://services.leadconnectorhq.com";
 export const GHL_OAUTH_AUTHORIZE_URL = "https://marketplace.gohighlevel.com/oauth/chooselocation";
 export const GHL_OAUTH_TOKEN_URL = "https://services.leadconnectorhq.com/oauth/token";

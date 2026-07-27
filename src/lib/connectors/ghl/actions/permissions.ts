@@ -50,7 +50,8 @@ export function canUserWriteGhl(user: Profile | null): GhlWritePermission {
 
     return {
       canWrite: false,
-      reason: "Write operations are not enabled for salespeople. Contact an administrator.",
+      reason:
+        "I can look that up, but CRM updates through Baxter are currently restricted to admins.",
       deniedActions: getAllowedActionsForRole("salesperson"),
     };
   }

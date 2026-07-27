@@ -39,8 +39,15 @@ export function baxterHelpText(channel: "web" | "slack"): string {
 
   if (isGhlConfigured()) {
     lines.push(
-      "• I can look up live GoHighLevel contacts and opportunities",
-      "• Authorized users can ask me to prepare CRM updates — I always confirm before changing anything",
+      "",
+      "GoHighLevel (live CRM):",
+      "• What stage is Lori Harris in?",
+      "• Who owns the Wong opportunity?",
+      "• When is the next appointment?",
+      "• What did this lead last say?",
+      "• Show open opportunities without an owner",
+      "• Move Lori to Project Findings Complete (authorized users — confirmation required)",
+      "• I will not send texts or book calendars through chat yet",
     );
   }
 

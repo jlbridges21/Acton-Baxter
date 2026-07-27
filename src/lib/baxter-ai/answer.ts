@@ -58,6 +58,11 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   const command = parseChatCommand(question);
 
   if (command.type === "clear") {
+    if (input.conversationId && isGhlConfigured()) {
+      const { cancelPendingActionsForConversation } =
+        await import("@/lib/connectors/ghl/actions/pending-actions");
+      await cancelPendingActionsForConversation(input.conversationId).catch(() => 0);
+    }
     const reset = await resetBaxterConversation({
       previousConversationId: input.conversationId,
       userId: input.userId,
@@ -213,6 +218,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       question,
       conversationId: conversation.id,
       userId: input.userId,
+      externalUserId: input.externalUserId ?? null,
       profile,
     });
     if (pendingHandled.handled) {

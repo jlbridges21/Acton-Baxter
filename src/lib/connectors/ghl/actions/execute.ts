@@ -251,6 +251,7 @@ async function executeUpdateContactFields(action: GhlPendingAction): Promise<Ghl
   const response = await ghlPut<{ contact: Record<string, unknown> }>(
     `/contacts/${action.resourceId}`,
     allowed,
+    { resource: "contacts", injectLocationId: false },
   );
 
   return {
@@ -277,7 +278,14 @@ async function executeAddContactTag(action: GhlPendingAction): Promise<GhlAction
     };
   }
 
-  await ghlPost(`/contacts/${action.resourceId}/tags`, { tags: [tagId] });
+  await ghlPost(
+    `/contacts/${action.resourceId}/tags`,
+    { tags: [tagId] },
+    {
+      resource: "contacts",
+      injectLocationId: false,
+    },
+  );
 
   return {
     success: true,
@@ -302,7 +310,10 @@ async function executeRemoveContactTag(action: GhlPendingAction): Promise<GhlAct
     };
   }
 
-  await ghlDelete(`/contacts/${action.resourceId}/tags/${tagId}`);
+  await ghlDelete(`/contacts/${action.resourceId}/tags/${tagId}`, {
+    resource: "contacts",
+    injectLocationId: false,
+  });
 
   return {
     success: true,
@@ -343,6 +354,7 @@ async function executeUpdateOpportunity(action: GhlPendingAction): Promise<GhlAc
   const response = await ghlPut<{ opportunity: Record<string, unknown> }>(
     `/opportunities/${action.resourceId}`,
     allowed,
+    { resource: "opportunities", injectLocationId: false },
   );
 
   return {
@@ -372,6 +384,7 @@ async function executeMoveOpportunityStage(action: GhlPendingAction): Promise<Gh
   const response = await ghlPut<{ opportunity: Record<string, unknown> }>(
     `/opportunities/${action.resourceId}`,
     { pipelineStageId: stageId },
+    { resource: "opportunities", injectLocationId: false },
   );
 
   return {
