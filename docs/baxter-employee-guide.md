@@ -97,7 +97,7 @@ When in doubt, verify with the official document or your team lead.
 | **Web chat** | 👍 / 👎 on Baxter’s message                                                            |
 | **Slack**    | Tell your admin or pilot contact if an answer is wrong, incomplete, or missing sources |
 
-Admins review feedback at `/admin/baxter/feedback` (admin only).
+Admins review feedback at `/admin/baxter/feedback` (admin only). Slack usage for admins is organized under `/admin/slack` (Activity by person and channel).
 
 ---
 

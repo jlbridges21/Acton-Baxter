@@ -4,6 +4,7 @@ import { jsonError, jsonOk } from "@/lib/api";
 import {
   getAdminSlackSnapshot,
   processOnePendingSlackJob,
+  refreshSlackDisplayNames,
   runSlackAuthDiagnostic,
   runSlackPipelineDryRun,
   runSlackTestPost,
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
           "verify_events_config",
           "process_one_job",
           "pipeline_dry_run",
+          "refresh_names",
         ]),
         channelOrUserId: z.string().optional(),
         text: z.string().optional(),
@@ -41,6 +43,9 @@ export async function POST(request: Request) {
 
     if (parsed.action === "test_auth") {
       return jsonOk({ result: await runSlackAuthDiagnostic() });
+    }
+    if (parsed.action === "refresh_names") {
+      return jsonOk({ result: await refreshSlackDisplayNames() });
     }
     if (parsed.action === "test_post") {
       if (!parsed.channelOrUserId?.trim()) {

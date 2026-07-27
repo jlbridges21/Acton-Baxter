@@ -2,28 +2,19 @@
 
 import Link from "next/link";
 import {
-  BookOpen,
-  Cloud,
-  FileUp,
   LayoutDashboard,
   LogOut,
   Menu,
-  MessageSquare,
-  Palette,
   PlusCircle,
   Search,
-  Settings,
-  Shield,
-  Users,
   X,
-  Activity,
-  Rocket,
 } from "lucide-react";
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/branding/company-logo";
 import { Button } from "@/components/ui/button";
 import { getNavContext, type NavContext } from "@/lib/baxter/tools";
+import { getAdminNavLinks } from "@/lib/baxter/admin-nav";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
@@ -65,93 +56,7 @@ function employeeLinks(context: NavContext): NavLink[] {
 
 /** Full admin menu — always available so Users and tools are never hidden. */
 function adminLinks(): NavLink[] {
-  return [
-    {
-      href: "/",
-      label: "Dashboard",
-      icon: LayoutDashboard,
-      match: (pathname) => pathname === "/",
-    },
-    {
-      href: "/dashboard",
-      label: "Property Research",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
-    },
-    {
-      href: "/admin/knowledge",
-      label: "Knowledge Center",
-      icon: BookOpen,
-      match: (pathname) => pathname.startsWith("/admin/knowledge"),
-    },
-    {
-      href: "/admin/knowledge/upload",
-      label: "Uploads",
-      icon: FileUp,
-      match: (pathname) => pathname.startsWith("/admin/knowledge/upload"),
-    },
-    {
-      href: "/admin/connectors/google",
-      label: "Google Workspace",
-      icon: Cloud,
-      match: (pathname) => pathname.startsWith("/admin/connectors/google"),
-    },
-    {
-      href: "/admin/users",
-      label: "Users",
-      icon: Users,
-      match: (pathname) => pathname.startsWith("/admin/users"),
-    },
-    {
-      href: "/admin/slack",
-      label: "Slack",
-      icon: MessageSquare,
-      match: (pathname) => pathname.startsWith("/admin/slack"),
-    },
-    {
-      href: "/admin/connectors",
-      label: "Connectors",
-      icon: Shield,
-      match: (pathname) =>
-        pathname.startsWith("/admin/connectors") && !pathname.includes("/google"),
-    },
-    {
-      href: "/admin/baxter/diagnostics",
-      label: "Diagnostics",
-      icon: Activity,
-      match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
-    },
-    {
-      href: "/admin/baxter/evaluations",
-      label: "Evaluations",
-      icon: Rocket,
-      match: (pathname) => pathname.startsWith("/admin/baxter/evaluations"),
-    },
-    {
-      href: "/admin/baxter/feedback",
-      label: "Feedback",
-      icon: MessageSquare,
-      match: (pathname) => pathname.startsWith("/admin/baxter/feedback"),
-    },
-    {
-      href: "/admin/baxter/launch-readiness",
-      label: "Launch Ready",
-      icon: Rocket,
-      match: (pathname) => pathname.startsWith("/admin/baxter/launch-readiness"),
-    },
-    {
-      href: "/admin/branding",
-      label: "Branding",
-      icon: Palette,
-      match: (pathname) => pathname.startsWith("/admin/branding"),
-    },
-    {
-      href: "/admin/knowledge/settings",
-      label: "Settings",
-      icon: Settings,
-      match: (pathname) => pathname.startsWith("/admin/knowledge/settings"),
-    },
-  ];
+  return getAdminNavLinks();
 }
 
 export function AppNav({

@@ -11,6 +11,7 @@ import { employeeFacingSlackError, SLACK_ERROR_CODES } from "@/lib/slack/errors"
 import { buildSlackReplySegments } from "@/lib/slack/format";
 import { postSlackMessage, SlackClientError } from "@/lib/slack/client";
 import { claimSlackEventReceipt, updateSlackEventReceipt } from "@/lib/slack/receipts";
+import { observeSlackIdentities } from "@/lib/slack/profiles";
 import { logServerError } from "@/lib/errors";
 
 export type SlackIncomingEvent = {
@@ -320,10 +321,16 @@ export async function handleBaxterSlackEvent(
     : externalThreadId;
 
   try {
+    const identities = await observeSlackIdentities({
+      teamId: teamId ?? "unknown",
+      slackUserId: event.user ?? null,
+      slackChannelId: channel,
+    });
+
     const result = await answerBaxterQuestion({
       question: text,
       userId: null,
-      userName: event.user ? `Slack user ${event.user}` : "Slack user",
+      userName: identities.userLabel,
       channel: "slack",
       externalThreadId: stableExternalThreadId,
       externalUserId: event.user ?? null,

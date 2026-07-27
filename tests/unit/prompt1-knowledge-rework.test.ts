@@ -223,7 +223,7 @@ describe("knowledge navigation contexts", () => {
   it("treats knowledge and google connector routes as knowledge nav", () => {
     expect(getNavContext("/admin/knowledge")).toBe("knowledge");
     expect(getNavContext("/admin/knowledge/upload")).toBe("knowledge");
-    expect(getNavContext("/admin/connectors/google")).toBe("knowledge");
+    expect(getNavContext("/admin/connectors/google")).toBe("platform-admin");
     expect(getNavContext("/admin/slack")).toBe("platform-admin");
   });
 });

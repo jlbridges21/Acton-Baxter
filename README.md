@@ -83,13 +83,15 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 
 ## Google Workspace + Slack
 
+- Admin top nav **Integrations** → `/admin/connectors` (Google Workspace, Slack, future connectors)
 - Google Workspace OAuth + Drive Knowledge Manager: `/admin/connectors/google` — see `docs/google-workspace-oauth-setup.md` and `docs/google-connector.md`
   - Prefer connecting as `baxter@actonadu.com` (service account is often blocked from Acton Shared Drives)
   - Scheduled sync: `GOOGLE_SYNC_ENABLED`, `GOOGLE_SYNC_INTERVAL_MINUTES` (default 180)
+- Knowledge Center still links directly to Google Workspace and Upload Files where useful
 - Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`
 - Slack `/property` command: Property Research from Slack
+- Slack admin Activity (human names): `/admin/slack` — apply migration **019**, add `users:read` + `channels:read`, reinstall Slack app, then **Refresh Slack names**
 - Connector overview: `/admin/connectors`
-- Slack health and activity: `/admin/slack`
 
 ---
 
@@ -115,6 +117,7 @@ In Supabase SQL Editor, run each file completely:
 16. `supabase/migrations/016_knowledge_units.sql`
 17. `supabase/migrations/017_hybrid_retrieval_and_evals.sql`
 18. `supabase/migrations/018_conversation_reset_and_eval_indexes.sql`
+19. `supabase/migrations/019_slack_display_profiles.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 

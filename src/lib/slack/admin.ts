@@ -14,7 +14,25 @@ import { claimNextJob } from "@/lib/jobs/queue";
 import { processJob } from "@/lib/jobs/process";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
+import { backfillSlackDisplayNames } from "@/lib/slack/profiles";
+import {
+  getSlackActivityOverview,
+  getSlackChannelActivityDetail,
+  getSlackUserActivityDetail,
+  type SlackActivityFilters,
+} from "@/lib/slack/activity";
+import {
+  formatResolvedChannelLabel,
+  formatResolvedUserLabel,
+  getCachedSlackChannelProfile,
+  getCachedSlackUserProfile,
+  resolveSlackChannelProfile,
+  resolveSlackUserProfile,
+} from "@/lib/slack/profiles";
+import { parseSlackExternalThreadId } from "@/lib/slack/display-names";
 
+export { getSlackActivityOverview, getSlackUserActivityDetail, getSlackChannelActivityDetail };
+export type { SlackActivityFilters };
 export async function getAdminSlackSnapshot() {
   const config = getSlackRuntimeConfig();
   const stats = await getSlackReceiptStats();
@@ -135,21 +153,62 @@ export async function getSlackConversationDetail(conversationId: string) {
   }
 
   const messages = await listMessagesForConversation(conversation.id);
-  const parts = (conversation.external_thread_id ?? "").split(":");
-  const teamId = parts[0] ?? null;
-  const channelId = parts[1] ?? null;
-  const threadOrUser = parts[2] ?? null;
+  const parsed = parseSlackExternalThreadId(conversation.external_thread_id);
+  const teamId = parsed.teamId;
+  const channelId = parsed.channelId;
+  const threadOrUser = parsed.threadOrUserKey;
+
+  let userProfile =
+    teamId && conversation.external_user_id
+      ? await getCachedSlackUserProfile(teamId, conversation.external_user_id)
+      : null;
+  let channelProfile =
+    teamId && channelId ? await getCachedSlackChannelProfile(teamId, channelId) : null;
+
+  // Lazy resolve when missing (admin page only; bounded)
+  try {
+    if (
+      teamId &&
+      conversation.external_user_id &&
+      !userProfile?.display_name &&
+      !userProfile?.real_name
+    ) {
+      userProfile = await resolveSlackUserProfile({
+        teamId,
+        slackUserId: conversation.external_user_id,
+      });
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (teamId && channelId && !channelProfile?.name && !parsed.isDmKey) {
+      channelProfile = await resolveSlackChannelProfile({ teamId, slackChannelId: channelId });
+    }
+  } catch {
+    // ignore
+  }
+
+  const userLabel = formatResolvedUserLabel(userProfile, conversation.external_user_id);
+  const channelLabel = formatResolvedChannelLabel(channelProfile, channelId);
 
   return {
     conversation,
     teamId,
     channelId,
     threadOrUser,
+    isDm: parsed.isDmKey,
+    userLabel,
+    channelLabel,
+    avatarUrl: userProfile?.avatar_url ?? null,
     messages: messages.map((message) => {
       const meta = message.metadata as {
         sources?: Array<{ title?: string; citationLabel?: string; sourceUrl?: string | null }>;
         answerMode?: string;
       };
+      const isReset =
+        message.role === "assistant" &&
+        (message.model_provider === "command" || /conversation cleared/i.test(message.content));
       return {
         id: message.id,
         role: message.role,
@@ -163,9 +222,15 @@ export async function getSlackConversationDetail(conversationId: string) {
         modelName: message.model_name,
         latencyMs: message.latency_ms,
         sources: Array.isArray(meta.sources) ? meta.sources : [],
+        isSystemReset: isReset,
+        speakerLabel: message.role === "assistant" ? (isReset ? "System" : "Baxter") : userLabel,
       };
     }),
   };
+}
+
+export async function refreshSlackDisplayNames() {
+  return backfillSlackDisplayNames({ limit: 50 });
 }
 
 export async function verifyEventsConfigValues() {

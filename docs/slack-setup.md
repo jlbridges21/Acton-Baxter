@@ -104,7 +104,7 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 
 ## 7. OAuth scopes (bot token)
 
-**Required scopes only** (must match manifest exactly):
+**Required scopes** (must match `docs/slack-app-manifest.yaml`):
 
 | Scope               | Why                                    |
 | ------------------- | -------------------------------------- |
@@ -112,6 +112,8 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 | `chat:write`        | Post replies in DMs and threads        |
 | `im:history`        | Receive direct messages to Baxter      |
 | `commands`          | Handle the `/property` slash command   |
+| `users:read`        | Resolve employee display names for `/admin/slack` Activity |
+| `channels:read`     | Resolve public channel names for admin Activity |
 
 **Do NOT add** (secure pilot default):
 
@@ -119,10 +121,12 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 | ------------------ | ------------------------------------------------- |
 | `channels:history` | Would read all channel messages without `@Baxter` |
 | `groups:history`   | Same for private channels                         |
-| `users:read`       | Optional for display names only — not required    |
+| `users:read.email` | Not required — names do not need email            |
 | `mpim:history`     | Not needed                                        |
 
 **Tradeoff:** Without `channels:history`, Baxter **cannot** see unmentioned thread replies in channels. Employees must `@Baxter` again for each channel follow-up. DMs work as normal free-form conversation.
+
+**After adding `users:read` / `channels:read`:** reinstall the Slack app so the bot token picks up the new scopes. Then open `/admin/slack` → **Refresh Slack names**.
 
 ---
 

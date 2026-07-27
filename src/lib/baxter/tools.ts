@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Cloud, House, Upload } from "lucide-react";
+import { BookOpen, Cloud, House } from "lucide-react";
 
 export type BaxterTool = {
   key: string;
@@ -40,19 +40,12 @@ export const BAXTER_ADMIN_CARDS = [
     icon: BookOpen,
   },
   {
-    key: "knowledge-upload",
-    name: "Upload Documents",
-    description: "Import Markdown, text, PDF, Word, CSV, or Excel files into the Knowledge Base.",
-    href: "/admin/knowledge/upload",
-    ctaLabel: "Upload Files",
-    icon: Upload,
-  },
-  {
-    key: "google-drive",
-    name: "Google Workspace",
-    description: "Connect Acton Drive, select Docs and Sheets, and keep knowledge synchronized.",
-    href: "/admin/connectors/google",
-    ctaLabel: "Open Google Workspace",
+    key: "integrations",
+    name: "Integrations",
+    description:
+      "Google Workspace, Slack, and other connectors Baxter uses for knowledge and chat.",
+    href: "/admin/connectors",
+    ctaLabel: "Open Integrations",
     icon: Cloud,
   },
 ] as const;
@@ -69,7 +62,7 @@ export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTo
 export type NavContext = "platform" | "property-research" | "knowledge" | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
-  if (pathname.startsWith("/admin/knowledge") || pathname.startsWith("/admin/connectors/google")) {
+  if (pathname.startsWith("/admin/knowledge")) {
     return "knowledge";
   }
   if (pathname.startsWith("/admin")) return "platform-admin";

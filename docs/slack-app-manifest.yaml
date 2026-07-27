@@ -23,6 +23,10 @@ oauth_config:
       - im:history
       # Required — /property slash command
       - commands
+      # Admin UX — resolve human-readable user names (users.info)
+      - users:read
+      # Admin UX — resolve public channel names (conversations.info)
+      - channels:read
 settings:
   event_subscriptions:
     request_url: https://acton-baxter.vercel.app/api/slack/events

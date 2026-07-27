@@ -93,10 +93,13 @@ Additional database tasks:
 - [ ] Slack app **Baxter** created from `docs/slack-app-manifest.yaml`
 - [ ] Events URL verified: `https://acton-baxter.vercel.app/api/slack/events`
 - [ ] `/property` URL: `https://acton-baxter.vercel.app/api/slack/commands/property`
-- [ ] Bot scopes **only**: `app_mentions:read`, `chat:write`, `im:history`, `commands`
+- [ ] Bot scopes **only**: `app_mentions:read`, `chat:write`, `im:history`, `commands`, `users:read`, `channels:read`
 - [ ] Bot events **only**: `app_mention`, `message.im`
 - [ ] Socket Mode **disabled** — `SLACK_APP_TOKEN` unused
 - [ ] App installed to Acton workspace; `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in Vercel
+- [ ] Migration **019** applied (`slack_user_profiles`, `slack_channel_profiles`)
+- [ ] After scope change: **reinstall** Slack app, then `/admin/slack` → Refresh Slack names
+- [ ] `/admin/slack` shows Activity first with human display names (not raw `U…` IDs)
 - [ ] `ENABLE_SLACK_INTEGRATION=true`
 - [ ] `SLACK_ALLOWED_TEAM_IDS` set to Acton workspace team ID
 - [ ] Pilot: start with **empty** `SLACK_ALLOWED_CHANNEL_IDS` (DMs only)

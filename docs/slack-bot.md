@@ -145,12 +145,26 @@ Evaluated by `evaluateSlackHealth()` and shown at `/admin/slack`:
 
 ## Admin routes
 
-| Route                             | Purpose                                                                            |
-| --------------------------------- | ---------------------------------------------------------------------------------- |
-| `/admin/slack`                    | Health, configuration (Yes/No), receipt stats, recent activity, diagnostic actions |
-| `/admin/slack/conversations/[id]` | Conversation detail — messages, sources, answer mode, errors (admin only)          |
+| Route | Purpose |
+| --- | --- |
+| `/admin/slack` | **Activity** (default): users & channels with human names; Health & Settings tabs for diagnostics |
+| `/admin/slack/users/[teamId]/[slackUserId]` | User activity grouped by Direct Message / channel |
+| `/admin/slack/channels/[teamId]/[channelId]` | Channel activity and participants |
+| `/admin/slack/conversations/[id]` | Conversation detail — chat-style history, sources, safe error codes |
 
-Diagnostic actions (admin only, explicit destinations required):
+### Display names
+
+Baxter caches Slack display metadata in `slack_user_profiles` and `slack_channel_profiles` (migration **019**).
+
+Resolution order for people: `profile.display_name` → `real_name` → username → “Unknown Slack user”.
+
+Channels: DMs → “Direct Message”; otherwise `#name` when known; private/unresolved → “Private channel”.
+
+Use **Refresh Slack names** on the Activity tab to backfill historical IDs (bounded, rate-limit safe). Name resolution never blocks answering Slack messages.
+
+Required bot scopes for name resolution: `users:read`, `channels:read` (see manifest). After adding scopes, **reinstall** the Slack app.
+
+Diagnostic actions (admin only, under Health):
 
 - Test Slack authentication
 - Post test message to a channel or user ID

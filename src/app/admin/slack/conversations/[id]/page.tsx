@@ -19,6 +19,14 @@ export default async function AdminSlackConversationPage({
   if (!detail) notFound();
 
   const { conversation, teamId, channelId, threadOrUser, messages } = detail;
+  const userHref =
+    teamId && conversation.external_user_id
+      ? `/admin/slack/users/${encodeURIComponent(teamId)}/${encodeURIComponent(conversation.external_user_id)}`
+      : null;
+  const channelHref =
+    teamId && channelId
+      ? `/admin/slack/channels/${encodeURIComponent(teamId)}/${encodeURIComponent(channelId)}`
+      : null;
 
   return (
     <AppShell user={user}>
@@ -28,61 +36,106 @@ export default async function AdminSlackConversationPage({
             href="/admin/slack"
             className="text-xs font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
           >
-            ← Back to Slack admin
+            ← Back to Slack activity
           </Link>
-          <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Slack conversation</h1>
+          <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
+            {userHref ? (
+              <Link href={userHref} className="hover:underline">
+                {detail.userLabel}
+              </Link>
+            ) : (
+              detail.userLabel
+            )}
+          </h1>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            {conversation.user_display_name ?? conversation.external_user_id ?? "Slack user"}
+            {channelHref ? (
+              <Link href={channelHref} className="font-semibold hover:underline">
+                {detail.channelLabel}
+              </Link>
+            ) : (
+              detail.channelLabel
+            )}
+            {!detail.isDm ? " · Thread" : ""}
           </p>
         </div>
 
-        <Card>
-          <CardTitle>Conversation metadata</CardTitle>
-          <dl className="mt-3 grid gap-2 text-sm text-[var(--acton-navy)] md:grid-cols-2">
-            <div>Channel type: slack</div>
-            <div>Team ID: {teamId ?? "—"}</div>
-            <div>Channel ID: {channelId ?? "—"}</div>
-            <div>Thread / user key: {threadOrUser ?? "—"}</div>
-            <div>Slack user ID: {conversation.external_user_id ?? "—"}</div>
-            <div>Started: {new Date(conversation.created_at).toLocaleString()}</div>
-            <div className="break-all md:col-span-2">
-              External thread ID: {conversation.external_thread_id ?? "—"}
-            </div>
-          </dl>
+        <Card className="p-4">
+          <CardTitle>Conversation</CardTitle>
+          <CardDescription className="mt-2">
+            Started {new Date(conversation.created_at).toLocaleString()}
+            {conversation.last_message_at
+              ? ` · Last activity ${new Date(conversation.last_message_at).toLocaleString()}`
+              : ""}
+          </CardDescription>
+          <details className="mt-3 text-xs text-[var(--acton-muted)]">
+            <summary className="cursor-pointer font-semibold">Technical details</summary>
+            <dl className="mt-2 grid gap-1 md:grid-cols-2">
+              <div>Slack user: {conversation.external_user_id ?? "—"}</div>
+              <div>Slack channel: {channelId ?? "—"}</div>
+              <div>Team: {teamId ?? "—"}</div>
+              <div>Thread / user key: {threadOrUser ?? "—"}</div>
+              <div className="break-all md:col-span-2">
+                External thread ID: {conversation.external_thread_id ?? "—"}
+              </div>
+            </dl>
+          </details>
         </Card>
 
         <div className="space-y-3">
           <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Messages</h2>
-          {messages.map((message) => (
-            <Card key={message.id}>
-              <CardTitle className="text-base capitalize">{message.role}</CardTitle>
-              <CardDescription className="mt-1">
-                {new Date(message.createdAt).toLocaleString()}
-                {message.answerMode ? ` · ${message.answerMode}` : ""}
-                {message.modelProvider ? ` · ${message.modelProvider}` : ""}
-                {message.modelName ? ` / ${message.modelName}` : ""}
-                {typeof message.latencyMs === "number" ? ` · ${message.latencyMs}ms` : ""}
-              </CardDescription>
-              <p className="mt-3 text-sm whitespace-pre-wrap text-[var(--acton-navy)]">
-                {message.content}
-              </p>
-              {message.sources.length > 0 ? (
-                <ul className="mt-2 space-y-1 text-xs text-[var(--acton-muted)]">
-                  {message.sources.map((source, index) => (
-                    <li key={`${message.id}-src-${index}`}>
-                      {source.title ?? source.citationLabel ?? "Source"}
-                      {source.sourceUrl ? ` — ${source.sourceUrl}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {message.errorCode ? (
-                <p className="mt-2 text-xs font-semibold text-red-700">
-                  Error: {message.errorCode}
+          {messages.map((message) => {
+            if (message.isSystemReset) {
+              return (
+                <div
+                  key={message.id}
+                  className="rounded-md border border-dashed border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-3 py-2 text-center text-xs text-[var(--acton-muted)]"
+                >
+                  Conversation reset · {new Date(message.createdAt).toLocaleString()}
+                </div>
+              );
+            }
+
+            const isBaxter = message.role === "assistant";
+            return (
+              <div
+                key={message.id}
+                className={`rounded-lg border border-[var(--acton-border)] p-4 ${
+                  isBaxter ? "bg-white" : "bg-[var(--acton-gray-50)]"
+                }`}
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold text-[var(--acton-navy)]">
+                    {message.speakerLabel}
+                  </p>
+                  <p className="text-xs text-[var(--acton-muted)]">
+                    {new Date(message.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                <p className="mt-2 text-sm whitespace-pre-wrap text-[var(--acton-navy)]">
+                  {message.content}
                 </p>
-              ) : null}
-            </Card>
-          ))}
+                {message.sources.length > 0 ? (
+                  <div className="mt-3 border-t border-[var(--acton-border)] pt-2">
+                    <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+                      Sources
+                    </p>
+                    <ul className="mt-1 space-y-1 text-xs text-[var(--acton-muted)]">
+                      {message.sources.map((source, index) => (
+                        <li key={`${message.id}-src-${index}`}>
+                          {source.title ?? source.citationLabel ?? "Source"}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {message.errorCode ? (
+                  <p className="mt-2 text-xs font-semibold text-amber-800">
+                    Needs attention: {message.errorCode}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
     </AppShell>

@@ -62,6 +62,7 @@
 - Baxter Intelligence Prompt 1: structured knowledge units + spreadsheet exact lookup (migration 016)
 - Baxter Intelligence Prompt 2: hybrid retrieval, embeddings, multimodal, Anthropic fallback, eval foundation (migration 017)
 - Baxter Intelligence Prompt 3: conversation context policy, `/clear`, temporal sales aggregation, eval suite, multimodal viewers (migration 018) — done
+- Admin UX: Integrations nav (`/admin/connectors`), Uploads removed from top nav, Slack Activity by user/channel with display-name cache (migration 019)
 
 ## Future
 
