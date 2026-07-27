@@ -64,14 +64,15 @@
 - Baxter Intelligence Prompt 3: conversation context policy, `/clear`, temporal sales aggregation, eval suite, multimodal viewers (migration 018) — done
 - Admin UX: Integrations nav (`/admin/connectors`), Uploads removed from top nav, Slack Activity by user/channel with display-name cache (migration 019)
 - Baxter runtime governance v1.1: Acton culture/brand/value-prop distillation, evidence-as-data, change control, `/admin/baxter/governance`
+- GoHighLevel Prompt 1: secure connector, PIT default, resource clients, migration **020**
+- GoHighLevel Prompt 2: capability health, live CRM evidence in Baxter, confirmed contact/opportunity writes, migration **021** — done
 
 ## Future
 
+- GoHighLevel Prompt 3: autonomous monitoring, proactive workflows, governed multi-step actions
 - Buildertrend sync
-- GoHighLevel sync
 - Domo sync
 - Full admin conversation analytics expansion
-- Proactive project monitoring
 - RACI enforcement in answers
 
 Baxter answers company-specific questions from **approved** Acton knowledge when available, cites sources, uses clearly labeled general guidance when safe, and explains itself even when the Knowledge Base is sparse.

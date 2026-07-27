@@ -87,10 +87,11 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 - Google Workspace OAuth + Drive Knowledge Manager: `/admin/connectors/google` — see `docs/google-workspace-oauth-setup.md` and `docs/google-connector.md`
   - Prefer connecting as `baxter@actonadu.com` (service account is often blocked from Acton Shared Drives)
   - Scheduled sync: `GOOGLE_SYNC_ENABLED`, `GOOGLE_SYNC_INTERVAL_MINUTES` (default 180)
-- GoHighLevel CRM connector: `/admin/connectors/ghl` — see `docs/gohighlevel-connector.md`
-  - Read-only Prompt 1: contacts, opportunities, pipelines, calendars, conversations, users
-  - Primary auth: Private Integration Token (env var)
-  - Customer data NOT synced to Knowledge Base (read on-demand)
+- GoHighLevel CRM connector: `/admin/connectors/ghl` — see `docs/gohighlevel-connector.md` and `docs/gohighlevel-actions.md`
+  - Auth default: Private Integration Token (`GHL_AUTH_MODE=private_integration`) — **no** `GHL_CLIENT_ID` / `GHL_CLIENT_SECRET` required
+  - Live CRM reads in Baxter answers + hybrid with approved Knowledge
+  - Controlled contact/opportunity writes with confirmation (admins; sales only if `ENABLE_GHL_WRITES_FOR_SALES=true`)
+  - Customer CRM data is **not** embedded into the Knowledge Base
 - Knowledge Center still links directly to Google Workspace and Upload Files where useful
 - Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`
 - Slack `/property` command: Property Research from Slack
@@ -122,6 +123,8 @@ In Supabase SQL Editor, run each file completely:
 17. `supabase/migrations/017_hybrid_retrieval_and_evals.sql`
 18. `supabase/migrations/018_conversation_reset_and_eval_indexes.sql`
 19. `supabase/migrations/019_slack_display_profiles.sql`
+20. `supabase/migrations/020_ghl_connector.sql`
+21. `supabase/migrations/021_ghl_pending_actions.sql`
 
 Also create Storage bucket `branding-assets` if step 4 cannot insert into `storage.buckets` in your project (Dashboard → Storage → New bucket → private → 2 MB → PNG/JPEG/WEBP).
 
@@ -306,4 +309,4 @@ RUN_LIVE_INTEGRATION_TESTS=true npm run test:integration
 - Santa Clara County Property Profile is currently **generic_search** (search by APN)
 - Flood/fire values are manual-review links unless a reliable automated source is connected later
 - Imagery-based yard measurements are not included
-- No GoHighLevel / Buildertrend / internal Acton project search in this version
+- No Buildertrend / Domo / autonomous CRM monitoring in this version (GHL live lookup + confirmed writes are available when connected)

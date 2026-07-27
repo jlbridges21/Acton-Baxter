@@ -92,6 +92,15 @@ export class PrivateIntegrationCredentialProvider implements GhlCredentialProvid
     }
   }
 
+  /**
+   * Health check for PIT mode.
+   *
+   * IMPORTANT: We do NOT require GET /locations for PIT health.
+   * Acton's PIT may not have locations.readonly scope, but core CRM (contacts/opportunities/pipelines)
+   * may still work. We prove token validity via POST /contacts/search with limit=1.
+   *
+   * Location name is fetched as optional enrichment; failure is a warning, not an auth failure.
+   */
   async health(): Promise<GhlCredentialHealth> {
     const config = getGhlRuntimeConfig();
 
@@ -117,49 +126,70 @@ export class PrivateIntegrationCredentialProvider implements GhlCredentialProvid
 
     try {
       const token = await this.getAccessToken();
-      const url = `${config.apiBaseUrl}/locations/${config.locationId}`;
-      const response = await fetch(url, {
+
+      // Use POST /contacts/search to prove token validity (contacts.readonly scope)
+      // This is more reliable than GET /locations which requires locations.readonly
+      const searchUrl = `${config.apiBaseUrl}/contacts/search`;
+      const searchResponse = await fetch(searchUrl, {
+        method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           Version: "2021-07-28",
           Accept: "application/json",
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({
+          locationId: config.locationId,
+          pageLimit: 1,
+        }),
       });
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        if (response.status === 401) {
+      if (!searchResponse.ok) {
+        const text = await searchResponse.text().catch(() => "");
+        const lower = text.toLowerCase();
+
+        // Check for scope issues vs true auth failures
+        if (searchResponse.status === 401 || searchResponse.status === 403) {
+          const isScopeIssue =
+            lower.includes("not authorized for this scope") ||
+            lower.includes("scope") ||
+            lower.includes("permission");
+
+          if (isScopeIssue) {
+            return {
+              ok: false,
+              mode: this.mode,
+              code: "BAXTER_GHL_SCOPE_MISSING",
+              message: `Token lacks required scopes for contacts. Add 'contacts.readonly' to your Private Integration in GHL.`,
+              locationId: config.locationId,
+            };
+          }
+
+          // True auth failure
           return {
             ok: false,
             mode: this.mode,
             code: "BAXTER_GHL_AUTH_FAILED",
-            message: `Authentication failed (401): ${text.slice(0, 100)}`,
+            message: `Authentication failed (${searchResponse.status}): ${text.slice(0, 100)}`,
             locationId: config.locationId,
           };
         }
-        if (response.status === 404) {
-          return {
-            ok: false,
-            mode: this.mode,
-            code: "BAXTER_GHL_LOCATION_INVALID",
-            message: `Location not found: ${config.locationId}`,
-            locationId: config.locationId,
-          };
-        }
+
         return {
           ok: false,
           mode: this.mode,
           code: "BAXTER_GHL_API_UNAVAILABLE",
-          message: `API error (${response.status}): ${text.slice(0, 100)}`,
+          message: `API error (${searchResponse.status}): ${text.slice(0, 100)}`,
           locationId: config.locationId,
         };
       }
 
+      // Token is valid for core CRM access
       return {
         ok: true,
         mode: this.mode,
         code: null,
-        message: "Private integration token is valid.",
+        message: "Private integration token is valid for core CRM access.",
         locationId: config.locationId,
       };
     } catch (error) {
@@ -170,6 +200,35 @@ export class PrivateIntegrationCredentialProvider implements GhlCredentialProvid
         message: error instanceof Error ? error.message.slice(0, 200) : "Health check failed",
         locationId: config.locationId,
       };
+    }
+  }
+
+  /**
+   * Soft-fetch location name as optional enrichment.
+   * Returns null on failure instead of throwing.
+   */
+  async getLocationNameSoft(): Promise<string | null> {
+    const config = getGhlRuntimeConfig();
+    if (!config.locationId) return null;
+
+    try {
+      const token = await this.getAccessToken();
+      const url = `${config.apiBaseUrl}/locations/${config.locationId}`;
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Version: "2021-07-28",
+          Accept: "application/json",
+        },
+      });
+
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      const parsed = ghlLocationResponseSchema.safeParse(data);
+      return parsed.success ? (parsed.data.location.name ?? null) : null;
+    } catch {
+      return null;
     }
   }
 }

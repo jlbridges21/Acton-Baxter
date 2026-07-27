@@ -15,6 +15,7 @@ type Tab =
   | "conversations"
   | "users"
   | "voice-ai"
+  | "recent-actions"
   | "advanced";
 
 function formatWhen(iso: string | null | undefined) {
@@ -199,20 +200,28 @@ export function GhlConnectorClient({
   const healthLabel =
     health.overall === "healthy"
       ? "Connected"
-      : health.overall === "warning"
-        ? "Partial"
-        : health.overall === "not_configured"
-          ? "Not Configured"
-          : "Offline";
+      : health.overall === "connected_limited"
+        ? "Connected (Limited)"
+        : health.overall === "needs_attention"
+          ? "Needs Attention"
+          : health.overall === "warning"
+            ? "Partial"
+            : health.overall === "not_configured"
+              ? "Not Configured"
+              : "Offline";
 
   const healthColor =
     health.overall === "healthy"
       ? "text-emerald-700"
-      : health.overall === "warning"
+      : health.overall === "connected_limited"
         ? "text-amber-700"
-        : health.overall === "not_configured"
-          ? "text-[var(--acton-muted)]"
-          : "text-red-700";
+        : health.overall === "needs_attention"
+          ? "text-amber-700"
+          : health.overall === "warning"
+            ? "text-amber-700"
+            : health.overall === "not_configured"
+              ? "text-[var(--acton-muted)]"
+              : "text-red-700";
 
   const capabilities = [];
   if (health.checks.find((c) => c.check === "contacts" && c.ok)) capabilities.push("Contacts");
@@ -353,7 +362,7 @@ export function GhlConnectorClient({
         {isConnected && (
           <Card className="p-6">
             <CardTitle className="mb-4">Browse GoHighLevel Data</CardTitle>
-            <div className="mb-4 flex gap-2 border-b">
+            <div className="mb-4 flex gap-2 overflow-x-auto border-b">
               {(
                 [
                   "overview",
@@ -363,21 +372,28 @@ export function GhlConnectorClient({
                   "calendars",
                   "conversations",
                   "users",
+                  "recent-actions",
                   "advanced",
                 ] as Tab[]
-              ).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => browseTab(tab)}
-                  className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-                    activeTab === tab
-                      ? "border-sky-600 text-sky-700"
-                      : "border-transparent text-[var(--acton-muted)] hover:text-[var(--acton-fg)]"
-                  }`}
-                >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
+              ).map((tab) => {
+                const label =
+                  tab === "recent-actions"
+                    ? "Recent Actions"
+                    : tab.charAt(0).toUpperCase() + tab.slice(1);
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => browseTab(tab)}
+                    className={`border-b-2 px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
+                      activeTab === tab
+                        ? "border-sky-600 text-sky-700"
+                        : "border-transparent text-[var(--acton-muted)] hover:text-[var(--acton-fg)]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
 
             {activeTab === "overview" && (

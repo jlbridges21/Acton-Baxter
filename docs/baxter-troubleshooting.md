@@ -107,6 +107,20 @@ Full Google setup: **`docs/google-workspace-oauth-setup.md`**, **`docs/google-co
 
 ---
 
+## GoHighLevel connector
+
+| Symptom | Likely cause | Fix |
+| ------- | ------------ | --- |
+| `401` “token is not authorized for this scope” on Test connection | Missing scope on that endpoint (often not a bad token) | Mapped as `BAXTER_GHL_SCOPE_MISSING`. Edit PIT permissions in GHL (usually **no** new token). Refresh permissions in Baxter. |
+| Entire connector Offline when Voice AI / docs fail | Fixed in Prompt 2 | Core CRM (contacts/pipelines/opportunities) can succeed while optional caps warn |
+| OAuth client ID/secret required in PIT mode | Misconfiguration | PIT needs only token + `GHL_LOCATION_ID`. Leave OAuth vars blank. |
+| Writes refused | Missing `contacts.write` / `opportunities.write`, or user role | Admins allowed by default; sales need `ENABLE_GHL_WRITES_FOR_SALES=true` |
+| Confirm does nothing | Pending action expired (~10 min) or stale CRM state | Ask Baxter to propose the change again |
+
+Full guide: **`docs/gohighlevel-connector.md`**, actions: **`docs/gohighlevel-actions.md`**.
+
+---
+
 ## Knowledge Base deletion
 
 | Symptom                                            | Cause                                                                 | Fix                                                                   |

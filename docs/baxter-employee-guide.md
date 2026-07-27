@@ -22,8 +22,15 @@ Baxter is Acton ADU’s internal AI teammate. It helps employees with company pr
 - “What is our process for X?” (when documented in approved sources)
 - “What is an ADU?” (general knowledge)
 - “How much have we sold this year?” (from approved Sales Performance Report)
+- “What stage is Lori Harris in?” (live GoHighLevel, when connected)
+- “What happens next for Lori?” (live CRM stage + approved process docs)
+- “Move Lori to Project Findings Complete.” (authorized users only — Baxter previews, then requires **confirm**)
 
 Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins.
+
+### GoHighLevel (when connected)
+
+Baxter can look up live contacts and opportunities. CRM answers cite **GoHighLevel** as a source (not Knowledge Base). Authorized users can ask Baxter to prepare CRM updates; Baxter never writes until you reply **confirm** (or cancel). Reply **cancel** to discard a pending update. Confirmations expire in about 10 minutes.
 
 ---
 
@@ -81,8 +88,9 @@ Supported automated jurisdictions today include San Jose and Santa Clara County 
 
 Baxter **does not**:
 
-- Search **Buildertrend**, **GoHighLevel**, or **Domo**
-- Access live project schedules, CRM records, or internal dashboards
+- Search **Buildertrend** or **Domo**
+- Autonomously monitor CRM or run multi-step write workflows (coming later)
+- Send GHL messages, book calendars, or edit Voice AI / contracts through chat
 - Perform site surveys, title research, or zoning determinations
 - Guarantee completeness of every Acton document (only **approved** synced/entered knowledge is used)
 

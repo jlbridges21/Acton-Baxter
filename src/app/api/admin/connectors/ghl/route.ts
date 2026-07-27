@@ -19,6 +19,8 @@ import { listPipelines } from "@/lib/connectors/ghl/resources/pipelines";
 import { listCalendars } from "@/lib/connectors/ghl/resources/calendars";
 import { searchConversations } from "@/lib/connectors/ghl/resources/conversations";
 import { listUsers } from "@/lib/connectors/ghl/resources/users";
+import { probeGhlCapabilities } from "@/lib/connectors/ghl/capabilities";
+import { getRecentAuditEntries } from "@/lib/connectors/ghl/actions/audit";
 
 export async function GET() {
   try {
@@ -42,6 +44,8 @@ export async function POST(request: Request) {
           "test_location",
           "browse",
           "refresh_reference_cache",
+          "refresh_capabilities",
+          "list_recent_actions",
           "disconnect",
           "mark_connected_from_pit",
         ]),
@@ -56,6 +60,7 @@ export async function POST(request: Request) {
             "users",
             "voice-ai",
             "advanced",
+            "recent-actions",
           ])
           .optional(),
         query: z.string().optional(),
@@ -335,6 +340,54 @@ export async function POST(request: Request) {
               error instanceof Error
                 ? error.message.slice(0, 240)
                 : "Connection verification failed",
+          },
+        });
+      }
+    }
+
+    if (parsed.action === "refresh_capabilities") {
+      try {
+        const capabilityMatrix = await probeGhlCapabilities();
+        return jsonOk({
+          result: {
+            pass: capabilityMatrix.coreAvailable,
+            capabilityMatrix,
+            message: capabilityMatrix.coreAvailable
+              ? `Connected with ${capabilityMatrix.coreCapabilities.length} core + ${capabilityMatrix.optionalAvailable.length} optional capabilities.`
+              : `Core CRM capabilities not available. Check scopes.`,
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            code: "BAXTER_GHL_API_UNAVAILABLE",
+            message:
+              error instanceof Error ? error.message.slice(0, 240) : "Capability probe failed",
+          },
+        });
+      }
+    }
+
+    if (parsed.action === "list_recent_actions") {
+      try {
+        const auditEntries = await getRecentAuditEntries({ limit: parsed.limit ?? 50 });
+        return jsonOk({
+          result: {
+            pass: true,
+            entries: auditEntries,
+            total: auditEntries.length,
+          },
+        });
+      } catch (error) {
+        return jsonOk({
+          result: {
+            pass: false,
+            code: "BAXTER_GHL_API_UNAVAILABLE",
+            message:
+              error instanceof Error
+                ? error.message.slice(0, 240)
+                : "Failed to fetch audit entries",
           },
         });
       }

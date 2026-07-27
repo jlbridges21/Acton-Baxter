@@ -6,12 +6,14 @@ Baxter is Acton ADU’s internal AI assistant. It combines:
 
 1. Built-in identity (`identity.ts`)
 2. Approved Knowledge Base retrieval (manual + uploads + Google-synced) with deduped, synonym-aware ranking
-3. Conversation memory for follow-ups and pronouns
-4. Clearly labeled general answers when no Acton source matches
-5. Conversation history
-6. OpenAI general assistance
+3. Live GoHighLevel operational evidence when the question needs CRM state (contacts, opportunities, conversations, appointments) — not embedded into Knowledge
+4. Conversation memory for follow-ups and pronouns
+5. Clearly labeled general answers when no Acton source matches
+6. Conversation history + optional confirmed CRM writes (contacts/opportunities only)
 
 Web chat (`POST /api/baxter/chat`) and Slack Events (`POST /api/slack/events`) both call `answerBaxterQuestion()` with `channel: "web"` or `channel: "slack"`.
+
+GHL intent detection, entity resolution, and confirmation live in `ghl-intent.ts` / `ghl-runtime.ts` plus `src/lib/baxter-data/ghl/` and `src/lib/connectors/ghl/`. See `docs/gohighlevel-connector.md` and `docs/gohighlevel-actions.md`.
 
 ## Query classification
 

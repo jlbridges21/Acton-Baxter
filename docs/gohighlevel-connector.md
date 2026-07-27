@@ -2,7 +2,7 @@
 
 ## Purpose
 
-GoHighLevel (GHL) is Acton ADU's CRM platform. The GHL connector provides Baxter with read-only access to contacts, opportunities, pipelines, calendars, conversations, and users.
+GoHighLevel (GHL) is Acton ADU's CRM platform. The GHL connector provides Baxter with read access to contacts, opportunities, pipelines, calendars, conversations, and users. With Prompt 2, Baxter can also perform controlled write operations with user confirmation.
 
 **Admin UI:** `/admin/connectors/ghl` (labeled **GoHighLevel**)
 
@@ -13,12 +13,12 @@ GoHighLevel (GHL) is Acton ADU's CRM platform. The GHL connector provides Baxter
 
 ## Prompt 1 vs Prompt 2
 
-| Phase    | Status      | Capabilities                                                         |
-| -------- | ----------- | -------------------------------------------------------------------- |
-| Prompt 1 | **Current** | Read-only CRM data access via Baxter Data helpers (no LLM tools yet) |
-| Prompt 2 | Future      | Write tools exposed to LLM (update contacts, create opportunities)   |
+| Phase    | Status      | Capabilities                                                              |
+| -------- | ----------- | ------------------------------------------------------------------------- |
+| Prompt 1 | Complete    | Read-only CRM data access via Baxter Data helpers                         |
+| Prompt 2 | **Current** | Read + controlled writes (update contact fields, tags, opportunity stage) |
 
-**In Prompt 1**, Baxter can read CRM data when staff ask questions, but cannot autonomously update records. Write scopes may be granted now for future Prompt 2, but they are NOT exposed to Baxter conversations.
+**In Prompt 2**, Baxter can read CRM data and propose write operations. All writes require user confirmation before execution. See [GoHighLevel Actions](./gohighlevel-actions.md) for details.
 
 ---
 
@@ -199,15 +199,33 @@ Admin can **Clear All Cache** or clear individual resource types at `/admin/conn
 
 ### Common errors
 
-| Code                          | Meaning                               | Fix                                                                         |
-| ----------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
-| `BAXTER_GHL_DISABLED`         | GHL integration is disabled           | Set `ENABLE_GHL_INTEGRATION=true`                                           |
-| `BAXTER_GHL_NOT_CONFIGURED`   | Missing required env vars             | Set `GHL_PRIVATE_INTEGRATION_TOKEN` + `GHL_LOCATION_ID` (PIT) or OAuth vars |
-| `BAXTER_GHL_AUTH_FAILED`      | Authentication failed (invalid token) | Verify token is valid and not expired                                       |
-| `BAXTER_GHL_LOCATION_INVALID` | Location ID invalid or no access      | Verify `GHL_LOCATION_ID` matches token's location                           |
-| `BAXTER_GHL_REAUTH_REQUIRED`  | OAuth token expired or revoked        | Reconnect GoHighLevel in Admin → Connectors                                 |
-| `BAXTER_GHL_SCOPE_MISSING`    | Required scope not granted            | Reconnect OAuth with required scopes                                        |
-| `BAXTER_GHL_API_UNAVAILABLE`  | GHL API unreachable or rate limited   | Retry later; check GHL API status                                           |
+| Code                                | Meaning                               | Fix                                                                         |
+| ----------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| `BAXTER_GHL_DISABLED`               | GHL integration is disabled           | Set `ENABLE_GHL_INTEGRATION=true`                                           |
+| `BAXTER_GHL_NOT_CONFIGURED`         | Missing required env vars             | Set `GHL_PRIVATE_INTEGRATION_TOKEN` + `GHL_LOCATION_ID` (PIT) or OAuth vars |
+| `BAXTER_GHL_AUTH_FAILED`            | Authentication failed (invalid token) | Verify token is valid and not expired                                       |
+| `BAXTER_GHL_TOKEN_EXPIRED`          | Token has expired                     | For OAuth: reconnect. For PIT: regenerate token in GHL                      |
+| `BAXTER_GHL_LOCATION_INVALID`       | Location ID invalid or not found      | Verify `GHL_LOCATION_ID` matches token's location                           |
+| `BAXTER_GHL_LOCATION_ACCESS_DENIED` | Missing `locations.readonly` scope    | Optional for PIT. Add scope or ignore (contacts/opportunities still work)   |
+| `BAXTER_GHL_SCOPE_MISSING`          | Required scope not granted            | Edit PIT in GHL → Add missing scopes. No need to regenerate token           |
+| `BAXTER_GHL_REAUTH_REQUIRED`        | OAuth token expired or revoked        | Reconnect GoHighLevel in Admin → Connectors                                 |
+| `BAXTER_GHL_PERMISSION_DENIED`      | Permission denied for resource        | Check PIT scopes or user role                                               |
+| `BAXTER_GHL_API_UNAVAILABLE`        | GHL API unreachable or rate limited   | Retry later; check GHL API status                                           |
+| `BAXTER_GHL_STALE_STATE`            | Resource changed since proposal       | Refresh and propose the action again                                        |
+| `BAXTER_GHL_ACTION_EXPIRED`         | Pending action confirmation expired   | Actions expire after 10 minutes; propose again                              |
+| `BAXTER_GHL_WRITE_DISABLED`         | Write operations are disabled         | Contact admin to enable GHL writes                                          |
+
+### PIT Scope Issues (Prompt 2)
+
+If you see `BAXTER_GHL_SCOPE_MISSING` or `BAXTER_GHL_LOCATION_ACCESS_DENIED`:
+
+1. **Do NOT regenerate the token** unless it's truly invalid
+2. Go to GHL → Settings → Integrations → Private Integrations
+3. Edit your Private Integration and add the missing scopes
+4. Save — the existing token will gain the new permissions
+5. Test connection in Admin → Connectors → GoHighLevel
+
+**Note:** `locations.readonly` is optional for PIT mode. Baxter can access contacts, opportunities, and pipelines without it. Location name enrichment will be skipped.
 
 ### Diagnostics
 
@@ -221,33 +239,35 @@ Admin → Connectors → GoHighLevel → Advanced tab:
 
 ---
 
-## Read-only Prompt 1 enforcement
+## Prompt 2 — live CRM + controlled writes
 
-- No write tools exposed to LLM in Prompt 1
-- Baxter Data helpers (`@/lib/baxter-data/ghl/*`) only export read functions
-- Write scopes may be granted for future Prompt 2, but are not used
-- Access policy enforces admin vs employee permissions (all GHL data read is admin-gated today)
+Prompt 2 keeps GHL **out of** permanent Knowledge Base embeddings. Live CRM answers use on-demand retrieval.
+
+| Capability | Behavior |
+| ---------- | -------- |
+| Live reads | Contacts, opportunities, pipelines/stages, owners, custom fields, tags, calendars, conversations when scopes allow |
+| Hybrid answers | GHL current state + approved Knowledge process (e.g. “what happens next for Lori?”) |
+| Writes | Contacts + opportunities only, after explicit confirmation (see `docs/gohighlevel-actions.md`) |
+| Capability matrix | Core CRM success → Connected; optional missing scopes → Connected with limited capabilities |
+
+**Do not sync** customer messages / contact / opportunity state into `knowledge_units`.
 
 ---
 
-## Prompt 2 roadmap
+## Prompt 3 (deferred)
 
-Future enhancements (not in Prompt 1):
-
-- Expose write tools to LLM (create/update contacts, opportunities)
-- Sync CRM data into Knowledge Base for offline retrieval (optional)
-- Employee-scoped CRM read access (contacts assigned to employee)
-- Automated CRM updates based on Baxter conversations (with human approval)
+- Autonomous monitoring / proactive workflows
+- Multi-step write chains
+- Message sending / calendar booking / Voice AI mutation
 
 ---
 
 ## Migration
 
-Apply `supabase/migrations/022_ghl_connector.sql` (or latest GHL migration) to create:
+Apply in order:
 
-- `ghl_connections` — OAuth connection rows (encrypted tokens)
-- `ghl_oauth_states` — OAuth state CSRF protection
-- `ghl_reference_cache` — Cached reference data (pipelines, users, etc.)
+1. `supabase/migrations/020_ghl_connector.sql` — connections, OAuth state, reference cache, `ghl_action_audit`
+2. `supabase/migrations/021_ghl_pending_actions.sql` — pending write confirmations + audit extensions
 
 ---
 
@@ -257,12 +277,13 @@ Apply `supabase/migrations/022_ghl_connector.sql` (or latest GHL migration) to c
 - OAuth refresh tokens are **encrypted at rest** in `ghl_connections`
 - Tokens never appear in admin overview JSON responses
 - Admin API routes are protected with `requireAdmin()`
-- GHL data access is admin-only in Prompt 1 (no employee access yet)
+- API scopes ≠ Baxter user write permission ≠ confirmation — all three must pass for writes
 
 ---
 
 ## See also
 
+- [GoHighLevel Actions](./gohighlevel-actions.md) — confirmation, allowlists, audit
 - [Baxter Evaluations](./baxter-evaluations.md) — GHL connector tests in evaluations suite
 - [Production Checklist](./production-checklist.md) — GHL deployment checklist
 - [Baxter AI Architecture](./baxter-ai-architecture.md) — Prompt governance and limitations

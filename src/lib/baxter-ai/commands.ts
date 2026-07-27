@@ -2,6 +2,8 @@
  * Lightweight chat commands (/clear, /help) — Prompt 3.
  */
 
+import { isGhlConfigured } from "@/lib/connectors/ghl/config";
+
 export type ChatCommand = { type: "clear" } | { type: "help" } | { type: "none"; text: string };
 
 export function parseChatCommand(raw: string): ChatCommand {
@@ -28,12 +30,21 @@ export function baxterHelpText(channel: "web" | "slack"): string {
     channel === "slack"
       ? "• `/clear` — start a fresh conversation in this DM or thread"
       : "• `/clear` or **New chat** — start a fresh conversation";
-  return [
+  const lines = [
     "Here’s how to work with Baxter:",
     "• Ask normal questions about Acton knowledge, projects, or general help",
     clearLine,
     "• Official Acton answers cite Sources when they use approved knowledge",
-  ].join("\n");
+  ];
+
+  if (isGhlConfigured()) {
+    lines.push(
+      "• I can look up live GoHighLevel contacts and opportunities",
+      "• Authorized users can ask me to prepare CRM updates — I always confirm before changing anything",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 export const CLEAR_RESPONSE_WEB = "Conversation cleared.";

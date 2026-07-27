@@ -167,4 +167,7 @@ Additional database tasks:
 - [ ] Monitor `/admin/slack`, `/admin/baxter/diagnostics`, and `/admin/baxter/feedback` during pilot
 - [ ] Collect wrong/incomplete answers; improve approved Knowledge Base and Google sync
 - [ ] Confirm employees understand **Sources** vs **general guidance** labels
-- [ ] **Not in this version:** Buildertrend, GoHighLevel, Domo, embeddings, proactive monitoring
+- [ ] GoHighLevel (when enabled): apply migrations **020** + **021**; set PIT env (`ENABLE_GHL_INTEGRATION`, `GHL_AUTH_MODE=private_integration`, `GHL_PRIVATE_INTEGRATION_TOKEN`, `GHL_LOCATION_ID`) — **no** OAuth client ID/secret required for PIT
+- [ ] Admin → Connectors → GoHighLevel → **Test connection** shows Connected (optional scopes may warn)
+- [ ] Spot-check live CRM ask + one confirmed write from an admin; verify audit on Recent Actions
+- [ ] **Not in this version:** Buildertrend, Domo, autonomous GHL monitoring (Prompt 3)

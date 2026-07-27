@@ -1,10 +1,7 @@
 import "server-only";
 
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
-import {
-  listUpcomingEvents,
-  listEventsForContact,
-} from "@/lib/connectors/ghl/resources/calendars";
+import { listUpcomingEvents, listEventsForContact } from "@/lib/connectors/ghl/resources/calendars";
 import type { BaxterGhlCalendarContext, GhlCalendarEvent, GhlEvidenceSource } from "./types";
 import { createCalendarEventEvidenceSource } from "./evidence";
 

@@ -28,10 +28,10 @@ export function buildCapabilitiesBlock(): string {
   const ghlConfigured = isGhlConfigured();
   if (ghlConfigured) {
     capabilities.push(
-      "Read/search GoHighLevel CRM data (contacts, opportunities, pipelines, calendars, conversations, users)",
+      "Read/search live GoHighLevel CRM data (contacts, opportunities, pipelines, calendars, conversations)",
     );
     limitations.push(
-      "Cannot update GoHighLevel contacts or opportunities (read-only until Prompt 2 write tools are enabled)",
+      "GoHighLevel CRM updates require an authorized user and explicit confirmation before any write",
     );
     limitations.unshift("No live Buildertrend or Domo access yet");
   } else {

@@ -90,7 +90,10 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
         status: ghlHealth?.overall ?? "offline",
         locationId: ghlHealth?.locationId ?? null,
         authMode: ghlHealth?.authMode ?? null,
-        healthy: ghlHealth?.overall === "healthy" || ghlHealth?.overall === "warning",
+        healthy:
+          ghlHealth?.overall === "healthy" ||
+          ghlHealth?.overall === "warning" ||
+          ghlHealth?.overall === "connected_limited",
       }
     : null;
 

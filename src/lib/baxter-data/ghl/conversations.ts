@@ -7,11 +7,7 @@ import {
   getConversationSummary,
 } from "@/lib/connectors/ghl/resources/conversations";
 import { getContactById } from "@/lib/connectors/ghl/resources/contacts";
-import type {
-  BaxterGhlConversationContext,
-  GhlMessage,
-  GhlEvidenceSource,
-} from "./types";
+import type { BaxterGhlConversationContext, GhlMessage, GhlEvidenceSource } from "./types";
 import { createConversationEvidenceSource, createContactEvidenceSource } from "./evidence";
 
 export async function getBaxterConversationContext(

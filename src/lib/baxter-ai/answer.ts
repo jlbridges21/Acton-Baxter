@@ -40,6 +40,14 @@ import {
   CLEAR_RESPONSE_WEB,
   parseChatCommand,
 } from "./commands";
+import {
+  handleGhlPendingConfirmation,
+  handleGhlWriteProposal,
+  retrieveGhlLiveEvidence,
+} from "./ghl-runtime";
+import { createServiceClient } from "@/lib/supabase/admin";
+import type { Profile } from "@/lib/research/db-types";
+import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./conversation-context";
 
 /**
@@ -198,13 +206,137 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
+  // GoHighLevel pending confirm/cancel + write proposals (never mutate without confirmation).
+  if (isGhlConfigured()) {
+    const profile = await loadProfileForGhl(input.userId);
+    const pendingHandled = await handleGhlPendingConfirmation({
+      question,
+      conversationId: conversation.id,
+      userId: input.userId,
+      profile,
+    });
+    if (pendingHandled.handled) {
+      const sources = pendingHandled.sources.map((s) => ({
+        title: s.title,
+        sourceName: "GoHighLevel",
+        category: "GoHighLevel",
+        sourceUrl: s.sourceUrl ?? null,
+        citationLabel: s.citationLabel,
+        sourceKind: "manual" as const,
+        openLabel: "GoHighLevel",
+        lastUpdated: null,
+        relevanceScore: 1,
+        availability: "available" as const,
+      }));
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: pendingHandled.answer,
+        insufficientKnowledge: pendingHandled.insufficientKnowledge,
+        confidence: pendingHandled.confidence,
+        modelProvider: "ghl-actions",
+        modelName: "pending-action",
+        sources,
+        sourceEntryIds: [],
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: pendingHandled.answer,
+        sources,
+        confidence: pendingHandled.confidence,
+        insufficientKnowledge: pendingHandled.insufficientKnowledge,
+        answerMode: pendingHandled.answerMode,
+      });
+    }
+
+    const writeHandled = await handleGhlWriteProposal({
+      question,
+      conversationId: conversation.id,
+      userId: input.userId,
+      externalUserId: input.externalUserId ?? null,
+      channel: input.channel,
+      profile,
+    });
+    if (writeHandled.handled) {
+      const sources = writeHandled.sources.map((s) => ({
+        title: s.title,
+        sourceName: "GoHighLevel",
+        category: "GoHighLevel",
+        sourceUrl: s.sourceUrl ?? null,
+        citationLabel: s.citationLabel,
+        sourceKind: "manual" as const,
+        openLabel: "GoHighLevel",
+        lastUpdated: null,
+        relevanceScore: 1,
+        availability: "available" as const,
+      }));
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: writeHandled.answer,
+        insufficientKnowledge: writeHandled.insufficientKnowledge,
+        confidence: writeHandled.confidence,
+        modelProvider: "ghl-actions",
+        modelName: "write-proposal",
+        sources,
+        sourceEntryIds: [],
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: writeHandled.answer,
+        sources,
+        confidence: writeHandled.confidence,
+        insufficientKnowledge: writeHandled.insufficientKnowledge,
+        answerMode: writeHandled.answerMode,
+      });
+    }
+  }
+
   // Fast path: identity questions with no need for OpenAI when KB is empty.
   const historyEarly = await getRecentConversationHistory(conversation.id, {
     limit: 10,
     excludeLastUser: true,
   });
   const evidence = await retrieveBaxterEvidence(question, historyEarly);
-  const contextItems = evidence.contextItems;
+  let contextItems = evidence.contextItems;
+
+  // Merge live GoHighLevel operational evidence when the question is CRM-related.
+  if (isGhlConfigured()) {
+    const ghlEvidence = await retrieveGhlLiveEvidence(question).catch(() => null);
+    if (ghlEvidence?.ambiguityWarning) {
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: ghlEvidence.ambiguityWarning,
+        insufficientKnowledge: false,
+        confidence: "medium",
+        modelProvider: "ghl-resolve",
+        modelName: "entity-resolution",
+        sources: [],
+        sourceEntryIds: [],
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: ghlEvidence.ambiguityWarning,
+        sources: [],
+        confidence: "medium",
+        insufficientKnowledge: false,
+        answerMode: "clarification",
+      });
+    }
+    if (ghlEvidence?.items.length) {
+      const renumbered = ghlEvidence.items.map((item, index) => ({
+        ...item,
+        number: index + 1,
+      }));
+      const kbOffset = renumbered.length;
+      const kbItems = contextItems.map((item, index) => ({
+        ...item,
+        number: kbOffset + index + 1,
+      }));
+      contextItems = [...renumbered, ...kbItems].slice(0, 8);
+    }
+  }
 
   // Deterministic structured answer when we have a direct field value
   let direct =
@@ -558,4 +690,15 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 function needsOpenAiForIdentityFollowUp(question: string): boolean {
   // Use OpenAI when the question asks for nuanced comparison or drafting around identity.
   return /\b(compare|draft|write|summarize|in detail|phase 1|not supposed)\b/i.test(question);
+}
+
+async function loadProfileForGhl(userId: string | null): Promise<Profile | null> {
+  if (!userId) return null;
+  try {
+    const supabase = createServiceClient();
+    const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+    return (data as Profile | null) ?? null;
+  } catch {
+    return null;
+  }
 }
