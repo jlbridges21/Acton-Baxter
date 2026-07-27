@@ -5,9 +5,13 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:
 const ALGO = "aes-256-gcm";
 
 function getKey(): Buffer {
-  const raw = (process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim();
+  const ghlKey = (process.env.GHL_TOKEN_ENCRYPTION_KEY ?? "").trim();
+  const googleKey = (process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim();
+  const raw = ghlKey || googleKey;
   if (!raw) {
-    throw new Error("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured");
+    throw new Error(
+      "Token encryption key is not configured (GHL_TOKEN_ENCRYPTION_KEY or GOOGLE_TOKEN_ENCRYPTION_KEY)",
+    );
   }
   // Accept 32-byte base64 or derive from passphrase via SHA-256.
   try {
@@ -21,6 +25,13 @@ function getKey(): Buffer {
 
 export function isGoogleTokenEncryptionConfigured(): boolean {
   return Boolean((process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim());
+}
+
+export function isTokenEncryptionConfigured(): boolean {
+  return Boolean(
+    (process.env.GHL_TOKEN_ENCRYPTION_KEY ?? "").trim() ||
+    (process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim(),
+  );
 }
 
 /**

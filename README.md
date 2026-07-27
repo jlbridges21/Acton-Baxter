@@ -81,12 +81,16 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 - Employee guide: `docs/baxter-employee-guide.md`
 - Troubleshooting: `docs/baxter-troubleshooting.md`
 
-## Google Workspace + Slack
+## Connectors (Google Workspace, GoHighLevel, Slack)
 
-- Admin top nav **Integrations** → `/admin/connectors` (Google Workspace, Slack, future connectors)
+- Admin top nav **Integrations** → `/admin/connectors` (Google Workspace, GoHighLevel, Slack, future connectors)
 - Google Workspace OAuth + Drive Knowledge Manager: `/admin/connectors/google` — see `docs/google-workspace-oauth-setup.md` and `docs/google-connector.md`
   - Prefer connecting as `baxter@actonadu.com` (service account is often blocked from Acton Shared Drives)
   - Scheduled sync: `GOOGLE_SYNC_ENABLED`, `GOOGLE_SYNC_INTERVAL_MINUTES` (default 180)
+- GoHighLevel CRM connector: `/admin/connectors/ghl` — see `docs/gohighlevel-connector.md`
+  - Read-only Prompt 1: contacts, opportunities, pipelines, calendars, conversations, users
+  - Primary auth: Private Integration Token (env var)
+  - Customer data NOT synced to Knowledge Base (read on-demand)
 - Knowledge Center still links directly to Google Workspace and Upload Files where useful
 - Slack Baxter Q&A (Prompt 5B): DMs, `@Baxter` mentions, threads — see `docs/slack-setup.md` and `docs/slack-bot.md`
 - Slack `/property` command: Property Research from Slack

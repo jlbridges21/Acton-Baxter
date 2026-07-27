@@ -1,3 +1,5 @@
+import { isGhlConfigured } from "@/lib/connectors/ghl/config";
+
 /**
  * Current Baxter capabilities — only claim what is actually connected.
  */
@@ -14,17 +16,32 @@ export const BAXTER_CURRENT_CAPABILITIES = [
 export const BAXTER_CURRENT_LIMITATIONS = [
   "Not customer-facing as an autonomous actor",
   "Not a decision-maker; important calls stay with responsible teammates",
-  "No live Buildertrend, GoHighLevel, or Domo access yet",
   "Does not invent official Acton policies, pricing, RACI, or project facts",
   "Does not take autonomous action in external systems",
   "Does not evaluate individuals or speculate about intent",
 ] as const;
 
 export function buildCapabilitiesBlock(): string {
+  const capabilities: string[] = [...BAXTER_CURRENT_CAPABILITIES];
+  const limitations: string[] = [...BAXTER_CURRENT_LIMITATIONS];
+
+  const ghlConfigured = isGhlConfigured();
+  if (ghlConfigured) {
+    capabilities.push(
+      "Read/search GoHighLevel CRM data (contacts, opportunities, pipelines, calendars, conversations, users)",
+    );
+    limitations.push(
+      "Cannot update GoHighLevel contacts or opportunities (read-only until Prompt 2 write tools are enabled)",
+    );
+    limitations.unshift("No live Buildertrend or Domo access yet");
+  } else {
+    limitations.unshift("No live Buildertrend, GoHighLevel, or Domo access yet");
+  }
+
   return [
     "Current capabilities:",
-    ...BAXTER_CURRENT_CAPABILITIES.map((c) => `- ${c}`),
+    ...capabilities.map((c) => `- ${c}`),
     "Current limitations:",
-    ...BAXTER_CURRENT_LIMITATIONS.map((c) => `- ${c}`),
+    ...limitations.map((c) => `- ${c}`),
   ].join("\n");
 }

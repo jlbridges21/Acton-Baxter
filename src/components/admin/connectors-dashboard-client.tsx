@@ -54,6 +54,11 @@ export function ConnectorsDashboardClient({
                   <Button size="sm">Manage Google</Button>
                 </Link>
               ) : null}
+              {connector.key === "gohighlevel" ? (
+                <Link href="/admin/connectors/ghl">
+                  <Button size="sm">Manage GoHighLevel</Button>
+                </Link>
+              ) : null}
               {connector.key === "slack" ? (
                 <Link href="/admin/slack">
                   <Button size="sm" variant="secondary">

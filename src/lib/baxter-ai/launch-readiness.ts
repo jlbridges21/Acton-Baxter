@@ -7,6 +7,8 @@ import { openaiAdminGuidance } from "@/lib/baxter-ai/errors";
 import { getAdminSlackSnapshot } from "@/lib/slack/admin";
 import { evaluateSlackHealth } from "@/lib/slack/config";
 import { getGoogleAdminOverview } from "@/lib/connectors/google/diagnostics";
+import { isGhlEnabled, isGhlConfigured } from "@/lib/connectors/ghl/config";
+import { evaluateGhlHealth } from "@/lib/connectors/ghl/health";
 import { listAllKnowledgeEntriesForRetrieval } from "@/lib/knowledge/store";
 
 export type LaunchOverallStatus =
@@ -19,6 +21,11 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
   const slack = await getAdminSlackSnapshot();
   const slackHealth = await evaluateSlackHealth();
   const google = await getGoogleAdminOverview();
+
+  const ghlEnabled = isGhlEnabled();
+  const ghlConfigured = isGhlConfigured();
+  const ghlHealth = ghlConfigured ? await evaluateGhlHealth() : null;
+
   const entries = await listAllKnowledgeEntriesForRetrieval();
   const approved = entries.filter((e) => e.status === "approved" && e.visibility === "internal");
   const googleEntries = approved.filter((e) => e.source_type === "Google Drive");
@@ -76,6 +83,17 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
     failedJobs: slack.stats.failedJobs,
   };
 
+  const ghlSection = ghlEnabled
+    ? {
+        enabled: ghlEnabled,
+        configured: ghlConfigured,
+        status: ghlHealth?.overall ?? "offline",
+        locationId: ghlHealth?.locationId ?? null,
+        authMode: ghlHealth?.authMode ?? null,
+        healthy: ghlHealth?.overall === "healthy" || ghlHealth?.overall === "warning",
+      }
+    : null;
+
   const security = {
     supabaseServiceRolePresent: diagnostics.config.supabaseServiceRolePresent,
     openaiKeyPresent: diagnostics.config.openaiKeyPresent,
@@ -103,6 +121,8 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
       slackSection.status !== "offline" &&
       slackSection.status !== "misconfigured");
 
+  const ghlOk = !ghlSection || !ghlSection.enabled || ghlSection.healthy;
+
   let overall: LaunchOverallStatus = "not_ready";
   const blockers: string[] = [];
   const attention: string[] = [];
@@ -126,6 +146,12 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
       `Slack is enabled but misconfigured: ${slack.config.missingRequired.join(", ")}`,
     );
   }
+  if (ghlSection?.enabled && !ghlSection.configured) {
+    attention.push("GoHighLevel is enabled but not fully configured.");
+  }
+  if (ghlSection?.enabled && ghlSection.configured && !ghlSection.healthy) {
+    attention.push(`GoHighLevel connector is ${ghlSection.status}. Check /admin/connectors/ghl.`);
+  }
   if (!security.cronSecretConfigured && (slackSection.enabled || google.config.configured)) {
     attention.push(
       "CRON_SECRET (or legacy INTERNAL_CRON_SECRET) is missing — Vercel Cron cannot authorize /api/internal/process-jobs.",
@@ -138,7 +164,8 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
     openaiOk &&
     knowledgeOk &&
     googleOk &&
-    slackOk
+    slackOk &&
+    ghlOk
   ) {
     if (
       slackSection.enabled &&
@@ -172,11 +199,13 @@ export async function getLaunchReadinessSnapshot(options?: { runLiveOpenAi?: boo
     knowledge,
     google: googleSection,
     slack: slackSection,
+    ghl: ghlSection,
     security,
     openaiMetrics,
     links: {
       diagnostics: "/admin/baxter/diagnostics",
       google: "/admin/connectors/google",
+      ghl: "/admin/connectors/ghl",
       slack: "/admin/slack",
       knowledge: "/admin/knowledge",
       feedback: "/admin/baxter/feedback",

@@ -77,6 +77,16 @@ const serverEnvSchema = publicEnvSchema.extend({
   E2E_TEST_USER_NAME: z.string().optional().default("Test Salesperson"),
   E2E_TEST_USER_ROLE: z.enum(["admin", "salesperson"]).optional().default("salesperson"),
   NODE_ENV: z.enum(["development", "test", "production"]).optional(),
+  ENABLE_GHL_INTEGRATION: booleanFromString.default(false),
+  GHL_AUTH_MODE: z.enum(["private_integration", "oauth"]).default("private_integration"),
+  GHL_PRIVATE_INTEGRATION_TOKEN: z.string().optional().default(""),
+  GHL_LOCATION_ID: z.string().optional().default(""),
+  GHL_API_BASE_URL: z.string().url().default("https://services.leadconnectorhq.com"),
+  GHL_CLIENT_ID: z.string().optional().default(""),
+  GHL_CLIENT_SECRET: z.string().optional().default(""),
+  GHL_REDIRECT_URI: z.string().optional().default(""),
+  GHL_TOKEN_ENCRYPTION_KEY: z.string().optional().default(""),
+  GHL_EXPECTED_SCOPES: z.string().optional().default(""),
 });
 
 export type AppEnv = z.infer<typeof serverEnvSchema>;
@@ -150,6 +160,16 @@ function readServerRaw() {
     E2E_TEST_USER_NAME: process.env.E2E_TEST_USER_NAME ?? "Test Salesperson",
     E2E_TEST_USER_ROLE: process.env.E2E_TEST_USER_ROLE ?? "salesperson",
     NODE_ENV: process.env.NODE_ENV,
+    ENABLE_GHL_INTEGRATION: process.env.ENABLE_GHL_INTEGRATION ?? "false",
+    GHL_AUTH_MODE: process.env.GHL_AUTH_MODE ?? "private_integration",
+    GHL_PRIVATE_INTEGRATION_TOKEN: process.env.GHL_PRIVATE_INTEGRATION_TOKEN ?? "",
+    GHL_LOCATION_ID: process.env.GHL_LOCATION_ID ?? "",
+    GHL_API_BASE_URL: process.env.GHL_API_BASE_URL ?? "https://services.leadconnectorhq.com",
+    GHL_CLIENT_ID: process.env.GHL_CLIENT_ID ?? "",
+    GHL_CLIENT_SECRET: process.env.GHL_CLIENT_SECRET ?? "",
+    GHL_REDIRECT_URI: process.env.GHL_REDIRECT_URI ?? "",
+    GHL_TOKEN_ENCRYPTION_KEY: process.env.GHL_TOKEN_ENCRYPTION_KEY ?? "",
+    GHL_EXPECTED_SCOPES: process.env.GHL_EXPECTED_SCOPES ?? "",
   };
 }
 

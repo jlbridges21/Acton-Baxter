@@ -49,8 +49,7 @@ export async function POST(request: Request) {
       .parse(body);
 
     if (parsed.action === "inspect_retrieval") {
-      const question =
-        parsed.question?.trim() || "How much was the Lori Harris project agreement for?";
+      const question = parsed.question?.trim() || "Who is Baxter?";
       const evidence = await retrieveBaxterEvidence(question);
       const hit = evidence.structured?.lookups[0];
       const entitiesReset = Boolean(

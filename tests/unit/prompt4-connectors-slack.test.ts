@@ -28,6 +28,7 @@ beforeEach(() => {
   process.env.APP_BASE_URL = "https://example.com";
   process.env.ENABLE_MOCK_RESEARCH = "true";
   process.env.ENABLE_SLACK_INTEGRATION = "true";
+  process.env.ENABLE_GHL_INTEGRATION = "false";
   process.env.SLACK_SIGNING_SECRET = "secret";
   process.env.SLACK_BOT_TOKEN = "xoxb-test";
   process.env.SLACK_ALLOWED_TEAM_IDS = "T123";
@@ -58,9 +59,9 @@ describe("Google connector helpers", () => {
     expect(health.label).toBe("Offline");
   });
 
-  it("lists future connectors as Coming Soon and Slack/Google explicitly", async () => {
+  it("lists connectors with appropriate statuses", async () => {
     const health = await listConnectorHealth();
-    expect(health.find((item) => item.key === "gohighlevel")?.status).toBe("coming_soon");
+    expect(health.find((item) => item.key === "gohighlevel")).toBeTruthy();
     expect(health.find((item) => item.key === "buildertrend")?.status).toBe("coming_soon");
     expect(health.find((item) => item.key === "domo")?.status).toBe("coming_soon");
     expect(health.find((item) => item.key === "google_workspace")).toBeTruthy();

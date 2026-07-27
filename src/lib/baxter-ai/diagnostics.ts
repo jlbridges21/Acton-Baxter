@@ -3,6 +3,7 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { isGoogleWorkspaceConfigured } from "@/lib/connectors/google/auth";
 import { listGoogleSyncFolders } from "@/lib/connectors/google/folders";
+import { isGhlConfigured, isGhlEnabled } from "@/lib/connectors/ghl/config";
 import { listAllKnowledgeEntriesForRetrieval } from "@/lib/knowledge/store";
 import { searchApprovedKnowledge } from "@/lib/knowledge/queries";
 import {
@@ -78,6 +79,8 @@ export async function getBaxterDiagnosticsSnapshot() {
       anthropicKeyPresent: Boolean((env.ANTHROPIC_API_KEY ?? "").trim()),
       supabaseServiceRolePresent: Boolean((env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()),
       googleConfigured: isGoogleWorkspaceConfigured(),
+      ghlConfigured: isGhlConfigured(),
+      ghlEnabled: isGhlEnabled(),
       slackConfigured: Boolean(
         env.ENABLE_SLACK_INTEGRATION &&
         env.SLACK_BOT_TOKEN &&

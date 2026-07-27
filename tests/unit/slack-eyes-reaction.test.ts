@@ -10,12 +10,12 @@ const postSlackMessage = vi.fn(
   }),
 );
 
-const addSlackReaction = vi.fn(
-  async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }),
-);
-const removeSlackReaction = vi.fn(
-  async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }),
-);
+const addSlackReaction = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({
+  ok: true,
+}));
+const removeSlackReaction = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({
+  ok: true,
+}));
 
 const answerBaxterQuestion = vi.fn(async (): Promise<BaxterAnswer> => ({
   answer: "Hello from Baxter.",

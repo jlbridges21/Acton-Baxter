@@ -93,9 +93,7 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
   const [snapshot, setSnapshot] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
-  const [inspectQuestion, setInspectQuestion] = useState(
-    "How much was the Lori Harris project agreement for?",
-  );
+  const [inspectQuestion, setInspectQuestion] = useState("Who is Baxter?");
   const [inspectResult, setInspectResult] = useState<string | null>(null);
 
   async function refresh() {
