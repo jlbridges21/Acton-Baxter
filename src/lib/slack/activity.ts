@@ -5,8 +5,9 @@ import {
   listRecentConversations,
 } from "@/lib/baxter-ai/conversations";
 import type { BaxterConversation, BaxterMessage } from "@/lib/baxter-ai/types";
-import { parseSlackExternalThreadId } from "./display-names";
+import { parseSlackExternalThreadId, slackUserFallbackLabel } from "./display-names";
 import {
+  ensureSlackIdentitiesForKeys,
   formatResolvedChannelLabel,
   formatResolvedUserLabel,
   getCachedSlackChannelProfile,
@@ -158,6 +159,40 @@ export async function listSlackConversationSummaries(
   filters: SlackActivityFilters = {},
 ): Promise<SlackConversationSummary[]> {
   const conversations = (await listRecentConversations(200)).filter((c) => c.channel === "slack");
+
+  const usersToResolve: Array<{ teamId: string; slackUserId: string }> = [];
+  const channelsToResolve: Array<{ teamId: string; slackChannelId: string }> = [];
+  const seenUsers = new Set<string>();
+  const seenChannels = new Set<string>();
+  for (const conversation of conversations) {
+    const parsed = parseSlackExternalThreadId(conversation.external_thread_id);
+    if (parsed.teamId && conversation.external_user_id) {
+      const key = `${parsed.teamId}:${conversation.external_user_id}`;
+      if (!seenUsers.has(key)) {
+        seenUsers.add(key);
+        usersToResolve.push({
+          teamId: parsed.teamId,
+          slackUserId: conversation.external_user_id,
+        });
+      }
+    }
+    if (parsed.teamId && parsed.channelId) {
+      const key = `${parsed.teamId}:${parsed.channelId}`;
+      if (!seenChannels.has(key)) {
+        seenChannels.add(key);
+        channelsToResolve.push({
+          teamId: parsed.teamId,
+          slackChannelId: parsed.channelId,
+        });
+      }
+    }
+  }
+  await ensureSlackIdentitiesForKeys({
+    users: usersToResolve,
+    channels: channelsToResolve,
+    limit: 40,
+  });
+
   const users = await listAllSlackUserProfiles();
   const channels = await listAllSlackChannelProfiles();
   const usersByKey = new Map(users.map((u) => [`${u.team_id}:${u.slack_user_id}`, u]));
@@ -333,7 +368,7 @@ export async function getSlackUserActivityDetail(teamId: string, slackUserId: st
     user: user ?? {
       slackUserId,
       teamId,
-      displayName: "Unknown Slack user",
+      displayName: slackUserFallbackLabel(slackUserId),
       avatarUrl: null,
       conversationCount: conversations.length,
       messageCount: conversations.reduce((s, c) => s + c.messageCount, 0),

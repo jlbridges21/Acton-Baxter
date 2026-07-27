@@ -31,7 +31,7 @@ Slack passes:
 - `userId: null` — no fake Supabase user
 - `externalUserId` — Slack user ID (`U...`)
 - `externalThreadId` — stable conversation key (see below)
-- `userName` — `Slack user U...` (or display name if `users:read` is added later)
+- `userName` — resolved Slack display name when available (`users:read` / `users.profile:read`), else `Slack user U…`
 
 ---
 
@@ -162,7 +162,7 @@ Channels: DMs → “Direct Message”; otherwise `#name` when known; private/un
 
 Use **Refresh Slack names** on the Activity tab to backfill historical IDs (bounded, rate-limit safe). Name resolution never blocks answering Slack messages.
 
-Required bot scopes for name resolution: `users:read`, `channels:read` (see manifest). After adding scopes, **reinstall** the Slack app.
+Required bot scopes for name resolution: `users:read`, `users.profile:read`, `channels:read`. For the 👀 processing indicator: `reactions:write`. After adding scopes, **reinstall** the Slack app. Optional `groups:read` only if private-channel names are required in admin Activity.
 
 Diagnostic actions (admin only, under Health):
 

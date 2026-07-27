@@ -106,14 +106,20 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 
 **Required scopes** (must match `docs/slack-app-manifest.yaml`):
 
-| Scope               | Why                                                        |
-| ------------------- | ---------------------------------------------------------- |
-| `app_mentions:read` | Receive `@Baxter` mentions in channels                     |
-| `chat:write`        | Post replies in DMs and threads                            |
-| `im:history`        | Receive direct messages to Baxter                          |
-| `commands`          | Handle the `/property` slash command                       |
-| `users:read`        | Resolve employee display names for `/admin/slack` Activity |
-| `channels:read`     | Resolve public channel names for admin Activity            |
+| Scope                | Why                                                              |
+| -------------------- | ---------------------------------------------------------------- |
+| `app_mentions:read`  | Receive `@Baxter` mentions in channels                           |
+| `chat:write`         | Post replies in DMs and threads                                  |
+| `im:history`         | Receive direct messages to Baxter                                |
+| `commands`           | Handle the `/property` slash command                             |
+| `users:read`         | Resolve employee display names for `/admin/slack` Activity       |
+| `users.profile:read` | Prefer `profile.display_name` when resolving Slack user identity |
+| `channels:read`      | Resolve **public** channel names for admin Activity              |
+| `reactions:write`    | Add/remove Baxter’s 👀 processing reaction on the user message   |
+
+**Already added in Slack (Jackson):** `users:read`, `users.profile:read`, `channels:read`.
+
+**Still needs a Slack app update + reinstall:** `reactions:write` (required for the 👀 processing indicator).
 
 **Do NOT add** (secure pilot default):
 
@@ -124,11 +130,53 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 | `users:read.email` | Not required — names do not need email            |
 | `mpim:history`     | Not needed                                        |
 
+### Optional: private channel names
+
+`channels:read` covers **public** channels. If Baxter is invited to **private** channels and admins need those names (not `Private channel` / `Channel G…`) in Activity, add:
+
+| Scope         | Why                                     |
+| ------------- | --------------------------------------- |
+| `groups:read` | Resolve private channel names via Slack |
+
+Do **not** add `groups:read` silently. Only add it when private-channel Activity naming is required, then reinstall the app.
+
 **Tradeoff:** Without `channels:history`, Baxter **cannot** see unmentioned thread replies in channels. Employees must `@Baxter` again for each channel follow-up. DMs work as normal free-form conversation.
 
-**After adding `users:read` / `channels:read`:** reinstall the Slack app so the bot token picks up the new scopes. Then open `/admin/slack` → **Refresh Slack names**.
+### After changing scopes
+
+1. Update Bot Token Scopes in Slack (or re-import the manifest).
+2. **OAuth & Permissions → Reinstall to Workspace** so the existing `SLACK_BOT_TOKEN` picks up new permissions.
+3. Open `/admin/slack` → **Refresh Slack names** (or load Activity — missing names resolve on demand from cache).
+
+### How names are resolved
+
+- Server-side only (`src/lib/slack/profiles.ts`). Tokens never go to the browser.
+- Users: `users.info` → prefer `profile.display_name`, then `profile.real_name` / `user.real_name`, then `user.name`, then `Slack user <ID>`.
+- Channels: `conversations.info` → `#name` for public channels; DMs always show **Direct Message**.
+- Results are cached in Supabase (`slack_user_profiles`, `slack_channel_profiles`, migration **019**). Historical conversations reuse IDs already stored on messages — no new chats required for names to appear once metadata resolves.
+- Unresolved private channels fall back to `Channel <ID>` or **Private channel** without failing the admin page.
+
+### 👀 processing reaction
+
+When Baxter accepts an actionable DM or `@Baxter` message:
+
+1. Add 👀 (`reactions.add`, name `eyes`) on the **user’s triggering message** (`event.ts`).
+2. Run the existing Baxter answer pipeline / short empty-mention reply.
+3. Remove 👀 (`reactions.remove`) after the reply is posted (success or employee-facing error).
+
+Reaction failures are logged and **never** fail the AI job, create duplicate answers, or corrupt conversation state. Bot messages never receive reactions. Reaction events are ignored by the Q&A pipeline.
+
+**Manual step:** add `reactions:write`, then **Reinstall to Workspace**.
 
 ---
+
+## 7b. Admin navigation
+
+Slack Activity is **not** a top-level nav item. Admins open:
+
+**Integrations** → `/admin/connectors` → **Slack activity** → `/admin/slack`
+
+The route `/admin/slack` remains available.
 
 ## 8. Event subscriptions
 

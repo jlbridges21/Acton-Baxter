@@ -9,7 +9,13 @@ import {
 } from "@/lib/slack/config";
 import { employeeFacingSlackError, SLACK_ERROR_CODES } from "@/lib/slack/errors";
 import { buildSlackReplySegments } from "@/lib/slack/format";
-import { postSlackMessage, SlackClientError } from "@/lib/slack/client";
+import {
+  addSlackReaction,
+  postSlackMessage,
+  removeSlackReaction,
+  SlackClientError,
+  SLACK_EYES_REACTION,
+} from "@/lib/slack/client";
 import { claimSlackEventReceipt, updateSlackEventReceipt } from "@/lib/slack/receipts";
 import { observeSlackIdentities } from "@/lib/slack/profiles";
 import { logServerError } from "@/lib/errors";
@@ -41,6 +47,8 @@ export function stripBotMention(text: string): string {
 export function shouldIgnoreSlackEvent(event: SlackIncomingEvent): boolean {
   if (event.bot_id) return true;
   if (event.subtype === "bot_message") return true;
+  // Reaction events must never enter the Q&A pipeline (even if subscribed later).
+  if (typeof event.type === "string" && event.type.startsWith("reaction_")) return true;
   if (event.type !== "message" && event.type !== "app_mention") return true;
   if (event.type === "message" && event.subtype && event.subtype !== "file_share") {
     if (event.subtype !== "thread_broadcast") return true;
@@ -263,6 +271,7 @@ export async function handleBaxterSlackEvent(
     }
     return;
   }
+  const channelId: string = channel;
 
   // Channel mentions must thread under the mention (or existing thread).
   // DMs must post top-level — never pass thread_ts for message.im.
@@ -283,11 +292,50 @@ export async function handleBaxterSlackEvent(
     ? event.ts || event.event_ts || "dm"
     : (replyThreadTs as string);
 
+  // React to the triggering user message (not the thread root unless they are the same).
+  const reactionTs = event.ts ?? null;
+  let eyesAdded = false;
+
+  async function tryAddEyesReaction() {
+    if (!reactionTs) return;
+    const result = await addSlackReaction({
+      channel: channelId,
+      timestamp: reactionTs,
+      name: SLACK_EYES_REACTION,
+    });
+    if (result.ok) {
+      eyesAdded = true;
+    } else {
+      console.error("[slack.reaction.add_failed]", {
+        channelId,
+        timestamp: reactionTs,
+        error: result.error ?? null,
+      });
+    }
+  }
+
+  async function tryRemoveEyesReaction() {
+    if (!eyesAdded || !reactionTs) return;
+    const result = await removeSlackReaction({
+      channel: channelId,
+      timestamp: reactionTs,
+      name: SLACK_EYES_REACTION,
+    });
+    if (!result.ok) {
+      console.error("[slack.reaction.remove_failed]", {
+        channelId,
+        timestamp: reactionTs,
+        error: result.error ?? null,
+      });
+    }
+  }
+
   // Empty mention (just @Baxter) — reply with a short prompt, no AI call.
   if (!text) {
+    await tryAddEyesReaction();
     try {
       await postSlackMessage({
-        channel,
+        channel: channelId,
         ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: "*Baxter*\nAsk me a question about Acton procedures, general work help, or what I can do. Send `/clear` to start a fresh conversation.",
       });
@@ -296,13 +344,15 @@ export async function handleBaxterSlackEvent(
       }
     } catch (error) {
       await markPostFailure(eventId, error);
+    } finally {
+      await tryRemoveEyesReaction();
     }
     return;
   }
 
   const externalThreadId = buildSlackExternalThreadId({
     teamId,
-    channelId: channel,
+    channelId,
     userId: event.user ?? null,
     threadTs: conversationRootTs,
     isDm: access.isDm,
@@ -313,18 +363,19 @@ export async function handleBaxterSlackEvent(
   const stableExternalThreadId = access.isDm
     ? buildSlackExternalThreadId({
         teamId,
-        channelId: channel,
+        channelId,
         userId: event.user ?? null,
         threadTs: "dm",
         isDm: true,
       })
     : externalThreadId;
 
+  await tryAddEyesReaction();
   try {
     const identities = await observeSlackIdentities({
       teamId: teamId ?? "unknown",
       slackUserId: event.user ?? null,
-      slackChannelId: channel,
+      slackChannelId: channelId,
     });
 
     const result = await answerBaxterQuestion({
@@ -339,7 +390,7 @@ export async function handleBaxterSlackEvent(
     const segments = buildSlackReplySegments(result);
     for (const segment of segments) {
       await postSlackMessage({
-        channel,
+        channel: channelId,
         ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: segment.text,
         blocks: segment.blocks,
@@ -366,7 +417,7 @@ export async function handleBaxterSlackEvent(
     logServerError("handleBaxterSlackEvent", {
       code,
       eventId: eventId ?? null,
-      channelId: channel,
+      channelId,
       threadTs: replyThreadTs ?? null,
       isDm: access.isDm,
       slackError: error instanceof SlackClientError ? error.slackError : null,
@@ -375,7 +426,7 @@ export async function handleBaxterSlackEvent(
 
     try {
       await postSlackMessage({
-        channel,
+        channel: channelId,
         ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: employeeFacingSlackError(code),
       });
@@ -383,7 +434,7 @@ export async function handleBaxterSlackEvent(
       logServerError("handleBaxterSlackEvent:errorReply", {
         code: SLACK_ERROR_CODES.POST_FAILED,
         eventId: eventId ?? null,
-        channelId: channel,
+        channelId,
         threadTs: replyThreadTs ?? null,
         isDm: access.isDm,
         slackError: postError instanceof SlackClientError ? postError.slackError : null,
@@ -397,6 +448,8 @@ export async function handleBaxterSlackEvent(
         errorCode: code,
       });
     }
+  } finally {
+    await tryRemoveEyesReaction();
   }
 }
 

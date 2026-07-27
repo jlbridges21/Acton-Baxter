@@ -7,6 +7,7 @@ import {
   isSlackProfileStale,
   pickSlackChannelLabel,
   pickSlackDisplayName,
+  slackUserFallbackLabel,
 } from "./display-names";
 
 export type SlackUserProfileRecord = {
@@ -405,10 +406,10 @@ export async function resolveSlackChannelProfile(input: {
 
 export function formatResolvedUserLabel(
   profile: SlackUserProfileRecord | null,
-  _slackUserId: string | null,
+  slackUserId: string | null,
 ) {
   if (profile) return pickSlackDisplayName(profile);
-  return "Unknown Slack user";
+  return slackUserFallbackLabel(slackUserId);
 }
 
 export function formatResolvedChannelLabel(
@@ -420,13 +421,150 @@ export function formatResolvedChannelLabel(
   return pickSlackChannelLabel({ slack_channel_id: slackChannelId });
 }
 
+/** Normalized Slack user identity for admin/display (IDs remain canonical elsewhere). */
+export async function getSlackUser(
+  teamId: string,
+  userId: string,
+): Promise<{
+  id: string;
+  displayName: string;
+  realName: string | null;
+  imageUrl: string | null;
+}> {
+  const profile = await resolveSlackUserProfile({ teamId, slackUserId: userId });
+  return {
+    id: profile.slack_user_id,
+    displayName: formatResolvedUserLabel(profile, userId),
+    realName: profile.real_name,
+    imageUrl: profile.avatar_url,
+  };
+}
+
+/** Normalized Slack channel identity for admin/display. */
+export async function getSlackChannel(
+  teamId: string,
+  channelId: string,
+): Promise<{
+  id: string;
+  name: string | null;
+  displayName: string;
+  type: string | null;
+}> {
+  const profile = await resolveSlackChannelProfile({ teamId, slackChannelId: channelId });
+  return {
+    id: profile.slack_channel_id,
+    name: profile.name,
+    displayName: formatResolvedChannelLabel(profile, channelId),
+    type: profile.channel_type,
+  };
+}
+
+export type SlackIdentityCacheStats = {
+  usersResolved: number;
+  usersTotal: number;
+  channelsResolved: number;
+  channelsTotal: number;
+  lastMetadataRefresh: string | null;
+};
+
+export async function getSlackIdentityCacheStats(): Promise<SlackIdentityCacheStats> {
+  const users = await listAllSlackUserProfiles();
+  const channels = await listAllSlackChannelProfiles();
+  const usersResolved = users.filter((u) =>
+    Boolean(u.display_name?.trim() || u.real_name?.trim() || u.username?.trim()),
+  ).length;
+  const channelsResolved = channels.filter(
+    (c) => Boolean(c.name?.trim()) || isSlackDmChannelId(c.slack_channel_id),
+  ).length;
+
+  let lastMetadataRefresh: string | null = null;
+  for (const row of [...users, ...channels]) {
+    if (!row.last_resolved_at) continue;
+    if (
+      !lastMetadataRefresh ||
+      Date.parse(row.last_resolved_at) > Date.parse(lastMetadataRefresh)
+    ) {
+      lastMetadataRefresh = row.last_resolved_at;
+    }
+  }
+
+  return {
+    usersResolved,
+    usersTotal: users.length,
+    channelsResolved,
+    channelsTotal: channels.length,
+    lastMetadataRefresh,
+  };
+}
+
+/**
+ * Resolve missing/stale display metadata for conversation IDs (bounded).
+ * Used so historical Slack conversations pick up names without a manual refresh.
+ */
+export async function ensureSlackIdentitiesForKeys(input: {
+  users: Array<{ teamId: string; slackUserId: string }>;
+  channels: Array<{ teamId: string; slackChannelId: string }>;
+  limit?: number;
+}): Promise<void> {
+  const limit = input.limit ?? 30;
+  let budget = limit;
+
+  for (const u of input.users) {
+    if (budget <= 0) break;
+    const cached = await getCachedSlackUserProfile(u.teamId, u.slackUserId);
+    const hasName = Boolean(
+      cached?.display_name?.trim() || cached?.real_name?.trim() || cached?.username?.trim(),
+    );
+    if (cached && hasName && !isSlackProfileStale(cached.last_resolved_at)) continue;
+    try {
+      await resolveSlackUserProfile({
+        teamId: u.teamId,
+        slackUserId: u.slackUserId,
+        force: false,
+      });
+      budget -= 1;
+    } catch {
+      // never block admin page
+    }
+  }
+
+  for (const c of input.channels) {
+    if (budget <= 0) break;
+    if (isSlackDmChannelId(c.slackChannelId)) {
+      try {
+        await resolveSlackChannelProfile({
+          teamId: c.teamId,
+          slackChannelId: c.slackChannelId,
+        });
+      } catch {
+        // ignore
+      }
+      continue;
+    }
+    const cached = await getCachedSlackChannelProfile(c.teamId, c.slackChannelId);
+    if (cached?.name?.trim() && !isSlackProfileStale(cached.last_resolved_at)) continue;
+    try {
+      await resolveSlackChannelProfile({
+        teamId: c.teamId,
+        slackChannelId: c.slackChannelId,
+        force: false,
+      });
+      budget -= 1;
+    } catch {
+      // never block admin page
+    }
+  }
+}
+
 export async function observeSlackIdentities(input: {
   teamId: string;
   slackUserId?: string | null;
   slackChannelId?: string | null;
 }): Promise<{ userLabel: string; channelLabel: string }> {
-  let userLabel = "Unknown Slack user";
-  let channelLabel = "Unknown channel";
+  let userLabel = slackUserFallbackLabel(input.slackUserId);
+  let channelLabel = input.slackChannelId
+    ? pickSlackChannelLabel({ slack_channel_id: input.slackChannelId })
+    : "Unknown channel";
 
   try {
     if (input.slackUserId) {

@@ -14,7 +14,7 @@ import { claimNextJob } from "@/lib/jobs/queue";
 import { processJob } from "@/lib/jobs/process";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
-import { backfillSlackDisplayNames } from "@/lib/slack/profiles";
+import { backfillSlackDisplayNames, getSlackIdentityCacheStats } from "@/lib/slack/profiles";
 import {
   getSlackActivityOverview,
   getSlackChannelActivityDetail,
@@ -36,6 +36,7 @@ export type { SlackActivityFilters };
 export async function getAdminSlackSnapshot() {
   const config = getSlackRuntimeConfig();
   const stats = await getSlackReceiptStats();
+  const identity = await getSlackIdentityCacheStats();
   const health = await evaluateSlackHealth({
     recentErrors: stats.failedJobs > 0 || stats.recentErrorCodes.length > 0,
   });
@@ -84,6 +85,7 @@ export async function getAdminSlackSnapshot() {
       missingRequired: config.missingRequired,
     },
     stats,
+    identity,
     activity,
   };
 }

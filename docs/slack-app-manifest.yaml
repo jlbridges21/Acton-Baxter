@@ -25,8 +25,11 @@ oauth_config:
       - commands
       # Admin UX — resolve human-readable user names (users.info)
       - users:read
+      - users.profile:read
       # Admin UX — resolve public channel names (conversations.info)
       - channels:read
+      # Processing indicator — add/remove 👀 on the user’s triggering message
+      - reactions:write
 settings:
   event_subscriptions:
     request_url: https://acton-baxter.vercel.app/api/slack/events

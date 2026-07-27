@@ -149,6 +149,80 @@ export async function postSlackMessage(
   );
 }
 
+/** Slack reaction name for the 👀 emoji. */
+export const SLACK_EYES_REACTION = "eyes";
+
+export type SlackReactionInput = {
+  channel: string;
+  timestamp: string;
+  name?: string;
+};
+
+/**
+ * Add a reaction to a Slack message. Cosmetic only — never throws.
+ * Requires reactions:write. Failures are logged safely by the caller.
+ */
+export async function addSlackReaction(
+  input: SlackReactionInput,
+): Promise<{ ok: boolean; error?: string }> {
+  return slackReactionRequest("reactions.add", input);
+}
+
+/**
+ * Remove a reaction Baxter previously added. Cosmetic only — never throws.
+ */
+export async function removeSlackReaction(
+  input: SlackReactionInput,
+): Promise<{ ok: boolean; error?: string }> {
+  return slackReactionRequest("reactions.remove", input);
+}
+
+async function slackReactionRequest(
+  method: "reactions.add" | "reactions.remove",
+  input: SlackReactionInput,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const env = getEnv();
+    if (!env.SLACK_BOT_TOKEN) {
+      return { ok: false, error: "missing_bot_token" };
+    }
+    if (!input.channel || !input.timestamp) {
+      return { ok: false, error: "missing_channel_or_timestamp" };
+    }
+
+    const name = input.name ?? SLACK_EYES_REACTION;
+    const response = await fetch(`https://slack.com/api/${method}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel: input.channel,
+        timestamp: input.timestamp,
+        name,
+      }),
+    });
+
+    const data = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+    } | null;
+
+    if (!data?.ok) {
+      // already_reacted / no_reaction are benign for our add/remove lifecycle
+      const error = data?.error ?? "reaction_failed";
+      if (error === "already_reacted" || error === "no_reaction") {
+        return { ok: true };
+      }
+      return { ok: false, error };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "reaction_exception" };
+  }
+}
+
 export async function authTestSlack(): Promise<{
   ok: boolean;
   error?: string;

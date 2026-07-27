@@ -16,7 +16,7 @@ export type SlackChannelProfileLike = {
   is_private?: boolean | null;
 };
 
-/** Preferred: display_name → real_name → username → safe ID fallback. */
+/** Preferred: display_name → real_name → username → Slack user <id>. */
 export function pickSlackDisplayName(profile: SlackUserProfileLike): string {
   const display = profile.display_name?.trim();
   if (display) return display;
@@ -24,12 +24,13 @@ export function pickSlackDisplayName(profile: SlackUserProfileLike): string {
   if (real) return real;
   const username = profile.username?.trim();
   if (username) return username;
-  return `Unknown Slack user`;
+  return slackUserFallbackLabel(profile.slack_user_id);
 }
 
+/** Prefer a useful ID over opaque "Unknown" when lookup failed. */
 export function slackUserFallbackLabel(slackUserId: string | null | undefined): string {
   if (!slackUserId) return "Unknown Slack user";
-  return "Unknown Slack user";
+  return `Slack user ${slackUserId}`;
 }
 
 export function isSlackDmChannelId(channelId: string | null | undefined): boolean {

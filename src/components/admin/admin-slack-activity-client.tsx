@@ -62,6 +62,13 @@ type SnapshotExtras = {
     lastFailedAt: string | null;
     recentErrorCodes: string[];
   };
+  identity?: {
+    usersResolved: number;
+    usersTotal: number;
+    channelsResolved: number;
+    channelsTotal: number;
+    lastMetadataRefresh: string | null;
+  };
 };
 
 function YesNo({ value }: { value: boolean }) {
@@ -383,11 +390,30 @@ export function AdminSlackActivityClient({
       {tab === "health" ? (
         <div className="space-y-4">
           <Card className="p-4">
-            <CardTitle>Health</CardTitle>
+            <CardTitle>Slack</CardTitle>
             <CardDescription className="mt-2 text-lg font-semibold text-[var(--acton-navy)]">
-              {extras.health.label} ({extras.health.status})
+              {extras.health.status === "healthy" ||
+              extras.health.label.toLowerCase().includes("ok")
+                ? "Connected"
+                : extras.health.label}{" "}
+              <span className="text-sm font-normal text-[var(--acton-muted)]">
+                ({extras.health.status})
+              </span>
             </CardDescription>
             <p className="mt-2 text-sm text-[var(--acton-muted)]">{extras.health.details}</p>
+            {extras.identity ? (
+              <ul className="mt-3 space-y-1 text-sm text-[var(--acton-navy)]">
+                <li>
+                  Users: {extras.identity.usersResolved} resolved
+                  {extras.identity.usersTotal ? ` of ${extras.identity.usersTotal} seen` : ""}
+                </li>
+                <li>
+                  Channels: {extras.identity.channelsResolved} resolved
+                  {extras.identity.channelsTotal ? ` of ${extras.identity.channelsTotal} seen` : ""}
+                </li>
+                <li>Last metadata refresh: {formatWhen(extras.identity.lastMetadataRefresh)}</li>
+              </ul>
+            ) : null}
           </Card>
           <div className="grid gap-4 md:grid-cols-4">
             <Card className="p-4">
@@ -407,8 +433,10 @@ export function AdminSlackActivityClient({
               <p className="mt-2 text-2xl font-bold">{extras.stats.duplicatesIgnored}</p>
             </Card>
           </div>
-          <Card className="p-4">
-            <CardTitle>Recent health signals</CardTitle>
+          <details className="rounded-lg border border-[var(--acton-border)] bg-white p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-[var(--acton-navy)]">
+              Advanced health signals
+            </summary>
             <ul className="mt-3 space-y-1 text-sm text-[var(--acton-muted)]">
               <li>Last valid event: {extras.stats.lastValidEventAt ?? "—"}</li>
               <li>Last successful reply: {extras.stats.lastCompletedAt ?? "—"}</li>
@@ -420,13 +448,10 @@ export function AdminSlackActivityClient({
                   : "none"}
               </li>
             </ul>
-          </Card>
-          <Card className="p-4">
-            <CardTitle>Diagnostic actions</CardTitle>
             <div className="mt-4">
               <AdminSlackDiagnosticsClient />
             </div>
-          </Card>
+          </details>
         </div>
       ) : null}
 

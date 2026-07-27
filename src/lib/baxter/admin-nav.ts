@@ -53,12 +53,6 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/admin/users"),
     },
     {
-      href: "/admin/slack",
-      label: "Slack",
-      icon: MessageSquare,
-      match: (pathname) => pathname.startsWith("/admin/slack"),
-    },
-    {
       href: "/admin/baxter/diagnostics",
       label: "Diagnostics",
       icon: Activity,

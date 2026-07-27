@@ -43,6 +43,7 @@ export default async function AdminSlackPage({
             health: snapshot.health,
             config: snapshot.config,
             stats: snapshot.stats,
+            identity: snapshot.identity,
           }}
         />
       </Suspense>
