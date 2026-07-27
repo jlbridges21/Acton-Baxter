@@ -1,38 +1,31 @@
 /**
  * Built-in Baxter identity — version-controlled minimum profile.
- * Not a substitute for the Knowledge Base. Used so Baxter can explain itself
- * even when no approved entries exist.
+ * Permanent behavior lives in governance/runtime; this supports fast identity answers.
  */
+import { BAXTER_CURRENT_CAPABILITIES, BAXTER_CURRENT_LIMITATIONS } from "./governance/capabilities";
+import { BAXTER_RUNTIME_VERSION } from "./governance/version";
+
 export const BAXTER_IDENTITY = {
   name: "Baxter",
   company: "Acton ADU",
   summary:
-    "Baxter is Acton ADU’s internal AI assistant — a digital teammate that helps employees find approved procedures, policies, processes, and institutional knowledge, and also helps with general questions, drafting, summarization, and explanation.",
-  capabilities: [
-    "Answer questions in the Baxter web dashboard chat",
-    "Answer questions in Slack (when Slack Events are configured)",
-    "Search approved Knowledge Base entries, including Google Workspace–synced Docs and Sheets",
-    "Cite the original Acton sources used for company-specific answers",
-    "Help with general explanations, writing, and summarization",
-  ],
-  limitations: [
-    "Not customer-facing",
-    "Not an autonomous decision-maker",
-    "Does not invent official Acton policies, RACI assignments, pricing, or project facts",
-    "Does not currently have live access to Buildertrend, GoHighLevel, or Domo",
-    "Important decisions should be verified with the responsible Acton teammate",
-  ],
+    "Baxter is Acton ADU’s internal digital teammate — helping employees find approved procedures and knowledge, make better decisions, and reduce preventable mistakes.",
+  capabilities: BAXTER_CURRENT_CAPABILITIES,
+  limitations: BAXTER_CURRENT_LIMITATIONS,
   sources: [
     "Approved Knowledge Base entries (manual)",
     "Synchronized Google Workspace documents (when the Google connector is configured and healthy)",
+    "Structured spreadsheet knowledge units",
     "Built-in Baxter identity profile for explaining Baxter itself",
   ],
+  runtimeVersion: BAXTER_RUNTIME_VERSION,
 } as const;
 
 export function buildBaxterIdentityContext(): string {
   return [
     `Name: ${BAXTER_IDENTITY.name}`,
     `Company: ${BAXTER_IDENTITY.company}`,
+    `Runtime version: ${BAXTER_IDENTITY.runtimeVersion}`,
     `Summary: ${BAXTER_IDENTITY.summary}`,
     "Capabilities:",
     ...BAXTER_IDENTITY.capabilities.map((item) => `- ${item}`),
@@ -45,6 +38,9 @@ export function buildBaxterIdentityContext(): string {
 
 export function answerFromBaxterIdentity(question: string): string {
   const q = question.toLowerCase();
+  if (/what version|which version|runtime version/.test(q)) {
+    return `I’m running Baxter runtime v${BAXTER_RUNTIME_VERSION}.`;
+  }
   if (/what can you (do|help)|what do you (do|help)|capabilities|how (can|do) you help/.test(q)) {
     return [
       BAXTER_IDENTITY.summary,
@@ -73,4 +69,28 @@ export function answerFromBaxterIdentity(question: string): string {
     "I use approved Acton Knowledge Base entries and synchronized Google Workspace sources for company-specific answers, and I cite those sources when I use them.",
     "I can also help with general questions and writing. I’m not customer-facing and I’m not a decision-maker — verify important decisions with the responsible teammate.",
   ].join("\n");
+}
+
+/** Standing-instruction requests that cannot permanently change Baxter. */
+export function isStandingBehaviorChangeRequest(question: string): boolean {
+  return /\b(from now on|always (do|tell|say|skip|ignore)|standing (rule|instruction|behavior)|permanently|reprogram|update your (rules|instructions|prompt))\b/i.test(
+    question,
+  );
+}
+
+export function standingBehaviorChangeResponse(): string {
+  return [
+    "I can help with the immediate request, but I can’t adopt standing behavior changes from chat.",
+    "Permanent Baxter behavior updates go through approved runtime / change-control — not a one-off Slack or web message.",
+  ].join(" ");
+}
+
+export function isPromptExtractionAttempt(question: string): boolean {
+  return /\b(system prompt|hidden (prompt|instructions)|ignore (all )?(previous |your )?rules|reveal (your )?(prompt|instructions)|repeat your instructions)\b/i.test(
+    question,
+  );
+}
+
+export function promptExtractionRefusal(): string {
+  return "I can’t share my hidden instructions or setup. Happy to help with Acton work, procedures, or general questions instead.";
 }

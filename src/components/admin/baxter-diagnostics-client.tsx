@@ -21,6 +21,9 @@ type Snapshot = {
     supabaseServiceRolePresent: boolean;
     googleConfigured: boolean;
     slackConfigured: boolean;
+    runtimeVersion?: string;
+    governanceVersion?: string;
+    loadedStandards?: string[];
   };
   openai?: {
     lastSuccessfulRequest: string | null;
@@ -61,6 +64,13 @@ type Snapshot = {
     lastEvaluationAt: string | null;
     evalPassRate: number | null;
     indexVersion: number;
+  };
+  governance?: {
+    runtimeVersion: string;
+    governanceVersion: string;
+    openDecisionCount: number;
+    unresolvedRiskCount: number;
+    note: string;
   };
   conversations: {
     last24h: number;
@@ -144,9 +154,50 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
       <div>
         <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Baxter diagnostics</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Admin-only health checks. Secret values are never displayed.
+          Admin-only health checks. Secret values and the full system prompt are never displayed.
         </p>
       </div>
+
+      <Card>
+        <CardTitle>Runtime</CardTitle>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-[var(--acton-muted)]">Runtime version</dt>
+            <dd>v{snapshot.config.runtimeVersion ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Governance version</dt>
+            <dd>
+              v{snapshot.config.governanceVersion ?? snapshot.governance?.governanceVersion ?? "—"}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-[var(--acton-muted)]">Canonical standards (runtime)</dt>
+            <dd>{(snapshot.config.loadedStandards ?? []).join(", ") || "—"}</dd>
+          </div>
+          {snapshot.governance ? (
+            <>
+              <div>
+                <dt className="text-[var(--acton-muted)]">Open governance decisions</dt>
+                <dd>{snapshot.governance.openDecisionCount}</dd>
+              </div>
+              <div>
+                <dt className="text-[var(--acton-muted)]">Unresolved risks</dt>
+                <dd>{snapshot.governance.unresolvedRiskCount}</dd>
+              </div>
+              <div className="text-xs text-[var(--acton-muted)] sm:col-span-2">
+                {snapshot.governance.note}{" "}
+                <a
+                  href="/admin/baxter/governance"
+                  className="font-semibold underline-offset-2 hover:underline"
+                >
+                  Open governance
+                </a>
+              </div>
+            </>
+          ) : null}
+        </dl>
+      </Card>
 
       <Card>
         <CardTitle>Configuration</CardTitle>

@@ -65,6 +65,12 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
     },
     {
+      href: "/admin/baxter/governance",
+      label: "Governance",
+      icon: Settings,
+      match: (pathname) => pathname.startsWith("/admin/baxter/governance"),
+    },
+    {
       href: "/admin/baxter/evaluations",
       label: "Evaluations",
       icon: Rocket,

@@ -23,7 +23,14 @@ import {
   logBaxterDiagnostic,
 } from "./errors";
 import { classifyBaxterQuestion } from "./classify";
-import { answerFromBaxterIdentity, buildBaxterIdentityContext } from "./identity";
+import {
+  answerFromBaxterIdentity,
+  buildBaxterIdentityContext,
+  isPromptExtractionAttempt,
+  isStandingBehaviorChangeRequest,
+  promptExtractionRefusal,
+  standingBehaviorChangeResponse,
+} from "./identity";
 import { getEnv } from "@/lib/env";
 import type { BaxterAnswer, BaxterAnswerMode, BaxterQuestionInput } from "./types";
 import { draftDirectStructuredAnswer } from "@/lib/knowledge-index";
@@ -131,6 +138,52 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       confidence: "high",
       modelProvider: null,
       modelName: null,
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer,
+      sources: [],
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "clarification",
+    });
+  }
+
+  if (isPromptExtractionAttempt(question)) {
+    const answer = promptExtractionRefusal();
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: answer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "governance",
+      modelName: "runtime",
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer,
+      sources: [],
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "clarification",
+    });
+  }
+
+  if (isStandingBehaviorChangeRequest(question)) {
+    const answer = standingBehaviorChangeResponse();
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: answer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "governance",
+      modelName: "change-control",
       sources: [],
       sourceEntryIds: [],
     });

@@ -31,7 +31,9 @@ Admin actions:
 - Run golden suite
 - Run one / run category
 
-IDs include Lori agreement/close, current-year sold + count, semantic procedure, cross-source, multimodal, PDF citation smoke, context reset, follow-up continuity, knowledge gap.
+IDs include Lori agreement/close, current-year sold + count, semantic procedure, cross-source, multimodal, PDF citation smoke, context reset, follow-up continuity, knowledge gap, and governance cases (`eval-gov-*`: standing-instruction refusal, prompt-extraction refusal).
+
+Unit tests in `tests/unit/baxter-governance-runtime.test.ts` cover runtime assembly, evidence wrapping, value-prop conditioning, and PLACEHOLDER parsing.
 
 ## Admin UI
 

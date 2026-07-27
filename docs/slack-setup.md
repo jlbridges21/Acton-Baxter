@@ -106,14 +106,14 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 
 **Required scopes** (must match `docs/slack-app-manifest.yaml`):
 
-| Scope               | Why                                    |
-| ------------------- | -------------------------------------- |
-| `app_mentions:read` | Receive `@Baxter` mentions in channels |
-| `chat:write`        | Post replies in DMs and threads        |
-| `im:history`        | Receive direct messages to Baxter      |
-| `commands`          | Handle the `/property` slash command   |
+| Scope               | Why                                                        |
+| ------------------- | ---------------------------------------------------------- |
+| `app_mentions:read` | Receive `@Baxter` mentions in channels                     |
+| `chat:write`        | Post replies in DMs and threads                            |
+| `im:history`        | Receive direct messages to Baxter                          |
+| `commands`          | Handle the `/property` slash command                       |
 | `users:read`        | Resolve employee display names for `/admin/slack` Activity |
-| `channels:read`     | Resolve public channel names for admin Activity |
+| `channels:read`     | Resolve public channel names for admin Activity            |
 
 **Do NOT add** (secure pilot default):
 

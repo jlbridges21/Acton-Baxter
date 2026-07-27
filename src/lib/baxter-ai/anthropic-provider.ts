@@ -51,7 +51,7 @@ export class AnthropicBaxterProvider implements BaxterLLMProvider {
           model,
           max_tokens: 1200,
           temperature: 0.3,
-          system: buildBaxterSystemPrompt(),
+          system: buildBaxterSystemPrompt(input.question),
           messages: [{ role: "user", content: buildBaxterUserPrompt(input) }],
         }),
         signal: controller.signal,

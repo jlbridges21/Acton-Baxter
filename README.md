@@ -1,6 +1,6 @@
 # Baxter
 
-**Baxter** is Acton ADU’s internal tools and knowledge platform.
+Baxter is Acton ADU’s internal digital teammate (runtime v1.1). See `docs/baxter/governance-architecture.md`.
 
 **Property Research** is the first Baxter tool. It researches a California property address and prepares a short Partnership Evaluation Meeting (PEM) brief.
 

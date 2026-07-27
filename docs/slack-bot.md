@@ -145,12 +145,12 @@ Evaluated by `evaluateSlackHealth()` and shown at `/admin/slack`:
 
 ## Admin routes
 
-| Route | Purpose |
-| --- | --- |
-| `/admin/slack` | **Activity** (default): users & channels with human names; Health & Settings tabs for diagnostics |
-| `/admin/slack/users/[teamId]/[slackUserId]` | User activity grouped by Direct Message / channel |
-| `/admin/slack/channels/[teamId]/[channelId]` | Channel activity and participants |
-| `/admin/slack/conversations/[id]` | Conversation detail — chat-style history, sources, safe error codes |
+| Route                                        | Purpose                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `/admin/slack`                               | **Activity** (default): users & channels with human names; Health & Settings tabs for diagnostics |
+| `/admin/slack/users/[teamId]/[slackUserId]`  | User activity grouped by Direct Message / channel                                                 |
+| `/admin/slack/channels/[teamId]/[channelId]` | Channel activity and participants                                                                 |
+| `/admin/slack/conversations/[id]`            | Conversation detail — chat-style history, sources, safe error codes                               |
 
 ### Display names
 

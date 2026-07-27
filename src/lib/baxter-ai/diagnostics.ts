@@ -19,6 +19,7 @@ import { getBaxterProviderDiagnostics } from "./providers";
 import { getEmbeddingConfig } from "@/lib/knowledge-index/embeddings";
 import { getBaxterVisionProvider } from "./vision";
 import { getKnowledgeHealthSummary } from "./knowledge-health";
+import { getGovernanceAdminSummary, assembleBaxterRuntime } from "./governance";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
@@ -58,6 +59,8 @@ export async function getBaxterDiagnosticsSnapshot() {
 
   const openaiMetrics = getOpenAiMetricsSnapshot();
   const knowledgeHealth = await getKnowledgeHealthSummary();
+  const governance = getGovernanceAdminSummary();
+  const runtime = assembleBaxterRuntime({ includeJsonContract: false });
 
   return {
     config: {
@@ -81,6 +84,9 @@ export async function getBaxterDiagnosticsSnapshot() {
         env.SLACK_SIGNING_SECRET &&
         env.SLACK_ALLOWED_TEAM_IDS,
       ),
+      runtimeVersion: runtime.runtimeVersion,
+      governanceVersion: runtime.governanceVersion,
+      loadedStandards: runtime.loadedStandards,
     },
     openai: {
       ...openaiMetrics,
@@ -103,6 +109,13 @@ export async function getBaxterDiagnosticsSnapshot() {
           .at(-1) ?? null,
     },
     knowledgeHealth,
+    governance: {
+      runtimeVersion: governance.runtimeVersion,
+      governanceVersion: governance.governanceVersion,
+      openDecisionCount: governance.openDecisions.length,
+      unresolvedRiskCount: governance.unresolvedRisks.length,
+      note: governance.note,
+    },
     conversations: {
       last24h: recent.length,
       successfulAssistantResponses: successful,

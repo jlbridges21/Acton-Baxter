@@ -1,6 +1,6 @@
 # Baxter — employee guide
 
-Baxter is Acton ADU’s internal AI assistant. It helps employees with company procedures, approved documentation, and general questions. Baxter is **not** a substitute for legal, engineering, or feasibility determinations.
+Baxter is Acton ADU’s internal AI teammate. It helps employees with company procedures, approved documentation, and general questions — in Acton’s voice and operating standards. Baxter is **not** a substitute for legal, engineering, or feasibility determinations.
 
 **Web app:** https://acton-baxter.vercel.app
 

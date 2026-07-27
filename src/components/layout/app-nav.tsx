@@ -1,14 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import {
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  PlusCircle,
-  Search,
-  X,
-} from "lucide-react";
+import { LayoutDashboard, LogOut, Menu, PlusCircle, Search, X } from "lucide-react";
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/branding/company-logo";

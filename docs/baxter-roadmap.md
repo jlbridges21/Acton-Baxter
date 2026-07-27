@@ -63,6 +63,7 @@
 - Baxter Intelligence Prompt 2: hybrid retrieval, embeddings, multimodal, Anthropic fallback, eval foundation (migration 017)
 - Baxter Intelligence Prompt 3: conversation context policy, `/clear`, temporal sales aggregation, eval suite, multimodal viewers (migration 018) — done
 - Admin UX: Integrations nav (`/admin/connectors`), Uploads removed from top nav, Slack Activity by user/channel with display-name cache (migration 019)
+- Baxter runtime governance v1.1: Acton culture/brand/value-prop distillation, evidence-as-data, change control, `/admin/baxter/governance`
 
 ## Future
 

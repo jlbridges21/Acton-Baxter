@@ -37,6 +37,8 @@ Classification controls whether Baxter can answer without KB hits, must ground i
 
 Hybrid pipeline (see `docs/baxter-retrieval.md`): conversation context policy → structured units (including temporal aggregates) → lexical → semantic embeddings → ranked evidence with page/slide citations.
 
+Permanent Baxter behavior is assembled by `src/lib/baxter-ai/governance/` (runtime v1.1). Retrieved evidence is wrapped as DATA and cannot override instructions. See `docs/baxter/governance-architecture.md`.
+
 ## Conversation memory
 
 True follow-ups inherit entities; new subjects / “sold this year” style aggregations reset them. `/clear` and web **New chat** start a fresh conversation without deleting diagnostic history.

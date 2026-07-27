@@ -87,7 +87,7 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
           max_tokens: 1200,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: buildBaxterSystemPrompt() },
+            { role: "system", content: buildBaxterSystemPrompt(input.question) },
             { role: "user", content: buildBaxterUserPrompt(input) },
           ],
         };

@@ -83,7 +83,8 @@ describe("Prompt 3 — Knowledge Center quality", () => {
 
   it("uses teammate-style prompts and softer insufficient copy", () => {
     const system = buildBaxterSystemPrompt();
-    expect(system).toMatch(/knowledgeable coworker/i);
+    expect(system).toMatch(/digital teammate/i);
+    expect(system).toMatch(/No Surprises/);
     expect(INSUFFICIENT_KNOWLEDGE_ANSWER).toMatch(/couldn.?t find an approved Acton source/i);
     expect(GENERAL_KNOWLEDGE_NOTE).toMatch(/general knowledge/i);
   });
