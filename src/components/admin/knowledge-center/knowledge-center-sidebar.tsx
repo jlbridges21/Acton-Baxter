@@ -12,6 +12,7 @@ import {
   FileWarning,
   FileUp,
   Settings,
+  Shield,
   Activity,
   PenLine,
   Clock,
@@ -30,7 +31,8 @@ export type KnowledgeCenterView =
   | "settings"
   | "health"
   | "rulebook"
-  | "monitoring";
+  | "monitoring"
+  | "governance";
 
 const NAV: Array<{
   view: KnowledgeCenterView;
@@ -90,8 +92,14 @@ const NAV: Array<{
     icon: Bell,
   },
   {
+    view: "governance",
+    label: "Baxter Governance",
+    href: "/admin/baxter/governance",
+    icon: Shield,
+  },
+  {
     view: "settings",
-    label: "Settings",
+    label: "Knowledge Settings",
     href: "/admin/knowledge/settings",
     icon: Settings,
   },
@@ -115,6 +123,9 @@ export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeC
     }
     if (item.href.startsWith("/admin/baxter/monitoring")) {
       return pathname.startsWith("/admin/baxter/monitoring");
+    }
+    if (item.href.startsWith("/admin/baxter/governance")) {
+      return pathname.startsWith("/admin/baxter/governance");
     }
     if (pathname === "/admin/knowledge" || pathname.startsWith("/admin/knowledge?")) {
       if (item.view === "all") return !searchParams.get("view");

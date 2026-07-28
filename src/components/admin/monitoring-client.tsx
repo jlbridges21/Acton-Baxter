@@ -42,8 +42,11 @@ type MonitoringRun = {
 };
 
 type DashboardSummary = {
+  needsSetup?: boolean;
+  setupMessage?: string;
   enabled: boolean;
   lastSweepAt: string | null;
+  lastRunStatus?: string | null;
   openFindings: number;
   acknowledgedFindings: number;
   resolvedToday: number;
@@ -92,6 +95,18 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "settings", label: "Settings" },
   { id: "mappings", label: "Mappings" },
 ];
+
+function readApiError(data: unknown, fallback: string) {
+  if (!data || typeof data !== "object") return fallback;
+  const d = data as Record<string, unknown>;
+  if (typeof d.error === "string" && d.error.trim()) return d.error;
+  if (d.error && typeof d.error === "object") {
+    const msg = (d.error as { message?: unknown }).message;
+    if (typeof msg === "string" && msg.trim()) return msg;
+  }
+  if (typeof d.setupMessage === "string" && d.setupMessage.trim()) return d.setupMessage;
+  return fallback;
+}
 
 function formatDate(iso: string | null | undefined) {
   if (!iso) return "Never";
@@ -162,7 +177,7 @@ export function MonitoringClient() {
       const res = await fetch("/api/admin/baxter/monitoring");
       const data = await res.json();
       if (!data.success) {
-        throw new Error(data.error || "Failed to load summary");
+        throw new Error(readApiError(data, "Unable to load Process Monitoring."));
       }
       setSummary(data);
     } catch (err) {
@@ -194,7 +209,7 @@ export function MonitoringClient() {
       });
 
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to load findings");
+      if (!data.success) throw new Error(readApiError(data, "Unable to load findings."));
 
       setFindings(data.findings || []);
     } catch (err) {
@@ -217,7 +232,7 @@ export function MonitoringClient() {
       });
 
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to load runs");
+      if (!data.success) throw new Error(readApiError(data, "Unable to load runs."));
 
       setRuns(data.runs || []);
     } catch (err) {
@@ -240,7 +255,7 @@ export function MonitoringClient() {
       });
 
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to run sweep");
+      if (!data.success) throw new Error(readApiError(data, "Unable to run monitoring sweep."));
 
       showToast("Monitoring sweep completed", "success");
       await loadSummary();
@@ -330,7 +345,7 @@ export function MonitoringClient() {
       });
 
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to load mappings");
+      if (!data.success) throw new Error(readApiError(data, "Unable to load mappings."));
 
       setMappings(data.mappings || []);
     } catch (err) {
@@ -361,503 +376,543 @@ export function MonitoringClient() {
         </p>
       </div>
 
-      {error && (
+      {error && !summary?.needsSetup && (
         <Card className="border-red-500 bg-red-50 p-4">
           <p className="text-sm text-red-800">{error}</p>
+          <Button size="sm" variant="secondary" className="mt-3" onClick={() => void loadSummary()}>
+            Try Again
+          </Button>
         </Card>
       )}
 
+      {summary?.needsSetup ? (
+        <Card className="border-amber-500 bg-amber-50 p-6">
+          <CardTitle className="text-lg text-amber-950">
+            Process Monitoring isn&apos;t ready yet
+          </CardTitle>
+          <CardDescription className="mt-2 text-amber-900">
+            {summary.setupMessage ||
+              "Baxter's monitoring database setup is incomplete. An admin needs to apply the monitoring migrations in Supabase."}
+          </CardDescription>
+          <p className="mt-4 text-xs text-amber-800">
+            Required: <code>023_baxter_monitoring.sql</code> and{" "}
+            <code>024_monitoring_partial_runs.sql</code> (after{" "}
+            <code>022_process_rulebook.sql</code>).
+          </p>
+          <Button size="sm" variant="secondary" className="mt-4" onClick={() => void loadSummary()}>
+            Check again
+          </Button>
+        </Card>
+      ) : null}
+
       {toast && <Toast message={toast.message} type={toast.type} />}
 
-      <div className="flex gap-2 border-b border-gray-200">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => {
-              setTab(t.id);
-              if (t.id === "findings") void loadFindings();
-              if (t.id === "runs") void loadRuns();
-              if (t.id === "settings") void loadSettings();
-              if (t.id === "mappings") void loadMappings();
-            }}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              tab === t.id
-                ? "border-b-2 border-[var(--acton-navy)] text-[var(--acton-navy)]"
-                : "text-[var(--acton-muted)] hover:text-[var(--acton-navy)]"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "overview" && summary && (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Card className="p-4">
-              <CardTitle className="flex items-center gap-2 text-sm">
-                Status
-                {summary.enabled ? (
-                  <CheckCircle className="h-4 w-4 text-green-600" />
-                ) : (
-                  <XCircle className="h-4 w-4 text-gray-400" />
-                )}
-              </CardTitle>
-              <CardDescription className="mt-2 text-lg font-bold text-[var(--acton-navy)]">
-                {summary.enabled ? "Enabled" : "Disabled"}
-              </CardDescription>
-            </Card>
-
-            <Card className="p-4">
-              <CardTitle className="text-sm">Last Sweep</CardTitle>
-              <CardDescription className="mt-2 text-sm text-[var(--acton-navy)]">
-                {formatDate(summary.lastSweepAt)}
-              </CardDescription>
-            </Card>
-
-            <Card className="p-4">
-              <CardTitle className="text-sm">Open Findings</CardTitle>
-              <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
-                {summary.openFindings}
-              </CardDescription>
-              {summary.acknowledgedFindings > 0 && (
-                <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                  {summary.acknowledgedFindings} acknowledged
-                </p>
-              )}
-            </Card>
-
-            <Card className="p-4">
-              <CardTitle className="text-sm">Resolved Today</CardTitle>
-              <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
-                {summary.resolvedToday}
-              </CardDescription>
-              {summary.falsePositiveRate > 0 && (
-                <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                  {(summary.falsePositiveRate * 100).toFixed(1)}% false positive rate
-                </p>
-              )}
-            </Card>
+      {!summary?.needsSetup ? (
+        <>
+          <div className="flex gap-2 border-b border-gray-200">
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setTab(t.id);
+                  if (t.id === "findings") void loadFindings();
+                  if (t.id === "runs") void loadRuns();
+                  if (t.id === "settings") void loadSettings();
+                  if (t.id === "mappings") void loadMappings();
+                }}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  tab === t.id
+                    ? "border-b-2 border-[var(--acton-navy)] text-[var(--acton-navy)]"
+                    : "text-[var(--acton-muted)] hover:text-[var(--acton-navy)]"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card className="p-4">
-              <CardTitle className="text-sm">Connector Status</CardTitle>
-              <CardDescription className="mt-2 text-sm">
-                {summary.connectorStatus || "Unknown"}
-              </CardDescription>
-            </Card>
-
-            <Card className="p-4">
-              <CardTitle className="text-sm">Rulebook Status</CardTitle>
-              <CardDescription className="mt-2 text-sm">
-                {summary.rulebookStatus || "Unknown"}
-              </CardDescription>
-            </Card>
-          </div>
-
-          <Card className="p-4">
-            <CardTitle className="mb-3">Actions</CardTitle>
-            <div className="flex flex-wrap gap-3">
-              <Button onClick={handleRunSweep} disabled={sweepLoading} variant="primary">
-                <Play className="mr-2 h-4 w-4" />
-                {sweepLoading ? "Running..." : "Run Sweep Now"}
-              </Button>
-              <Button onClick={() => setTab("findings")} variant="secondary">
-                <AlertCircle className="mr-2 h-4 w-4" />
-                View Findings
-              </Button>
-              <Button onClick={() => setTab("settings")} variant="secondary">
-                <SettingsIcon className="mr-2 h-4 w-4" />
-                Configure
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {tab === "findings" && (
-        <div className="space-y-6">
-          {findingsLoading ? (
-            <p className="text-sm text-[var(--acton-muted)]">Loading findings...</p>
-          ) : findings.length === 0 ? (
-            <Card className="p-6">
-              <CardTitle className="mb-2">No Findings</CardTitle>
-              <CardDescription>
-                All opportunities are compliant with the process rulebook.
-              </CardDescription>
-            </Card>
-          ) : (
-            <>
-              <div className="grid gap-4">
-                {findings.map((finding) => (
-                  <Card
-                    key={finding.id}
-                    className={`p-4 ${
-                      selectedFinding?.id === finding.id ? "ring-2 ring-[var(--acton-navy)]" : ""
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <CardTitle className="text-base">{finding.title}</CardTitle>
-                          <span
-                            className={`rounded px-2 py-1 text-xs font-semibold ${
-                              finding.severity === "high"
-                                ? "bg-red-100 text-red-800"
-                                : finding.severity === "medium"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : "bg-blue-100 text-blue-800"
-                            }`}
-                          >
-                            {finding.severity}
-                          </span>
-                          <span
-                            className={`rounded px-2 py-1 text-xs font-semibold ${
-                              finding.status === "open"
-                                ? "bg-red-100 text-red-800"
-                                : finding.status === "acknowledged"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : finding.status === "resolved"
-                                    ? "bg-green-100 text-green-800"
-                                    : "bg-gray-100 text-gray-800"
-                            }`}
-                          >
-                            {finding.status}
-                          </span>
-                        </div>
-                        <CardDescription className="mt-1 text-sm">
-                          {finding.description}
-                        </CardDescription>
-                        <p className="mt-2 text-xs text-[var(--acton-muted)]">
-                          Detected: {formatDate(finding.detected_at)}
-                          {finding.acknowledged_at &&
-                            ` • Acknowledged: ${formatDate(finding.acknowledged_at)}`}
-                          {finding.resolved_at && ` • Resolved: ${formatDate(finding.resolved_at)}`}
-                        </p>
-                        {finding.notes && (
-                          <p className="mt-2 text-xs text-[var(--acton-muted)] italic">
-                            Note: {finding.notes}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        onClick={() =>
-                          setSelectedFinding(selectedFinding?.id === finding.id ? null : finding)
-                        }
-                        variant="ghost"
-                        size="sm"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                    </div>
-
-                    {selectedFinding?.id === finding.id && (
-                      <div className="mt-4 rounded bg-gray-50 p-3">
-                        <p className="mb-2 text-xs font-semibold text-[var(--acton-navy)]">
-                          Context:
-                        </p>
-                        <pre className="overflow-x-auto text-xs">
-                          {JSON.stringify(finding.context, null, 2)}
-                        </pre>
-                      </div>
+          {tab === "overview" && summary && (
+            <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Card className="p-4">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    Status
+                    {summary.enabled ? (
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-gray-400" />
                     )}
-                  </Card>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {tab === "runs" && (
-        <div className="space-y-6">
-          {runsLoading ? (
-            <p className="text-sm text-[var(--acton-muted)]">Loading runs...</p>
-          ) : runs.length === 0 ? (
-            <Card className="p-6">
-              <CardTitle className="mb-2">No Runs</CardTitle>
-              <CardDescription>No monitoring sweeps have been executed yet.</CardDescription>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {runs.map((run) => (
-                <Card key={run.id} className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <CardTitle className="text-base">
-                          Run {new Date(run.started_at).toLocaleString()}
-                        </CardTitle>
-                        <span
-                          className={`rounded px-2 py-1 text-xs font-semibold ${
-                            run.status === "completed"
-                              ? "bg-green-100 text-green-800"
-                              : run.status === "failed"
-                                ? "bg-red-100 text-red-800"
-                                : "bg-yellow-100 text-yellow-800"
-                          }`}
-                        >
-                          {run.status}
-                        </span>
-                      </div>
-                      <CardDescription className="mt-1 text-sm">
-                        Duration: {formatDuration(run.started_at, run.completed_at)} • Checks:{" "}
-                        {run.checks_run} • Findings: {run.findings_detected}
-                      </CardDescription>
-                      {run.error_message && (
-                        <p className="mt-2 text-xs text-red-600">{run.error_message}</p>
-                      )}
-                    </div>
-                  </div>
+                  </CardTitle>
+                  <CardDescription className="mt-2 text-lg font-bold text-[var(--acton-navy)]">
+                    {summary.enabled ? "Enabled" : "Disabled"}
+                  </CardDescription>
                 </Card>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
-      {tab === "settings" && (
-        <div className="space-y-6">
-          {settingsLoading ? (
-            <p className="text-sm text-[var(--acton-muted)]">Loading settings...</p>
-          ) : !settings ? (
-            <Card className="p-4">
-              <CardDescription>Failed to load settings</CardDescription>
-            </Card>
-          ) : (
-            <>
-              <Card className="p-4">
-                <CardTitle className="mb-4">General Settings</CardTitle>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-[var(--acton-navy)]">
-                        Enable Monitoring
-                      </p>
-                      <p className="text-xs text-[var(--acton-muted)]">
-                        Run automated compliance checks
-                      </p>
-                    </div>
-                    <label className="relative inline-block h-6 w-11">
-                      <input
-                        type="checkbox"
-                        checked={settings.enabled}
-                        onChange={(e) => handleUpdateSettings({ enabled: e.target.checked })}
-                        className="peer sr-only"
-                      />
-                      <span className="absolute inset-0 cursor-pointer rounded-full bg-gray-300 transition peer-checked:bg-[var(--acton-navy)]" />
-                      <span className="absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition peer-checked:translate-x-5" />
-                    </label>
-                  </div>
+                <Card className="p-4">
+                  <CardTitle className="text-sm">Last Sweep</CardTitle>
+                  <CardDescription className="mt-2 text-sm text-[var(--acton-navy)]">
+                    {formatDate(summary.lastSweepAt)}
+                  </CardDescription>
+                </Card>
 
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                      Slack Channel ID
-                    </label>
-                    <input
-                      type="text"
-                      value={settings.slack_channel_id || ""}
-                      onChange={(e) => handleUpdateSettings({ slack_channel_id: e.target.value })}
-                      placeholder="C1234567890"
-                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    />
+                <Card className="p-4">
+                  <CardTitle className="text-sm">Open Findings</CardTitle>
+                  <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
+                    {summary.openFindings}
+                  </CardDescription>
+                  {summary.acknowledgedFindings > 0 && (
                     <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                      Channel where alerts will be posted
+                      {summary.acknowledgedFindings} acknowledged
                     </p>
-                  </div>
+                  )}
+                </Card>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                        Quiet Hours Start
-                      </label>
-                      <input
-                        type="time"
-                        value={settings.quiet_hours_start || ""}
-                        onChange={(e) =>
-                          handleUpdateSettings({ quiet_hours_start: e.target.value })
-                        }
-                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                        Quiet Hours End
-                      </label>
-                      <input
-                        type="time"
-                        value={settings.quiet_hours_end || ""}
-                        onChange={(e) => handleUpdateSettings({ quiet_hours_end: e.target.value })}
-                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      />
-                    </div>
-                  </div>
+                <Card className="p-4">
+                  <CardTitle className="text-sm">Resolved Today</CardTitle>
+                  <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
+                    {summary.resolvedToday}
+                  </CardDescription>
+                  {summary.falsePositiveRate > 0 && (
+                    <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                      {(summary.falsePositiveRate * 100).toFixed(1)}% false positive rate
+                    </p>
+                  )}
+                </Card>
+              </div>
 
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                      Timezone
-                    </label>
-                    <input
-                      type="text"
-                      value={settings.timezone || ""}
-                      onChange={(e) => handleUpdateSettings({ timezone: e.target.value })}
-                      placeholder="America/New_York"
-                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    />
-                  </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Card className="p-4">
+                  <CardTitle className="text-sm">Connector Status</CardTitle>
+                  <CardDescription className="mt-2 text-sm">
+                    {summary.connectorStatus || "Unknown"}
+                  </CardDescription>
+                </Card>
 
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                      Delivery Mode
-                    </label>
-                    <select
-                      value={settings.delivery_mode}
-                      onChange={(e) => handleUpdateSettings({ delivery_mode: e.target.value })}
-                      className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    >
-                      <option value="immediate">Immediate</option>
-                      <option value="digest">Digest</option>
-                      <option value="none">None</option>
-                    </select>
-                  </div>
+                <Card className="p-4">
+                  <CardTitle className="text-sm">Rulebook Status</CardTitle>
+                  <CardDescription className="mt-2 text-sm">
+                    {summary.rulebookStatus || "Unknown"}
+                  </CardDescription>
+                </Card>
+              </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                        Escalation Minutes
-                      </label>
-                      <input
-                        type="number"
-                        value={settings.escalation_minutes}
-                        onChange={(e) =>
-                          handleUpdateSettings({ escalation_minutes: parseInt(e.target.value) })
-                        }
-                        min="0"
-                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      />
-                      <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                        Minutes before escalating unacknowledged findings
-                      </p>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
-                        Stale Opportunity Days
-                      </label>
-                      <input
-                        type="number"
-                        value={settings.stale_opportunity_days}
-                        onChange={(e) =>
-                          handleUpdateSettings({ stale_opportunity_days: parseInt(e.target.value) })
-                        }
-                        min="0"
-                        className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                      />
-                      <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                        Days before flagging opportunities as stale
-                      </p>
-                    </div>
-                  </div>
+              <Card className="p-4">
+                <CardTitle className="mb-3">Actions</CardTitle>
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={handleRunSweep} disabled={sweepLoading} variant="primary">
+                    <Play className="mr-2 h-4 w-4" />
+                    {sweepLoading ? "Running..." : "Run Sweep Now"}
+                  </Button>
+                  <Button onClick={() => setTab("findings")} variant="secondary">
+                    <AlertCircle className="mr-2 h-4 w-4" />
+                    View Findings
+                  </Button>
+                  <Button onClick={() => setTab("settings")} variant="secondary">
+                    <SettingsIcon className="mr-2 h-4 w-4" />
+                    Configure
+                  </Button>
                 </div>
               </Card>
+            </div>
+          )}
 
-              <Card className="p-4">
-                <CardTitle className="mb-4">Monitored Pipelines</CardTitle>
-                <CardDescription className="mb-3">
-                  Select which GoHighLevel pipelines to monitor for compliance
-                </CardDescription>
-                <div className="space-y-2">
-                  {pipelines.map((pipeline) => {
-                    const isMonitored = settings.monitored_pipelines.includes(pipeline.id);
-                    return (
-                      <div
-                        key={pipeline.id}
-                        className="flex items-center gap-3 rounded border border-gray-200 p-3"
+          {tab === "findings" && (
+            <div className="space-y-6">
+              {findingsLoading ? (
+                <p className="text-sm text-[var(--acton-muted)]">Loading findings...</p>
+              ) : findings.length === 0 ? (
+                <Card className="p-6">
+                  <CardTitle className="mb-2">No Findings</CardTitle>
+                  <CardDescription>
+                    All opportunities are compliant with the process rulebook.
+                  </CardDescription>
+                </Card>
+              ) : (
+                <>
+                  <div className="grid gap-4">
+                    {findings.map((finding) => (
+                      <Card
+                        key={finding.id}
+                        className={`p-4 ${
+                          selectedFinding?.id === finding.id
+                            ? "ring-2 ring-[var(--acton-navy)]"
+                            : ""
+                        }`}
                       >
-                        <input
-                          type="checkbox"
-                          checked={isMonitored}
-                          onChange={(e) =>
-                            handleToggleMonitoredPipeline(pipeline.id, e.target.checked)
-                          }
-                          id={`pipeline-${pipeline.id}`}
-                          className="h-4 w-4"
-                        />
-                        <label
-                          htmlFor={`pipeline-${pipeline.id}`}
-                          className="flex-1 cursor-pointer text-sm font-medium text-[var(--acton-navy)]"
-                        >
-                          {pipeline.name}
-                          <span className="ml-2 text-xs text-[var(--acton-muted)]">
-                            ({pipeline.stages.length} stages)
-                          </span>
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <CardTitle className="text-base">{finding.title}</CardTitle>
+                              <span
+                                className={`rounded px-2 py-1 text-xs font-semibold ${
+                                  finding.severity === "high"
+                                    ? "bg-red-100 text-red-800"
+                                    : finding.severity === "medium"
+                                      ? "bg-yellow-100 text-yellow-800"
+                                      : "bg-blue-100 text-blue-800"
+                                }`}
+                              >
+                                {finding.severity}
+                              </span>
+                              <span
+                                className={`rounded px-2 py-1 text-xs font-semibold ${
+                                  finding.status === "open"
+                                    ? "bg-red-100 text-red-800"
+                                    : finding.status === "acknowledged"
+                                      ? "bg-yellow-100 text-yellow-800"
+                                      : finding.status === "resolved"
+                                        ? "bg-green-100 text-green-800"
+                                        : "bg-gray-100 text-gray-800"
+                                }`}
+                              >
+                                {finding.status}
+                              </span>
+                            </div>
+                            <CardDescription className="mt-1 text-sm">
+                              {finding.description}
+                            </CardDescription>
+                            <p className="mt-2 text-xs text-[var(--acton-muted)]">
+                              Detected: {formatDate(finding.detected_at)}
+                              {finding.acknowledged_at &&
+                                ` • Acknowledged: ${formatDate(finding.acknowledged_at)}`}
+                              {finding.resolved_at &&
+                                ` • Resolved: ${formatDate(finding.resolved_at)}`}
+                            </p>
+                            {finding.notes && (
+                              <p className="mt-2 text-xs text-[var(--acton-muted)] italic">
+                                Note: {finding.notes}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            onClick={() =>
+                              setSelectedFinding(
+                                selectedFinding?.id === finding.id ? null : finding,
+                              )
+                            }
+                            variant="ghost"
+                            size="sm"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        {selectedFinding?.id === finding.id && (
+                          <div className="mt-4 rounded bg-gray-50 p-3">
+                            <p className="mb-2 text-xs font-semibold text-[var(--acton-navy)]">
+                              Context:
+                            </p>
+                            <pre className="overflow-x-auto text-xs">
+                              {JSON.stringify(finding.context, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "runs" && (
+            <div className="space-y-6">
+              {runsLoading ? (
+                <p className="text-sm text-[var(--acton-muted)]">Loading runs...</p>
+              ) : runs.length === 0 ? (
+                <Card className="p-6">
+                  <CardTitle className="mb-2">No Runs</CardTitle>
+                  <CardDescription>No monitoring sweeps have been executed yet.</CardDescription>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {runs.map((run) => (
+                    <Card key={run.id} className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <CardTitle className="text-base">
+                              Run {new Date(run.started_at).toLocaleString()}
+                            </CardTitle>
+                            <span
+                              className={`rounded px-2 py-1 text-xs font-semibold ${
+                                run.status === "completed"
+                                  ? "bg-green-100 text-green-800"
+                                  : run.status === "failed"
+                                    ? "bg-red-100 text-red-800"
+                                    : "bg-yellow-100 text-yellow-800"
+                              }`}
+                            >
+                              {run.status}
+                            </span>
+                          </div>
+                          <CardDescription className="mt-1 text-sm">
+                            Duration: {formatDuration(run.started_at, run.completed_at)} • Checks:{" "}
+                            {run.checks_run} • Findings: {run.findings_detected}
+                          </CardDescription>
+                          {run.error_message && (
+                            <p className="mt-2 text-xs text-red-600">{run.error_message}</p>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "settings" && (
+            <div className="space-y-6">
+              {settingsLoading ? (
+                <p className="text-sm text-[var(--acton-muted)]">Loading settings...</p>
+              ) : !settings ? (
+                <Card className="p-4">
+                  <CardDescription>Failed to load settings</CardDescription>
+                </Card>
+              ) : (
+                <>
+                  <Card className="p-4">
+                    <CardTitle className="mb-4">General Settings</CardTitle>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-[var(--acton-navy)]">
+                            Enable Monitoring
+                          </p>
+                          <p className="text-xs text-[var(--acton-muted)]">
+                            Run automated compliance checks
+                          </p>
+                        </div>
+                        <label className="relative inline-block h-6 w-11">
+                          <input
+                            type="checkbox"
+                            checked={settings.enabled}
+                            onChange={(e) => handleUpdateSettings({ enabled: e.target.checked })}
+                            className="peer sr-only"
+                          />
+                          <span className="absolute inset-0 cursor-pointer rounded-full bg-gray-300 transition peer-checked:bg-[var(--acton-navy)]" />
+                          <span className="absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition peer-checked:translate-x-5" />
                         </label>
                       </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            </>
-          )}
-        </div>
-      )}
 
-      {tab === "mappings" && (
-        <div className="space-y-6">
-          {mappingsLoading ? (
-            <p className="text-sm text-[var(--acton-muted)]">Loading mappings...</p>
-          ) : mappings.length === 0 ? (
-            <Card className="p-4">
-              <CardDescription>
-                No GHL mappings configured.{" "}
-                <Link
-                  href="/admin/baxter/rulebook?tab=mappings"
-                  className="text-[var(--acton-navy)] underline"
-                >
-                  Configure mappings in Rulebook →
-                </Link>
-              </CardDescription>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {mappings.map((mapping) => (
-                <Card key={mapping.id} className="p-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-base">
-                        {mapping.ghl_pipeline_name || mapping.ghl_pipeline_id} →{" "}
-                        {mapping.ghl_stage_name || mapping.ghl_stage_id}
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Maps to: {mapping.rulebook_stage_key}
-                        {mapping.rulebook_step_key && ` / ${mapping.rulebook_step_key}`}
-                      </CardDescription>
-                      {!mapping.enabled && <p className="mt-1 text-xs text-yellow-600">Disabled</p>}
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                          Slack Channel ID
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.slack_channel_id || ""}
+                          onChange={(e) =>
+                            handleUpdateSettings({ slack_channel_id: e.target.value })
+                          }
+                          placeholder="C1234567890"
+                          className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                        />
+                        <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                          Channel where alerts will be posted
+                        </p>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                            Quiet Hours Start
+                          </label>
+                          <input
+                            type="time"
+                            value={settings.quiet_hours_start || ""}
+                            onChange={(e) =>
+                              handleUpdateSettings({ quiet_hours_start: e.target.value })
+                            }
+                            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                            Quiet Hours End
+                          </label>
+                          <input
+                            type="time"
+                            value={settings.quiet_hours_end || ""}
+                            onChange={(e) =>
+                              handleUpdateSettings({ quiet_hours_end: e.target.value })
+                            }
+                            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                          Timezone
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.timezone || ""}
+                          onChange={(e) => handleUpdateSettings({ timezone: e.target.value })}
+                          placeholder="America/New_York"
+                          className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                          Delivery Mode
+                        </label>
+                        <select
+                          value={settings.delivery_mode}
+                          onChange={(e) => handleUpdateSettings({ delivery_mode: e.target.value })}
+                          className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                        >
+                          <option value="immediate">Immediate</option>
+                          <option value="digest">Digest</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                            Escalation Minutes
+                          </label>
+                          <input
+                            type="number"
+                            value={settings.escalation_minutes}
+                            onChange={(e) =>
+                              handleUpdateSettings({ escalation_minutes: parseInt(e.target.value) })
+                            }
+                            min="0"
+                            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                          />
+                          <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                            Minutes before escalating unacknowledged findings
+                          </p>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                            Stale Opportunity Days
+                          </label>
+                          <input
+                            type="number"
+                            value={settings.stale_opportunity_days}
+                            onChange={(e) =>
+                              handleUpdateSettings({
+                                stale_opportunity_days: parseInt(e.target.value),
+                              })
+                            }
+                            min="0"
+                            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                          />
+                          <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                            Days before flagging opportunities as stale
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </Card>
-              ))}
-              <Card className="p-4">
-                <CardDescription>
-                  <Link
-                    href="/admin/baxter/rulebook"
-                    className="text-[var(--acton-navy)] underline"
-                  >
-                    Manage mappings in Process Rulebook →
-                  </Link>
-                </CardDescription>
-              </Card>
+                  </Card>
+
+                  <Card className="p-4">
+                    <CardTitle className="mb-4">Monitored Pipelines</CardTitle>
+                    <CardDescription className="mb-3">
+                      Select which GoHighLevel pipelines to monitor for compliance
+                    </CardDescription>
+                    <div className="space-y-2">
+                      {pipelines.map((pipeline) => {
+                        const isMonitored = settings.monitored_pipelines.includes(pipeline.id);
+                        return (
+                          <div
+                            key={pipeline.id}
+                            className="flex items-center gap-3 rounded border border-gray-200 p-3"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isMonitored}
+                              onChange={(e) =>
+                                handleToggleMonitoredPipeline(pipeline.id, e.target.checked)
+                              }
+                              id={`pipeline-${pipeline.id}`}
+                              className="h-4 w-4"
+                            />
+                            <label
+                              htmlFor={`pipeline-${pipeline.id}`}
+                              className="flex-1 cursor-pointer text-sm font-medium text-[var(--acton-navy)]"
+                            >
+                              {pipeline.name}
+                              <span className="ml-2 text-xs text-[var(--acton-muted)]">
+                                ({pipeline.stages.length} stages)
+                              </span>
+                            </label>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                </>
+              )}
             </div>
           )}
-        </div>
-      )}
+
+          {tab === "mappings" && (
+            <div className="space-y-6">
+              {mappingsLoading ? (
+                <p className="text-sm text-[var(--acton-muted)]">Loading mappings...</p>
+              ) : mappings.length === 0 ? (
+                <Card className="p-4">
+                  <CardDescription>
+                    No GHL mappings configured.{" "}
+                    <Link
+                      href="/admin/baxter/rulebook?tab=mappings"
+                      className="text-[var(--acton-navy)] underline"
+                    >
+                      Configure mappings in Rulebook →
+                    </Link>
+                  </CardDescription>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {mappings.map((mapping) => (
+                    <Card key={mapping.id} className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <CardTitle className="text-base">
+                            {mapping.ghl_pipeline_name || mapping.ghl_pipeline_id} →{" "}
+                            {mapping.ghl_stage_name || mapping.ghl_stage_id}
+                          </CardTitle>
+                          <CardDescription className="text-xs">
+                            Maps to: {mapping.rulebook_stage_key}
+                            {mapping.rulebook_step_key && ` / ${mapping.rulebook_step_key}`}
+                          </CardDescription>
+                          {!mapping.enabled && (
+                            <p className="mt-1 text-xs text-yellow-600">Disabled</p>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                  <Card className="p-4">
+                    <CardDescription>
+                      <Link
+                        href="/admin/baxter/rulebook"
+                        className="text-[var(--acton-navy)] underline"
+                      >
+                        Manage mappings in Process Rulebook →
+                      </Link>
+                    </CardDescription>
+                  </Card>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : null}
 
       <p className="text-sm">
         <Link
-          href="/admin/baxter/governance"
+          href="/admin/knowledge"
           className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
         >
-          ← Back to Governance
+          ← Back to Knowledge Center
         </Link>
       </p>
     </div>

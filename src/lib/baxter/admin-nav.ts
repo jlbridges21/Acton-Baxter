@@ -62,19 +62,19 @@ export function getAdminNavLinks(): AdminNavLink[] {
     },
     {
       href: "/admin/baxter/governance",
-      label: "Governance",
+      label: "Baxter Governance",
       icon: Settings,
       match: (pathname) => pathname.startsWith("/admin/baxter/governance"),
     },
     {
       href: "/admin/baxter/rulebook",
-      label: "Rulebook",
+      label: "Process Rulebook",
       icon: BookMarked,
       match: (pathname) => pathname.startsWith("/admin/baxter/rulebook"),
     },
     {
       href: "/admin/baxter/monitoring",
-      label: "Monitoring",
+      label: "Process Monitoring",
       icon: Bell,
       match: (pathname) => pathname.startsWith("/admin/baxter/monitoring"),
     },

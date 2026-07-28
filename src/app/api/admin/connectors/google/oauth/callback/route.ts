@@ -8,7 +8,11 @@ import {
   requiredScopesGranted,
 } from "@/lib/connectors/google/oauth-config";
 import { consumeGoogleOAuthState } from "@/lib/connectors/google/oauth-state";
-import { upsertWorkspaceOauthConnection } from "@/lib/connectors/google/connections";
+import {
+  getActiveGoogleConnection,
+  decryptConnectionRefreshToken,
+  upsertWorkspaceOauthConnection,
+} from "@/lib/connectors/google/connections";
 import { isGoogleTokenEncryptionConfigured } from "@/lib/security/secret-box";
 
 export const runtime = "nodejs";
@@ -30,8 +34,10 @@ export async function GET(request: Request) {
     const errorParam = url.searchParams.get("error");
     if (errorParam) {
       return redirectResult(request, returnFallback, {
-        oauth_error: "BAXTER_GOOGLE_OAUTH_CALLBACK_FAILED",
-        oauth_message: url.searchParams.get("error_description") || errorParam,
+        oauth_error: "BAXTER_GOOGLE_OAUTH_CANCELLED",
+        oauth_message:
+          url.searchParams.get("error_description") ||
+          "Google authorization was cancelled. Try Connect again.",
       });
     }
 
@@ -57,23 +63,18 @@ export async function GET(request: Request) {
     }
 
     const tokens = await exchangeGoogleAuthorizationCode(code);
-    if (!tokens.refreshToken) {
-      return redirectResult(request, returnPath, {
-        oauth_error: "BAXTER_GOOGLE_REFRESH_TOKEN_MISSING",
-        oauth_message:
-          "Google did not return a refresh token. Click Reconnect and approve access again (consent may be required).",
-      });
-    }
-
     const profile = await fetchGoogleUserInfo(tokens.accessToken);
+
     const allowed = isGoogleAccountAllowed({
       email: profile.email,
       hostedDomain: profile.hd,
     });
     if (!allowed.ok) {
+      // Do not overwrite production credentials with a rejected account.
       return redirectResult(request, returnPath, {
         oauth_error: allowed.code,
-        oauth_message: allowed.message,
+        oauth_message: `Wrong Google account. Baxter's Google Workspace connection currently uses baxter@actonadu.com. You signed in as ${profile.email}.`,
+        oauth_reconnect: "1",
       });
     }
 
@@ -86,11 +87,35 @@ export async function GET(request: Request) {
       });
     }
 
+    let refreshToken = tokens.refreshToken;
+    if (!refreshToken) {
+      // Google often omits refresh_token on silent re-auth. Preserve same-account token.
+      const existing = await getActiveGoogleConnection();
+      const existingEmail = existing?.google_account_email?.trim().toLowerCase();
+      const profileEmail = profile.email.trim().toLowerCase();
+      if (existing && existingEmail === profileEmail && existing.encrypted_refresh_token) {
+        try {
+          refreshToken = decryptConnectionRefreshToken(existing);
+        } catch {
+          refreshToken = null;
+        }
+      }
+    }
+
+    if (!refreshToken) {
+      return redirectResult(request, returnPath, {
+        oauth_error: "BAXTER_GOOGLE_REFRESH_TOKEN_MISSING",
+        oauth_message:
+          "Google Workspace needs to be reconnected. Click Reconnect and approve access when Google asks for permission.",
+        oauth_reconnect: "1",
+      });
+    }
+
     const connection = await upsertWorkspaceOauthConnection({
       email: profile.email,
       subject: profile.sub,
       hostedDomain: profile.hd,
-      refreshToken: tokens.refreshToken,
+      refreshToken,
       grantedScopes: scopes,
       connectedBy: user.id,
       accessTokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000).toISOString(),
@@ -102,6 +127,9 @@ export async function GET(request: Request) {
       connected_as: connection.google_account_email ?? profile.email,
     });
   } catch (error) {
+    console.error("[google-oauth] callback failed", {
+      message: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+    });
     const code =
       error && typeof error === "object" && "code" in error
         ? String((error as { code?: string }).code ?? "BAXTER_GOOGLE_OAUTH_CALLBACK_FAILED")

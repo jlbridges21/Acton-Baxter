@@ -2030,10 +2030,10 @@ export function RulebookClient() {
 
       <p className="text-sm">
         <Link
-          href="/admin/baxter/governance"
+          href="/admin/knowledge"
           className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
         >
-          ← Back to Governance
+          ← Back to Knowledge Center
         </Link>
       </p>
     </div>

@@ -65,6 +65,8 @@ type LoadError = {
 };
 
 const PAGE_LIMIT = 25;
+/** Acton Feasibility Package pipeline — default Opportunities board. */
+const DEFAULT_FEASIBILITY_PIPELINE_ID = "11xV4ZJU0JotklCTFpgw";
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "contacts", label: "Contacts" },
@@ -468,7 +470,8 @@ export function GhlConnectorClient({
         const urlPipeline = searchParams.get("pipeline");
         const valid = Boolean(urlPipeline && list.some((p) => p.id === urlPipeline));
         if (list.length > 0 && !valid) {
-          const first = list[0]!.id;
+          const first =
+            list.find((p) => p.id === DEFAULT_FEASIBILITY_PIPELINE_ID)?.id ?? list[0]!.id;
           setSelectedPipelineId(first);
           const params = new URLSearchParams(searchParams.toString());
           params.set("tab", "opportunities");
@@ -567,7 +570,10 @@ export function GhlConnectorClient({
         setPipelines(null);
         setActions(null);
       }
-      pushCrmUrl(tab, tab === "opportunities" ? selectedPipelineId : null);
+      pushCrmUrl(
+        tab,
+        tab === "opportunities" ? selectedPipelineId || DEFAULT_FEASIBILITY_PIPELINE_ID : null,
+      );
     },
     [pushCrmUrl, selectedPipelineId],
   );
@@ -584,8 +590,10 @@ export function GhlConnectorClient({
     pipelines && pipelines.length > 0
       ? selectedPipelineId && pipelines.some((p) => p.id === selectedPipelineId)
         ? selectedPipelineId
-        : pipelines[0]!.id
-      : selectedPipelineId;
+        : pipelines.some((p) => p.id === DEFAULT_FEASIBILITY_PIPELINE_ID)
+          ? DEFAULT_FEASIBILITY_PIPELINE_ID
+          : pipelines[0]!.id
+      : selectedPipelineId || DEFAULT_FEASIBILITY_PIPELINE_ID;
 
   useEffect(() => {
     let cancelled = false;

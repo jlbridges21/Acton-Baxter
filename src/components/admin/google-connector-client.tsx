@@ -184,6 +184,7 @@ export function GoogleConnectorClient({
     connectedAs?: string | null;
     error?: string | null;
     message?: string | null;
+    offerReconnect?: boolean;
   };
 }) {
   const [health] = useState(initialHealth);
@@ -206,6 +207,7 @@ export function GoogleConnectorClient({
   const [error, setError] = useState<string | null>(() =>
     oauthNotice?.error ? oauthNotice.message || oauthNotice.error : null,
   );
+  const [offerReconnect] = useState(Boolean(oauthNotice?.offerReconnect));
   const [technical, setTechnical] = useState<string | null>(null);
 
   const primaryRoot = useMemo(
@@ -571,9 +573,17 @@ export function GoogleConnectorClient({
           </p>
         </header>
         {error ? (
-          <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
-            {error}
-          </p>
+          <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+            <p>{error}</p>
+            {offerReconnect ? (
+              <a
+                href="/api/admin/connectors/google/oauth/start?consent=1"
+                className="mt-3 inline-flex font-semibold underline"
+              >
+                Reconnect with baxter@actonadu.com
+              </a>
+            ) : null}
+          </div>
         ) : null}
         <Card className="p-8">
           <CardTitle>Connect Google Workspace</CardTitle>
@@ -582,7 +592,7 @@ export function GoogleConnectorClient({
           </CardDescription>
           <div className="mt-6 flex flex-wrap gap-3">
             <a
-              href="/api/admin/connectors/google/oauth/start"
+              href="/api/admin/connectors/google/oauth/start?consent=1"
               className="inline-flex h-11 items-center rounded-md bg-[var(--acton-navy)] px-5 text-sm font-semibold text-white"
             >
               Connect Google Workspace
@@ -711,7 +721,10 @@ export function GoogleConnectorClient({
           ) : null}
         </div>
         <div className="flex flex-wrap gap-3 text-sm">
-          <a href="/api/admin/connectors/google/oauth/start" className="font-semibold underline">
+          <a
+            href="/api/admin/connectors/google/oauth/start?consent=1"
+            className="font-semibold underline"
+          >
             Reconnect account
           </a>
           <button
@@ -780,6 +793,14 @@ export function GoogleConnectorClient({
       {error ? (
         <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
           <p>{error}</p>
+          {offerReconnect ? (
+            <a
+              href="/api/admin/connectors/google/oauth/start?consent=1"
+              className="mt-3 inline-flex font-semibold underline"
+            >
+              Reconnect with baxter@actonadu.com
+            </a>
+          ) : null}
           {technical ? (
             <details className="mt-2">
               <summary className="cursor-pointer font-semibold">Show technical details</summary>
@@ -863,7 +884,7 @@ export function GoogleConnectorClient({
           ) : null}
           <div className="flex flex-wrap gap-2">
             <a
-              href="/api/admin/connectors/google/oauth/start"
+              href="/api/admin/connectors/google/oauth/start?consent=1"
               className="inline-flex h-10 items-center rounded-md border border-[var(--acton-border)] px-4 text-sm font-semibold"
             >
               Reconnect account

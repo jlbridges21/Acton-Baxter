@@ -16,10 +16,16 @@ export default async function BaxterGovernancePage() {
     <AppShell user={user}>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Baxter governance</h1>
+          <Link
+            href="/admin/baxter/diagnostics"
+            className="text-sm text-[var(--acton-muted)] hover:text-[var(--acton-fg)]"
+          >
+            ← Back to Diagnostics
+          </Link>
+          <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Baxter Governance</h1>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Admin-only. PLACEHOLDER and RED FLAG items are planning notes — not live employee
-            policy.
+            Review the rules and safeguards that control how Baxter answers questions and uses
+            connected systems.
           </p>
         </div>
 
@@ -39,6 +45,49 @@ export default async function BaxterGovernancePage() {
         </div>
 
         <Card className="p-4">
+          <CardTitle>Related configuration</CardTitle>
+          <CardDescription className="mt-1">
+            These tools define Acton process and proactive checks. They live in the Knowledge
+            Center.
+          </CardDescription>
+          <ul className="mt-3 space-y-2 text-sm">
+            <li>
+              <Link
+                href="/admin/baxter/rulebook"
+                className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+              >
+                Process Rulebook
+              </Link>
+              <span className="text-[var(--acton-muted)]">
+                {" "}
+                — stages, roles, RACI, and required data
+              </span>
+            </li>
+            <li>
+              <Link
+                href="/admin/baxter/monitoring"
+                className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+              >
+                Process Monitoring
+              </Link>
+              <span className="text-[var(--acton-muted)]">
+                {" "}
+                — proactive GHL checks and findings
+              </span>
+            </li>
+            <li>
+              <Link
+                href="/admin/knowledge/settings"
+                className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+              >
+                Knowledge Settings
+              </Link>
+              <span className="text-[var(--acton-muted)]"> — Knowledge Center configuration</span>
+            </li>
+          </ul>
+        </Card>
+
+        <Card className="p-4">
           <CardTitle>Canonical standards</CardTitle>
           <ul className="mt-3 space-y-2 text-sm">
             {summary.canonicalStandards.map((s) => (
@@ -46,7 +95,7 @@ export default async function BaxterGovernancePage() {
                 <span className="font-semibold text-[var(--acton-navy)]">{s.title}</span>
                 <span className="text-[var(--acton-muted)]">
                   {" "}
-                  · v{s.version} · {s.role} · {s.path}
+                  · v{s.version} · {s.role}
                 </span>
               </li>
             ))}
@@ -75,22 +124,6 @@ export default async function BaxterGovernancePage() {
             )}
           </ul>
         </Card>
-
-        <p className="text-sm">
-          <Link
-            href="/admin/baxter/diagnostics"
-            className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-          >
-            ← Back to diagnostics
-          </Link>
-          {" · "}
-          <Link
-            href="/admin/baxter/evaluations"
-            className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-          >
-            Evaluations
-          </Link>
-        </p>
       </div>
     </AppShell>
   );

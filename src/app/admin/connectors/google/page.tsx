@@ -31,6 +31,10 @@ export default async function AdminGoogleConnectorPage({
           connectedAs: pick("connected_as") ?? null,
           error: pick("oauth_error") ?? null,
           message: pick("oauth_message") ?? null,
+          offerReconnect:
+            pick("oauth_reconnect") === "1" ||
+            pick("oauth_error") === "BAXTER_GOOGLE_ACCOUNT_NOT_ALLOWED" ||
+            pick("oauth_error") === "BAXTER_GOOGLE_REFRESH_TOKEN_MISSING",
         }}
       />
     </AppShell>
