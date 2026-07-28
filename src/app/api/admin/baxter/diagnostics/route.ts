@@ -14,6 +14,7 @@ import { AnthropicBaxterProvider } from "@/lib/baxter-ai/anthropic-provider";
 import { embedText } from "@/lib/knowledge-index/embeddings";
 import { getBaxterVisionProvider } from "@/lib/baxter-ai/vision";
 import { retrieveBaxterEvidence } from "@/lib/baxter-ai/context";
+import { runPemOpenAiDiagnosticTest } from "@/lib/pem-neat/openai-client";
 
 export async function GET() {
   try {
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
           "test_pipeline",
           "test_dynamic_answer",
           "test_rate_limit_classification",
+          "test_pem_ai",
           "bootstrap_overview",
           "inspect_retrieval",
         ]),
@@ -219,6 +221,9 @@ export async function POST(request: Request) {
     }
     if (parsed.action === "test_rate_limit_classification") {
       return jsonOk({ result: await runRateLimitClassificationDiagnostic() });
+    }
+    if (parsed.action === "test_pem_ai") {
+      return jsonOk({ result: await runPemOpenAiDiagnosticTest() });
     }
     return jsonOk({ result: await bootstrapBaxterOverviewEntry(user.id) });
   } catch (error) {

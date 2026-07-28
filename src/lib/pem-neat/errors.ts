@@ -42,11 +42,18 @@ export function isAbortError(error: unknown): boolean {
   return name === "AbortError" || name === "TimeoutError";
 }
 
-/** Dedicated PEM generation timeout — large structured JSON often exceeds the global 12s API timeout. */
+/**
+ * Total PEM generation lock / wall-clock budget for the multi-stage pipeline.
+ * Per-stage OpenAI calls use getPemNeatStageTimeoutMs() (same env, or 90s default).
+ * Route maxDuration is 300s on Vercel — keep this under that.
+ */
 export function getPemNeatProviderTimeoutMs(): number {
   const raw = process.env.PEM_NEAT_TIMEOUT_MS;
   if (raw && /^\d+$/.test(raw)) {
-    return Math.min(Math.max(Number(raw), 30_000), 300_000);
+    // Env is per-stage; total ≈ 3 stages + recovery headroom.
+    const stage = Math.min(Math.max(Number(raw), 30_000), 180_000);
+    return Math.min(stage * 3 + 30_000, 290_000);
   }
-  return 120_000;
+  // Default: 90s/stage × 3 + buffer, under Vercel 300s maxDuration.
+  return 270_000;
 }

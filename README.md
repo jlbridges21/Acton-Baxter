@@ -203,6 +203,17 @@ OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 ```
 
+**PEM NEAT analysis** uses its own model config (independent of Baxter chat):
+
+```bash
+PEM_NEAT_OPENAI_MODEL=gpt-5.4
+PEM_NEAT_REASONING_EFFORT=medium
+# PEM_NEAT_TIMEOUT_MS=90000          # per-stage timeout
+# PEM_NEAT_OPENAI_FALLBACK_MODEL=    # optional technical fallback only
+```
+
+GPT-5-class PEM models use the OpenAI Responses API; GPT-4o uses Chat Completions. Admin → Diagnostics → **Test PEM AI** validates credentials/model/parameters with a tiny synthetic request.
+
 If Property Research AI fails, the report still completes with deterministic PEM content.
 
 ---

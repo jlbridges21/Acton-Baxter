@@ -82,6 +82,12 @@ type Snapshot = {
   pemNeat?: {
     databaseReady: boolean;
     aiProviderReady: boolean;
+    provider?: string;
+    configuredModel?: string;
+    api?: string;
+    reasoningEffort?: string | null;
+    fallbackModel?: string | null;
+    status?: string;
     lastGenerationStatus: string | null;
     lastErrorCode: string | null;
     activeCount: number | null;
@@ -342,15 +348,47 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
       </Card>
 
       <Card>
-        <CardTitle>PEM NEAT</CardTitle>
+        <CardTitle>PEM NEAT AI</CardTitle>
+        <CardDescription className="mt-1">
+          Partnership Evaluation Meeting analysis provider (independent from Baxter chat model).
+        </CardDescription>
         <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+          <div>
+            <dt className="text-[var(--acton-muted)]">Provider</dt>
+            <dd>{snapshot.pemNeat?.provider ?? "OpenAI"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Configured Model</dt>
+            <dd>{snapshot.pemNeat?.configuredModel ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">API</dt>
+            <dd>
+              {snapshot.pemNeat?.api === "responses"
+                ? "Responses"
+                : snapshot.pemNeat?.api === "chat_completions"
+                  ? "Chat Completions"
+                  : (snapshot.pemNeat?.api ?? "—")}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Reasoning</dt>
+            <dd>
+              {snapshot.pemNeat?.reasoningEffort
+                ? snapshot.pemNeat.reasoningEffort.charAt(0).toUpperCase() +
+                  snapshot.pemNeat.reasoningEffort.slice(1)
+                : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Status</dt>
+            <dd>
+              {snapshot.pemNeat?.status ?? (snapshot.pemNeat?.aiProviderReady ? "Ready" : "Error")}
+            </dd>
+          </div>
           <div>
             <dt className="text-[var(--acton-muted)]">Database</dt>
             <dd>{snapshot.pemNeat?.databaseReady ? "Ready" : "Not ready"}</dd>
-          </div>
-          <div>
-            <dt className="text-[var(--acton-muted)]">AI Provider</dt>
-            <dd>{snapshot.pemNeat?.aiProviderReady ? "Ready" : "Not ready"}</dd>
           </div>
           <div>
             <dt className="text-[var(--acton-muted)]">Active records</dt>
@@ -360,11 +398,16 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             <dt className="text-[var(--acton-muted)]">Last generation</dt>
             <dd>{snapshot.pemNeat?.lastGenerationStatus ?? "—"}</dd>
           </div>
-          <div className="sm:col-span-2">
+          <div>
             <dt className="text-[var(--acton-muted)]">Last failure code</dt>
             <dd>{snapshot.pemNeat?.lastErrorCode ?? "—"}</dd>
           </div>
         </dl>
+        <div className="mt-4">
+          <Button disabled={busy} variant="secondary" onClick={() => void run("test_pem_ai")}>
+            Test PEM AI
+          </Button>
+        </div>
       </Card>
 
       <Card>

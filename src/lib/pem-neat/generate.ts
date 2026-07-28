@@ -16,8 +16,14 @@ import {
   mergeBuildertrendFields,
   clampInternalNotes,
 } from "./defaults";
-import { getPemNeatProviderTimeoutMs, isAbortError } from "./errors";
 import { buildMockPemNeatResult } from "./mock-result";
+import {
+  callPemOpenAiJsonWithRetries,
+  getPemNeatReasoningEffort,
+  getPemNeatStageTimeoutMs,
+  resolvePemNeatFallbackModel,
+  resolvePemNeatModelName,
+} from "./openai-client";
 import {
   buildAssessmentStagePrompt,
   buildFactExtractionStagePrompt,
@@ -63,10 +69,42 @@ export type GeneratePemNeatOutput = {
     overallScore?: number | null;
     chunkCount?: number;
     modelConfigured?: string;
+    api?: string;
+    usedFallback?: boolean;
   };
 };
 
+/** Stage output budgets — large enough for schemas, not chat-sized tiny limits. */
+const PEM_STAGE_FACTS_MAX_TOKENS = 8_000;
+const PEM_STAGE_ASSESSMENT_MAX_TOKENS = 6_000;
+const PEM_STAGE_HANDOFF_MAX_TOKENS = 5_000;
 const PEM_MAX_OUTPUT_TOKENS = 12_000;
+
+function stageMaxTokens(fallback: number): number {
+  const raw = process.env.PEM_NEAT_MAX_OUTPUT_TOKENS;
+  if (raw && /^\d+$/.test(raw)) {
+    return Math.min(Math.max(Number(raw), 1_000), 32_000);
+  }
+  return fallback;
+}
+
+/** Provider AppErrors must not be swallowed by stage soft-fail. */
+function isFatalPemProviderError(error: unknown): boolean {
+  if (!(error instanceof AppError)) return false;
+  return (
+    error.code === "AI_NOT_CONFIGURED" ||
+    error.code === "PEM_NEAT_PROVIDER_ERROR" ||
+    error.code === "PEM_NEAT_PROVIDER_REQUEST_INVALID" ||
+    error.code === "PEM_NEAT_MODEL_NOT_AVAILABLE" ||
+    error.code === "PEM_NEAT_RATE_LIMITED" ||
+    error.code === "PEM_NEAT_QUOTA_EXCEEDED" ||
+    error.code === "PEM_NEAT_TIMEOUT" ||
+    error.code === "PEM_NEAT_OUTPUT_TRUNCATED" ||
+    error.code === "PEM_NEAT_PROVIDER_INCOMPLETE" ||
+    error.code === "PEM_NEAT_PROVIDER_REFUSAL" ||
+    error.code === "PEM_NEAT_EMPTY_OUTPUT"
+  );
+}
 
 function shouldUseMock(): boolean {
   const env = getEnv();
@@ -74,16 +112,11 @@ function shouldUseMock(): boolean {
 }
 
 /**
- * PEM analysis needs stronger reasoning than general Baxter chat.
- * Prefer PEM_NEAT_OPENAI_MODEL; otherwise upgrade mini → gpt-4o for this feature.
+ * Explicit PEM model resolution (no silent mini→gpt-4o substitution).
+ * Prefer PEM_NEAT_OPENAI_MODEL; otherwise Baxter/OpenAI config or gpt-4o.
  */
 export function getPemNeatModelName(): string {
-  const env = getEnv();
-  const explicit = (process.env.PEM_NEAT_OPENAI_MODEL ?? "").trim();
-  if (explicit) return explicit;
-  const configured = (env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o").trim();
-  if (/mini/i.test(configured)) return "gpt-4o";
-  return configured || "gpt-4o";
+  return resolvePemNeatModelName();
 }
 
 function zodIssueSummary(error: unknown): string {
@@ -118,112 +151,57 @@ type ProviderJsonResult = {
   inputTokens: number | null;
   outputTokens: number | null;
   finishReason: string | null;
+  api?: string;
+  usedFallback?: boolean;
 };
 
 async function callOpenAiJson(
   messages: Array<{ role: string; content: string }>,
   maxTokens = PEM_MAX_OUTPUT_TOKENS,
 ): Promise<ProviderJsonResult> {
-  const env = getEnv();
-  const apiKey = (env.OPENAI_API_KEY ?? "").trim();
-  if (!apiKey) {
-    throw new AppError("AI generation is not configured", {
-      code: "AI_NOT_CONFIGURED",
-      statusCode: 503,
-    });
-  }
-
   const model = getPemNeatModelName();
-  const timeoutMs = getPemNeatProviderTimeoutMs();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const result = await callPemOpenAiJsonWithRetries(
+    {
+      model,
+      messages: messages.map((m) => ({
+        role: (m.role === "system" ? "system" : m.role === "assistant" ? "assistant" : "user") as
+          "system" | "user" | "assistant",
+        content: m.content,
+      })),
+      maxOutputTokens: maxTokens,
+      temperature: 0.25,
+      reasoningEffort: getPemNeatReasoningEffort(),
+      timeoutMs: getPemNeatStageTimeoutMs(),
+    },
+    {
+      maxAttempts: 2,
+      fallbackModel: resolvePemNeatFallbackModel(),
+    },
+  );
 
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.25,
-        max_tokens: maxTokens,
-        response_format: { type: "json_object" },
-        messages,
-      }),
-      signal: controller.signal,
-    });
+  return {
+    content: result.content,
+    model: result.model,
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    finishReason: result.finishReason,
+    api: result.api,
+    usedFallback: result.usedFallback,
+  };
+}
 
-    const text = await response.text();
-    type CompletionResponse = {
-      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-      model?: string;
-    };
-    let data: CompletionResponse | null = null;
-    try {
-      data = text ? (JSON.parse(text) as CompletionResponse) : null;
-    } catch {
-      data = null;
-    }
-
-    if (!response.ok) {
-      console.error("[pem-neat] provider HTTP error", {
-        status: response.status,
-        code: "PEM_NEAT_PROVIDER_ERROR",
-        model,
-      });
-      throw new AppError(
-        "Unable to generate PEM NEAT. Baxter couldn't complete the analysis with the AI provider.",
-        { code: "PEM_NEAT_PROVIDER_ERROR", statusCode: 502 },
-      );
-    }
-
-    const choice = data?.choices?.[0];
-    const content = choice?.message?.content;
-    const finishReason = choice?.finish_reason ?? null;
-
-    if (finishReason === "length") {
-      console.error("[pem-neat] output truncated", {
-        code: "PEM_NEAT_OUTPUT_TRUNCATED",
-        model,
-      });
-      throw new AppError(
-        "Baxter's analysis was truncated before it finished. Try regenerating — long meetings are processed in stages.",
-        { code: "PEM_NEAT_OUTPUT_TRUNCATED", statusCode: 502 },
-      );
-    }
-
-    if (!content || !data) {
-      throw new AppError("PEM NEAT generation returned empty output", {
-        code: "PEM_NEAT_EMPTY_OUTPUT",
-        statusCode: 502,
-      });
-    }
-
-    return {
-      content,
-      model: data.model ?? model,
-      inputTokens: data.usage?.prompt_tokens ?? null,
-      outputTokens: data.usage?.completion_tokens ?? null,
-      finishReason,
-    };
-  } catch (error) {
-    if (isAbortError(error)) {
-      throw new AppError(
-        "Unable to generate PEM NEAT. Analysis timed out — your transcript has been saved. Try again.",
-        { code: "PEM_NEAT_TIMEOUT", statusCode: 504, cause: error },
-      );
-    }
-    if (error instanceof AppError) throw error;
-    throw new AppError(
-      "Unable to generate PEM NEAT. Baxter couldn't complete the analysis. Your transcript has been saved.",
-      { code: "PEM_NEAT_PROVIDER_ERROR", statusCode: 502, cause: error },
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+async function runStage(
+  system: string,
+  user: string,
+  maxTokens: number,
+): Promise<ProviderJsonResult> {
+  return callOpenAiJson(
+    [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    maxTokens,
+  );
 }
 
 function parseJsonOrThrow(content: string, code: string): unknown {
@@ -282,20 +260,6 @@ const handoffStageSchema = z.object({
   internalOpportunityNotes: z.string().optional(),
   productionNotes: z.array(z.string()).optional(),
 });
-
-async function runStage(
-  system: string,
-  user: string,
-  maxTokens: number,
-): Promise<ProviderJsonResult> {
-  return callOpenAiJson(
-    [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    maxTokens,
-  );
-}
 
 function applyFactsToShell(
   shell: PemNeatStructuredResult,
@@ -483,9 +447,11 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
       transcript: transcriptText,
       transcriptNotes: stage0Notes,
     });
-    const res = await runStage(systemPrompt, user, 8_000);
+    const res = await runStage(systemPrompt, user, stageMaxTokens(PEM_STAGE_FACTS_MAX_TOKENS));
     diagnostics.finishReasons.push(res.finishReason ?? "unknown");
     modelName = res.model;
+    if (res.api) diagnostics.api = res.api;
+    if (res.usedFallback) diagnostics.usedFallback = true;
     inputTokens += res.inputTokens ?? 0;
     outputTokens += res.outputTokens ?? 0;
     return parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON");
@@ -557,9 +523,15 @@ ${input.transcript.slice(0, 80_000)}
 </pem_transcript>`;
 
   try {
-    const res = await runStage(buildAssessmentStagePrompt(), assessmentUser, 8_000);
+    const res = await runStage(
+      buildAssessmentStagePrompt(),
+      assessmentUser,
+      stageMaxTokens(PEM_STAGE_ASSESSMENT_MAX_TOKENS),
+    );
     diagnostics.finishReasons.push(res.finishReason ?? "unknown");
     modelName = res.model;
+    if (res.api) diagnostics.api = res.api;
+    if (res.usedFallback) diagnostics.usedFallback = true;
     inputTokens += res.inputTokens ?? 0;
     outputTokens += res.outputTokens ?? 0;
     const raw = parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON");
@@ -600,7 +572,7 @@ ${input.transcript.slice(0, 80_000)}
       };
     }
   } catch (error) {
-    if (error instanceof AppError && error.code === "PEM_NEAT_OUTPUT_TRUNCATED") throw error;
+    if (isFatalPemProviderError(error)) throw error;
     diagnostics.validationIssues.push(`assessment: ${zodIssueSummary(error)}`);
     console.error("[pem-neat] assessment stage soft-fail", {
       code: "PEM_NEAT_ASSESSMENT_PARTIAL",
@@ -623,9 +595,15 @@ Transcript excerpt for next-step / contact preference grounding:
 ${input.transcript.slice(0, 20_000)}`;
 
   try {
-    const res = await runStage(buildHandoffStagePrompt(), handoffUser, 6_000);
+    const res = await runStage(
+      buildHandoffStagePrompt(),
+      handoffUser,
+      stageMaxTokens(PEM_STAGE_HANDOFF_MAX_TOKENS),
+    );
     diagnostics.finishReasons.push(res.finishReason ?? "unknown");
     modelName = res.model;
+    if (res.api) diagnostics.api = res.api;
+    if (res.usedFallback) diagnostics.usedFallback = true;
     inputTokens += res.inputTokens ?? 0;
     outputTokens += res.outputTokens ?? 0;
     const raw = parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON");
@@ -647,7 +625,7 @@ ${input.transcript.slice(0, 20_000)}`;
       shell.productionNotes = parsed.data.productionNotes;
     }
   } catch (error) {
-    if (error instanceof AppError && error.code === "PEM_NEAT_OUTPUT_TRUNCATED") throw error;
+    if (isFatalPemProviderError(error)) throw error;
     diagnostics.validationIssues.push(`handoff: ${zodIssueSummary(error)}`);
     console.error("[pem-neat] handoff stage soft-fail", {
       code: "PEM_NEAT_HANDOFF_PARTIAL",

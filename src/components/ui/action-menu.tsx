@@ -139,7 +139,9 @@ export function ActionMenu({
                     href={item.href}
                     className={cn(
                       "block w-full px-3 py-2 text-left text-sm hover:bg-[var(--acton-gray-50)]",
-                      item.destructive ? "text-red-700 hover:bg-red-50" : "text-[var(--acton-navy)]",
+                      item.destructive
+                        ? "text-red-700 hover:bg-red-50"
+                        : "text-[var(--acton-navy)]",
                     )}
                     onClick={() => setOpen(false)}
                   >
@@ -153,7 +155,9 @@ export function ActionMenu({
                     disabled={item.disabled}
                     className={cn(
                       "block w-full px-3 py-2 text-left text-sm hover:bg-[var(--acton-gray-50)] disabled:opacity-50",
-                      item.destructive ? "text-red-700 hover:bg-red-50" : "text-[var(--acton-navy)]",
+                      item.destructive
+                        ? "text-red-700 hover:bg-red-50"
+                        : "text-[var(--acton-navy)]",
                     )}
                     onClick={() => {
                       if (item.disabled) return;

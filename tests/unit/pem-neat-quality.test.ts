@@ -72,7 +72,7 @@ describe("PEM prompt quality", () => {
 });
 
 describe("PEM model selection", () => {
-  it("upgrades mini chat models to gpt-4o for PEM unless explicitly overridden", () => {
+  it("uses explicit PEM_NEAT_OPENAI_MODEL without silent substitution", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key";
@@ -80,13 +80,18 @@ describe("PEM model selection", () => {
     const prevBaxter = process.env.BAXTER_OPENAI_MODEL;
     const prevOpenAi = process.env.OPENAI_MODEL;
     try {
+      process.env.PEM_NEAT_OPENAI_MODEL = "gpt-5.4";
+      process.env.BAXTER_OPENAI_MODEL = "gpt-4o-mini";
+      expect(getPemNeatModelName()).toBe("gpt-5.4");
+
       delete process.env.PEM_NEAT_OPENAI_MODEL;
       process.env.BAXTER_OPENAI_MODEL = "gpt-4o-mini";
       process.env.OPENAI_MODEL = "gpt-4o-mini";
-      expect(getPemNeatModelName()).toBe("gpt-4o");
+      // No silent mini→gpt-4o upgrade; Baxter chat model is used when PEM unset.
+      expect(getPemNeatModelName()).toBe("gpt-4o-mini");
 
-      process.env.PEM_NEAT_OPENAI_MODEL = "gpt-4.1";
-      expect(getPemNeatModelName()).toBe("gpt-4.1");
+      process.env.PEM_NEAT_OPENAI_MODEL = "gpt-4o";
+      expect(getPemNeatModelName()).toBe("gpt-4o");
     } finally {
       if (prevPem === undefined) delete process.env.PEM_NEAT_OPENAI_MODEL;
       else process.env.PEM_NEAT_OPENAI_MODEL = prevPem;
