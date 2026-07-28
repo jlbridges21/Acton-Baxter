@@ -204,7 +204,9 @@ export function PemNeatCreateClient({
                 Analyzing Partnership Evaluation Meeting…
               </p>
               <p className="mt-1 text-sm text-[var(--acton-muted)]">
-                Extracting customer intelligence and evaluating the Acton sales process.
+                Baxter is extracting customer intelligence, evaluating the sales process, and
+                preparing BuilderTrend handoff data. This can take up to a couple of minutes for
+                long meetings.
               </p>
             </div>
           ) : null}

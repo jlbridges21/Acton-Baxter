@@ -15,17 +15,16 @@ export default async function PemNeatDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  let generationCount: number | null = null;
+  let generations: Awaited<ReturnType<typeof store.listGenerations>> = [];
   try {
-    const generations = await store.listGenerations(id);
-    generationCount = generations.length;
+    generations = await store.listGenerations(id);
   } catch {
-    generationCount = null;
+    generations = [];
   }
 
   return (
     <AppShell user={user}>
-      <PemNeatResultClient item={item} generationCount={generationCount} />
+      <PemNeatResultClient item={item} generations={generations} />
     </AppShell>
   );
 }

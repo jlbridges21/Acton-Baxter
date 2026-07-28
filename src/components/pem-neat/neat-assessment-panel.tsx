@@ -1,12 +1,12 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
-import {
-  ASSESSMENT_CATEGORY_LABELS,
-  type AssessmentCategoryKey,
-} from "@/lib/pem-neat/constants";
+import { ASSESSMENT_CATEGORY_LABELS, type AssessmentCategoryKey } from "@/lib/pem-neat/constants";
 import type { PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
-import { AssessmentStatusBadge, QualificationBadge } from "@/components/pem-neat/pem-neat-formatters";
+import {
+  AssessmentStatusBadge,
+  QualificationBadge,
+} from "@/components/pem-neat/pem-neat-formatters";
 import { SectionHeading, SubSectionHeading } from "@/components/pem-neat/section-heading";
 import { cn } from "@/lib/utils";
 
@@ -64,7 +64,7 @@ export function NeatAssessmentPanel({
 
         <div className="rounded-md border-2 border-[var(--acton-yellow)] bg-[var(--acton-gray-50)] p-4">
           <SubSectionHeading>The One Thing</SubSectionHeading>
-          <p className="mt-2 text-sm font-medium leading-relaxed text-[var(--acton-navy)]">
+          <p className="mt-2 text-sm leading-relaxed font-medium text-[var(--acton-navy)]">
             {assessment.oneThing}
           </p>
         </div>
@@ -74,10 +74,7 @@ export function NeatAssessmentPanel({
         <SectionHeading>Scorecard</SectionHeading>
         <div className="mt-4 space-y-4">
           {assessment.categories.map((cat) => (
-            <div
-              key={cat.key}
-              className="rounded-md border border-[var(--acton-border)] p-4"
-            >
+            <div key={cat.key} className="rounded-md border border-[var(--acton-border)] p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <h4 className="text-sm font-semibold text-[var(--acton-navy)]">
                   {ASSESSMENT_CATEGORY_LABELS[cat.key as AssessmentCategoryKey] ?? cat.label}
@@ -124,7 +121,9 @@ export function NeatAssessmentPanel({
                           <AssessmentStatusBadge status={detail.status} />
                         </div>
                         {detail.evidence ? (
-                          <p className="mt-1 text-xs text-[var(--acton-muted)]">{detail.evidence}</p>
+                          <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                            {detail.evidence}
+                          </p>
                         ) : null}
                         {detail.notes ? (
                           <p className="mt-0.5 text-xs text-[var(--acton-muted)]">{detail.notes}</p>

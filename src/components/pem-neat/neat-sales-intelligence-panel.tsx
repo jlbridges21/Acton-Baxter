@@ -7,11 +7,21 @@ import {
   meetingOutcomeTone,
   OutcomeBadge,
 } from "@/components/pem-neat/pem-neat-formatters";
-import { ProseBlock, SectionHeading, SubSectionHeading } from "@/components/pem-neat/section-heading";
+import {
+  ProseBlock,
+  SectionHeading,
+  SubSectionHeading,
+} from "@/components/pem-neat/section-heading";
 import { cn } from "@/lib/utils";
 import type { PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
 
-function PainList({ items, title }: { items: PemNeatStructuredResult["salesIntelligence"]["type1Pain"]; title: string }) {
+function PainList({
+  items,
+  title,
+}: {
+  items: PemNeatStructuredResult["salesIntelligence"]["type1Pain"];
+  title: string;
+}) {
   return (
     <div>
       <SubSectionHeading>{title}</SubSectionHeading>
@@ -23,7 +33,9 @@ function PainList({ items, title }: { items: PemNeatStructuredResult["salesIntel
             <li key={i}>
               <span>{pain.statement}</span>
               {pain.whyNow ? (
-                <span className="mt-0.5 block text-[var(--acton-muted)]">Why now: {pain.whyNow}</span>
+                <span className="mt-0.5 block text-[var(--acton-muted)]">
+                  Why now: {pain.whyNow}
+                </span>
               ) : null}
             </li>
           ))}
@@ -33,7 +45,11 @@ function PainList({ items, title }: { items: PemNeatStructuredResult["salesIntel
   );
 }
 
-function BudgetSection({ budget }: { budget: PemNeatStructuredResult["salesIntelligence"]["budget"] }) {
+function BudgetSection({
+  budget,
+}: {
+  budget: PemNeatStructuredResult["salesIntelligence"]["budget"];
+}) {
   const rows: { label: string; content: React.ReactNode }[] = [];
 
   if (budget.target?.value?.trim()) {
@@ -136,7 +152,13 @@ function BudgetSection({ budget }: { budget: PemNeatStructuredResult["salesIntel
   );
 }
 
-function EvidencedField({ label, field }: { label: string; field: { value: string | null } | null | undefined }) {
+function EvidencedField({
+  label,
+  field,
+}: {
+  label: string;
+  field: { value: string | null } | null | undefined;
+}) {
   if (!field?.value?.trim()) return null;
   return (
     <p className="text-sm text-[var(--acton-navy)]">
@@ -175,7 +197,9 @@ export function NeatSalesIntelligencePanel({
         <div>
           <SubSectionHeading>6. Decision-Making Process</SubSectionHeading>
           <div className="mt-2 space-y-2">
-            <ProseBlock>{sales.decisionProcess.summary ?? sales.decisionProcess.process}</ProseBlock>
+            <ProseBlock>
+              {sales.decisionProcess.summary ?? sales.decisionProcess.process}
+            </ProseBlock>
             {sales.decisionProcess.decisionMakers.length > 0 ? (
               <div>
                 <p className="text-sm font-medium text-[var(--acton-navy)]">Decision makers</p>

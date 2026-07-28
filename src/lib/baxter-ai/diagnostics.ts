@@ -21,12 +21,14 @@ import { getEmbeddingConfig } from "@/lib/knowledge-index/embeddings";
 import { getBaxterVisionProvider } from "./vision";
 import { getKnowledgeHealthSummary } from "./knowledge-health";
 import { getGovernanceAdminSummary, assembleBaxterRuntime } from "./governance";
+import { getPemNeatHealthSnapshot } from "@/lib/pem-neat/health";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
   const providerDiag = getBaxterProviderDiagnostics();
   const embedding = getEmbeddingConfig();
   const vision = getBaxterVisionProvider();
+  const pemNeat = await getPemNeatHealthSnapshot();
   const entries = await listAllKnowledgeEntriesForRetrieval();
   const approvedInternal = entries.filter(
     (entry) => entry.status === "approved" && entry.visibility === "internal",
@@ -126,6 +128,7 @@ export async function getBaxterDiagnosticsSnapshot() {
       failedResponses: failed,
       recentErrorCodes: Array.from(new Set(errorCodes)).slice(0, 10),
     },
+    pemNeat,
   };
 }
 

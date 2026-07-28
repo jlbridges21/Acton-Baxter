@@ -90,8 +90,7 @@ export function AdminUsersClient({
   const active = profiles.filter((profile) => profile.role !== "new_user");
 
   function roleOptionsForProfile(profile: ProfileWithEmail): UserRole[] {
-    const isBootstrapAccount =
-      profile.email?.trim().toLowerCase() === "baxter@actonadu.com";
+    const isBootstrapAccount = profile.email?.trim().toLowerCase() === "baxter@actonadu.com";
     return ASSIGNABLE_ROLES.filter((role) => {
       if (role === "super_admin" && !viewerIsSuperAdmin) return false;
       if (isBootstrapAccount && role === "new_user") return false;
@@ -238,7 +237,7 @@ export function AdminUsersClient({
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="border-b border-[var(--acton-border)] text-left text-xs uppercase tracking-wide text-[var(--acton-muted)]">
+              <tr className="border-b border-[var(--acton-border)] text-left text-xs tracking-wide text-[var(--acton-muted)] uppercase">
                 <th className="px-2 py-2 font-medium">User</th>
                 <th className="px-2 py-2 font-medium">Department</th>
                 <th className="px-2 py-2 font-medium">Role</th>

@@ -237,9 +237,11 @@ A use case is not automatically pain.
 Example:
 
 Reason:
+
 > We want an ADU for Mom.
 
 Pain:
+
 > Mom is becoming vulnerable living alone, the family is worried about her safety, and they need a way to keep her close without eliminating everyone's independence.
 
 Common Type 1 themes include:
@@ -530,9 +532,11 @@ The rep does not need a memorized value proposition. Score whether the customer 
 Example:
 
 Weak:
+
 > We use Buildertrend.
 
 Stronger:
+
 > You said you hated not knowing what was happening on your last project. We use Buildertrend so schedule, selections, updates, and project communication are visible in one place.
 
 The second is tailored to Type 2 pain.
@@ -680,9 +684,11 @@ For each:
 Coaching must be behavioral and tied to evidence.
 
 Bad:
+
 > Dig deeper into pain.
 
 Good:
+
 > When the homeowner said the kids take over the living room every weekend, the advisor confirmed it was important but moved on. Ask one consequence question such as, "What does that make weekends like for you and your husband?" before changing topics.
 
 Identify:

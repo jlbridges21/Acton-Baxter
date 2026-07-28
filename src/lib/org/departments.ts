@@ -12,7 +12,11 @@ import type {
 } from "@/lib/org/department-types";
 
 export { SALES_DEPARTMENT_SLUG } from "@/lib/org/department-types";
-export type { CreateDepartmentInput, Department, UpdateDepartmentInput } from "@/lib/org/department-types";
+export type {
+  CreateDepartmentInput,
+  Department,
+  UpdateDepartmentInput,
+} from "@/lib/org/department-types";
 
 type MemoryState = {
   departments: Map<string, Department>;

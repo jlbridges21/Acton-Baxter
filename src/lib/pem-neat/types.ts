@@ -10,6 +10,7 @@ export type PemNeatListItem = {
   status: PemNeatStatus;
   meeting_outcome: MeetingOutcome | null;
   qualification: QualificationLevel | null;
+  analysis_stale: boolean;
   created_at: string;
   updated_at: string;
   generated_at: string | null;
@@ -20,8 +21,11 @@ export type PemNeatRecord = PemNeatListItem & {
   transcript: string;
   transcript_hash: string | null;
   transcript_char_count: number;
+  current_generation_transcript_hash: string | null;
   neat_standard_version: string;
   generation_error: string | null;
+  last_error_code: string | null;
+  generating_started_at: string | null;
   regenerated_at: string | null;
   model_provider: string | null;
   model_name: string | null;
@@ -31,6 +35,8 @@ export type PemNeatRecord = PemNeatListItem & {
   structured_result: PemNeatStructuredResult | Record<string, unknown>;
   buildertrend_fields: BuildertrendFields | Record<string, unknown>;
   analysis_metadata: Record<string, unknown>;
+  deleted_at: string | null;
+  deleted_by: string | null;
 };
 
 export type PemNeatGenerationRow = {
@@ -45,6 +51,11 @@ export type PemNeatGenerationRow = {
   buildertrend_fields: BuildertrendFields | Record<string, unknown>;
   analysis_metadata: Record<string, unknown>;
   error_message: string | null;
+  error_code: string | null;
+  finish_reason: string | null;
+  transcript_hash: string | null;
+  validation_issue_count: number | null;
+  diagnostics_json: Record<string, unknown>;
   latency_ms: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
@@ -60,6 +71,21 @@ export type CreatePemNeatRecordInput = {
   createdBy: string;
 };
 
+export type UpdatePemNeatSourceInput = {
+  prospectName: string;
+  salespersonUserId: string;
+  salespersonDisplayName: string;
+  meetingDate?: string | null;
+  transcript: string;
+  updatedBy: string;
+};
+
+export type UpdatePemNeatSourceResult = {
+  record: PemNeatRecord;
+  transcriptChanged: boolean;
+  prospectNameChanged: boolean;
+};
+
 export type SaveGenerationSuccessInput = {
   structuredResult: PemNeatStructuredResult;
   buildertrendFields: BuildertrendFields;
@@ -72,11 +98,19 @@ export type SaveGenerationSuccessInput = {
   inputTokens?: number | null;
   outputTokens?: number | null;
   neatStandardVersion: string;
+  transcriptHash?: string | null;
+  diagnostics?: Record<string, unknown>;
+  finishReason?: string | null;
 };
 
 export type SaveGenerationFailureInput = {
   errorMessage: string;
+  errorCode?: string | null;
   modelProvider?: string | null;
   modelName?: string | null;
   latencyMs?: number | null;
+  finishReason?: string | null;
+  transcriptHash?: string | null;
+  validationIssueCount?: number | null;
+  diagnostics?: Record<string, unknown>;
 };

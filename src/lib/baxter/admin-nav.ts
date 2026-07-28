@@ -1,9 +1,9 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity,
   Bell,
   BookOpen,
   BookMarked,
+  ClipboardList,
   Cloud,
   LayoutDashboard,
   MessageSquare,
@@ -56,10 +56,10 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/admin/users"),
     },
     {
-      href: "/admin/baxter/diagnostics",
-      label: "Diagnostics",
-      icon: Activity,
-      match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
+      href: "/pem-neats",
+      label: "PEM NEAT",
+      icon: ClipboardList,
+      match: (pathname) => pathname.startsWith("/pem-neats"),
     },
     {
       href: "/admin/baxter/governance",
@@ -107,7 +107,8 @@ export function getAdminNavLinks(): AdminNavLink[] {
       href: "/admin/settings",
       label: "Settings",
       icon: Settings,
-      match: (pathname) => pathname === "/admin/settings" || pathname.startsWith("/admin/settings/"),
+      match: (pathname) =>
+        pathname === "/admin/settings" || pathname.startsWith("/admin/settings/"),
     },
   ];
 

@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { MoreHorizontal } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { BuildertrendFieldsPanel } from "@/components/pem-neat/buildertrend-fields-panel";
@@ -12,12 +13,11 @@ import {
   GeneratingCard,
   GenerationFailedCard,
 } from "@/components/pem-neat/generation-status-cards";
+import { GenerationHistoryPanel } from "@/components/pem-neat/generation-history-panel";
 import { NeatAssessmentPanel } from "@/components/pem-neat/neat-assessment-panel";
 import { NeatFollowUpPanel } from "@/components/pem-neat/neat-follow-up-panel";
 import { NeatProjectIntelligencePanel } from "@/components/pem-neat/neat-project-intelligence-panel";
-import {
-  NeatSalesIntelligencePanel,
-} from "@/components/pem-neat/neat-sales-intelligence-panel";
+import { NeatSalesIntelligencePanel } from "@/components/pem-neat/neat-sales-intelligence-panel";
 import { NeatSourcePanel } from "@/components/pem-neat/neat-source-panel";
 import {
   formatGeneratedAt,
@@ -26,7 +26,7 @@ import {
   QualificationBadge,
 } from "@/components/pem-neat/pem-neat-formatters";
 import { cn } from "@/lib/utils";
-import type { PemNeatRecord } from "@/lib/pem-neat/types";
+import type { PemNeatGenerationRow, PemNeatRecord } from "@/lib/pem-neat/types";
 import type { BuildertrendFields, PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
 import { buildertrendFieldsSchema } from "@/lib/pem-neat/schemas";
 
@@ -35,10 +35,10 @@ type Tab = "neat" | "buildertrend";
 function isStructuredResult(value: unknown): value is PemNeatStructuredResult {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      "salesIntelligence" in value &&
-      "assessment" in value &&
-      "followUpEmail" in value,
+    typeof value === "object" &&
+    "salesIntelligence" in value &&
+    "assessment" in value &&
+    "followUpEmail" in value,
   );
 }
 
@@ -56,22 +56,32 @@ function parseBuildertrendFields(
 
 export function PemNeatResultClient({
   item,
-  generationCount,
+  generations = [],
 }: {
   item: PemNeatRecord;
-  generationCount?: number | null;
+  generations?: PemNeatGenerationRow[];
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("neat");
   const [regenerating, setRegenerating] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const result = isStructuredResult(item.structured_result) ? item.structured_result : null;
   const btFields = parseBuildertrendFields(result, item.buildertrend_fields);
   const isGenerating = regenerating || retrying || item.status === "generating";
   const showFailed = item.status === "failed" && !result;
+  const isStale =
+    item.analysis_stale ||
+    item.status === "needs_regeneration" ||
+    (Boolean(item.generated_at) &&
+      Boolean(item.transcript_hash) &&
+      Boolean(item.current_generation_transcript_hash) &&
+      item.transcript_hash !== item.current_generation_transcript_hash);
 
   const followUpEmailCopy = result
     ? [
@@ -114,6 +124,23 @@ export function PemNeatResultClient({
     }
   }
 
+  async function onDelete() {
+    setDeleting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/pem-neats/${item.id}`, { method: "DELETE" });
+      const data = (await response.json()) as { error?: { message?: string } };
+      if (!response.ok) {
+        throw new Error(data.error?.message ?? "Unable to delete PEM NEAT");
+      }
+      router.push("/pem-neats?deleted=1");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete PEM NEAT");
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header>
@@ -127,9 +154,7 @@ export function PemNeatResultClient({
         <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
             <h1 className="text-2xl font-bold text-[var(--acton-navy)]">{item.prospect_name}</h1>
-            <p className="text-sm text-[var(--acton-muted)]">
-              Partnership Evaluation Meeting NEAT
-            </p>
+            <p className="text-sm text-[var(--acton-muted)]">Partnership Evaluation Meeting NEAT</p>
 
             <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
               <div>
@@ -157,9 +182,18 @@ export function PemNeatResultClient({
             </dl>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Link href="/pem-neats" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+          <div className="relative flex flex-wrap gap-2">
+            <Link
+              href="/pem-neats"
+              className={buttonVariants({ variant: "secondary", size: "sm" })}
+            >
               Back
+            </Link>
+            <Link
+              href={`/pem-neats/${item.id}/edit`}
+              className={buttonVariants({ variant: "secondary", size: "sm" })}
+            >
+              Edit
             </Link>
             <button
               type="button"
@@ -187,6 +221,28 @@ export function PemNeatResultClient({
                 />
               </>
             ) : null}
+            <button
+              type="button"
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+              aria-label="More actions"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+            {menuOpen ? (
+              <div className="absolute top-10 right-0 z-10 w-40 rounded-md border border-[var(--acton-border)] bg-white py-1 shadow-md">
+                <button
+                  type="button"
+                  className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setDeleteOpen(true);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -194,9 +250,7 @@ export function PemNeatResultClient({
           Standard v{item.neat_standard_version}
           {item.model_provider ? ` · Provider: ${item.model_provider}` : ""}
           {item.model_name ? ` · Model: ${item.model_name}` : ""}
-          {generationCount != null && generationCount > 0
-            ? ` · Generations: ${generationCount}`
-            : ""}
+          {generations.length > 0 ? ` · Generations: ${generations.length}` : ""}
         </p>
       </header>
 
@@ -204,6 +258,24 @@ export function PemNeatResultClient({
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
         </div>
+      ) : null}
+
+      {isStale && result ? (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardTitle className="text-amber-900">Transcript Updated</CardTitle>
+          <CardDescription className="text-amber-800">
+            This NEAT was generated from an earlier version of the transcript. You can still inspect
+            the previous analysis.
+          </CardDescription>
+          <button
+            type="button"
+            className={cn(buttonVariants({ variant: "primary", size: "sm" }), "mt-3")}
+            onClick={() => setConfirmOpen(true)}
+            disabled={isGenerating}
+          >
+            Regenerate NEAT
+          </button>
+        </Card>
       ) : null}
 
       {isGenerating ? <GeneratingCard /> : null}
@@ -223,11 +295,18 @@ export function PemNeatResultClient({
         </Card>
       ) : null}
 
-      <div role="tablist" aria-label="PEM NEAT views" className="flex gap-2 border-b border-[var(--acton-border)]">
+      <div
+        role="tablist"
+        aria-label="PEM NEAT views"
+        className="flex gap-2 border-b border-[var(--acton-border)]"
+      >
         {(
           [
             { id: "neat" as const, label: "NEAT" },
-            { id: "buildertrend" as const, label: "BuilderTrend Custom Fields" },
+            {
+              id: "buildertrend" as const,
+              label: isStale ? "BuilderTrend Custom Fields (stale)" : "BuilderTrend Custom Fields",
+            },
           ] as const
         ).map(({ id, label }) => (
           <button
@@ -279,19 +358,48 @@ export function PemNeatResultClient({
           )}
         </div>
       ) : (
-        <div role="tabpanel" id="panel-buildertrend" aria-labelledby="tab-buildertrend">
+        <div
+          role="tabpanel"
+          id="panel-buildertrend"
+          aria-labelledby="tab-buildertrend"
+          className="space-y-4"
+        >
+          {isStale ? (
+            <Card className="border-amber-200 bg-amber-50">
+              <CardTitle className="text-amber-900">Generated from earlier transcript</CardTitle>
+              <CardDescription className="text-amber-800">
+                Do not copy these BuilderTrend fields into production until you regenerate from the
+                current transcript.
+              </CardDescription>
+            </Card>
+          ) : null}
           <BuildertrendFieldsPanel fields={btFields} />
         </div>
       )}
 
+      <GenerationHistoryPanel
+        generations={generations}
+        currentTranscriptHash={item.current_generation_transcript_hash}
+      />
+
       <ConfirmDialog
         open={confirmOpen}
         title="Regenerate PEM NEAT?"
-        description="Baxter will re-analyze the original transcript… current successful generation remains in history."
+        description="Baxter will re-analyze the stored transcript. The current successful generation remains in history."
         confirmLabel="Regenerate"
         confirming={regenerating}
         onConfirm={onRegenerate}
         onCancel={() => setConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete PEM NEAT?"
+        description={`${item.prospect_name}\n\nThis will remove the saved transcript and generated NEAT history from Baxter. This cannot be undone.`}
+        confirmLabel="Delete PEM NEAT"
+        confirming={deleting}
+        onConfirm={onDelete}
+        onCancel={() => setDeleteOpen(false)}
       />
     </div>
   );

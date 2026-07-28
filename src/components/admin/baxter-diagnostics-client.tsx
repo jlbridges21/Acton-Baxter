@@ -79,6 +79,13 @@ type Snapshot = {
     failedResponses: number;
     recentErrorCodes: string[];
   };
+  pemNeat?: {
+    databaseReady: boolean;
+    aiProviderReady: boolean;
+    lastGenerationStatus: string | null;
+    lastErrorCode: string | null;
+    activeCount: number | null;
+  };
 };
 
 function YesNo({ value }: { value: boolean }) {
@@ -332,6 +339,32 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             ))}
           </ul>
         ) : null}
+      </Card>
+
+      <Card>
+        <CardTitle>PEM NEAT</CardTitle>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+          <div>
+            <dt className="text-[var(--acton-muted)]">Database</dt>
+            <dd>{snapshot.pemNeat?.databaseReady ? "Ready" : "Not ready"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">AI Provider</dt>
+            <dd>{snapshot.pemNeat?.aiProviderReady ? "Ready" : "Not ready"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Active records</dt>
+            <dd>{snapshot.pemNeat?.activeCount ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last generation</dt>
+            <dd>{snapshot.pemNeat?.lastGenerationStatus ?? "—"}</dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-[var(--acton-muted)]">Last failure code</dt>
+            <dd>{snapshot.pemNeat?.lastErrorCode ?? "—"}</dd>
+          </div>
+        </dl>
       </Card>
 
       <Card>

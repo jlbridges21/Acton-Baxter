@@ -4,7 +4,11 @@ import { useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { CopyButton } from "@/components/pem-neat/copy-button";
 import { ProjectFactStatusBadge } from "@/components/pem-neat/pem-neat-formatters";
-import { ProseBlock, SectionHeading, SubSectionHeading } from "@/components/pem-neat/section-heading";
+import {
+  ProseBlock,
+  SectionHeading,
+  SubSectionHeading,
+} from "@/components/pem-neat/section-heading";
 import type { PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
 
 function groupFactsByTopic(facts: PemNeatStructuredResult["projectIntelligence"]["facts"]) {
@@ -64,10 +68,7 @@ export function NeatProjectIntelligencePanel({
         ) : (
           <ul className="space-y-2">
             {projectIntelligence.facts.map((fact, i) => (
-              <li
-                key={i}
-                className="rounded-md border border-[var(--acton-border)] p-3 text-sm"
-              >
+              <li key={i} className="rounded-md border border-[var(--acton-border)] p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-[var(--acton-navy)]">{fact.topic}</span>
                   <ProjectFactStatusBadge status={fact.status} />

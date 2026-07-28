@@ -21,7 +21,11 @@ import {
 } from "@/lib/org/departments";
 import { getReportStore, resetMemoryStoreForTests } from "@/lib/research/report-store";
 import { listSalespeople } from "@/lib/pem-neat/salespeople";
-import { getPemNeatProviderTimeoutMs, isAbortError, pemNeatStoreError } from "@/lib/pem-neat/errors";
+import {
+  getPemNeatProviderTimeoutMs,
+  isAbortError,
+  pemNeatStoreError,
+} from "@/lib/pem-neat/errors";
 import { AppError } from "@/lib/errors";
 
 describe("Baxter application roles", () => {

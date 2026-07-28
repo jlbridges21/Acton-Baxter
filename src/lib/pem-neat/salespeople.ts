@@ -2,11 +2,7 @@ import "server-only";
 
 import { isAppAccessRole } from "@/lib/auth/roles";
 import { getEnv } from "@/lib/env";
-import {
-  getDepartmentBySlug,
-  listDepartments,
-  SALES_DEPARTMENT_SLUG,
-} from "@/lib/org/departments";
+import { getDepartmentBySlug, listDepartments, SALES_DEPARTMENT_SLUG } from "@/lib/org/departments";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getReportStore } from "@/lib/research/report-store";
 import { pemNeatStoreError } from "@/lib/pem-neat/errors";
@@ -84,4 +80,50 @@ export async function resolveSalespersonDisplayName(
 ): Promise<SalespersonOption | null> {
   const all = await listSalespeople();
   return all.find((p) => p.id === userId) ?? null;
+}
+
+/** Resolve any active profile by id (for historical salesperson who left Sales). */
+export async function resolveProfileDisplayName(userId: string): Promise<SalespersonOption | null> {
+  const eligible = await resolveSalespersonDisplayName(userId);
+  if (eligible) return eligible;
+
+  if (shouldUseMemoryProfiles()) {
+    const profiles = await getReportStore().listProfiles();
+    const profile = profiles.find((p) => p.id === userId);
+    if (!profile) return null;
+    return {
+      id: profile.id,
+      displayName: profile.full_name?.trim() || "Unnamed user",
+      role: profile.role,
+    };
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, full_name, role")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw pemNeatStoreError(error, "Unable to resolve salesperson");
+  if (!data) return null;
+  return {
+    id: String(data.id),
+    displayName: (data.full_name as string | null)?.trim() || "Unnamed user",
+    role: (data.role as string | null) ?? null,
+  };
+}
+
+/** Eligible Sales options plus current historical salesperson if missing. */
+export async function listSalespeopleForEdit(
+  currentSalespersonUserId: string | null,
+): Promise<SalespersonOption[]> {
+  const eligible = await listSalespeople();
+  if (!currentSalespersonUserId) return eligible;
+  if (eligible.some((s) => s.id === currentSalespersonUserId)) return eligible;
+  const historical = await resolveProfileDisplayName(currentSalespersonUserId);
+  if (!historical) return eligible;
+  return [
+    { ...historical, displayName: `${historical.displayName} (current — not in Sales)` },
+    ...eligible,
+  ];
 }

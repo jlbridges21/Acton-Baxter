@@ -92,10 +92,7 @@ function rawFieldValue(fields: BuildertrendFields, def: BuildertrendFieldDef): u
   return base;
 }
 
-export function getDisplayValue(
-  fields: BuildertrendFields,
-  def: BuildertrendFieldDef,
-): string {
+export function getDisplayValue(fields: BuildertrendFields, def: BuildertrendFieldDef): string {
   const value = rawFieldValue(fields, def);
 
   if (def.isBudget) {
@@ -132,10 +129,7 @@ export function getDisplayValue(
   return String(value);
 }
 
-export function getCopyableValue(
-  fields: BuildertrendFields,
-  def: BuildertrendFieldDef,
-): string {
+export function getCopyableValue(fields: BuildertrendFields, def: BuildertrendFieldDef): string {
   const value = rawFieldValue(fields, def);
 
   if (def.isBudget) {
@@ -152,9 +146,7 @@ export function getCopyableValue(
         : [];
     const other = !Array.isArray(payload) ? payload?.other : undefined;
     if (list.length === 0 && !other) return "";
-    const items = list.map((item) =>
-      item === "Other" && other ? `Other — ${other}` : item,
-    );
+    const items = list.map((item) => (item === "Other" && other ? `Other — ${other}` : item));
     if (other && !list.includes("Other")) {
       items.push(`Other — ${other}`);
     }

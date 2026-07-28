@@ -42,7 +42,7 @@ export function NeatSourcePanel({ transcript }: { transcript: string }) {
         )}
       >
         <pre className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-[var(--acton-navy)]">
-          {open ? transcript : preview ?? transcript}
+          {open ? transcript : (preview ?? transcript)}
         </pre>
       </div>
       <p className="text-xs text-[var(--acton-muted)]">

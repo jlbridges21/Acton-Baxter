@@ -56,11 +56,20 @@ export function ConfirmDialog({
         <h2 id="confirm-dialog-title" className="text-lg font-bold text-[var(--acton-navy)]">
           {title}
         </h2>
-        <p id="confirm-dialog-desc" className="mt-2 text-sm text-[var(--acton-muted)]">
+        <p
+          id="confirm-dialog-desc"
+          className="mt-2 text-sm whitespace-pre-wrap text-[var(--acton-muted)]"
+        >
           {description}
         </p>
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel} disabled={confirming}>
+          <Button
+            ref={cancelRef}
+            type="button"
+            variant="secondary"
+            onClick={onCancel}
+            disabled={confirming}
+          >
             {cancelLabel}
           </Button>
           <Button type="button" variant="primary" onClick={onConfirm} disabled={confirming}>

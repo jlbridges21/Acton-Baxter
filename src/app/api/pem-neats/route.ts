@@ -4,13 +4,10 @@ import { RateLimitError, AppError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createPemNeatInputSchema } from "@/lib/pem-neat/schemas";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
-import {
-  generatePemNeat,
-  getPemNeatStandardVersion,
-} from "@/lib/pem-neat/generate";
+import { generatePemNeat, getPemNeatStandardVersion } from "@/lib/pem-neat/generate";
 import { resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
 
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   try {
@@ -59,6 +56,7 @@ export async function POST(request: Request) {
     createdId = record.id;
 
     await store.markGenerating(record.id);
+    const started = Date.now();
 
     try {
       const generated = await generatePemNeat({
@@ -75,6 +73,7 @@ export async function POST(request: Request) {
           ...generated.result.analysisMetadata,
           transcriptStrategy: generated.transcriptStrategy,
           standardVersion: getPemNeatStandardVersion(),
+          diagnostics: generated.diagnostics,
         },
         meetingOutcome: generated.result.salesIntelligence.meetingOutcome.classification,
         qualification: generated.result.salesIntelligence.qualification.classification,
@@ -84,6 +83,9 @@ export async function POST(request: Request) {
         inputTokens: generated.inputTokens,
         outputTokens: generated.outputTokens,
         neatStandardVersion: getPemNeatStandardVersion(),
+        transcriptHash: record.transcript_hash,
+        diagnostics: generated.diagnostics,
+        finishReason: generated.diagnostics.finishReasons.at(-1) ?? null,
       });
 
       console.info("[pem-neat] generated", {
@@ -91,6 +93,7 @@ export async function POST(request: Request) {
         status: saved.status,
         model: saved.model_name,
         latencyMs: saved.generation_latency_ms,
+        stages: generated.diagnostics.stages,
       });
 
       return jsonOk({ id: saved.id, status: saved.status }, { status: 201 });
@@ -99,9 +102,13 @@ export async function POST(request: Request) {
         genError instanceof AppError
           ? genError.message
           : "Unable to generate PEM NEAT. Baxter couldn't complete the analysis. Your transcript has been saved.";
+      const code = genError instanceof AppError ? genError.code : "PEM_NEAT_PROVIDER_ERROR";
       try {
         await store.saveGenerationFailure(record.id, {
           errorMessage: message.slice(0, 500),
+          errorCode: code,
+          latencyMs: Date.now() - started,
+          transcriptHash: record.transcript_hash,
         });
       } catch (persistError) {
         console.error("[pem-neat] failed to persist generation failure", {
@@ -111,7 +118,7 @@ export async function POST(request: Request) {
       }
       console.error("[pem-neat] generation failed", {
         id: record.id,
-        code: genError instanceof AppError ? genError.code : "UNKNOWN",
+        code,
       });
       // Record persisted — return id so the client can open Retry without re-pasting.
       return jsonOk(
@@ -119,6 +126,7 @@ export async function POST(request: Request) {
           id: record.id,
           status: "failed",
           message,
+          errorCode: code,
         },
         { status: 201 },
       );

@@ -58,19 +58,22 @@ describe("PEM NEAT schema", () => {
     expect(new Set(result.assessment.categories.map((c) => c.key)).size).toBe(12);
   });
 
-  it("rejects invalid meeting outcome", () => {
+  it("coerces unknown meeting outcome instead of rejecting the NEAT", () => {
     const result = buildMockPemNeatResult({
       prospectName: "Alex Prospect",
       advisorName: "Test Salesperson",
     });
-    const bad = {
+    const soft = {
       ...result,
       salesIntelligence: {
         ...result.salesIntelligence,
-        meetingOutcome: { classification: "MAYBE", explanation: "nope" },
+        meetingOutcome: { classification: "MAYBE", explanation: "unclear" },
       },
     };
-    expect(() => pemNeatStructuredResultSchema.parse(bad)).toThrow();
+    const parsed = pemNeatStructuredResultSchema.parse(soft);
+    expect(parsed.salesIntelligence.meetingOutcome.classification).toBe(
+      "DECISION_DATE_NOT_SECURED",
+    );
   });
 
   it("clamps out-of-range assessment scores into 1–10", () => {
@@ -99,13 +102,14 @@ describe("PEM NEAT schema", () => {
     expect(parsed.projectType).toBeNull();
   });
 
-  it("enforces internal notes character limit", () => {
+  it("truncates internal notes instead of failing the NEAT", () => {
     const result = buildMockPemNeatResult({
       prospectName: "Alex Prospect",
       advisorName: "Test Salesperson",
     });
-    result.internalOpportunityNotes = "x".repeat(INTERNAL_NOTES_MAX_CHARS + 1);
-    expect(() => pemNeatStructuredResultSchema.parse(result)).toThrow();
+    result.internalOpportunityNotes = "x".repeat(INTERNAL_NOTES_MAX_CHARS + 50);
+    const parsed = pemNeatStructuredResultSchema.parse(result);
+    expect(parsed.internalOpportunityNotes.length).toBe(INTERNAL_NOTES_MAX_CHARS);
   });
 
   it("flags internal sales terminology in customer email", () => {
@@ -237,13 +241,20 @@ describe("PEM NEAT stage 0 and long transcript", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("preserves beginning and end for long transcripts", () => {
-    const long = `START_MARKER ${"x".repeat(100_000)} END_MARKER outcome post-sell`;
+  it("chunks long transcripts covering beginning middle and end", () => {
+    const long = [
+      "BEGINNING PALO purpose agenda logistics outcome",
+      "x".repeat(40_000),
+      "MIDDLE type1 pain budget decision schedule $400000",
+      "y".repeat(40_000),
+      "END summary fulfillment outcome post-sell next steps",
+    ].join("\n\n");
     const prepared = prepareTranscriptForModel(long);
-    expect(prepared.strategy).toBe("head_tail_preserved");
-    expect(prepared.text.startsWith("START_MARKER")).toBe(true);
-    expect(prepared.text.includes("END_MARKER")).toBe(true);
-    expect(prepared.text.includes("BAXTER_TRANSCRIPT_NOTE")).toBe(true);
+    expect(prepared.strategy).toBe("chunked");
+    expect(prepared.chunks.length).toBeGreaterThan(1);
+    expect(prepared.chunks[0]?.label).toBe("beginning");
+    expect(prepared.chunks.at(-1)?.label).toBe("end");
+    expect(prepared.chunks.some((c) => c.text.includes("MIDDLE"))).toBe(true);
   });
 });
 

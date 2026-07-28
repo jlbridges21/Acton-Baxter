@@ -87,7 +87,7 @@ export default async function BaxterSettingsPage() {
             <CardDescription>
               Controlled by environment configuration (read-only). API keys are never shown here.
             </CardDescription>
-            <dl className="mt-4 grid gap-3 sm:grid-cols-2 text-sm">
+            <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
               <div>
                 <dt className="text-[var(--acton-muted)]">Primary provider</dt>
                 <dd className="font-medium text-[var(--acton-navy)]">{aiStatus.provider}</dd>

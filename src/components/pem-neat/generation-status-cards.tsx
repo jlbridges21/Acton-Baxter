@@ -36,13 +36,20 @@ export function GenerationFailedCard({
   );
 }
 
-export function GeneratingCard({ label = "Analyzing Partnership Evaluation Meeting…" }: { label?: string }) {
+export function GeneratingCard({
+  label = "Analyzing Partnership Evaluation Meeting…",
+}: {
+  label?: string;
+}) {
   return (
     <Card className="border-[var(--acton-yellow)] bg-[var(--acton-gray-50)]">
       <CardTitle>{label}</CardTitle>
       <p className="mt-2 text-sm text-[var(--acton-muted)]">
-        Extracting customer intelligence and evaluating the Acton sales process. This may take a
-        minute or two.
+        Baxter is extracting customer intelligence, evaluating the sales process, and preparing
+        BuilderTrend handoff data.
+      </p>
+      <p className="mt-1 text-sm text-[var(--acton-muted)]">
+        This can take up to a couple of minutes for long meetings.
       </p>
       <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-[var(--acton-border)]">
         <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--acton-yellow)]" />

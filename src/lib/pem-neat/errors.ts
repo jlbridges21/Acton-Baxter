@@ -6,11 +6,9 @@ export function pemNeatStoreError(error: unknown, fallback = "Unable to save PEM
   const message = error instanceof Error ? error.message : String(error ?? "");
   const lower = message.toLowerCase();
 
-  if (
-    /relation .* does not exist|could not find the table|undefined_table|42p01/i.test(message)
-  ) {
+  if (/relation .* does not exist|could not find the table|undefined_table|42p01/i.test(message)) {
     return new AppError(
-      "PEM NEAT database tables are not available yet. Ask an admin to apply migration 025_pem_neats.",
+      "PEM NEAT database tables are not available yet. Ask an admin to apply migrations 025–027 (pem_neats).",
       { code: "PEM_NEAT_MIGRATION_REQUIRED", statusCode: 503, cause: error },
     );
   }

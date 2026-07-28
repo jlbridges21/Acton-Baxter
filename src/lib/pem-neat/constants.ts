@@ -4,8 +4,23 @@
  */
 export const PEM_NEAT_STANDARD_VERSION = "1.0.0" as const;
 
-export const PEM_NEAT_STATUSES = ["draft", "generating", "completed", "failed"] as const;
+export const PEM_NEAT_STATUSES = [
+  "draft",
+  "generating",
+  "completed",
+  "failed",
+  "needs_regeneration",
+] as const;
 export type PemNeatStatus = (typeof PEM_NEAT_STATUSES)[number];
+
+/** Human-readable library/detail status labels. */
+export const PEM_NEAT_STATUS_LABELS: Record<PemNeatStatus, string> = {
+  draft: "Draft",
+  generating: "Generating",
+  completed: "Completed",
+  failed: "Failed",
+  needs_regeneration: "Needs Regeneration",
+};
 
 export const MEETING_OUTCOMES = [
   "YES",

@@ -221,9 +221,15 @@ export function DepartmentsSettingsClient({
         ))}
       </ul>
 
-      <form onSubmit={onCreate} className="mt-4 flex flex-wrap items-end gap-3 border-t border-[var(--acton-border)] pt-4">
+      <form
+        onSubmit={onCreate}
+        className="mt-4 flex flex-wrap items-end gap-3 border-t border-[var(--acton-border)] pt-4"
+      >
         <div className="min-w-[200px] flex-1">
-          <label htmlFor="new-department" className="block text-sm font-medium text-[var(--acton-navy)]">
+          <label
+            htmlFor="new-department"
+            className="block text-sm font-medium text-[var(--acton-navy)]"
+          >
             Add department
           </label>
           <input

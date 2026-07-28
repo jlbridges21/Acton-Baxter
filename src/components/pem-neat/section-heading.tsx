@@ -41,16 +41,10 @@ export function ProseBlock({
   className?: string;
 }) {
   const isEmpty =
-    children == null ||
-    (typeof children === "string" && !children.trim()) ||
-    children === false;
+    children == null || (typeof children === "string" && !children.trim()) || children === false;
   return (
     <p className={cn("text-sm leading-relaxed text-[var(--acton-navy)]", className)}>
-      {isEmpty ? (
-        <span className="text-[var(--acton-muted)]">{emptyLabel}</span>
-      ) : (
-        children
-      )}
+      {isEmpty ? <span className="text-[var(--acton-muted)]">{emptyLabel}</span> : children}
     </p>
   );
 }

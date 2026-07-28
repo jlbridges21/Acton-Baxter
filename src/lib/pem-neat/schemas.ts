@@ -17,6 +17,46 @@ import {
 
 const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
 
+export const evidenceTypeSchema = z.enum(EVIDENCE_TYPES);
+export const assessmentStatusSchema = z.enum(ASSESSMENT_STATUSES);
+export const meetingOutcomeSchema = z.enum(MEETING_OUTCOMES);
+export const qualificationSchema = z.enum(QUALIFICATION_LEVELS);
+export const projectFactStatusSchema = z.enum(PROJECT_FACT_STATUSES);
+
+const nonEmptyOrPlaceholder = (placeholder: string) =>
+  z.preprocess((value) => {
+    if (value == null) return placeholder;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : placeholder;
+    }
+    return String(value);
+  }, z.string().min(1));
+
+const outcomeClassificationSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return "DECISION_DATE_NOT_SECURED";
+  const v = value.trim().toUpperCase().replace(/\s+/g, "_").replace(/-/g, "_");
+  if (v === "YES" || v === "NO" || v === "DECISION_DATE" || v === "DECISION_DATE_NOT_SECURED") {
+    return v;
+  }
+  if (v.includes("NOT") && v.includes("SECURE")) return "DECISION_DATE_NOT_SECURED";
+  if (v.includes("DECISION")) return "DECISION_DATE";
+  if (v.includes("NO")) return "NO";
+  if (v.includes("YES")) return "YES";
+  return "DECISION_DATE_NOT_SECURED";
+}, meetingOutcomeSchema);
+
+const qualificationClassificationSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return "EARLY_EXPLORATORY";
+  const v = value.trim().toUpperCase().replace(/\s+/g, "_").replace(/-/g, "_");
+  if ((QUALIFICATION_LEVELS as readonly string[]).includes(v)) return v;
+  if (v.includes("DISQUAL")) return "DISQUALIFIED";
+  if (v.includes("STRONG")) return "STRONGLY_QUALIFIED";
+  if (v.includes("WEAK")) return "WEAKLY_QUALIFIED";
+  if (v.includes("RISK")) return "QUALIFIED_WITH_RISKS";
+  return "EARLY_EXPLORATORY";
+}, qualificationSchema);
+
 /** Coerce currency/strings from models into number | null. */
 export const nullableNumberSchema = z.preprocess((value) => {
   if (value == null || value === "") return null;
@@ -37,12 +77,6 @@ const nullableScoreSchema = z.preprocess((value) => {
   return Math.round(Math.min(10, Math.max(1, n)));
 }, z.number().int().min(1).max(10).nullable());
 
-export const evidenceTypeSchema = z.enum(EVIDENCE_TYPES);
-export const assessmentStatusSchema = z.enum(ASSESSMENT_STATUSES);
-export const meetingOutcomeSchema = z.enum(MEETING_OUTCOMES);
-export const qualificationSchema = z.enum(QUALIFICATION_LEVELS);
-export const projectFactStatusSchema = z.enum(PROJECT_FACT_STATUSES);
-
 /** Provenance-aware value used where reliability matters. */
 export const evidencedValueSchema = z.object({
   value: z.string().nullable(),
@@ -53,7 +87,7 @@ export const evidencedValueSchema = z.object({
 });
 
 export const painItemSchema = z.object({
-  statement: z.string().min(1),
+  statement: nonEmptyOrPlaceholder("Not established"),
   surfaceReason: z.string().nullable().optional(),
   deeperConsequence: z.string().nullable().optional(),
   whyNow: z.string().nullable().optional(),
@@ -61,8 +95,12 @@ export const painItemSchema = z.object({
   futureConsequence: z.string().nullable().optional(),
   importance: z.string().nullable().optional(),
   evidence: z.string().nullable().optional(),
-  evidenceType: evidenceTypeSchema.optional().default("prospect_fact"),
-  confidence: z.enum(["high", "medium", "low", "unknown"]).optional().default("medium"),
+  evidenceType: evidenceTypeSchema.optional().catch("prospect_fact").default("prospect_fact"),
+  confidence: z
+    .enum(["high", "medium", "low", "unknown"])
+    .optional()
+    .catch("medium")
+    .default("medium"),
 });
 
 export const budgetSchema = z.object({
@@ -174,10 +212,7 @@ export const buildertrendFieldsSchema = z.object({
   customerStory: z.string().nullable().default(null),
   customerPain1: z.string().nullable().default(null),
   customerPain: z.string().nullable().default(null),
-  customerPriorities: z
-    .array(z.enum(CUSTOMER_PRIORITIES))
-    .catch([])
-    .default([]),
+  customerPriorities: z.array(z.enum(CUSTOMER_PRIORITIES)).catch([]).default([]),
   customerPrioritiesOther: z.string().nullable().default(null),
   designHandoff: z.string().nullable().default(null),
   decisionMakingProcess: z.string().nullable().default(null),
@@ -190,11 +225,7 @@ export const buildertrendFieldsSchema = z.object({
   internalStrategyNotes: z.string().nullable().default(null),
   projectIntelligence: z.string().nullable().default(null),
   scheduleGoals: z.string().nullable().default(null),
-  preferredContactMethod: z
-    .enum(PREFERRED_CONTACT_METHODS)
-    .nullable()
-    .catch(null)
-    .default(null),
+  preferredContactMethod: z.enum(PREFERRED_CONTACT_METHODS).nullable().catch(null).default(null),
   salesCommitments: z.string().nullable().default(null),
   personalityTraits: z.string().nullable().default(null),
   assumptionsDuringSales: z.string().nullable().default(null),
@@ -258,27 +289,29 @@ export const salesIntelligenceSchema = z.object({
     })
     .default(() => ({ prospect: [], acton: [] })),
   meetingOutcome: z.object({
-    classification: meetingOutcomeSchema,
-    explanation: z.string().min(1),
+    classification: outcomeClassificationSchema,
+    explanation: nonEmptyOrPlaceholder("Outcome not established from transcript evidence."),
   }),
   qualification: z.object({
-    classification: qualificationSchema,
-    reasoning: z.string().min(1),
+    classification: qualificationClassificationSchema,
+    reasoning: nonEmptyOrPlaceholder("Qualification not established from transcript evidence."),
     risks: z.array(z.string()).default([]),
   }),
 });
 
 export const assessmentSchema = z.object({
-  /** Accept partial lists; parsePemNeatStructuredResult fills missing categories. */
-  categories: z.array(assessmentCategorySchema).min(1).max(20),
+  /** Accept partial/empty; parse fills canonical 12 categories. */
+  categories: z.array(assessmentCategorySchema).max(20).default([]),
   topStrengths: z.array(z.string()).max(3).default([]),
   topImprovements: z.array(z.string()).max(3).default([]),
-  oneThing: z.string().min(1),
+  oneThing: nonEmptyOrPlaceholder("Not enough evidence to determine The One Thing."),
 });
 
 export const followUpEmailSchema = z.object({
   subject: z.string().nullable().optional(),
-  body: z.string().min(1),
+  body: nonEmptyOrPlaceholder(
+    "Thank you for meeting with us. We will follow up with next steps based on our conversation.",
+  ),
 });
 
 export const projectIntelligenceSchema = z.object({
@@ -300,7 +333,11 @@ export const pemNeatStructuredResultSchema = z.object({
   followUpEmail: followUpEmailSchema,
   projectIntelligence: projectIntelligenceSchema.default(() => ({ facts: [] })),
   productionNotes: z.array(z.string()).default([]),
-  internalOpportunityNotes: z.string().max(INTERNAL_NOTES_MAX_CHARS).default(""),
+  internalOpportunityNotes: z.preprocess((value) => {
+    if (value == null) return "";
+    const text = String(value);
+    return text.length > INTERNAL_NOTES_MAX_CHARS ? text.slice(0, INTERNAL_NOTES_MAX_CHARS) : text;
+  }, z.string().default("")),
   buildertrendFields: buildertrendFieldsSchema.default(() => ({
     notesForInternalUsers: null,
     squareFeet: null,
@@ -376,6 +413,9 @@ export const createPemNeatInputSchema = z.object({
 
 export type CreatePemNeatInput = z.infer<typeof createPemNeatInputSchema>;
 
+export const updatePemNeatInputSchema = createPemNeatInputSchema;
+export type UpdatePemNeatInput = z.infer<typeof updatePemNeatInputSchema>;
+
 /** Soft post-generation checks (deterministic). */
 const INTERNAL_EMAIL_TERMS =
   /\b(type\s*[12]\s*pain|qualification|STRONGLY_QUALIFIED|WEAKLY_QUALIFIED|DISQUALIFIED|coaching|score\s*\/\s*10|process control|PALO)\b/i;
@@ -417,16 +457,17 @@ export function normalizeAssessmentCategories(
       byKey.set(category.key, category);
     }
   }
-  return ASSESSMENT_CATEGORY_KEYS.map(
-    (key) => byKey.get(key) ?? placeholderCategory(key),
-  );
+  return ASSESSMENT_CATEGORY_KEYS.map((key) => byKey.get(key) ?? placeholderCategory(key));
 }
 
 /** Soften internal sales language in customer-facing email without rejecting the NEAT. */
 export function sanitizeCustomerEmailBody(body: string): string {
   return body
     .replace(/\bType\s*[12]\s*pain\b/gi, "priorities")
-    .replace(/\b(STRONGLY_QUALIFIED|QUALIFIED_WITH_RISKS|EARLY_EXPLORATORY|WEAKLY_QUALIFIED|DISQUALIFIED)\b/g, "")
+    .replace(
+      /\b(STRONGLY_QUALIFIED|QUALIFIED_WITH_RISKS|EARLY_EXPLORATORY|WEAKLY_QUALIFIED|DISQUALIFIED)\b/g,
+      "",
+    )
     .replace(/\bqualification\b/gi, "fit")
     .replace(/\bcoaching\b/gi, "follow-up")
     .replace(/\bscore\s*\/\s*10\b/gi, "")

@@ -218,9 +218,11 @@ Do not stop at the use case.
 ### Example
 
 Surface:
+
 > "We need an office."
 
 Deeper:
+
 > Both spouses work from home, the house is already maxed out, and work competes with family space.
 
 That deeper statement is the useful Type 1 pain.
@@ -402,15 +404,19 @@ A useful coaching report identifies moments where the customer opened a door and
 Examples:
 
 Customer:
+
 > "The last 10% of our remodel was painful."
 
 Missed opening:
+
 > Advisor asks how long the project took instead of exploring what made closeout painful and what they need to avoid this time.
 
 Customer:
+
 > "My parents are having health issues."
 
 Missed opening:
+
 > Advisor immediately asks about square footage instead of understanding the impact, timing, and consequences.
 
 Only call something a missed opening when the transcript clearly supports it.
@@ -531,15 +537,19 @@ Therefore:
 Example:
 
 Bad:
+
 > Sewer will be expensive.
 
 Better:
+
 > Homeowner reports sewer connection is on the opposite side of the property; route/cost requires feasibility verification.
 
 Bad:
+
 > 100A panel must be upgraded.
 
 Better:
+
 > Existing panel reportedly 100A; upgrade requirement not yet confirmed.
 
 ---
@@ -706,9 +716,11 @@ If not, clean it.
 ### 10. Next Steps
 
 **Prospect**
+
 - ...
 
 **Acton**
+
 - ...
 
 ### 11. Meeting Outcome
@@ -774,11 +786,13 @@ If not, clean it.
 ...
 
 **Top Strengths**
+
 1. ...
 2. ...
 3. ...
 
 **Top Improvements**
+
 1. ...
 2. ...
 3. ...

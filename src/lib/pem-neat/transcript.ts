@@ -1,10 +1,7 @@
-import { MIN_TRANSCRIPT_CHARS } from "./constants";
-
-/** Soft character budget for a single-pass completion (leaves room for output). */
-const SINGLE_PASS_CHAR_BUDGET = 90_000;
-const HEAD_CHARS = 36_000;
-const TAIL_CHARS = 36_000;
-
+/**
+ * Chunk long PEM transcripts so beginning, middle, and end are all analyzed.
+ * Never head+tail-only.
+ */
 export function stage0ValidateTranscript(transcript: string): {
   ok: boolean;
   notes: string[];
@@ -14,7 +11,7 @@ export function stage0ValidateTranscript(transcript: string): {
   const compact = trimmed.replace(/\s+/g, " ");
   const notes: string[] = [];
 
-  if (compact.length < MIN_TRANSCRIPT_CHARS) {
+  if (compact.length < 200) {
     return {
       ok: false,
       notes,
@@ -53,25 +50,72 @@ export function stage0ValidateTranscript(transcript: string): {
   return { ok: true, notes };
 }
 
-export function prepareTranscriptForModel(transcript: string): {
+export type TranscriptChunk = {
+  index: number;
+  total: number;
+  label: "beginning" | "middle" | "end" | "full";
   text: string;
-  strategy: "full" | "head_tail_preserved";
-  notes: string[];
-} {
-  if (transcript.length <= SINGLE_PASS_CHAR_BUDGET) {
-    return { text: transcript, strategy: "full", notes: [] };
+};
+
+const CHUNK_TARGET_CHARS = 28_000;
+
+/**
+ * Split transcript into overlapping paragraph-aware chunks covering start→end.
+ */
+export function chunkTranscript(transcript: string): TranscriptChunk[] {
+  if (transcript.length <= CHUNK_TARGET_CHARS) {
+    return [{ index: 0, total: 1, label: "full", text: transcript }];
   }
 
-  const head = transcript.slice(0, HEAD_CHARS);
-  const tail = transcript.slice(-TAIL_CHARS);
-  const omitted = transcript.length - HEAD_CHARS - TAIL_CHARS;
-  const bridge = `\n\n[BAXTER_TRANSCRIPT_NOTE: Middle section of ${omitted} characters omitted for model context limits. Beginning and end preserved because Outcome and Post-Sell often occur at the end. Do not invent middle content. Mark incomplete sections NOT_DETERMINABLE when needed.]\n\n`;
+  const paragraphs = transcript.split(/\n{2,}/);
+  const chunks: string[] = [];
+  let current = "";
 
+  for (const para of paragraphs) {
+    if (!current) {
+      current = para;
+      continue;
+    }
+    if (current.length + para.length + 2 <= CHUNK_TARGET_CHARS) {
+      current = `${current}\n\n${para}`;
+    } else {
+      chunks.push(current);
+      // overlap: keep last ~2k of previous chunk
+      const overlap = current.slice(-2_000);
+      current = `${overlap}\n\n${para}`;
+    }
+  }
+  if (current) chunks.push(current);
+
+  if (chunks.length === 0) {
+    return [{ index: 0, total: 1, label: "full", text: transcript }];
+  }
+
+  return chunks.map((text, index) => {
+    let label: TranscriptChunk["label"] = "middle";
+    if (index === 0) label = "beginning";
+    else if (index === chunks.length - 1) label = "end";
+    return { index, total: chunks.length, label, text };
+  });
+}
+
+/** @deprecated Prefer chunkTranscript — kept for callers expecting prepare API. */
+export function prepareTranscriptForModel(transcript: string): {
+  text: string;
+  strategy: "full" | "chunked";
+  notes: string[];
+  chunks: TranscriptChunk[];
+} {
+  const chunks = chunkTranscript(transcript);
+  if (chunks.length === 1) {
+    return { text: transcript, strategy: "full", notes: [], chunks };
+  }
   return {
-    text: `${head}${bridge}${tail}`,
-    strategy: "head_tail_preserved",
+    text: transcript,
+    strategy: "chunked",
     notes: [
-      `Transcript exceeded single-pass budget (${transcript.length} chars). Beginning and end preserved; middle omitted for model context only. Full original transcript remains stored.`,
+      `Transcript split into ${chunks.length} overlapping chunks covering beginning, middle, and end.`,
     ],
+    chunks,
   };
 }
