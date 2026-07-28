@@ -358,11 +358,12 @@ export async function POST(request: Request) {
       try {
         const board = await buildPipelineBoard(parsed.pipelineId, {
           q: parsed.query,
-          status: parsed.status,
+          status: parsed.status ?? "all",
           assignedTo: parsed.assignedTo,
           source: parsed.source,
-          perStageLimit: parsed.perStageLimit,
+          perStageLimit: parsed.perStageLimit ?? 25,
           stagePages: parsed.stageId && parsed.page ? { [parsed.stageId]: parsed.page } : undefined,
+          singleStageId: parsed.stageId && parsed.page ? parsed.stageId : undefined,
         });
         return jsonOk({ result: { pass: true, data: board } });
       } catch (error) {

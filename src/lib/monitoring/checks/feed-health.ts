@@ -12,7 +12,7 @@ export const feedHealthCheck: MonitoringCheck = {
   key: "feed-health",
   description: "Verify GHL connector health and core CRM capabilities",
 
-  async run(_ctx: MonitoringContext): Promise<FindingCandidate[]> {
+  async run(_ctx: MonitoringContext) {
     const candidates: FindingCandidate[] = [];
 
     if (!isGhlConfigured()) {
@@ -27,7 +27,7 @@ export const feedHealthCheck: MonitoringCheck = {
         },
         recommendation: "Configure GoHighLevel PIT credentials in environment settings.",
       });
-      return candidates;
+      return { candidates };
     }
 
     const health = await evaluateGhlHealth().catch((_error) => null);
@@ -42,7 +42,7 @@ export const feedHealthCheck: MonitoringCheck = {
         evidence: { reason: "evaluateGhlHealth threw or returned nothing" },
         recommendation: "Review GHL connector logs and credentials.",
       });
-      return candidates;
+      return { candidates };
     }
 
     const unhealthy =
@@ -68,6 +68,6 @@ export const feedHealthCheck: MonitoringCheck = {
       });
     }
 
-    return candidates;
+    return { candidates };
   },
 };

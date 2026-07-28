@@ -12,7 +12,7 @@ export const rulebookHealthCheck: MonitoringCheck = {
   key: "rulebook-health",
   description: "Verify process rulebook configuration completeness",
 
-  async run(ctx: MonitoringContext): Promise<FindingCandidate[]> {
+  async run(ctx: MonitoringContext) {
     const { activeRulebook, mappings, settings } = ctx;
     const candidates: FindingCandidate[] = [];
 
@@ -28,7 +28,7 @@ export const rulebookHealthCheck: MonitoringCheck = {
         },
         recommendation: "Import and activate a process rulebook in admin settings.",
       });
-      return candidates;
+      return { candidates };
     }
 
     // Check monitored pipelines have stage mappings
@@ -135,6 +135,6 @@ export const rulebookHealthCheck: MonitoringCheck = {
       }
     }
 
-    return candidates;
+    return { candidates };
   },
 };

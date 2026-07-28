@@ -33,7 +33,7 @@ export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 export const TRIGGER_SOURCES = ["manual", "cron", "job"] as const;
 export type TriggerSource = (typeof TRIGGER_SOURCES)[number];
 
-export const RUN_STATUSES = ["running", "completed", "failed", "skipped"] as const;
+export const RUN_STATUSES = ["running", "completed", "partial", "failed", "skipped"] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /**
@@ -179,6 +179,9 @@ export type CheckResult = {
   recordsEvaluated: number;
   durationMs: number;
   error?: string;
+  /** True when GHL pagination hit a safety ceiling or otherwise could not finish. */
+  incomplete?: boolean;
+  incompleteReason?: string | null;
 };
 
 /**

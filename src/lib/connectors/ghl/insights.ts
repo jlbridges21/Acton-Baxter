@@ -34,7 +34,15 @@ export async function getStaleOpportunities(input: {
   pipelineStageId?: string;
   status?: OpportunitySearchOptions["status"];
   maxItems?: number;
-}): Promise<{ rows: StaleOpportunityRow[]; truncated: boolean; retrievedAt: string }> {
+  maxPages?: number;
+}): Promise<{
+  rows: StaleOpportunityRow[];
+  truncated: boolean;
+  incomplete: boolean;
+  incompleteReason: string | null;
+  scannedCount: number;
+  retrievedAt: string;
+}> {
   const days = Math.max(1, input.daysSinceUpdate);
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const retrievedAt = new Date().toISOString();
@@ -45,7 +53,7 @@ export async function getStaleOpportunities(input: {
       pipelineId: input.pipelineId,
       pipelineStageId: input.pipelineStageId,
       maxItems: input.maxItems ?? 100,
-      maxPages: 4,
+      maxPages: input.maxPages ?? 4,
       limit: 50,
     }),
     listPipelines({ useCache: true }).catch(() => []),
@@ -85,7 +93,14 @@ export async function getStaleOpportunities(input: {
   }
 
   rows.sort((a, b) => b.daysStale - a.daysStale);
-  return { rows, truncated: page.truncated, retrievedAt };
+  return {
+    rows,
+    truncated: page.truncated,
+    incomplete: page.incomplete,
+    incompleteReason: page.incompleteReason,
+    scannedCount: page.opportunities.length,
+    retrievedAt,
+  };
 }
 
 export type UnownedOpportunityRow = {
@@ -104,15 +119,23 @@ export async function getUnownedOpportunities(
     status?: OpportunitySearchOptions["status"];
     pipelineId?: string;
     maxItems?: number;
+    maxPages?: number;
   } = {},
-): Promise<{ rows: UnownedOpportunityRow[]; truncated: boolean; retrievedAt: string }> {
+): Promise<{
+  rows: UnownedOpportunityRow[];
+  truncated: boolean;
+  incomplete: boolean;
+  incompleteReason: string | null;
+  scannedCount: number;
+  retrievedAt: string;
+}> {
   const retrievedAt = new Date().toISOString();
   const [page, pipelines] = await Promise.all([
     searchOpportunitiesPaginated({
       status: input.status ?? "open",
       pipelineId: input.pipelineId,
       maxItems: input.maxItems ?? 100,
-      maxPages: 4,
+      maxPages: input.maxPages ?? 4,
       limit: 50,
     }),
     listPipelines({ useCache: true }).catch(() => []),
@@ -143,7 +166,14 @@ export async function getUnownedOpportunities(
     });
   }
 
-  return { rows, truncated: page.truncated, retrievedAt };
+  return {
+    rows,
+    truncated: page.truncated,
+    incomplete: page.incomplete,
+    incompleteReason: page.incompleteReason,
+    scannedCount: page.opportunities.length,
+    retrievedAt,
+  };
 }
 
 export async function getAppointmentsInRange(input: {

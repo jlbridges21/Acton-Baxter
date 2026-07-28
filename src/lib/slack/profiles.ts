@@ -417,7 +417,7 @@ export function formatResolvedChannelLabel(
   slackChannelId: string | null,
 ) {
   if (profile) return pickSlackChannelLabel(profile);
-  if (!slackChannelId) return "Unknown channel";
+  if (!slackChannelId) return "Unknown Channel";
   return pickSlackChannelLabel({ slack_channel_id: slackChannelId });
 }
 
@@ -625,10 +625,12 @@ export async function listAllSlackChannelProfiles(): Promise<SlackChannelProfile
 
 export async function backfillSlackDisplayNames(options?: {
   limit?: number;
+  force?: boolean;
 }): Promise<{ usersResolved: number; channelsResolved: number; errors: string[] }> {
   const { listRecentConversations } = await import("@/lib/baxter-ai/conversations");
   const { parseSlackExternalThreadId } = await import("./display-names");
   const limit = options?.limit ?? 40;
+  const force = options?.force ?? false;
   const conversations = (await listRecentConversations(200)).filter((c) => c.channel === "slack");
 
   const userIds = new Map<string, string>();
@@ -651,7 +653,7 @@ export async function backfillSlackDisplayNames(options?: {
   for (const [key, teamId] of Array.from(userIds.entries()).slice(0, limit)) {
     const slackUserId = key.split(":")[1]!;
     try {
-      await resolveSlackUserProfile({ teamId, slackUserId, force: false, touchSeen: false });
+      await resolveSlackUserProfile({ teamId, slackUserId, force, touchSeen: false });
       usersResolved += 1;
     } catch (error) {
       errors.push(error instanceof Error ? error.message : "user_resolve_failed");
@@ -664,7 +666,7 @@ export async function backfillSlackDisplayNames(options?: {
       await resolveSlackChannelProfile({
         teamId,
         slackChannelId,
-        force: false,
+        force,
         touchSeen: false,
       });
       channelsResolved += 1;

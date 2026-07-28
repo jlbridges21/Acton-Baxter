@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import type { GhlAdminOverview } from "@/lib/connectors/ghl/diagnostics";
+import { GhlPipelineBoardClient } from "@/components/admin/ghl-pipeline-board-client";
 
 type Tab = "overview" | "contacts" | "opportunities" | "conversations" | "actions" | "advanced";
 
@@ -167,9 +169,11 @@ function locationLine(
   return name || id || null;
 }
 
-function connectionStatusLabel(overall: string) {
+function connectionStatusLabel(overall: string, coreCrmOk: boolean) {
   if (overall === "connected" || overall === "healthy") return "Connected";
-  if (overall === "connected_limited") return "Connected Limited";
+  // Optional-only gaps (e.g. locations.readonly) should not dominate the CRM header.
+  if (overall === "connected_limited" && coreCrmOk) return "Connected";
+  if (overall === "connected_limited") return "Connected";
   if (overall === "warning" || overall === "needs_attention") return "Needs Attention";
   if (overall === "reauthorization_required") return "Reauthorization Required";
   if (overall === "not_configured" || overall === "disabled") return "Not Configured";
@@ -273,11 +277,31 @@ function PaginationBar({
   );
 }
 
+const VALID_TABS = new Set<Tab>([
+  "overview",
+  "contacts",
+  "opportunities",
+  "conversations",
+  "actions",
+  "advanced",
+]);
+
+function shortPipelineLabel(name: string) {
+  return (
+    name
+      .replace(/\s*Pipeline\s*$/i, "")
+      .replace(/\s+/g, " ")
+      .trim() || name
+  );
+}
+
 export function GhlConnectorClient({
   initialOverview,
+  canWrite = false,
   oauthNotice,
 }: {
   initialOverview: GhlAdminOverview;
+  canWrite?: boolean;
   oauthNotice?: {
     success?: boolean;
     connectedLocation?: string | null;
@@ -286,8 +310,18 @@ export function GhlConnectorClient({
     message?: string | null;
   };
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [overview, setOverview] = useState(initialOverview);
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const initialTab = (() => {
+    const t = searchParams.get("tab");
+    return t && VALID_TABS.has(t as Tab) ? (t as Tab) : "overview";
+  })();
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(() =>
+    searchParams.get("pipeline"),
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(() => {
     if (oauthNotice?.success) {
@@ -322,16 +356,20 @@ export function GhlConnectorClient({
   const config = overview.config;
   const connection = overview.connection;
   const connected = isBrowseConnected(health.overall);
-  const statusLabel = connectionStatusLabel(health.overall);
-  const statusClass = connectionStatusClass(health.overall);
-  const location = locationLine(connection, health);
-
   const crmAccess = [
     { label: "Contacts", ok: checkOk(health.checks, "contacts") },
     { label: "Opportunities", ok: checkOk(health.checks, "opportunities") },
     { label: "Conversations", ok: checkOk(health.checks, "conversations") },
     { label: "Pipelines", ok: checkOk(health.checks, "pipelines") },
   ];
+  const statusLabel = connectionStatusLabel(
+    health.overall,
+    crmAccess.filter((c) => c.label !== "Pipelines").every((c) => c.ok) ||
+      checkOk(health.checks, "contacts") ||
+      checkOk(health.checks, "opportunities"),
+  );
+  const statusClass = connectionStatusClass(health.overall);
+  const location = locationLine(connection, health);
 
   const showBanner = useCallback((text: string, tone: "info" | "error" = "info") => {
     setBanner(text);
@@ -425,7 +463,21 @@ export function GhlConnectorClient({
       const { data } = await postAction({ action: "list_pipelines_for_opportunities" });
       if (seq !== requestSeq.current) return;
       if (data.result?.pass) {
-        setPipelines(data.result.pipelines || []);
+        const list = (data.result.pipelines || []) as PipelineCard[];
+        setPipelines(list);
+        const urlPipeline = searchParams.get("pipeline");
+        const valid = Boolean(urlPipeline && list.some((p) => p.id === urlPipeline));
+        if (list.length > 0 && !valid) {
+          const first = list[0]!.id;
+          setSelectedPipelineId(first);
+          const params = new URLSearchParams(searchParams.toString());
+          params.set("tab", "opportunities");
+          params.set("pipeline", first);
+          const qs = params.toString();
+          router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+        } else if (urlPipeline && valid) {
+          setSelectedPipelineId(urlPipeline);
+        }
       } else {
         setPipelines(null);
         setLoadError({
@@ -443,7 +495,7 @@ export function GhlConnectorClient({
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
-  }, [postAction]);
+  }, [postAction, searchParams, pathname, router]);
 
   const loadActions = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -473,25 +525,67 @@ export function GhlConnectorClient({
     }
   }, [postAction]);
 
-  const selectTab = useCallback((tab: Tab) => {
-    setActiveTab(tab);
-    setLoadError(null);
-    setPage(1);
-    if (tab === "overview" || tab === "advanced") {
-      setBrowse(null);
-      setPipelines(null);
-      setActions(null);
-    } else if (tab === "actions") {
-      setBrowse(null);
-      setPipelines(null);
-    } else if (tab === "opportunities") {
-      setBrowse(null);
-      setActions(null);
-    } else {
-      setPipelines(null);
-      setActions(null);
-    }
-  }, []);
+  const pushCrmUrl = useCallback(
+    (tab: Tab, pipelineId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      // Drop oauth flash params from ongoing navigation
+      for (const key of [
+        "oauth_success",
+        "connected_location",
+        "reconnect_success",
+        "oauth_error",
+        "oauth_message",
+      ]) {
+        params.delete(key);
+      }
+      if (tab === "overview") params.delete("tab");
+      else params.set("tab", tab);
+      if (tab === "opportunities" && pipelineId) params.set("pipeline", pipelineId);
+      else params.delete("pipeline");
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  const selectTab = useCallback(
+    (tab: Tab) => {
+      setActiveTab(tab);
+      setLoadError(null);
+      setPage(1);
+      if (tab === "overview" || tab === "advanced") {
+        setBrowse(null);
+        setPipelines(null);
+        setActions(null);
+      } else if (tab === "actions") {
+        setBrowse(null);
+        setPipelines(null);
+      } else if (tab === "opportunities") {
+        setBrowse(null);
+        setActions(null);
+      } else {
+        setPipelines(null);
+        setActions(null);
+      }
+      pushCrmUrl(tab, tab === "opportunities" ? selectedPipelineId : null);
+    },
+    [pushCrmUrl, selectedPipelineId],
+  );
+
+  const selectPipeline = useCallback(
+    (pipelineId: string) => {
+      setSelectedPipelineId(pipelineId);
+      pushCrmUrl("opportunities", pipelineId);
+    },
+    [pushCrmUrl],
+  );
+
+  const effectivePipelineId =
+    pipelines && pipelines.length > 0
+      ? selectedPipelineId && pipelines.some((p) => p.id === selectedPipelineId)
+        ? selectedPipelineId
+        : pipelines[0]!.id
+      : selectedPipelineId;
 
   useEffect(() => {
     let cancelled = false;
@@ -725,19 +819,20 @@ export function GhlConnectorClient({
             </p>
           ) : null}
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {crmAccess.map((item) => (
-              <div
-                key={item.label}
-                className="rounded-md border border-[var(--acton-border)] px-3 py-3"
-              >
-                <p className="text-xs text-[var(--acton-muted)]">CRM Access</p>
-                <p className="mt-1 text-sm font-medium text-[var(--acton-fg)]">{item.label}</p>
-                <p className={`mt-1 text-xs ${item.ok ? "text-emerald-700" : "text-amber-700"}`}>
-                  {item.ok ? "Available" : "Unavailable"}
-                </p>
-              </div>
-            ))}
+          <div className="mt-5 space-y-2">
+            <p className="text-xs font-medium tracking-wide text-[var(--acton-muted)] uppercase">
+              CRM Access
+            </p>
+            <p className="text-sm text-[var(--acton-fg)]">
+              {crmAccess.map((item) => (
+                <span key={item.label} className="mr-4 inline-flex items-center gap-1">
+                  <span>{item.label}</span>
+                  <span className={item.ok ? "text-emerald-700" : "text-amber-700"}>
+                    {item.ok ? "✓" : "—"}
+                  </span>
+                </span>
+              ))}
+            </p>
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2">
@@ -1052,42 +1147,45 @@ export function GhlConnectorClient({
 
             {activeTab === "opportunities" ? (
               <div className="space-y-4">
-                {loading ? <LoadingState label="Loading pipelines…" /> : null}
+                {loading && !pipelines ? <LoadingState label="Loading pipelines…" /> : null}
 
-                {!loading && loadError ? (
+                {!loading && loadError && !pipelines ? (
                   <ErrorPanel title={loadError.message} error={loadError} onRetry={retryActive} />
                 ) : null}
 
-                {!loading && !loadError && pipelines ? (
-                  pipelines.length === 0 ? (
-                    <EmptyState message="No pipelines found." />
-                  ) : (
-                    <div>
-                      <h3 className="mb-3 text-sm font-medium text-[var(--acton-fg)]">
-                        Choose a pipeline
-                      </h3>
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {pipelines.map((pipeline) => (
-                          <Link
-                            key={pipeline.id}
-                            href={`/admin/connectors/ghl/opportunities/pipeline/${pipeline.id}`}
-                            className="block"
-                          >
-                            <Card className="p-4 transition-colors hover:bg-[var(--acton-bg)]">
-                              <CardTitle className="text-base">{pipeline.name}</CardTitle>
-                              <CardDescription className="mt-1">
-                                {pipeline.stageCount}{" "}
-                                {pipeline.stageCount === 1 ? "stage" : "stages"}
-                              </CardDescription>
-                              <Button size="sm" variant="secondary" className="mt-3">
-                                Open Pipeline
-                              </Button>
-                            </Card>
-                          </Link>
-                        ))}
-                      </div>
+                {pipelines && pipelines.length === 0 ? (
+                  <EmptyState message="No pipelines found." />
+                ) : null}
+
+                {pipelines && pipelines.length > 0 ? (
+                  <>
+                    <div className="flex gap-1 overflow-x-auto border-b border-[var(--acton-border)]">
+                      {pipelines.map((pipeline) => (
+                        <button
+                          key={pipeline.id}
+                          type="button"
+                          onClick={() => selectPipeline(pipeline.id)}
+                          className={`border-b-2 px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors ${
+                            effectivePipelineId === pipeline.id
+                              ? "border-sky-600 text-sky-700"
+                              : "border-transparent text-[var(--acton-muted)] hover:text-[var(--acton-fg)]"
+                          }`}
+                        >
+                          {shortPipelineLabel(pipeline.name)}
+                        </button>
+                      ))}
                     </div>
-                  )
+                    {effectivePipelineId ? (
+                      <GhlPipelineBoardClient
+                        key={effectivePipelineId}
+                        canWrite={canWrite}
+                        pipelineId={effectivePipelineId}
+                        embedded
+                      />
+                    ) : (
+                      <LoadingState label="Loading pipeline board…" />
+                    )}
+                  </>
                 ) : null}
               </div>
             ) : null}

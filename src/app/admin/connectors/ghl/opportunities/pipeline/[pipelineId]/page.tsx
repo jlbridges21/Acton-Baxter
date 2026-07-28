@@ -1,17 +1,21 @@
 import { redirect } from "next/navigation";
-import { AppShell } from "@/components/layout/app-shell";
-import { GhlPipelineBoardClient } from "@/components/admin/ghl-pipeline-board-client";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
-import { canUserWriteGhl } from "@/lib/connectors/ghl/actions/permissions";
 
-export default async function AdminGhlPipelineBoardPage() {
+/**
+ * Legacy pipeline board URL → canonical Acton CRM opportunities tab.
+ */
+export default async function AdminGhlPipelineBoardRedirectPage({
+  params,
+}: {
+  params: Promise<{ pipelineId: string }>;
+}) {
   const user = await requireActiveUser();
   if (!isAdminRole(user.profile.role)) redirect("/");
-  const write = canUserWriteGhl(user.profile);
-  return (
-    <AppShell user={user}>
-      <GhlPipelineBoardClient canWrite={write.canWrite} />
-    </AppShell>
-  );
+  const { pipelineId } = await params;
+  const qs = new URLSearchParams({
+    tab: "opportunities",
+    pipeline: pipelineId,
+  });
+  redirect(`/admin/connectors/ghl?${qs.toString()}`);
 }

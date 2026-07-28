@@ -14,6 +14,8 @@ export type SlackChannelProfileLike = {
   name?: string | null;
   channel_type?: string | null;
   is_private?: boolean | null;
+  /** When set for DMs, prefer "Direct Message with {name}". */
+  peer_display_name?: string | null;
 };
 
 /** Preferred: display_name → real_name → username → Slack user <id>. */
@@ -45,6 +47,8 @@ export function isSlackPrivateChannelId(channelId: string | null | undefined): b
 export function pickSlackChannelLabel(profile: SlackChannelProfileLike): string {
   const id = profile.slack_channel_id;
   if (isSlackDmChannelId(id) || profile.channel_type === "im") {
+    const peer = profile.peer_display_name?.trim();
+    if (peer) return `Direct Message with ${peer}`;
     return "Direct Message";
   }
   const name = profile.name?.trim();
@@ -58,8 +62,8 @@ export function pickSlackChannelLabel(profile: SlackChannelProfileLike): string 
   ) {
     return "Private channel";
   }
-  if (id) return `Channel ${id}`;
-  return "Unknown channel";
+  if (id) return "Unknown Channel";
+  return "Unknown Channel";
 }
 
 export function parseSlackExternalThreadId(externalThreadId: string | null | undefined): {

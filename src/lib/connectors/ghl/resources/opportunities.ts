@@ -109,7 +109,14 @@ export async function searchOpportunities(
  */
 export async function searchOpportunitiesPaginated(
   options: OpportunitySearchOptions & { maxPages?: number; maxItems?: number } = {},
-): Promise<{ opportunities: GhlOpportunity[]; total: number | null; truncated: boolean }> {
+): Promise<{
+  opportunities: GhlOpportunity[];
+  total: number | null;
+  truncated: boolean;
+  incomplete: boolean;
+  incompleteReason: string | null;
+  pagesFetched: number;
+}> {
   const result = await paginateGhl<GhlOpportunity>({
     maxPages: options.maxPages ?? 5,
     maxItems: options.maxItems ?? 200,
@@ -140,6 +147,9 @@ export async function searchOpportunitiesPaginated(
     opportunities: result.items,
     total: result.total,
     truncated: result.truncated,
+    incomplete: result.incomplete,
+    incompleteReason: result.incompleteReason,
+    pagesFetched: result.pagesFetched,
   };
 }
 

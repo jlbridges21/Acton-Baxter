@@ -4,6 +4,7 @@ import type { GhlPipeline, GhlOpportunity } from "@/lib/connectors/ghl/types";
 
 const mockGetPipelineById = vi.hoisted(() => vi.fn());
 const mockSearchOpportunities = vi.hoisted(() => vi.fn());
+const mockGetOpportunityCount = vi.hoisted(() => vi.fn());
 const mockHydrateOpportunityRows = vi.hoisted(() => vi.fn());
 const mockGetGhlReferenceData = vi.hoisted(() => vi.fn());
 
@@ -13,6 +14,7 @@ vi.mock("@/lib/connectors/ghl/resources/pipelines", () => ({
 
 vi.mock("@/lib/connectors/ghl/resources/opportunities", () => ({
   searchOpportunities: mockSearchOpportunities,
+  getOpportunityCount: mockGetOpportunityCount,
 }));
 
 vi.mock("@/lib/connectors/ghl/admin-views", () => ({
@@ -39,6 +41,7 @@ describe("buildPipelineBoard", () => {
       hasMore: false,
       total: 0,
     });
+    mockGetOpportunityCount.mockResolvedValue(0);
 
     mockHydrateOpportunityRows.mockImplementation(async (opps?: GhlOpportunity[] | null) =>
       (opps ?? []).map((o) => ({
@@ -308,7 +311,7 @@ describe("buildPipelineBoard", () => {
     await expect(buildPipelineBoard("invalid")).rejects.toThrow("Pipeline invalid not found");
   });
 
-  it("should use search mode with query and bounded max 200", async () => {
+  it("should use search mode with query and bounded page limit", async () => {
     const mockPipeline: GhlPipeline = {
       id: "pipeline1",
       name: "Sales Pipeline",
@@ -355,8 +358,63 @@ describe("buildPipelineBoard", () => {
       expect.objectContaining({
         q: "matching",
         pipelineId: "pipeline1",
-        limit: 200,
+        limit: 100,
+        status: "all",
       }),
     );
+  });
+
+  it("defaults to all statuses and sums stage totals for pipelineTotal", async () => {
+    const mockPipeline: GhlPipeline = {
+      id: "pipeline1",
+      name: "Feasibility",
+      locationId: "loc1",
+      stages: [
+        { id: "stage1", name: "PEM", position: 1 },
+        { id: "stage_won", name: "Closed Won", position: 2 },
+        { id: "stage_lost", name: "Closed Lost", position: 3 },
+      ],
+    };
+    mockGetPipelineById.mockResolvedValue(mockPipeline);
+    mockSearchOpportunities.mockImplementation(async ({ pipelineStageId }) => {
+      if (pipelineStageId === "stage1") {
+        return { opportunities: [], hasMore: false, total: 42 };
+      }
+      if (pipelineStageId === "stage_won") {
+        return { opportunities: [], hasMore: true, total: 1204 };
+      }
+      if (pipelineStageId === "stage_lost") {
+        return { opportunities: [], hasMore: true, total: 502 };
+      }
+      return { opportunities: [], hasMore: false, total: 0 };
+    });
+
+    const result = await buildPipelineBoard("pipeline1");
+
+    expect(mockSearchOpportunities).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "all", limit: 25 }),
+    );
+    expect(result.pipelineTotal).toBe(1748);
+    expect(result.columns.find((c) => c.stageId === "stage_won")?.total).toBe(1204);
+    expect(result.columns.find((c) => c.stageId === "stage_lost")?.total).toBe(502);
+    expect(result.filters.status).toBe("all");
+  });
+
+  it("marks searchIncomplete when hasMore is true", async () => {
+    mockGetPipelineById.mockResolvedValue({
+      id: "pipeline1",
+      name: "Feasibility",
+      locationId: "loc1",
+      stages: [{ id: "stage1", name: "PEM", position: 1 }],
+    });
+    mockSearchOpportunities.mockResolvedValue({
+      opportunities: [{ id: "opp1", name: "A", pipelineStageId: "stage1" }] as GhlOpportunity[],
+      hasMore: true,
+      total: 500,
+    });
+
+    const result = await buildPipelineBoard("pipeline1", { q: "a" });
+    expect(result.searchIncomplete).toBe(true);
+    expect(result.searchIncompleteReason).toMatch(/partial/i);
   });
 });

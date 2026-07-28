@@ -110,6 +110,8 @@ export function buildOpportunitySearchQuery(input: {
   for (const key of optionalKeys) {
     const value = input[key];
     if (value === undefined || value === null || value === "") continue;
+    // GHL treats omitted status as all statuses. Do not send status=all.
+    if (key === "status" && value === "all") continue;
     raw[key] = value;
   }
 

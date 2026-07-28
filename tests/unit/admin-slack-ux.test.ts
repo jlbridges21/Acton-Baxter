@@ -72,15 +72,22 @@ describe("Slack display name helpers", () => {
     expect(slackUserFallbackLabel(null)).toBe("Unknown Slack user");
   });
 
-  it("labels DMs and public channels; unresolved channel keeps ID", () => {
+  it("labels DMs and public channels; unresolved channel is Unknown Channel", () => {
     expect(isSlackDmChannelId("D123")).toBe(true);
     expect(pickSlackChannelLabel({ slack_channel_id: "D123", channel_type: "im" })).toBe(
       "Direct Message",
     );
+    expect(
+      pickSlackChannelLabel({
+        slack_channel_id: "D123",
+        channel_type: "im",
+        peer_display_name: "Jackson Bridges",
+      }),
+    ).toBe("Direct Message with Jackson Bridges");
     expect(pickSlackChannelLabel({ slack_channel_id: "C123", name: "baxter-pilot" })).toBe(
       "#baxter-pilot",
     );
-    expect(pickSlackChannelLabel({ slack_channel_id: "C0BDX025ALW" })).toBe("Channel C0BDX025ALW");
+    expect(pickSlackChannelLabel({ slack_channel_id: "C0BDX025ALW" })).toBe("Unknown Channel");
     expect(pickSlackChannelLabel({ slack_channel_id: "G123", is_private: true })).toBe(
       "Private channel",
     );

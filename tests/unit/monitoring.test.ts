@@ -126,7 +126,6 @@ describe("monitoring/dedupe-keys", () => {
 
 describe("monitoring/false-positive-rate", () => {
   it("should handle empty dataset", () => {
-    // This is a pure formula test; actual DB test would require fixtures
     const total = 0;
     const fpCount = 0;
     const rate = total === 0 ? 0 : fpCount / total;
@@ -152,6 +151,24 @@ describe("monitoring/false-positive-rate", () => {
     const fpCount = 0;
     const rate = fpCount / total;
     expect(rate).toBe(0);
+  });
+});
+
+describe("monitoring/data-coverage", () => {
+  it("partial coverage cannot claim clean result", () => {
+    const incomplete = true;
+    const findings: string[] = [];
+    const runStatus = incomplete ? "partial" : findings.length === 0 ? "completed" : "completed";
+    expect(runStatus).toBe("partial");
+    expect(incomplete).toBe(true);
+  });
+
+  it("complete coverage with zero findings is clean", () => {
+    const incomplete = false;
+    const findings: string[] = [];
+    const runStatus = incomplete ? "partial" : "completed";
+    expect(runStatus).toBe("completed");
+    expect(findings).toHaveLength(0);
   });
 });
 

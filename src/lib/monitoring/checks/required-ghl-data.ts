@@ -15,16 +15,19 @@ export const requiredGhlDataCheck: MonitoringCheck = {
   key: "required-ghl-data",
   description: "Detect missing required GHL fields per process rulebook",
 
-  async run(ctx: MonitoringContext): Promise<FindingCandidate[]> {
+  async run(ctx: MonitoringContext) {
     const { settings, mappings, activeRulebook } = ctx;
     const candidates: FindingCandidate[] = [];
+    let incomplete = false;
+    let incompleteReason: string | null = null;
+    let recordsEvaluated = 0;
 
     if (!activeRulebook) {
-      return [];
+      return { candidates: [] };
     }
 
     if (settings.monitored_pipeline_ids.length === 0) {
-      return [];
+      return { candidates: [] };
     }
 
     // Load custom field catalog
@@ -63,10 +66,18 @@ export const requiredGhlDataCheck: MonitoringCheck = {
         pipelineId: mapping.ghl_pipeline_id,
         pipelineStageId: mapping.ghl_stage_id,
         status: "open",
-        maxItems: 50,
-        maxPages: 2,
-        limit: 25,
+        maxItems: 2000,
+        maxPages: 40,
+        limit: 50,
       });
+
+      recordsEvaluated += opps.opportunities.length;
+      if (opps.incomplete || opps.truncated) {
+        incomplete = true;
+        incompleteReason =
+          opps.incompleteReason ||
+          `Required-data check incomplete for stage ${mapping.ghl_stage_name || mapping.ghl_stage_id}`;
+      }
 
       for (const opp of opps.opportunities) {
         const missingFields: string[] = [];
@@ -135,6 +146,19 @@ export const requiredGhlDataCheck: MonitoringCheck = {
       }
     }
 
-    return candidates;
+    if (incomplete) {
+      candidates.push({
+        checkKey: "feed-health",
+        dedupeKey: "feed_health:partial_required_data",
+        severity: "critical",
+        entityType: "feed",
+        title: "Incomplete required-data scan",
+        evidence: { reason: incompleteReason, checkKey: "required-ghl-data" },
+        recommendation:
+          "Baxter could not finish reading mapped opportunities. Do not treat required-data coverage as complete.",
+      });
+    }
+
+    return { candidates, incomplete, incompleteReason, recordsEvaluated };
   },
 };

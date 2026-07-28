@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { InitialsAvatar } from "@/components/ui/initials-avatar";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getSlackUserActivityDetail } from "@/lib/slack/admin";
@@ -32,14 +33,7 @@ export default async function AdminSlackUserPage({
             ← Back to Slack activity
           </Link>
           <div className="mt-3 flex items-center gap-3">
-            {detail.user.avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={detail.user.avatarUrl}
-                alt=""
-                className="h-12 w-12 rounded-full border border-[var(--acton-border)]"
-              />
-            ) : null}
+            <InitialsAvatar name={detail.user.displayName} size={48} />
             <div>
               <h1 className="text-2xl font-bold text-[var(--acton-navy)]">
                 {detail.user.displayName}

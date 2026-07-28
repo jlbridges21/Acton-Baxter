@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { InitialsAvatar } from "@/components/ui/initials-avatar";
 import { AdminSlackDiagnosticsClient } from "@/components/admin/admin-slack-diagnostics-client";
 
 type Overview = {
@@ -288,18 +289,7 @@ export function AdminSlackActivityClient({
                   <Card key={`${user.teamId}:${user.slackUserId}`} className="p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="flex min-w-0 items-start gap-3">
-                        {user.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={user.avatarUrl}
-                            alt=""
-                            className="h-10 w-10 rounded-full border border-[var(--acton-border)]"
-                          />
-                        ) : (
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--acton-gray-100)] text-sm font-semibold text-[var(--acton-navy)]">
-                            {user.displayName.slice(0, 1).toUpperCase()}
-                          </div>
-                        )}
+                        <InitialsAvatar name={user.displayName} size={40} />
                         <div className="min-w-0">
                           <CardTitle className="text-base">{user.displayName}</CardTitle>
                           <CardDescription className="mt-1">

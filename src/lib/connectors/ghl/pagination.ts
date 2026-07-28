@@ -1,5 +1,7 @@
 /**
  * Reusable pagination helpers for GHL list/search endpoints.
+ *
+ * Incomplete/truncated results are never silently presented as complete.
  */
 
 export type GhlPageMeta = {
@@ -26,10 +28,14 @@ export function parseGhlPageMeta(meta: unknown): GhlPageMeta {
   };
 }
 
+/** Hard safety ceiling — hit = incomplete, never silent truncate-as-complete. */
+export const GHL_PAGINATION_HARD_MAX_PAGES = 100;
+export const GHL_PAGINATION_HARD_MAX_ITEMS = 10_000;
+
 export type PaginateOptions<T> = {
-  /** Max pages to fetch (hard cap). Default 5. */
+  /** Max pages to fetch. Default 5. Capped by hard max. */
   maxPages?: number;
-  /** Max total items. Default 200. */
+  /** Max total items. Default 200. Capped by hard max. */
   maxItems?: number;
   fetchPage: (cursor: {
     page: number;
@@ -38,24 +44,30 @@ export type PaginateOptions<T> = {
   }) => Promise<{ items: T[]; meta: GhlPageMeta }>;
 };
 
-/**
- * Fetch multiple pages until exhausted or caps hit.
- * Never infinite — always bounded.
- */
-export async function paginateGhl<T>(options: PaginateOptions<T>): Promise<{
+export type PaginateResult<T> = {
   items: T[];
   total: number | null;
   pagesFetched: number;
+  /** True when more data may exist beyond what was fetched. */
   truncated: boolean;
-}> {
-  const maxPages = options.maxPages ?? 5;
-  const maxItems = options.maxItems ?? 200;
+  /** Alias for truncated — monitoring/UI should treat this as incomplete coverage. */
+  incomplete: boolean;
+  incompleteReason: string | null;
+};
+
+/**
+ * Fetch multiple pages until exhausted or caps hit.
+ * Never infinite — always bounded.
+ * When truncated/incomplete, callers MUST NOT claim a clean complete dataset.
+ */
+export async function paginateGhl<T>(options: PaginateOptions<T>): Promise<PaginateResult<T>> {
+  const maxPages = Math.min(options.maxPages ?? 5, GHL_PAGINATION_HARD_MAX_PAGES);
+  const maxItems = Math.min(options.maxItems ?? 200, GHL_PAGINATION_HARD_MAX_ITEMS);
   const items: T[] = [];
   let pagesFetched = 0;
   let total: number | null = null;
   let startAfterId: string | null = null;
   let startAfter: string | number | null = null;
-  let truncated = false;
 
   for (let page = 1; page <= maxPages; page++) {
     const result = await options.fetchPage({ page, startAfterId, startAfter });
@@ -64,21 +76,51 @@ export async function paginateGhl<T>(options: PaginateOptions<T>): Promise<{
     items.push(...result.items);
 
     if (items.length >= maxItems) {
-      truncated = items.length > maxItems || Boolean(result.meta.hasMore);
-      return { items: items.slice(0, maxItems), total, pagesFetched, truncated };
+      const incomplete = items.length > maxItems || Boolean(result.meta.hasMore);
+      const sliced = items.slice(0, maxItems);
+      return {
+        items: sliced,
+        total,
+        pagesFetched,
+        truncated: incomplete,
+        incomplete,
+        incompleteReason: incomplete
+          ? `Reached item safety ceiling (${maxItems})${result.meta.hasMore ? " with more pages available" : ""}`
+          : null,
+      };
     }
 
     if (!result.meta.hasMore || result.items.length === 0) {
-      return { items, total, pagesFetched, truncated: false };
+      return {
+        items,
+        total,
+        pagesFetched,
+        truncated: false,
+        incomplete: false,
+        incompleteReason: null,
+      };
     }
 
     startAfterId = result.meta.startAfterId;
     startAfter = result.meta.startAfter;
     if (!startAfterId && !startAfter && !result.meta.nextPage) {
-      // No cursor to continue
-      return { items, total, pagesFetched, truncated: false };
+      return {
+        items,
+        total,
+        pagesFetched,
+        truncated: false,
+        incomplete: false,
+        incompleteReason: null,
+      };
     }
   }
 
-  return { items, total, pagesFetched, truncated: true };
+  return {
+    items,
+    total,
+    pagesFetched,
+    truncated: true,
+    incomplete: true,
+    incompleteReason: `Reached page safety ceiling (${maxPages}) with more data available`,
+  };
 }

@@ -232,7 +232,7 @@ export async function getSlackConversationDetail(conversationId: string) {
 }
 
 export async function refreshSlackDisplayNames() {
-  return backfillSlackDisplayNames({ limit: 50 });
+  return backfillSlackDisplayNames({ limit: 80, force: true });
 }
 
 export async function verifyEventsConfigValues() {
