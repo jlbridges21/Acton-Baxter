@@ -4,25 +4,27 @@ Administrators can upload documents into Baxter at **`/admin/knowledge/upload`**
 
 ## Supported types
 
-| Extension           | Behavior                                      |
-| ------------------- | --------------------------------------------- |
-| `.md` / `.markdown` | Preserve Markdown text                        |
-| `.txt`              | Preserve plain text                           |
-| `.pdf`              | Extract selectable text only — **no OCR**     |
-| `.docx`             | Extract paragraphs/lists as text via Mammoth  |
-| `.csv`              | Headers + row boundaries as readable text     |
-| `.xlsx`             | Sheet names, headers, rows (displayed values) |
+| Extension           | Behavior                                                      |
+| ------------------- | ------------------------------------------------------------- |
+| `.md` / `.markdown` | Preserve Markdown text                                        |
+| `.txt`              | Preserve plain text                                           |
+| `.pdf`              | Extract selectable text via `unpdf` (server) — **no OCR yet** |
+| `.docx`             | Extract paragraphs/lists as text via Mammoth                  |
+| `.csv`              | Headers + row boundaries as readable text                     |
+| `.xlsx`             | Sheet names, headers, rows (displayed values)                 |
 
 `.doc` (legacy Word) is **not** supported.
 
 ## Limits
 
-| Variable                          | Default  | Purpose                 |
-| --------------------------------- | -------- | ----------------------- |
-| `KNOWLEDGE_UPLOAD_MAX_MB`         | `20`     | Per-file max size       |
-| `KNOWLEDGE_IMPORT_MAX_CHARACTERS` | `200000` | Truncate extracted text |
-| `KNOWLEDGE_IMPORT_MAX_ROWS`       | `500`    | CSV/XLSX row cap        |
-| `KNOWLEDGE_IMPORT_MAX_SHEETS`     | `10`     | XLSX sheet cap          |
+| Variable                              | Default  | Purpose                 |
+| ------------------------------------- | -------- | ----------------------- |
+| `KNOWLEDGE_UPLOAD_MAX_MB`             | `20`     | Per-file max size       |
+| `KNOWLEDGE_IMPORT_MAX_CHARACTERS`     | `200000` | Truncate extracted text |
+| `KNOWLEDGE_IMPORT_MAX_ROWS`           | `500`    | CSV/XLSX row cap        |
+| `KNOWLEDGE_IMPORT_MAX_SHEETS`         | `10`     | XLSX sheet cap          |
+| `KNOWLEDGE_PDF_MAX_PAGES`             | `200`    | Max PDF pages to parse  |
+| `KNOWLEDGE_PDF_EXTRACTION_TIMEOUT_MS` | `45000`  | PDF parse timeout       |
 
 ## Workflow
 
@@ -32,9 +34,11 @@ Administrators can upload documents into Baxter at **`/admin/knowledge/upload`**
 4. **Import**.
 5. Open the created entry.
 
-Empty PDF extractions text shows:
+Empty / scanned PDF (valid file, no text layer) shows:
 
-> No selectable text was found. This may be a scanned PDF. OCR is not currently supported.
+> This appears to be a scanned or image-only PDF. Baxter couldn't find a readable text layer.
+
+Parser failures (corrupt, password-protected, runtime errors) are separate from empty text and never surface raw messages like `DOMMatrix is not defined` in the upload UI.
 
 ## Duplicates
 
@@ -72,5 +76,7 @@ Google browsing/auth redesign is **Prompt 2**.
 | -------------------------------- | ------------------------------------------------------------- |
 | Upload storage failed            | Confirm migration 012 / bucket `knowledge-uploads` exists     |
 | Unexpected delete error (legacy) | Apply 012; cited entries should be archived, not hard-deleted |
-| Scanned PDF empty                | Expected without OCR                                          |
+| Scanned PDF empty                | Expected — OCR for PDF page rasters not enabled yet           |
+| Password-protected PDF           | Upload an unlocked copy                                       |
+| DOMMatrix / PDF parse crash      | Fixed via `unpdf` serverless extractor on Node runtime        |
 | Unsupported type                 | Use listed extensions only                                    |

@@ -280,6 +280,39 @@ export async function parseGoogleDriveFile(
         buffer,
         mimeType: file.mimeType,
       });
+
+      if (parsed.extractionStatus === "failed" || parsed.extractionStatus === "unsupported") {
+        const reason =
+          parsed.warnings[0] ??
+          "Content extraction failed. Open the original file for full content.";
+        return {
+          ...base,
+          contentText: [`Title: ${file.name}`, `Type: ${file.mimeType}`, reason]
+            .filter(Boolean)
+            .join("\n"),
+          contentHash: hashContent(
+            `${file.id}:${file.modifiedTime ?? ""}:${file.md5Checksum ?? ""}`,
+          ),
+          parseMode: "metadata_only",
+          pdfPages: undefined,
+        };
+      }
+
+      if (parsed.extractionStatus === "empty" || !parsed.content.trim()) {
+        return {
+          ...base,
+          contentText: [
+            `Title: ${file.name}`,
+            `Type: ${file.mimeType}`,
+            parsed.warnings[0] ??
+              "No selectable text was found. This may be a scanned or image-only PDF.",
+          ].join("\n"),
+          contentHash: parsed.contentHash || hashContent(parsed.content || file.id),
+          parseMode: "metadata_only",
+          pdfPages: [],
+        };
+      }
+
       return {
         ...base,
         contentText: parsed.content,
@@ -294,7 +327,10 @@ export async function parseGoogleDriveFile(
         `Type: ${file.mimeType}`,
         "Content extraction failed. Open the original file for full content.",
         file.webViewLink ? `URL: ${file.webViewLink}` : "",
-        error instanceof Error ? `Error: ${error.message.slice(0, 200)}` : "",
+        // Keep message generic — do not forward raw parser/runtime exceptions to indexed text.
+        error instanceof Error && /password/i.test(error.message)
+          ? "This PDF is password protected and Baxter can't read it."
+          : "",
       ]
         .filter(Boolean)
         .join("\n");

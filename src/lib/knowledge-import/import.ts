@@ -67,19 +67,20 @@ export async function importKnowledgeUpload(input: {
     );
   }
 
-  if ((!preview.content.trim() || preview.extractionStatus === "empty") && !input.allowEmpty) {
+  if (preview.extractionStatus === "failed" || preview.extractionStatus === "unsupported") {
     throw new KnowledgeError(
       preview.warnings[0] ??
-        "No selectable text was found. This may be a scanned PDF. OCR is not currently supported.",
-      KNOWLEDGE_ERROR_CODES.UPLOAD_EMPTY,
+        "Baxter couldn't read this file. Please try again or upload another copy.",
+      KNOWLEDGE_ERROR_CODES.UPLOAD_PARSE_FAILED,
       { statusCode: 422 },
     );
   }
 
-  if (preview.extractionStatus === "failed" || preview.extractionStatus === "unsupported") {
+  if ((!preview.content.trim() || preview.extractionStatus === "empty") && !input.allowEmpty) {
     throw new KnowledgeError(
-      preview.warnings[0] ?? "This file could not be parsed.",
-      KNOWLEDGE_ERROR_CODES.UPLOAD_PARSE_FAILED,
+      preview.warnings[0] ??
+        "This appears to be a scanned or image-only PDF. Baxter couldn't find a readable text layer.",
+      KNOWLEDGE_ERROR_CODES.UPLOAD_EMPTY,
       { statusCode: 422 },
     );
   }
@@ -97,10 +98,15 @@ export async function importKnowledgeUpload(input: {
     metadata: preview.metadata,
   });
 
+  const emptyPlaceholder =
+    preview.extension === "pdf"
+      ? "[No selectable text was found in this PDF. OCR for scanned PDFs is not enabled yet.]"
+      : "[No extractable text was found in this file.]";
+
   const entry = await createKnowledgeEntry(
     {
       title: (input.title?.trim() || preview.title).slice(0, 300),
-      content: preview.content || "(No extractable text)",
+      content: preview.content.trim() ? preview.content : emptyPlaceholder,
       summary: preview.summary ?? null,
       category: input.category?.trim() || "General",
       tags: input.tags ?? ["uploaded"],

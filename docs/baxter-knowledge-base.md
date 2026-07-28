@@ -68,7 +68,7 @@ Migration **012** sets `baxter_message_sources.knowledge_entry_id` to `ON DELETE
 
 See **`docs/knowledge-imports.md`**.
 
-Libraries: Mammoth (DOCX), pdf-parse (PDF text), SheetJS/`xlsx` (Excel), built-in CSV/text/Markdown parsers.
+Libraries: Mammoth (DOCX), unpdf (PDF text, serverless/Node), SheetJS/`xlsx` (Excel), built-in CSV/text/Markdown parsers.
 
 ## Source badges
 
