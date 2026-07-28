@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MoreHorizontal, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ActionMenu } from "@/components/ui/action-menu";
 import { ConfirmDialog } from "@/components/pem-neat/confirm-dialog";
 import { cn } from "@/lib/utils";
 import { PEM_NEAT_STATUS_LABELS, type PemNeatStatus } from "@/lib/pem-neat/constants";
+import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
 import type { PemNeatListItem } from "@/lib/pem-neat/types";
 
 function formatOutcome(outcome: string | null) {
@@ -36,7 +38,6 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
   const router = useRouter();
   const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PemNeatListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<string | null>(
@@ -138,7 +139,7 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
           <CardDescription>Try a different search.</CardDescription>
         </Card>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-[var(--acton-border)] bg-white">
+        <div className="overflow-x-auto rounded-lg border border-[var(--acton-border)] bg-white">
           <table className="min-w-full divide-y divide-[var(--acton-border)] text-sm">
             <thead className="bg-[var(--acton-gray-50)] text-left text-[var(--acton-muted)]">
               <tr>
@@ -157,12 +158,14 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
               {items.map((item) => (
                 <tr key={item.id} className="text-[var(--acton-navy)]">
                   <td className="px-4 py-3 font-medium">{item.prospect_name}</td>
-                  <td className="px-4 py-3">{item.salesperson_display_name}</td>
+                  <td className="px-4 py-3">
+                    {formatHumanDisplayName(item.salesperson_display_name)}
+                  </td>
                   <td className="px-4 py-3">{item.meeting_date ?? "—"}</td>
                   <td className="px-4 py-3">{formatOutcome(item.meeting_outcome)}</td>
                   <td className="px-4 py-3">{statusLabel(item.status, item.analysis_stale)}</td>
                   <td className="px-4 py-3">{formatDate(item.updated_at)}</td>
-                  <td className="relative px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-1">
                       <Link
                         href={`/pem-neats/${item.id}`}
@@ -170,36 +173,23 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
                       >
                         Open
                       </Link>
-                      <button
-                        type="button"
-                        className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
-                        aria-label={`More actions for ${item.prospect_name}`}
-                        onClick={() => setMenuOpenId((prev) => (prev === item.id ? null : item.id))}
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </button>
+                      <ActionMenu
+                        label={`More actions for ${item.prospect_name}`}
+                        items={[
+                          {
+                            id: "edit",
+                            label: "Edit",
+                            href: `/pem-neats/${item.id}/edit`,
+                          },
+                          {
+                            id: "delete",
+                            label: "Delete",
+                            destructive: true,
+                            onSelect: () => setDeleteTarget(item),
+                          },
+                        ]}
+                      />
                     </div>
-                    {menuOpenId === item.id ? (
-                      <div className="absolute right-4 z-10 mt-1 w-36 rounded-md border border-[var(--acton-border)] bg-white py-1 text-left shadow-md">
-                        <Link
-                          href={`/pem-neats/${item.id}/edit`}
-                          className="block px-3 py-2 text-sm hover:bg-[var(--acton-gray-50)]"
-                          onClick={() => setMenuOpenId(null)}
-                        >
-                          Edit
-                        </Link>
-                        <button
-                          type="button"
-                          className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            setDeleteTarget(item);
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    ) : null}
                   </td>
                 </tr>
               ))}

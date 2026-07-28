@@ -5,7 +5,6 @@ import {
   formatMeetingOutcomeLabel,
   formatMoneyLike,
   meetingOutcomeTone,
-  OutcomeBadge,
 } from "@/components/pem-neat/pem-neat-formatters";
 import {
   ProseBlock,
@@ -22,25 +21,29 @@ function PainList({
   items: PemNeatStructuredResult["salesIntelligence"]["type1Pain"];
   title: string;
 }) {
+  if (items.length === 0) {
+    return (
+      <div>
+        <SubSectionHeading>{title}</SubSectionHeading>
+        <ProseBlock className="mt-2" emptyLabel="Not established">
+          {null}
+        </ProseBlock>
+      </div>
+    );
+  }
   return (
     <div>
       <SubSectionHeading>{title}</SubSectionHeading>
-      {items.length === 0 ? (
-        <ProseBlock emptyLabel="Not established">{null}</ProseBlock>
-      ) : (
-        <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[var(--acton-navy)]">
-          {items.map((pain, i) => (
-            <li key={i}>
-              <span>{pain.statement}</span>
-              {pain.whyNow ? (
-                <span className="mt-0.5 block text-[var(--acton-muted)]">
-                  Why now: {pain.whyNow}
-                </span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
+      <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[var(--acton-navy)]">
+        {items.map((pain, i) => (
+          <li key={i}>
+            <span>{pain.statement}</span>
+            {pain.whyNow ? (
+              <span className="mt-0.5 block text-[var(--acton-muted)]">Why now: {pain.whyNow}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -50,6 +53,7 @@ function BudgetSection({
 }: {
   budget: PemNeatStructuredResult["salesIntelligence"]["budget"];
 }) {
+  const summary = budget.summary?.trim();
   const rows: { label: string; content: React.ReactNode }[] = [];
 
   if (budget.target?.value?.trim()) {
@@ -63,7 +67,13 @@ function BudgetSection({
       content: formatMoneyLike(budget.statedBudget.value) || budget.statedBudget.value,
     });
   }
-
+  if (budget.range?.trim()) rows.push({ label: "Range", content: budget.range });
+  if (budget.hardCeiling?.value?.trim()) {
+    rows.push({
+      label: "Comfort / hard ceiling",
+      content: formatMoneyLike(budget.hardCeiling.value) || budget.hardCeiling.value,
+    });
+  }
   if (budget.scope?.trim()) rows.push({ label: "Scope", content: budget.scope });
   if (budget.fundingSource?.trim()) rows.push({ label: "Funding", content: budget.fundingSource });
   if (budget.firmness?.trim()) rows.push({ label: "Firmness", content: budget.firmness });
@@ -84,7 +94,6 @@ function BudgetSection({
       ),
     });
   }
-
   if (budget.advisorEstimates.length > 0) {
     rows.push({
       label: "Advisor estimates",
@@ -101,7 +110,6 @@ function BudgetSection({
       ),
     });
   }
-
   if (budget.risks.length > 0) {
     rows.push({
       label: "Risks",
@@ -114,7 +122,6 @@ function BudgetSection({
       ),
     });
   }
-
   if (budget.unknowns.length > 0) {
     rows.push({
       label: "Unknowns",
@@ -128,19 +135,22 @@ function BudgetSection({
     });
   }
 
-  if (rows.length === 0) {
+  if (!summary && rows.length === 0) {
     return (
       <div>
-        <SubSectionHeading>Budget</SubSectionHeading>
-        <ProseBlock emptyLabel="Not established">{null}</ProseBlock>
+        <SubSectionHeading>5. Budget</SubSectionHeading>
+        <ProseBlock className="mt-2" emptyLabel="Not established">
+          {null}
+        </ProseBlock>
       </div>
     );
   }
 
   return (
     <div>
-      <SubSectionHeading>Budget</SubSectionHeading>
+      <SubSectionHeading>5. Budget</SubSectionHeading>
       <div className="mt-2 space-y-3">
+        {summary ? <ProseBlock>{summary}</ProseBlock> : null}
         {rows.map((row) => (
           <div key={row.label}>
             <p className="text-sm font-medium text-[var(--acton-navy)]">{row.label}</p>
@@ -167,12 +177,26 @@ function EvidencedField({
   );
 }
 
+function hasScheduleContent(
+  schedule: PemNeatStructuredResult["salesIntelligence"]["schedule"],
+): boolean {
+  return Boolean(
+    schedule.decisionTiming?.value ||
+    schedule.desiredStart?.value ||
+    schedule.desiredCompletion?.value ||
+    schedule.drivers.length ||
+    schedule.summary?.trim(),
+  );
+}
+
 export function NeatSalesIntelligencePanel({
   sales,
 }: {
   sales: PemNeatStructuredResult["salesIntelligence"];
 }) {
   const outcomeTone = meetingOutcomeTone(sales.meetingOutcome.classification);
+  const showSchedule = hasScheduleContent(sales.schedule);
+  const showCompetition = sales.competitionAlternatives.length > 0;
 
   return (
     <div className="space-y-6">
@@ -189,15 +213,15 @@ export function NeatSalesIntelligencePanel({
           <ProseBlock className="mt-2">{sales.customerPain}</ProseBlock>
         </div>
 
-        <PainList items={sales.type1Pain} title="3. Type 1 Pain — Why Build an ADU?" />
-        <PainList items={sales.type2Pain} title="4. Type 2 Pain — Why the Right Partner / Acton?" />
+        <PainList items={sales.type1Pain} title="3. Type 1 Pain — Why Build an ADU" />
+        <PainList items={sales.type2Pain} title="4. Type 2 Pain — Why Choose Acton" />
 
         <BudgetSection budget={sales.budget} />
 
         <div>
           <SubSectionHeading>6. Decision-Making Process</SubSectionHeading>
           <div className="mt-2 space-y-2">
-            <ProseBlock>
+            <ProseBlock emptyLabel="Not established">
               {sales.decisionProcess.summary ?? sales.decisionProcess.process}
             </ProseBlock>
             {sales.decisionProcess.decisionMakers.length > 0 ? (
@@ -218,43 +242,49 @@ export function NeatSalesIntelligencePanel({
                 </p>
               </div>
             ) : null}
-          </div>
-        </div>
-
-        <div>
-          <SubSectionHeading>7. Schedule</SubSectionHeading>
-          <div className="mt-2 space-y-1">
-            <EvidencedField label="Decision timing" field={sales.schedule.decisionTiming} />
-            <EvidencedField label="Desired start" field={sales.schedule.desiredStart} />
-            <EvidencedField label="Desired completion" field={sales.schedule.desiredCompletion} />
-            {sales.schedule.drivers.length > 0 ? (
-              <p className="text-sm text-[var(--acton-navy)]">
-                <span className="font-medium">Drivers:</span> {sales.schedule.drivers.join("; ")}
-              </p>
-            ) : null}
-            {sales.schedule.summary ? (
-              <ProseBlock className="mt-1">{sales.schedule.summary}</ProseBlock>
+            {sales.decisionProcess.alternatives.length > 0 ? (
+              <div>
+                <p className="text-sm font-medium text-[var(--acton-navy)]">Alternatives</p>
+                <p className="text-sm text-[var(--acton-muted)]">
+                  {sales.decisionProcess.alternatives.join("; ")}
+                </p>
+              </div>
             ) : null}
           </div>
         </div>
 
-        <div>
-          <SubSectionHeading>8. Competition / Alternatives</SubSectionHeading>
-          {sales.competitionAlternatives.length === 0 ? (
-            <ProseBlock className="mt-2" emptyLabel="Not established">
-              {null}
-            </ProseBlock>
-          ) : (
+        {showSchedule ? (
+          <div>
+            <SubSectionHeading>Schedule</SubSectionHeading>
+            <div className="mt-2 space-y-1">
+              <EvidencedField label="Decision timing" field={sales.schedule.decisionTiming} />
+              <EvidencedField label="Desired start" field={sales.schedule.desiredStart} />
+              <EvidencedField label="Desired completion" field={sales.schedule.desiredCompletion} />
+              {sales.schedule.drivers.length > 0 ? (
+                <p className="text-sm text-[var(--acton-navy)]">
+                  <span className="font-medium">Drivers:</span> {sales.schedule.drivers.join("; ")}
+                </p>
+              ) : null}
+              {sales.schedule.summary ? (
+                <ProseBlock className="mt-1">{sales.schedule.summary}</ProseBlock>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {showCompetition ? (
+          <div>
+            <SubSectionHeading>Competition / Alternatives</SubSectionHeading>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--acton-navy)]">
               {sales.competitionAlternatives.map((alt, i) => (
                 <li key={i}>{alt}</li>
               ))}
             </ul>
-          )}
-        </div>
+          </div>
+        ) : null}
 
         <div>
-          <SubSectionHeading>9. Acton Recommendation</SubSectionHeading>
+          <SubSectionHeading>7. Acton Recommendation</SubSectionHeading>
           <div className="mt-2 space-y-1">
             {sales.actonRecommendation.fit ? (
               <p className="text-sm font-medium text-[var(--acton-navy)]">
@@ -266,14 +296,14 @@ export function NeatSalesIntelligencePanel({
         </div>
 
         <div>
-          <SubSectionHeading>10. Next Steps</SubSectionHeading>
+          <SubSectionHeading>8. Next Steps</SubSectionHeading>
           <div className="mt-2 grid gap-4 sm:grid-cols-2">
             <div>
               <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
                 Prospect
               </p>
               {sales.nextSteps.prospect.length === 0 ? (
-                <ProseBlock emptyLabel="Not established">{null}</ProseBlock>
+                <p className="mt-1 text-sm text-[var(--acton-muted)]">—</p>
               ) : (
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--acton-navy)]">
                   {sales.nextSteps.prospect.map((step, i) => (
@@ -287,7 +317,7 @@ export function NeatSalesIntelligencePanel({
                 Acton
               </p>
               {sales.nextSteps.acton.length === 0 ? (
-                <ProseBlock emptyLabel="Not established">{null}</ProseBlock>
+                <p className="mt-1 text-sm text-[var(--acton-muted)]">—</p>
               ) : (
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--acton-navy)]">
                   {sales.nextSteps.acton.map((step, i) => (
@@ -310,13 +340,10 @@ export function NeatSalesIntelligencePanel({
           outcomeTone === "gray" && "border-[var(--acton-border)]",
         )}
       >
-        <SectionHeading>11. Meeting Outcome</SectionHeading>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="text-lg font-bold text-[var(--acton-navy)]">
-            {formatMeetingOutcomeLabel(sales.meetingOutcome.classification)}
-          </span>
-          <OutcomeBadge outcome={sales.meetingOutcome.classification} />
-        </div>
+        <SectionHeading>9. Meeting Outcome</SectionHeading>
+        <p className="mt-3 text-lg font-bold text-[var(--acton-navy)]">
+          {formatMeetingOutcomeLabel(sales.meetingOutcome.classification)}
+        </p>
         <p className="mt-3 text-sm leading-relaxed text-[var(--acton-navy)]">
           {sales.meetingOutcome.explanation}
         </p>

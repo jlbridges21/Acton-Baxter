@@ -1,9 +1,15 @@
 import "server-only";
 
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { ASSESSMENT_CATEGORY_LABELS, PEM_NEAT_STANDARD_VERSION } from "./constants";
+import {
+  analyzeTranscriptSignals,
+  computeOverallScore,
+  scoreFactCoverage,
+  type FactCoverageScore,
+} from "./coverage";
 import {
   emptyPemNeatShell,
   mergeAssessmentCategories,
@@ -12,7 +18,13 @@ import {
 } from "./defaults";
 import { getPemNeatProviderTimeoutMs, isAbortError } from "./errors";
 import { buildMockPemNeatResult } from "./mock-result";
-import { buildPemNeatSystemPrompt, buildPemNeatUserPrompt } from "./prompts";
+import {
+  buildAssessmentStagePrompt,
+  buildFactExtractionStagePrompt,
+  buildHandoffStagePrompt,
+  buildPemNeatUserPrompt,
+  buildRecoveryFactPrompt,
+} from "./prompts";
 import {
   parsePemNeatStructuredResult,
   salesIntelligenceSchema,
@@ -24,7 +36,6 @@ import {
 } from "./schemas";
 import { chunkTranscript, stage0ValidateTranscript } from "./transcript";
 import { runDeterministicNeatChecks } from "./validate";
-import { z } from "zod";
 
 export type GeneratePemNeatInput = {
   prospectName: string;
@@ -47,6 +58,11 @@ export type GeneratePemNeatOutput = {
     stages: string[];
     finishReasons: string[];
     validationIssues: string[];
+    coverage?: FactCoverageScore;
+    recoveryUsed?: boolean;
+    overallScore?: number | null;
+    chunkCount?: number;
+    modelConfigured?: string;
   };
 };
 
@@ -55,6 +71,19 @@ const PEM_MAX_OUTPUT_TOKENS = 12_000;
 function shouldUseMock(): boolean {
   const env = getEnv();
   return Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";
+}
+
+/**
+ * PEM analysis needs stronger reasoning than general Baxter chat.
+ * Prefer PEM_NEAT_OPENAI_MODEL; otherwise upgrade mini → gpt-4o for this feature.
+ */
+export function getPemNeatModelName(): string {
+  const env = getEnv();
+  const explicit = (process.env.PEM_NEAT_OPENAI_MODEL ?? "").trim();
+  if (explicit) return explicit;
+  const configured = (env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o").trim();
+  if (/mini/i.test(configured)) return "gpt-4o";
+  return configured || "gpt-4o";
 }
 
 function zodIssueSummary(error: unknown): string {
@@ -104,7 +133,7 @@ async function callOpenAiJson(
     });
   }
 
-  const model = (env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o").trim();
+  const model = getPemNeatModelName();
   const timeoutMs = getPemNeatProviderTimeoutMs();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -118,7 +147,7 @@ async function callOpenAiJson(
       },
       body: JSON.stringify({
         model,
-        temperature: 0.2,
+        temperature: 0.25,
         max_tokens: maxTokens,
         response_format: { type: "json_object" },
         messages,
@@ -143,6 +172,7 @@ async function callOpenAiJson(
       console.error("[pem-neat] provider HTTP error", {
         status: response.status,
         code: "PEM_NEAT_PROVIDER_ERROR",
+        model,
       });
       throw new AppError(
         "Unable to generate PEM NEAT. Baxter couldn't complete the analysis with the AI provider.",
@@ -267,19 +297,115 @@ async function runStage(
   );
 }
 
+function applyFactsToShell(
+  shell: PemNeatStructuredResult,
+  mergedFacts: unknown,
+  diagnostics: { validationIssues: string[] },
+) {
+  // Prefer validated parse; on failure still merge raw SI fields so shape drift doesn't wipe content.
+  const parsed = factsStageSchema.safeParse(mergedFacts);
+  const source = parsed.success
+    ? parsed.data
+    : ((mergedFacts && typeof mergedFacts === "object" ? mergedFacts : {}) as Record<
+        string,
+        unknown
+      >);
+
+  if (!parsed.success) {
+    diagnostics.validationIssues.push(`facts: ${zodIssueSummary(parsed.error)}`);
+    console.error("[pem-neat] facts stage schema soft-fail — merging raw fields", {
+      code: "PEM_NEAT_FACTS_PARTIAL",
+      issues: zodIssueSummary(parsed.error),
+    });
+  }
+
+  const siRaw =
+    (source as { salesIntelligence?: Record<string, unknown> }).salesIntelligence ??
+    (source as Record<string, unknown>);
+
+  if (siRaw && typeof siRaw === "object") {
+    const siParsed = salesIntelligenceSchema.partial().safeParse(siRaw);
+    const patch = (siParsed.success ? siParsed.data : siRaw) as Partial<
+      PemNeatStructuredResult["salesIntelligence"]
+    >;
+    shell.salesIntelligence = {
+      ...shell.salesIntelligence,
+      ...patch,
+      budget: { ...shell.salesIntelligence.budget, ...(patch.budget ?? {}) },
+      decisionProcess: {
+        ...shell.salesIntelligence.decisionProcess,
+        ...(patch.decisionProcess ?? {}),
+      },
+      schedule: { ...shell.salesIntelligence.schedule, ...(patch.schedule ?? {}) },
+      nextSteps: {
+        prospect: patch.nextSteps?.prospect ?? shell.salesIntelligence.nextSteps.prospect,
+        acton: patch.nextSteps?.acton ?? shell.salesIntelligence.nextSteps.acton,
+      },
+      actonRecommendation: {
+        ...shell.salesIntelligence.actonRecommendation,
+        ...(patch.actonRecommendation ?? {}),
+      },
+      // Keep outcome/qualification for Stage 2 unless Stage 1 provided them.
+      meetingOutcome: patch.meetingOutcome ?? shell.salesIntelligence.meetingOutcome,
+      qualification: patch.qualification ?? shell.salesIntelligence.qualification,
+    };
+  }
+
+  const projectRaw = (source as { projectIntelligence?: unknown }).projectIntelligence;
+  if (projectRaw) {
+    const p = projectIntelligenceSchema.safeParse(projectRaw);
+    if (p.success) {
+      shell.projectIntelligence = {
+        ...shell.projectIntelligence,
+        ...p.data,
+        facts: p.data.facts?.length ? p.data.facts : shell.projectIntelligence.facts,
+      };
+    }
+  }
+
+  const productionNotes = (source as { productionNotes?: string[] }).productionNotes;
+  if (Array.isArray(productionNotes) && productionNotes.length) {
+    shell.productionNotes = productionNotes;
+  }
+
+  const analysisMetadata = (source as { analysisMetadata?: Record<string, unknown> })
+    .analysisMetadata;
+  if (analysisMetadata && typeof analysisMetadata === "object") {
+    shell.analysisMetadata = {
+      ...shell.analysisMetadata,
+      ...analysisMetadata,
+      limitations: [
+        ...(shell.analysisMetadata.limitations ?? []),
+        ...((analysisMetadata.limitations as string[] | undefined) ?? []),
+      ],
+    } as PemNeatStructuredResult["analysisMetadata"];
+  }
+}
+
+function missingCoverageLabels(coverage: FactCoverageScore): string[] {
+  const missing: string[] = [];
+  if (!coverage.customerStory) missing.push("customerStory");
+  if (!coverage.customerPain) missing.push("customerPain");
+  if (coverage.type1Count === 0) missing.push("type1Pain");
+  if (coverage.type2Count === 0) missing.push("type2Pain");
+  if (!coverage.budgetSignal) missing.push("budget");
+  if (!coverage.decisionSignal) missing.push("decisionProcess");
+  if (coverage.nextStepsCount === 0) missing.push("nextSteps");
+  if (coverage.projectFactsCount === 0) missing.push("projectIntelligence.facts");
+  return missing;
+}
+
 /**
- * Staged PEM NEAT generation:
- * 1) Fact extraction (full or chunked merge)
- * 2) Sales assessment
- * 3) Email + BuilderTrend handoff
- * Server owns structural defaults; unknown business facts are allowed.
+ * Staged PEM NEAT generation with evidence-coverage recovery.
  */
 export async function generatePemNeat(input: GeneratePemNeatInput): Promise<GeneratePemNeatOutput> {
   const started = Date.now();
-  const diagnostics = {
-    stages: [] as string[],
-    finishReasons: [] as string[],
-    validationIssues: [] as string[],
+  const diagnostics: GeneratePemNeatOutput["diagnostics"] = {
+    stages: [],
+    finishReasons: [],
+    validationIssues: [],
+    recoveryUsed: false,
+    modelConfigured: getPemNeatModelName(),
   };
 
   const stage0 = stage0ValidateTranscript(input.transcript);
@@ -290,7 +416,9 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
     });
   }
 
+  const signals = analyzeTranscriptSignals(input.transcript);
   const chunks = chunkTranscript(input.transcript);
+  diagnostics.chunkCount = chunks.length;
   const strategy = chunks.length === 1 ? ("full" as const) : ("chunked" as const);
   const stage0Notes = [
     ...stage0.notes,
@@ -309,11 +437,13 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
         }),
       ),
     );
+    const overallScore = computeOverallScore(result.assessment.categories);
     result.analysisMetadata = {
       ...result.analysisMetadata,
       stage0Notes,
       limitations: [...(result.analysisMetadata.limitations ?? []), ...stage0Notes],
-    };
+      overallScore,
+    } as typeof result.analysisMetadata & { overallScore?: number | null };
     return {
       result,
       modelProvider: "mock",
@@ -324,11 +454,16 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
       usedMock: true,
       stage0Notes,
       transcriptStrategy: strategy,
-      diagnostics: { stages: ["mock"], finishReasons: [], validationIssues: [] },
+      diagnostics: {
+        stages: ["mock"],
+        finishReasons: [],
+        validationIssues: [],
+        overallScore,
+        chunkCount: chunks.length,
+      },
     };
   }
 
-  const baseSystem = buildPemNeatSystemPrompt();
   let modelName = "";
   let inputTokens = 0;
   let outputTokens = 0;
@@ -339,147 +474,129 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
     meetingDate: input.meetingDate,
   });
 
-  // -------- Stage 1: facts --------
-  diagnostics.stages.push("facts");
-  const factParts: unknown[] = [];
-  for (const chunk of chunks) {
-    const factPrompt = `${baseSystem}
-
-STAGE: FACT EXTRACTION ONLY.
-Return JSON with keys: salesIntelligence (customerStory, customerPain, type1Pain, type2Pain, budget, decisionProcess, schedule, competitionAlternatives, actonRecommendation, nextSteps), projectIntelligence, productionNotes, analysisMetadata, metadata.transcriptQuality/limitations.
-Do NOT invent unknown facts. Prefer null / [] when not established.
-Do NOT include assessment categories or BuilderTrend fields.
-Chunk ${chunk.index + 1}/${chunk.total} (${chunk.label}).`;
-
+  async function extractFacts(label: string, systemPrompt: string, transcriptText: string) {
+    diagnostics.stages.push(label);
     const user = buildPemNeatUserPrompt({
       prospectName: input.prospectName,
       advisorName: input.advisorName,
       meetingDate: input.meetingDate ?? null,
-      transcript: chunk.text,
+      transcript: transcriptText,
       transcriptNotes: stage0Notes,
     });
-
-    const res = await runStage(factPrompt, user, 6_000);
+    const res = await runStage(systemPrompt, user, 8_000);
     diagnostics.finishReasons.push(res.finishReason ?? "unknown");
     modelName = res.model;
     inputTokens += res.inputTokens ?? 0;
     outputTokens += res.outputTokens ?? 0;
-    factParts.push(parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON"));
+    return parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON");
   }
 
-  const mergedFacts = mergeFactStages(factParts);
-  try {
-    const parsedFacts = factsStageSchema.parse(mergedFacts);
-    if (parsedFacts.salesIntelligence) {
-      shell.salesIntelligence = {
-        ...shell.salesIntelligence,
-        ...parsedFacts.salesIntelligence,
-        meetingOutcome: shell.salesIntelligence.meetingOutcome,
-        qualification: shell.salesIntelligence.qualification,
-      };
-    }
-    if (parsedFacts.projectIntelligence) {
-      shell.projectIntelligence = {
-        ...shell.projectIntelligence,
-        ...parsedFacts.projectIntelligence,
-      };
-    }
-    if (parsedFacts.productionNotes) {
-      shell.productionNotes = parsedFacts.productionNotes;
-    }
-    if (parsedFacts.analysisMetadata) {
-      shell.analysisMetadata = {
-        ...shell.analysisMetadata,
-        ...parsedFacts.analysisMetadata,
-        limitations: [
-          ...(shell.analysisMetadata.limitations ?? []),
-          ...(parsedFacts.analysisMetadata.limitations ?? []),
-        ],
-      };
-    }
-    if (parsedFacts.metadata) {
-      shell.metadata = {
-        ...shell.metadata,
-        transcriptQuality:
-          parsedFacts.metadata.transcriptQuality ?? shell.metadata.transcriptQuality,
-        limitations: [
-          ...(shell.metadata.limitations ?? []),
-          ...(parsedFacts.metadata.limitations ?? []),
-        ],
-      };
-    }
-  } catch (error) {
-    diagnostics.validationIssues.push(`facts: ${zodIssueSummary(error)}`);
-    console.error("[pem-neat] facts stage soft-fail", {
-      code: "PEM_NEAT_FACTS_PARTIAL",
-      issues: zodIssueSummary(error),
+  // -------- Stage 1: facts --------
+  const factParts: unknown[] = [];
+  const factSystem = buildFactExtractionStagePrompt();
+  for (const chunk of chunks) {
+    const chunkSystem = `${factSystem}\nChunk ${chunk.index + 1}/${chunk.total} (${chunk.label}).`;
+    factParts.push(await extractFacts("facts", chunkSystem, chunk.text));
+  }
+  applyFactsToShell(shell, mergeFactStages(factParts), diagnostics);
+
+  // Evidence coverage + recovery
+  let coverage = scoreFactCoverage(shell, signals);
+  if (coverage.isSuspiciouslyEmpty && signals.looksSubstantive) {
+    diagnostics.recoveryUsed = true;
+    diagnostics.stages.push("facts_recovery");
+    console.warn("[pem-neat] low evidence coverage — recovery pass", {
+      code: "PEM_NEAT_LOW_EVIDENCE_COVERAGE",
+      totalScore: coverage.totalScore,
+      wordCount: signals.wordCount,
     });
+    const missing = missingCoverageLabels(coverage);
+    const recovered = await extractFacts(
+      "facts_recovery",
+      buildRecoveryFactPrompt(missing),
+      // Prefer full transcript head+middle+tail via first+last chunks if huge
+      chunks.length === 1
+        ? input.transcript
+        : [
+            chunks[0]?.text ?? "",
+            chunks[Math.floor(chunks.length / 2)]?.text ?? "",
+            chunks.at(-1)?.text ?? "",
+          ].join("\n\n"),
+    );
+    applyFactsToShell(shell, recovered, diagnostics);
+    coverage = scoreFactCoverage(shell, signals);
+  }
+
+  diagnostics.coverage = coverage;
+
+  if (coverage.isSuspiciouslyEmpty && signals.looksSubstantive) {
+    console.error("[pem-neat] empty shell after recovery", {
+      code: "PEM_NEAT_LOW_EVIDENCE_COVERAGE",
+      coverage,
+    });
+    throw new AppError(
+      "Baxter couldn't reliably extract enough information from this transcript. Your transcript is saved. You can edit it or retry the analysis.",
+      { code: "PEM_NEAT_LOW_EVIDENCE_COVERAGE", statusCode: 502 },
+    );
   }
 
   // -------- Stage 2: assessment --------
   diagnostics.stages.push("assessment");
-  const assessmentPrompt = `${baseSystem}
-
-STAGE: SALES ASSESSMENT ONLY.
-Given the established facts JSON and transcript evidence, return JSON with:
-assessment { categories (keyed by bonding_rapport, palo_upfront_contract, type1_pain, type2_pain, budget, decision_making_process, schedule, summary, fulfillment_solution_positioning, outcome_close, post_sell, overall_process_control — include palo on palo_upfront_contract), topStrengths, topImprovements, oneThing },
-meetingOutcome { classification, explanation },
-qualification { classification, reasoning, risks }.
-Use NOT_DETERMINABLE when evidence is insufficient — do not invent MISSED from incomplete evidence.
-Unknown coaching fields may use short honest placeholders.`;
-
   const assessmentUser = `Prospect: ${input.prospectName}
 Advisor: ${input.advisorName}
 
-Established facts (JSON):
+Established facts (JSON) — use as primary sales intelligence; still verify against transcript for scoring:
 ${JSON.stringify({
   salesIntelligence: shell.salesIntelligence,
   projectIntelligence: shell.projectIntelligence,
-  analysisMetadata: shell.analysisMetadata,
 }).slice(0, 40_000)}
 
-Transcript evidence (may be abbreviated for length; facts above are authoritative for extraction):
+Transcript evidence (score salesperson behavior from this):
 <pem_transcript>
-${input.transcript.slice(0, 60_000)}
+${input.transcript.slice(0, 80_000)}
 </pem_transcript>`;
 
   try {
-    const res = await runStage(assessmentPrompt, assessmentUser, 8_000);
+    const res = await runStage(buildAssessmentStagePrompt(), assessmentUser, 8_000);
     diagnostics.finishReasons.push(res.finishReason ?? "unknown");
     modelName = res.model;
     inputTokens += res.inputTokens ?? 0;
     outputTokens += res.outputTokens ?? 0;
     const raw = parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON");
-    const parsed = assessmentStageSchema.parse(raw);
-    if (parsed.assessment) {
+    const parsed = assessmentStageSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+    if (parsed.data.assessment) {
       shell.assessment = {
         categories: mergeAssessmentCategories(
-          (parsed.assessment.categories as PemNeatStructuredResult["assessment"]["categories"]) ??
-            [],
+          (parsed.data.assessment
+            .categories as PemNeatStructuredResult["assessment"]["categories"]) ?? [],
         ),
-        topStrengths: parsed.assessment.topStrengths ?? [],
-        topImprovements: parsed.assessment.topImprovements ?? [],
+        topStrengths: parsed.data.assessment.topStrengths ?? [],
+        topImprovements: parsed.data.assessment.topImprovements ?? [],
         oneThing:
-          parsed.assessment.oneThing?.trim() || "Not enough evidence to determine The One Thing.",
+          parsed.data.assessment.oneThing?.trim() ||
+          "Tighten discovery and next-step clarity on the next PEM.",
       };
     }
-    if (parsed.meetingOutcome) {
+    if (parsed.data.meetingOutcome) {
       shell.salesIntelligence.meetingOutcome = {
-        classification: parsed.meetingOutcome
+        classification: parsed.data.meetingOutcome
           .classification as PemNeatStructuredResult["salesIntelligence"]["meetingOutcome"]["classification"],
         explanation:
-          parsed.meetingOutcome.explanation?.trim() ||
-          "Outcome not established from transcript evidence.",
+          parsed.data.meetingOutcome.explanation?.trim() ||
+          "Outcome based on closing evidence in the transcript.",
       };
     }
-    if (parsed.qualification) {
+    if (parsed.data.qualification) {
       shell.salesIntelligence.qualification = {
-        classification: parsed.qualification
+        classification: parsed.data.qualification
           .classification as PemNeatStructuredResult["salesIntelligence"]["qualification"]["classification"],
         reasoning:
-          parsed.qualification.reasoning?.trim() ||
-          "Qualification not established from transcript evidence.",
-        risks: parsed.qualification.risks ?? [],
+          parsed.data.qualification.reasoning?.trim() ||
+          "Qualification based on Pain, Budget, Decision, Schedule, and Fit.",
+        risks: parsed.data.qualification.risks ?? [],
       };
     }
   } catch (error) {
@@ -489,49 +606,45 @@ ${input.transcript.slice(0, 60_000)}
       code: "PEM_NEAT_ASSESSMENT_PARTIAL",
       issues: zodIssueSummary(error),
     });
-    // Keep defaults — structurally complete shell remains valid.
   }
 
   // -------- Stage 3: handoff --------
   diagnostics.stages.push("handoff");
-  const handoffPrompt = `${baseSystem}
-
-STAGE: CUSTOMER EMAIL + BUILDERTrend HANDOFF ONLY.
-Return JSON with: followUpEmail { subject, body }, buildertrendFields (only fill evidenced values; null when unknown), internalOpportunityNotes (max 2500 chars), productionNotes.
-Email must be customer-facing — no Type 1/2, qualification, scores, coaching, or PALO language.
-BuilderTrend fields are operational; no sales coaching.`;
-
   const handoffUser = `Prospect: ${input.prospectName}
 Advisor: ${input.advisorName}
 
-Validated sales intelligence:
+Validated sales intelligence (write a specific customer email from these facts):
 ${JSON.stringify(shell.salesIntelligence).slice(0, 30_000)}
 
 Project intelligence:
-${JSON.stringify(shell.projectIntelligence).slice(0, 10_000)}`;
+${JSON.stringify(shell.projectIntelligence).slice(0, 10_000)}
+
+Transcript excerpt for next-step / contact preference grounding:
+${input.transcript.slice(0, 20_000)}`;
 
   try {
-    const res = await runStage(handoffPrompt, handoffUser, 5_000);
+    const res = await runStage(buildHandoffStagePrompt(), handoffUser, 6_000);
     diagnostics.finishReasons.push(res.finishReason ?? "unknown");
     modelName = res.model;
     inputTokens += res.inputTokens ?? 0;
     outputTokens += res.outputTokens ?? 0;
     const raw = parseJsonOrThrow(res.content, "PEM_NEAT_INVALID_JSON");
-    const parsed = handoffStageSchema.parse(raw);
-    if (parsed.followUpEmail?.body) {
+    const parsed = handoffStageSchema.safeParse(raw);
+    if (!parsed.success) throw parsed.error;
+    if (parsed.data.followUpEmail?.body) {
       shell.followUpEmail = {
-        subject: parsed.followUpEmail.subject ?? null,
-        body: parsed.followUpEmail.body,
+        subject: parsed.data.followUpEmail.subject ?? null,
+        body: parsed.data.followUpEmail.body,
       };
     }
-    if (parsed.buildertrendFields) {
-      shell.buildertrendFields = mergeBuildertrendFields(parsed.buildertrendFields);
+    if (parsed.data.buildertrendFields) {
+      shell.buildertrendFields = mergeBuildertrendFields(parsed.data.buildertrendFields);
     }
-    if (parsed.internalOpportunityNotes != null) {
-      shell.internalOpportunityNotes = clampInternalNotes(parsed.internalOpportunityNotes);
+    if (parsed.data.internalOpportunityNotes != null) {
+      shell.internalOpportunityNotes = clampInternalNotes(parsed.data.internalOpportunityNotes);
     }
-    if (parsed.productionNotes?.length) {
-      shell.productionNotes = parsed.productionNotes;
+    if (parsed.data.productionNotes?.length) {
+      shell.productionNotes = parsed.data.productionNotes;
     }
   } catch (error) {
     if (error instanceof AppError && error.code === "PEM_NEAT_OUTPUT_TRUNCATED") throw error;
@@ -542,7 +655,6 @@ ${JSON.stringify(shell.projectIntelligence).slice(0, 10_000)}`;
     });
   }
 
-  // Final structural validation — shell is always mergeable to valid result
   let result: PemNeatStructuredResult;
   try {
     result = normalizeCategoryLabels(parsePemNeatStructuredResult(shell));
@@ -557,6 +669,19 @@ ${JSON.stringify(shell.projectIntelligence).slice(0, 10_000)}`;
     );
   }
 
+  // Final semantic gate
+  coverage = scoreFactCoverage(result, signals);
+  diagnostics.coverage = coverage;
+  if (coverage.isSuspiciouslyEmpty && signals.looksSubstantive) {
+    throw new AppError(
+      "Baxter couldn't reliably extract enough information from this transcript. Your transcript is saved. You can edit it or retry the analysis.",
+      { code: "PEM_NEAT_LOW_EVIDENCE_COVERAGE", statusCode: 502 },
+    );
+  }
+
+  const overallScore = computeOverallScore(result.assessment.categories);
+  diagnostics.overallScore = overallScore;
+
   const checkIssues = runDeterministicNeatChecks(result, input.transcript);
   diagnostics.validationIssues.push(...checkIssues);
   result = {
@@ -566,11 +691,15 @@ ${JSON.stringify(shell.projectIntelligence).slice(0, 10_000)}`;
       limitations: [
         ...(result.analysisMetadata.limitations ?? []),
         ...checkIssues.map((i) => `QC: ${i}`),
-        ...diagnostics.validationIssues
-          .filter((i) => i.includes("partial") || i.includes("soft"))
-          .slice(0, 5),
       ],
       stage0Notes: [...(result.analysisMetadata.stage0Notes ?? []), ...stage0Notes],
+      overallScore,
+      factCoverageScore: coverage.totalScore,
+      recoveryUsed: diagnostics.recoveryUsed,
+    } as typeof result.analysisMetadata & {
+      overallScore?: number | null;
+      factCoverageScore?: number;
+      recoveryUsed?: boolean;
     },
     metadata: {
       ...result.metadata,
@@ -584,6 +713,9 @@ ${JSON.stringify(shell.projectIntelligence).slice(0, 10_000)}`;
     stages: diagnostics.stages,
     finishReasons: diagnostics.finishReasons,
     validationIssueCount: diagnostics.validationIssues.length,
+    coverageScore: coverage.totalScore,
+    recoveryUsed: diagnostics.recoveryUsed,
+    overallScore,
     model: modelName,
     latencyMs: Date.now() - started,
   });
@@ -607,8 +739,7 @@ function mergeFactStages(parts: unknown[]): unknown {
   const base: Record<string, unknown> = {};
   for (const part of parts) {
     if (!part || typeof part !== "object") continue;
-    const obj = part as Record<string, unknown>;
-    deepMergeFacts(base, obj);
+    deepMergeFacts(base, part as Record<string, unknown>);
   }
   return base;
 }
@@ -619,6 +750,7 @@ function deepMergeFacts(target: Record<string, unknown>, source: Record<string, 
     const existing = target[key];
     if (Array.isArray(value)) {
       const prev = Array.isArray(existing) ? existing : [];
+      // Prefer non-empty later arrays; concat unique-ish strings
       target[key] = [...prev, ...value];
     } else if (typeof value === "object") {
       const prev =
@@ -631,8 +763,8 @@ function deepMergeFacts(target: Record<string, unknown>, source: Record<string, 
     } else if (existing == null || existing === "") {
       target[key] = value;
     } else if (typeof existing === "string" && typeof value === "string" && existing !== value) {
-      // Prefer later (often updated) statement while keeping note of earlier
-      target[key] = value;
+      // Prefer longer / later synthesis
+      target[key] = value.length >= existing.length ? value : existing;
     }
   }
 }

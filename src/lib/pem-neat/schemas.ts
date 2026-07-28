@@ -249,6 +249,9 @@ export const analysisMetadataSchema = z.object({
   attributionConfidence: z.enum(["high", "medium", "low", "unknown"]).default("unknown"),
   limitations: z.array(z.string()).default([]),
   stage0Notes: z.array(z.string()).default([]),
+  overallScore: z.number().nullable().optional(),
+  factCoverageScore: z.number().optional(),
+  recoveryUsed: z.boolean().optional(),
 });
 
 export const salesIntelligenceSchema = z.object({

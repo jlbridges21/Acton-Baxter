@@ -3,9 +3,9 @@
 import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MoreHorizontal } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ActionMenu } from "@/components/ui/action-menu";
 import { BuildertrendFieldsPanel } from "@/components/pem-neat/buildertrend-fields-panel";
 import { ConfirmDialog } from "@/components/pem-neat/confirm-dialog";
 import { CopyButton } from "@/components/pem-neat/copy-button";
@@ -26,6 +26,7 @@ import {
   QualificationBadge,
 } from "@/components/pem-neat/pem-neat-formatters";
 import { cn } from "@/lib/utils";
+import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
 import type { PemNeatGenerationRow, PemNeatRecord } from "@/lib/pem-neat/types";
 import type { BuildertrendFields, PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
 import { buildertrendFieldsSchema } from "@/lib/pem-neat/schemas";
@@ -67,7 +68,6 @@ export function PemNeatResultClient({
   const [retrying, setRetrying] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -159,7 +159,9 @@ export function PemNeatResultClient({
             <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
               <div>
                 <dt className="inline text-[var(--acton-muted)]">Salesperson: </dt>
-                <dd className="inline text-[var(--acton-navy)]">{item.salesperson_display_name}</dd>
+                <dd className="inline text-[var(--acton-navy)]">
+                  {formatHumanDisplayName(item.salesperson_display_name)}
+                </dd>
               </div>
               <div>
                 <dt className="inline text-[var(--acton-muted)]">Meeting Date: </dt>
@@ -221,28 +223,17 @@ export function PemNeatResultClient({
                 />
               </>
             ) : null}
-            <button
-              type="button"
-              className={buttonVariants({ variant: "ghost", size: "sm" })}
-              aria-label="More actions"
-              onClick={() => setMenuOpen((v) => !v)}
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
-            {menuOpen ? (
-              <div className="absolute top-10 right-0 z-10 w-40 rounded-md border border-[var(--acton-border)] bg-white py-1 shadow-md">
-                <button
-                  type="button"
-                  className="block w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setDeleteOpen(true);
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            ) : null}
+            <ActionMenu
+              label="More actions"
+              items={[
+                {
+                  id: "delete",
+                  label: "Delete",
+                  destructive: true,
+                  onSelect: () => setDeleteOpen(true),
+                },
+              ]}
+            />
           </div>
         </div>
 

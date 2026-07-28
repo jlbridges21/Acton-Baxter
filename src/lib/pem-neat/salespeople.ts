@@ -6,6 +6,7 @@ import { getDepartmentBySlug, listDepartments, SALES_DEPARTMENT_SLUG } from "@/l
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getReportStore } from "@/lib/research/report-store";
 import { pemNeatStoreError } from "@/lib/pem-neat/errors";
+import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
 
 export type SalespersonOption = {
   id: string;
@@ -49,7 +50,7 @@ export async function listSalespeople(): Promise<SalespersonOption[]> {
       })
       .map((p) => ({
         id: p.id,
-        displayName: p.full_name?.trim() || "Unnamed user",
+        displayName: formatHumanDisplayName(p.full_name?.trim() || "Unnamed user"),
         role: p.role,
       }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -69,7 +70,7 @@ export async function listSalespeople(): Promise<SalespersonOption[]> {
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
-    displayName: (row.full_name as string | null)?.trim() || "Unnamed user",
+    displayName: formatHumanDisplayName((row.full_name as string | null)?.trim() || "Unnamed user"),
     email: null,
     role: (row.role as string | null) ?? null,
   }));
@@ -93,7 +94,7 @@ export async function resolveProfileDisplayName(userId: string): Promise<Salespe
     if (!profile) return null;
     return {
       id: profile.id,
-      displayName: profile.full_name?.trim() || "Unnamed user",
+      displayName: formatHumanDisplayName(profile.full_name?.trim() || "Unnamed user"),
       role: profile.role,
     };
   }
@@ -108,7 +109,9 @@ export async function resolveProfileDisplayName(userId: string): Promise<Salespe
   if (!data) return null;
   return {
     id: String(data.id),
-    displayName: (data.full_name as string | null)?.trim() || "Unnamed user",
+    displayName: formatHumanDisplayName(
+      (data.full_name as string | null)?.trim() || "Unnamed user",
+    ),
     role: (data.role as string | null) ?? null,
   };
 }

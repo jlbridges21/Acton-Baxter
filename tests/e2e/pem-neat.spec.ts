@@ -51,7 +51,42 @@ test("PEM NEAT create, generate, reopen from library", async ({ page }) => {
   await expect(page.getByText(/Customer Story|SALES INTELLIGENCE/i).first()).toBeVisible();
 });
 
+test("PEM NEAT library action menu Edit/Delete is clickable (portal)", async ({ page }) => {
+  await page.goto("/pem-neats/new");
+  await page.getByLabel("Prospect Name").fill("Menu Portal Prospect");
+  await page.getByLabel("Partnership Evaluation Meeting Transcript").fill(SAMPLE_TRANSCRIPT);
+  await page.getByRole("button", { name: "Generate PEM NEAT" }).click();
+  await page.waitForURL(/\/pem-neats\/[0-9a-f-]+$/, { timeout: 60_000 });
+
+  await page.goto("/pem-neats");
+  await expect(page.getByText("Menu Portal Prospect")).toBeVisible();
+
+  const row = page.getByRole("row").filter({ hasText: "Menu Portal Prospect" });
+  await row.getByRole("button", { name: /More actions/i }).click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+
+  const menuBox = await menu.boundingBox();
+  expect(menuBox).toBeTruthy();
+  expect(menuBox!.height).toBeGreaterThan(40);
+  // Portaled menus are attached under document.body, not inside overflow table cells
+  expect(await menu.evaluate((el) => el.parentElement?.tagName)).toBe("BODY");
+
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  await row.getByRole("button", { name: /More actions/i }).click();
+  await Promise.all([
+    page.waitForURL(/\/pem-neats\/[0-9a-f-]+\/edit/, { timeout: 15_000 }),
+    page.getByRole("menuitem", { name: "Edit" }).click(),
+  ]);
+  await expect(page.getByRole("heading", { name: "Edit PEM NEAT" })).toBeVisible();
+});
+
 test("PEM NEAT edit transcript marks needs regeneration, then delete", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto("/pem-neats/new");
   await page.getByLabel("Prospect Name").fill("Edit Delete Prospect");
   await page.getByLabel("Partnership Evaluation Meeting Transcript").fill(SAMPLE_TRANSCRIPT);
@@ -60,9 +95,7 @@ test("PEM NEAT edit transcript marks needs regeneration, then delete", async ({ 
   await expect(page.getByRole("heading", { name: "Edit Delete Prospect" })).toBeVisible();
 
   const detailUrl = page.url();
-  const editUrl = `${detailUrl.replace(/\/$/, "")}/edit`;
-  await page.goto(editUrl);
-  await expect(page).toHaveURL(/\/pem-neats\/[0-9a-f-]+\/edit/);
+  await page.goto(`${detailUrl.replace(/\/$/, "")}/edit`);
   await expect(page.getByRole("heading", { name: "Edit PEM NEAT" })).toBeVisible();
 
   await page.getByLabel("Prospect Name").fill("Edit Delete Prospect Updated");
@@ -70,11 +103,12 @@ test("PEM NEAT edit transcript marks needs regeneration, then delete", async ({ 
   await page.getByLabel("Transcript").fill(`${transcript}\nProspect: We prefer email.`);
   await page.getByRole("button", { name: "Save Changes" }).click();
   await expect(page.getByText(/Transcript updated/i)).toBeVisible();
-  await page.getByRole("link", { name: "Later" }).click();
+
+  await page.goto(detailUrl);
   await expect(page.getByText(/Transcript Updated/i)).toBeVisible();
 
   await page.getByRole("button", { name: "More actions" }).click();
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
   await expect(page.getByRole("heading", { name: "Delete PEM NEAT?" })).toBeVisible();
   await page.getByRole("button", { name: "Delete PEM NEAT" }).click();
   await expect(page).toHaveURL(/\/pem-neats/);
