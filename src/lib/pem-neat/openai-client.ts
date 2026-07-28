@@ -17,6 +17,12 @@ export type PemOpenAiJsonRequest = {
   temperature?: number;
   reasoningEffort?: OpenAiReasoningEffort;
   timeoutMs: number;
+  /** Optional JSON Schema structured output (Responses / Chat). */
+  jsonSchema?: {
+    name: string;
+    schema: Record<string, unknown>;
+    strict?: boolean;
+  };
   /** Optional override for tests. */
   fetchImpl?: typeof fetch;
 };
@@ -152,10 +158,19 @@ function buildResponsesBody(input: PemOpenAiJsonRequest, caps: OpenAiModelCapabi
   const effort =
     input.reasoningEffort ?? parseReasoningEffort(process.env.PEM_NEAT_REASONING_EFFORT, "medium");
 
+  const textFormat = input.jsonSchema
+    ? {
+        type: "json_schema",
+        name: input.jsonSchema.name,
+        strict: input.jsonSchema.strict ?? true,
+        schema: input.jsonSchema.schema,
+      }
+    : { type: "json_object" };
+
   const body: Record<string, unknown> = {
     model: input.model,
     max_output_tokens: input.maxOutputTokens,
-    text: { format: { type: "json_object" } },
+    text: { format: textFormat },
     input: input.messages.map((m) => ({
       role:
         m.role === "system"
@@ -177,9 +192,20 @@ function buildResponsesBody(input: PemOpenAiJsonRequest, caps: OpenAiModelCapabi
 }
 
 function buildChatBody(input: PemOpenAiJsonRequest, caps: OpenAiModelCapabilities) {
+  const responseFormat = input.jsonSchema
+    ? {
+        type: "json_schema",
+        json_schema: {
+          name: input.jsonSchema.name,
+          strict: input.jsonSchema.strict ?? true,
+          schema: input.jsonSchema.schema,
+        },
+      }
+    : { type: "json_object" };
+
   const body: Record<string, unknown> = {
     model: input.model,
-    response_format: { type: "json_object" },
+    response_format: responseFormat,
     messages: input.messages.map((m) => ({
       role: m.role === "developer" ? "system" : m.role,
       content: m.content,

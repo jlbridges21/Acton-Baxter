@@ -186,17 +186,51 @@ export function buildSalesIntelligenceStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
 STAGE B — SALES INTELLIGENCE SYNTHESIS.
-You receive a validated Fact Ledger (working source). Synthesize the NEAT salesIntelligence section.
+You receive a validated Fact Ledger (working source of evidence).
+Synthesize SIMPLE business meaning. Do NOT wrap values in evidence objects.
+Provenance already lives in the Fact Ledger.
 
-Return JSON with salesIntelligence only:
-customerStory, customerPain, type1Pain[], type2Pain[], budget, decisionProcess, schedule,
-competitionAlternatives[], actonRecommendation { fit, reasoning }, nextSteps { prospect[], acton[] },
-meetingOutcome { classification, explanation }, qualification { classification, reasoning, risks[] }.
+Return ONE JSON object matching the structured schema exactly (no salesIntelligence wrapper).
 
-For budget/decision makers use objects: { "value": "...", "evidenceType": "prospect_fact", "evidence?": "..." }
-OR plain strings (Baxter will coerce). Prefer nuanced budget (ideal vs stretch vs ceiling).
+Fields:
+- customerStory: 2–5 sentence grounded story
+- customerPain: central tension synthesis
+- type1Pain: { summary, drivers[] }  // why build / project need
+- type2Pain: { summary, drivers[] }  // why the right partner
+- budget: {
+    summary,
+    statedTarget (number|null),
+    availableFunds (number|null),
+    potentialCeiling (number|null) — discomfort threshold, NOT invent a hard stop,
+    aduAllocation (number|null),
+    poolAllocation (number|null),
+    fundingSummary (string|null),
+    flexibility (string|null),
+    risks[]
+  }
+- decisionProcess: {
+    summary,
+    primaryDecisionMaker (string|null),
+    otherParticipants[],
+    gatingFactors[],
+    alternatives[],
+    criteria[],
+    timing (string|null)
+  }
+- schedule: { summary, urgency, dates[], drivers[] }
+- competitionAlternatives[]
+- actonRecommendation: { fit: strong_fit|potential_fit|weak_fit|not_enough_information, summary, reasons[] }
+- nextSteps: { prospect[], acton[] }
+- meetingOutcome: {
+    classification: YES|NO|DECISION_DATE|DECISION_DATE_NOT_SECURED,
+    explanation,
+    transcriptIncomplete (boolean) — true if meeting ending is missing/truncated
+  }
+- qualification: { classification, explanation, risks[] }
+
+Numbers must be plain numbers (500000) not "$500k".
 Do NOT invent amounts. Do NOT reverse-engineer Type 2 from Acton pitch.
-${buildPemNeatSchemaHint()}`;
+If the transcript ends mid-meeting, set transcriptIncomplete=true and do not invent the close.`;
 }
 
 export function buildAssessmentStagePrompt(): string {
@@ -215,7 +249,12 @@ qualification { classification, reasoning, risks }.
 
 Poor execution = LOW SCORE. NOT_DETERMINABLE only when transcript evidence for that section is absent.
 For a complete PEM, most categories should be scoreable.
-Include palo sub-object on palo_upfront_contract.`;
+Include palo sub-object on palo_upfront_contract.
+
+If the transcript appears truncated / mid-sentence at the end:
+- Still score Story, Pain, Budget, Decision, Schedule, Fulfillment, etc. from available evidence.
+- Prefer NOT_DETERMINABLE for outcome_close and post_sell when the meeting ending was not observed.
+- Do NOT invent a close or invent DECISION_DATE_NOT_SECURED solely from an incomplete ending.`;
 }
 
 export function buildEmailStagePrompt(): string {
@@ -266,6 +305,16 @@ customer/advisor attribution errors, assessment inconsistent with evidence, inte
 important evidenced topics omitted from Customer Story/Pain.
 Grounded paraphrase is OK — do NOT require exact transcript string matches.
 pass=true when no material issues remain.`;
+}
+
+export function buildSalesIntelligenceCorrectionPrompt(): string {
+  return `${buildPemNeatSystemPrompt()}
+
+STAGE B CORRECTION — STRUCTURE ONLY.
+You previously returned Sales Intelligence JSON that failed schema validation.
+Correct the STRUCTURE to match the required schema exactly.
+Preserve the analysis meaning. Do not re-analyze the meeting or invent new facts.
+Return one corrected JSON object (no wrapper).`;
 }
 
 export function buildCorrectionStagePrompt(): string {

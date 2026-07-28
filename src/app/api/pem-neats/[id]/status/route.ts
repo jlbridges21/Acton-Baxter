@@ -16,6 +16,13 @@ export async function GET(_request: Request, context: RouteContext) {
     if (!existing) throw new NotFoundError("PEM NEAT not found");
 
     const trace = existing.generation_trace_json ?? {};
+    const stageOutputs = (existing.stage_outputs_json ?? {}) as {
+      validationDiagnostics?: {
+        stage?: string;
+        issues?: string[];
+        shape?: string[];
+      } | null;
+    };
     const admin = isAdminRole(user.profile.role);
     const stages = Array.isArray((trace as { stages?: unknown }).stages)
       ? ((trace as { stages: Array<Record<string, unknown>> }).stages ?? []).map((s) => ({
@@ -26,6 +33,11 @@ export async function GET(_request: Request, context: RouteContext) {
           errorCode: s.errorCode ?? null,
         }))
       : [];
+
+    const validationIssues = [
+      ...(stageOutputs.validationDiagnostics?.issues ?? []),
+      ...(stageOutputs.validationDiagnostics?.shape ?? []).map((s) => `shape: ${s}`),
+    ].slice(0, 30);
 
     return jsonOk({
       id: existing.id,
@@ -43,6 +55,7 @@ export async function GET(_request: Request, context: RouteContext) {
             finalErrorStage: (trace as { finalErrorStage?: string | null }).finalErrorStage ?? null,
             chunkCount:
               (trace as { transcript?: { chunkCount?: number } }).transcript?.chunkCount ?? null,
+            validationIssues,
           }
         : null,
     });

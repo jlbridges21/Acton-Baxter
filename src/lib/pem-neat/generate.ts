@@ -6,7 +6,6 @@ import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import type { OpenAiReasoningEffort } from "@/lib/openai/capabilities";
 import { ASSESSMENT_CATEGORY_LABELS, PEM_NEAT_STANDARD_VERSION } from "./constants";
-import { coerceSalesIntelligencePartial } from "./coerce";
 import {
   analyzeTranscriptSignals,
   computeOverallScore,
@@ -42,18 +41,32 @@ import {
   buildPemNeatUserPrompt,
   buildQualityReviewStagePrompt,
   buildRecoveryFactPrompt,
+  buildSalesIntelligenceCorrectionPrompt,
   buildSalesIntelligenceStagePrompt,
 } from "./prompts";
 import {
   parsePemNeatStructuredResult,
-  salesIntelligenceSchema,
   assessmentSchema,
   followUpEmailSchema,
   buildertrendFieldsSchema,
   projectIntelligenceSchema,
   type PemNeatStructuredResult,
 } from "./schemas";
-import { chunkTranscript, stage0ValidateTranscript } from "./transcript";
+import {
+  extractBudgetCandidatesFromLedger,
+  factLedgerSemanticCounts,
+  mapSalesIntelligenceStageToCanonical,
+  parseSalesIntelligenceStage,
+  PEM_NEAT_FACT_LEDGER_SCHEMA_VERSION,
+  PEM_NEAT_GENERATION_SCHEMA_VERSION,
+  SALES_INTELLIGENCE_JSON_SCHEMA,
+  type SalesIntelligenceStageOutput,
+} from "./sales-intelligence-stage";
+import {
+  chunkTranscript,
+  detectTranscriptLikelyIncomplete,
+  stage0ValidateTranscript,
+} from "./transcript";
 import {
   completeStage,
   createPemGenerationTrace,
@@ -78,12 +91,24 @@ export type GeneratePemNeatInput = {
 };
 
 export type PemStageOutputs = {
+  /** Overall generation contract version (SI synthesis). */
+  schemaVersion?: number;
+  /** Fact Ledger evidence contract version. */
+  factLedgerSchemaVersion?: number;
   factLedger?: FactLedger | null;
+  /** Simple stage B output (preferred for resume). */
+  salesIntelligenceStage?: SalesIntelligenceStageOutput | null;
+  /** Canonical NEAT salesIntelligence after mapping. */
   salesIntelligence?: Record<string, unknown> | null;
   assessment?: Record<string, unknown> | null;
   followUpEmail?: Record<string, unknown> | null;
   handoff?: Record<string, unknown> | null;
   qualityReview?: Record<string, unknown> | null;
+  validationDiagnostics?: {
+    stage?: string;
+    issues?: string[];
+    shape?: string[];
+  } | null;
 };
 
 export type PemGenerationProgressUpdate = {
@@ -229,6 +254,7 @@ async function callStageJson(input: {
   user: string;
   maxTokens: number;
   reasoningEffort: OpenAiReasoningEffort;
+  jsonSchema?: { name: string; schema: Record<string, unknown>; strict?: boolean };
 }): Promise<ProviderJsonResult> {
   const model = getPemNeatModelName();
   const result = await callPemOpenAiJsonWithRetries(
@@ -242,6 +268,7 @@ async function callStageJson(input: {
       temperature: 0.25,
       reasoningEffort: input.reasoningEffort,
       timeoutMs: getPemNeatStageTimeoutMs(),
+      jsonSchema: input.jsonSchema,
     },
     {
       maxAttempts: 2,
@@ -278,70 +305,69 @@ function ledgerIsEmpty(ledger: FactLedger): boolean {
   return countFactLedgerItems(ledger) < 3;
 }
 
-function applySalesIntelligence(
+function applySalesIntelligenceFromStage(
   shell: PemNeatStructuredResult,
-  raw: unknown,
-  diagnostics: { validationIssues: string[] },
+  stage: SalesIntelligenceStageOutput,
 ) {
-  const coerced = coerceSalesIntelligencePartial(
-    raw && typeof raw === "object" && "salesIntelligence" in (raw as object)
-      ? (raw as { salesIntelligence: unknown }).salesIntelligence
-      : raw,
-  );
-  const parsed = salesIntelligenceSchema.partial().safeParse(coerced);
-  if (!parsed.success) {
-    diagnostics.validationIssues.push(`sales_intelligence: ${zodIssueSummary(parsed.error)}`);
-    // Coerced merge of known-safe fields only — never raw poison
-    const safe = coerceSalesIntelligencePartial(coerced);
-    const retry = salesIntelligenceSchema.partial().safeParse(safe);
-    if (!retry.success) {
-      throw pemError("PEM_FACT_SCHEMA_INVALID");
-    }
-    Object.assign(shell.salesIntelligence, {
-      ...shell.salesIntelligence,
-      ...retry.data,
-      budget: { ...shell.salesIntelligence.budget, ...(retry.data.budget ?? {}) },
-      decisionProcess: {
-        ...shell.salesIntelligence.decisionProcess,
-        ...(retry.data.decisionProcess ?? {}),
-      },
-      schedule: { ...shell.salesIntelligence.schedule, ...(retry.data.schedule ?? {}) },
-      nextSteps: {
-        prospect: retry.data.nextSteps?.prospect ?? shell.salesIntelligence.nextSteps.prospect,
-        acton: retry.data.nextSteps?.acton ?? shell.salesIntelligence.nextSteps.acton,
-      },
-      actonRecommendation: {
-        ...shell.salesIntelligence.actonRecommendation,
-        ...(retry.data.actonRecommendation ?? {}),
-      },
-      meetingOutcome: retry.data.meetingOutcome ?? shell.salesIntelligence.meetingOutcome,
-      qualification: retry.data.qualification ?? shell.salesIntelligence.qualification,
-    });
-    return;
-  }
-  const patch = parsed.data;
   shell.salesIntelligence = {
     ...shell.salesIntelligence,
-    ...patch,
-    budget: { ...shell.salesIntelligence.budget, ...(patch.budget ?? {}) },
-    decisionProcess: {
-      ...shell.salesIntelligence.decisionProcess,
-      ...(patch.decisionProcess ?? {}),
-    },
-    schedule: { ...shell.salesIntelligence.schedule, ...(patch.schedule ?? {}) },
-    nextSteps: {
-      prospect: patch.nextSteps?.prospect ?? shell.salesIntelligence.nextSteps.prospect,
-      acton: patch.nextSteps?.acton ?? shell.salesIntelligence.nextSteps.acton,
-    },
-    actonRecommendation: {
-      ...shell.salesIntelligence.actonRecommendation,
-      ...(patch.actonRecommendation ?? {}),
-    },
-    meetingOutcome: patch.meetingOutcome ?? shell.salesIntelligence.meetingOutcome,
-    qualification: patch.qualification ?? shell.salesIntelligence.qualification,
-    type1Pain: patch.type1Pain ?? shell.salesIntelligence.type1Pain,
-    type2Pain: patch.type2Pain ?? shell.salesIntelligence.type2Pain,
+    ...mapSalesIntelligenceStageToCanonical(stage),
   };
+}
+
+function tryResumeSalesIntelligence(
+  shell: PemNeatStructuredResult,
+  outputs: PemStageOutputs,
+): boolean {
+  if (outputs.salesIntelligenceStage) {
+    const parsed = parseSalesIntelligenceStage(outputs.salesIntelligenceStage);
+    if (parsed.ok) {
+      applySalesIntelligenceFromStage(shell, parsed.data);
+      return true;
+    }
+  }
+  // Legacy: canonical already stored from a prior successful map (same generation schema)
+  const si = outputs.salesIntelligence;
+  const genVersion = outputs.schemaVersion ?? 0;
+  if (
+    genVersion >= PEM_NEAT_GENERATION_SCHEMA_VERSION &&
+    si &&
+    typeof si === "object" &&
+    typeof (si as { customerStory?: unknown }).customerStory === "string"
+  ) {
+    shell.salesIntelligence = {
+      ...shell.salesIntelligence,
+      ...(si as PemNeatStructuredResult["salesIntelligence"]),
+    };
+    return true;
+  }
+  return false;
+}
+
+function canResumeFactLedger(outputs: PemStageOutputs): boolean {
+  const ledger = outputs.factLedger;
+  if (!ledger || ledgerIsEmpty(ledger)) return false;
+  const flVersion = outputs.factLedgerSchemaVersion ?? 1;
+  return flVersion >= PEM_NEAT_FACT_LEDGER_SCHEMA_VERSION;
+}
+
+function applyIncompleteEndingAssessmentGuard(shell: PemNeatStructuredResult, incomplete: boolean) {
+  if (!incomplete) return;
+  shell.assessment.categories = shell.assessment.categories.map((cat) => {
+    if (cat.key !== "outcome_close" && cat.key !== "post_sell") return cat;
+    if (cat.status === "NOT_DETERMINABLE") return cat;
+    return {
+      ...cat,
+      score: null,
+      status: "NOT_DETERMINABLE" as const,
+      evidence:
+        cat.evidence?.trim() ||
+        "Meeting ending not fully observed in transcript; Outcome/Close and Post-Sell cannot be scored confidently.",
+      coachingOpportunity:
+        cat.coachingOpportunity ??
+        "Ensure the full meeting ending is captured so Outcome and Post-Sell can be evaluated.",
+    };
+  });
 }
 
 /**
@@ -451,7 +477,9 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
   try {
     // -------- Stage A: Fact Ledger --------
     let ledger: FactLedger = stageOutputs.factLedger ?? emptyFactLedger();
-    if (!stageOutputs.factLedger || ledgerIsEmpty(ledger)) {
+    if (!canResumeFactLedger(stageOutputs)) {
+      stageOutputs.factLedger = null;
+      ledger = emptyFactLedger();
       const prep = startStage(trace, "transcript_prep");
       completeStage(prep, {
         status: "completed",
@@ -495,7 +523,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
           if (res.usedFallback) diagnostics.usedFallback = true;
           diagnostics.finishReasons.push(res.finishReason ?? "unknown");
 
-          const raw = parseJsonStrict(res.content, "PEM_FACT_SCHEMA_INVALID");
+          const raw = parseJsonStrict(res.content, "PEM_FACT_LEDGER_SCHEMA_INVALID");
           const parsed = tryParseFactLedger(raw);
           if (!parsed.ok && ledgerIsEmpty(parsed.ledger)) {
             completeStage(stage, {
@@ -504,10 +532,10 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
               validationIssues: parsed.issues,
               outputCharacters: res.content.length,
               finishReason: res.finishReason,
-              errorCode: "PEM_FACT_SCHEMA_INVALID",
+              errorCode: "PEM_FACT_LEDGER_SCHEMA_INVALID",
               api: res.api ?? null,
             });
-            throw pemError("PEM_FACT_SCHEMA_INVALID");
+            throw pemError("PEM_FACT_LEDGER_SCHEMA_INVALID");
           }
           ledgerParts.push(parsed.ledger);
           completeStage(stage, {
@@ -556,7 +584,7 @@ Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Retur
           inputTokens += res.inputTokens ?? 0;
           outputTokens += res.outputTokens ?? 0;
           diagnostics.finishReasons.push(res.finishReason ?? "unknown");
-          const raw = parseJsonStrict(res.content, "PEM_FACT_SCHEMA_INVALID");
+          const raw = parseJsonStrict(res.content, "PEM_FACT_LEDGER_SCHEMA_INVALID");
           const parsed = tryParseFactLedger(raw);
           ledger =
             parsed.ok || !ledgerIsEmpty(parsed.ledger)
@@ -649,64 +677,175 @@ Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Retur
       }
 
       stageOutputs.factLedger = ledger;
+      stageOutputs.factLedgerSchemaVersion = PEM_NEAT_FACT_LEDGER_SCHEMA_VERSION;
+      stageOutputs.schemaVersion = PEM_NEAT_GENERATION_SCHEMA_VERSION;
+      await emitProgress("extracting_facts");
+    } else {
+      ledger = stageOutputs.factLedger!;
+      stageOutputs.factLedgerSchemaVersion =
+        stageOutputs.factLedgerSchemaVersion ?? PEM_NEAT_FACT_LEDGER_SCHEMA_VERSION;
+      diagnostics.stages.push("fact_ledger_resume");
+      const resumeStage = startStage(trace, "fact_ledger");
+      completeStage(resumeStage, {
+        status: "completed",
+        validationStatus: "ok",
+        validationIssues: ["Resumed persisted Fact Ledger (not re-run)."],
+        extractedItemCounts: { items: countFactLedgerItems(ledger) },
+      });
       await emitProgress("extracting_facts");
     }
 
     // -------- Stage B: Sales Intelligence --------
-    await emitProgress("evaluating_sales");
-    if (!stageOutputs.salesIntelligence) {
+    await emitProgress("building_sales_intelligence");
+    stageOutputs.schemaVersion = PEM_NEAT_GENERATION_SCHEMA_VERSION;
+
+    const resumedSi = tryResumeSalesIntelligence(shell, stageOutputs);
+    if (!resumedSi) {
       const stage = startStage(trace, "sales_intelligence", {
         model: modelName,
         provider: "openai",
       });
       diagnostics.stages.push("sales_intelligence");
+      const budgetCandidates = extractBudgetCandidatesFromLedger(ledger);
+      const ledgerCounts = factLedgerSemanticCounts(ledger);
+      diagnostics.validationIssues.push(`fact_ledger_counts: ${JSON.stringify(ledgerCounts)}`);
+
+      const siUser = `Prospect: ${input.prospectName}
+Advisor: ${input.advisorName}
+
+Budget candidates extracted from Fact Ledger (interpret; do not invent):
+${budgetCandidates.length ? budgetCandidates.map((b) => `- ${b}`).join("\n") : "- none listed"}
+
+Fact Ledger (primary source — synthesize sales intelligence from this):
+${JSON.stringify(ledger).slice(0, 120_000)}
+
+Optional transcript excerpt for clarification only (do not rediscover everything):
+${input.transcript.slice(0, 40_000)}`;
+
       try {
         const res = await callStageJson({
           system: buildSalesIntelligenceStagePrompt(),
-          user: `Prospect: ${input.prospectName}
-Advisor: ${input.advisorName}
-
-Fact Ledger (primary source — synthesize NEAT sales intelligence from this):
-${JSON.stringify(ledger).slice(0, 120_000)}
-
-Optional transcript excerpt for clarification only:
-${input.transcript.slice(0, 40_000)}`,
+          user: siUser,
           maxTokens: STAGE_BUDGETS.sales_intelligence.tokens,
           reasoningEffort: STAGE_BUDGETS.sales_intelligence.effort,
+          jsonSchema: {
+            name: "pem_sales_intelligence",
+            schema: SALES_INTELLIGENCE_JSON_SCHEMA as unknown as Record<string, unknown>,
+            strict: true,
+          },
         });
         modelName = res.model;
         inputTokens += res.inputTokens ?? 0;
         outputTokens += res.outputTokens ?? 0;
         if (res.api) diagnostics.api = res.api;
         diagnostics.finishReasons.push(res.finishReason ?? "unknown");
-        const raw = parseJsonStrict(res.content, "PEM_FACT_SCHEMA_INVALID");
-        applySalesIntelligence(shell, raw, diagnostics);
+
+        let raw: unknown;
+        try {
+          raw = parseJsonStrict(res.content, "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID");
+        } catch {
+          throw pemError("PEM_SALES_INTELLIGENCE_SCHEMA_INVALID");
+        }
+
+        let parsed = parseSalesIntelligenceStage(raw);
+        if (!parsed.ok) {
+          stageOutputs.validationDiagnostics = {
+            stage: "sales_intelligence",
+            issues: parsed.issues,
+            shape: parsed.shape,
+          };
+          diagnostics.validationIssues.push(
+            ...parsed.issues.map((i) => `sales_intelligence: ${i}`),
+          );
+
+          // One structure-only correction pass
+          const corrRes = await callStageJson({
+            system: buildSalesIntelligenceCorrectionPrompt(),
+            user: `Validation issues (paths/types only):
+${parsed.issues.join("\n")}
+
+Invalid JSON to correct (preserve meaning):
+${res.content.slice(0, 60_000)}`,
+            maxTokens: STAGE_BUDGETS.sales_intelligence.tokens,
+            reasoningEffort: "medium",
+            jsonSchema: {
+              name: "pem_sales_intelligence",
+              schema: SALES_INTELLIGENCE_JSON_SCHEMA as unknown as Record<string, unknown>,
+              strict: true,
+            },
+          });
+          modelName = corrRes.model;
+          inputTokens += corrRes.inputTokens ?? 0;
+          outputTokens += corrRes.outputTokens ?? 0;
+          diagnostics.finishReasons.push(corrRes.finishReason ?? "unknown");
+          diagnostics.stages.push("sales_intelligence_correction");
+
+          const corrRaw = parseJsonStrict(corrRes.content, "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID");
+          parsed = parseSalesIntelligenceStage(corrRaw);
+          if (!parsed.ok) {
+            stageOutputs.validationDiagnostics = {
+              stage: "sales_intelligence",
+              issues: parsed.issues,
+              shape: parsed.shape,
+            };
+            completeStage(stage, {
+              status: "failed",
+              validationStatus: "failed",
+              validationIssues: parsed.issues,
+              errorCode: "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID",
+              outputCharacters: corrRes.content.length,
+              finishReason: corrRes.finishReason,
+              model: corrRes.model,
+              api: corrRes.api ?? null,
+            });
+            throw pemError("PEM_SALES_INTELLIGENCE_SCHEMA_INVALID");
+          }
+        }
+
+        applySalesIntelligenceFromStage(shell, parsed.data);
+        stageOutputs.salesIntelligenceStage = parsed.data;
         stageOutputs.salesIntelligence = shell.salesIntelligence as unknown as Record<
           string,
           unknown
         >;
+        stageOutputs.schemaVersion = PEM_NEAT_GENERATION_SCHEMA_VERSION;
+        stageOutputs.validationDiagnostics = null;
         completeStage(stage, {
           status: "completed",
-          validationStatus: diagnostics.validationIssues.some((v) =>
-            v.startsWith("sales_intelligence:"),
-          )
-            ? "soft_issues"
-            : "ok",
+          validationStatus: "ok",
           outputCharacters: res.content.length,
           finishReason: res.finishReason,
           model: res.model,
           api: res.api ?? null,
+          extractedItemCounts: {
+            type1: parsed.data.type1Pain.drivers.length,
+            type2: parsed.data.type2Pain.drivers.length,
+            alternatives: parsed.data.decisionProcess.alternatives.length,
+          },
         });
       } catch (error) {
         completeStage(stage, {
           status: "failed",
-          errorCode: error instanceof AppError ? error.code : "PEM_FACT_EXTRACTION_FAILED",
+          errorCode:
+            error instanceof AppError ? error.code : "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID",
         });
-        throw error instanceof AppError ? error : pemError("PEM_FACT_EXTRACTION_FAILED");
+        throw error instanceof AppError ? error : pemError("PEM_SALES_INTELLIGENCE_SCHEMA_INVALID");
       }
     } else {
-      applySalesIntelligence(shell, stageOutputs.salesIntelligence, diagnostics);
+      stageOutputs.schemaVersion = PEM_NEAT_GENERATION_SCHEMA_VERSION;
     }
+
+    const incompleteness = detectTranscriptLikelyIncomplete(input.transcript);
+    const siIncomplete =
+      Boolean(
+        (stageOutputs.salesIntelligenceStage as SalesIntelligenceStageOutput | null | undefined)
+          ?.meetingOutcome?.transcriptIncomplete,
+      ) || incompleteness.likelyIncomplete;
+    if (incompleteness.notes.length) {
+      diagnostics.validationIssues.push(...incompleteness.notes);
+    }
+
+    await emitProgress("evaluating_sales");
 
     // Coverage gate after SI
     let coverage = scoreFactCoverage(shell, signals);
@@ -716,7 +855,6 @@ ${input.transcript.slice(0, 40_000)}`,
     }
 
     // -------- Stage C: Assessment --------
-    await emitProgress("evaluating_sales");
     if (!stageOutputs.assessment) {
       const stage = startStage(trace, "assessment", { model: modelName, provider: "openai" });
       diagnostics.stages.push("assessment");
@@ -797,6 +935,11 @@ ${input.transcript.slice(0, 80_000)}`,
           meetingOutcome: shell.salesIntelligence.meetingOutcome,
           qualification: shell.salesIntelligence.qualification,
         };
+        applyIncompleteEndingAssessmentGuard(shell, siIncomplete);
+        stageOutputs.assessment = {
+          ...stageOutputs.assessment,
+          assessment: shell.assessment,
+        };
         completeStage(stage, {
           status: "completed",
           validationStatus: "ok",
@@ -817,6 +960,20 @@ ${input.transcript.slice(0, 80_000)}`,
         });
         throw error instanceof AppError ? error : pemError("PEM_ASSESSMENT_FAILED");
       }
+    } else if (stageOutputs.assessment) {
+      const persisted = stageOutputs.assessment as {
+        assessment?: PemNeatStructuredResult["assessment"];
+        meetingOutcome?: PemNeatStructuredResult["salesIntelligence"]["meetingOutcome"];
+        qualification?: PemNeatStructuredResult["salesIntelligence"]["qualification"];
+      };
+      if (persisted.assessment) shell.assessment = persisted.assessment;
+      if (persisted.meetingOutcome) {
+        shell.salesIntelligence.meetingOutcome = persisted.meetingOutcome;
+      }
+      if (persisted.qualification) {
+        shell.salesIntelligence.qualification = persisted.qualification;
+      }
+      applyIncompleteEndingAssessmentGuard(shell, siIncomplete);
     }
 
     // -------- Stage D: Email --------
@@ -846,10 +1003,10 @@ ${JSON.stringify({
         inputTokens += res.inputTokens ?? 0;
         outputTokens += res.outputTokens ?? 0;
         diagnostics.finishReasons.push(res.finishReason ?? "unknown");
-        const raw = parseJsonStrict(res.content, "PEM_HANDOFF_SCHEMA_INVALID");
+        const raw = parseJsonStrict(res.content, "PEM_EMAIL_SCHEMA_INVALID");
         const parsed = z.object({ followUpEmail: followUpEmailSchema.partial() }).safeParse(raw);
         if (!parsed.success || !parsed.data.followUpEmail?.body) {
-          throw pemError("PEM_HANDOFF_SCHEMA_INVALID");
+          throw pemError("PEM_EMAIL_SCHEMA_INVALID");
         }
         shell.followUpEmail = {
           subject: parsed.data.followUpEmail.subject ?? null,
@@ -867,9 +1024,9 @@ ${JSON.stringify({
       } catch (error) {
         completeStage(stage, {
           status: "failed",
-          errorCode: error instanceof AppError ? error.code : "PEM_HANDOFF_FAILED",
+          errorCode: error instanceof AppError ? error.code : "PEM_EMAIL_SCHEMA_INVALID",
         });
-        throw error instanceof AppError ? error : pemError("PEM_HANDOFF_FAILED");
+        throw error instanceof AppError ? error : pemError("PEM_EMAIL_SCHEMA_INVALID");
       }
     } else if (stageOutputs.followUpEmail) {
       shell.followUpEmail = {
@@ -1102,7 +1259,10 @@ ${JSON.stringify({
             unknown
           >;
           if (raw.salesIntelligence) {
-            applySalesIntelligence(shell, raw.salesIntelligence, diagnostics);
+            const siParsed = parseSalesIntelligenceStage(raw.salesIntelligence);
+            if (siParsed.ok) {
+              applySalesIntelligenceFromStage(shell, siParsed.data);
+            }
           }
           if (raw.followUpEmail && typeof raw.followUpEmail === "object") {
             const fe = raw.followUpEmail as { subject?: string; body?: string };
@@ -1173,18 +1333,26 @@ ${JSON.stringify({
       ...result,
       analysisMetadata: {
         ...result.analysisMetadata,
+        transcriptComplete: !siIncomplete,
         limitations: [
           ...(result.analysisMetadata.limitations ?? []),
           ...checkIssues.map((i) => `QC: ${i}`),
+          ...(siIncomplete
+            ? [
+                "Transcript appears incomplete at the ending; Outcome/Close and Post-Sell may be NOT_DETERMINABLE.",
+              ]
+            : []),
         ],
         stage0Notes: [...(result.analysisMetadata.stage0Notes ?? []), ...stage0Notes],
         overallScore,
         factCoverageScore: coverage.totalScore,
         recoveryUsed: diagnostics.recoveryUsed,
+        generationSchemaVersion: PEM_NEAT_GENERATION_SCHEMA_VERSION,
       } as typeof result.analysisMetadata & {
         overallScore?: number | null;
         factCoverageScore?: number;
         recoveryUsed?: boolean;
+        generationSchemaVersion?: number;
       },
       metadata: {
         ...result.metadata,
@@ -1229,9 +1397,12 @@ ${JSON.stringify({
       diagnostics,
     };
   } catch (error) {
+    const failedStage = trace.stages.at(-1)?.name ?? null;
     const code =
-      error instanceof AppError ? normalizePemErrorCode(error.code) : "PEM_FACT_EXTRACTION_FAILED";
-    failTrace(trace, code);
+      error instanceof AppError
+        ? normalizePemErrorCode(error.code, failedStage)
+        : "PEM_FACT_EXTRACTION_FAILED";
+    failTrace(trace, code, failedStage ?? undefined);
     diagnostics.trace = trace;
     diagnostics.stageOutputs = stageOutputs;
     await input.onProgress?.({
@@ -1240,10 +1411,10 @@ ${JSON.stringify({
       trace,
       stageOutputs,
       errorCode: code,
-      errorMessage: employeeFacingPemError(code),
+      errorMessage: employeeFacingPemError(code, failedStage),
     });
     if (error instanceof AppError) {
-      throw new AppError(employeeFacingPemError(code), {
+      throw new AppError(employeeFacingPemError(code, failedStage), {
         code,
         statusCode: error.statusCode,
         cause: error,

@@ -119,3 +119,35 @@ export function prepareTranscriptForModel(transcript: string): {
     chunks,
   };
 }
+
+/**
+ * Heuristic: transcript may be truncated mid-meeting (incomplete ending).
+ * Used to avoid inventing Outcome/Close / Post-Sell.
+ */
+export function detectTranscriptLikelyIncomplete(transcript: string): {
+  likelyIncomplete: boolean;
+  notes: string[];
+} {
+  const trimmed = transcript.trim();
+  const notes: string[] = [];
+  if (!trimmed) {
+    return { likelyIncomplete: true, notes: ["Empty transcript."] };
+  }
+
+  const tail = trimmed.slice(-240).replace(/\s+/g, " ").trim();
+  const endsWithCloser =
+    /\b(thanks for (your )?time|talk soon|have a (great|good)|we'll (be in|reconnect)|sounds good\.?|take care)\b[.!]?\s*$/i.test(
+      tail,
+    );
+  const endsMidPhrase =
+    /\bas far as\s*\.?$/i.test(tail) ||
+    /\b(and|or|but|so|because|that|which|with|to|for|of|the|a|an)\s*$/i.test(tail) ||
+    /[,:;]\s*$/.test(tail) ||
+    (!/[.!?]["']?\s*$/.test(tail) && trimmed.length > 500);
+
+  if (endsMidPhrase && !endsWithCloser) {
+    notes.push("Transcript appears to end mid-sentence or without a clear meeting close.");
+    return { likelyIncomplete: true, notes };
+  }
+  return { likelyIncomplete: false, notes };
+}

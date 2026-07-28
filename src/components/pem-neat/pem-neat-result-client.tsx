@@ -80,6 +80,7 @@ export function PemNeatResultClient({
     errorCode?: string | null;
     modelName?: string | null;
     stages?: Array<{ name?: unknown; status?: unknown }>;
+    validationIssues?: string[];
   } | null>(null);
 
   const result = isStructuredResult(item.structured_result) ? item.structured_result : null;
@@ -110,6 +111,7 @@ export function PemNeatResultClient({
             stages?: Array<{ name?: unknown; status?: unknown }>;
             finalErrorCode?: string | null;
             finalErrorStage?: string | null;
+            validationIssues?: string[];
           } | null;
         };
         if (data.generationStage) setGenerationStage(data.generationStage);
@@ -119,6 +121,7 @@ export function PemNeatResultClient({
             errorCode: data.adminDiagnostics.finalErrorCode ?? data.lastErrorCode,
             modelName: data.modelName,
             stages: data.adminDiagnostics.stages,
+            validationIssues: data.adminDiagnostics.validationIssues,
           });
         }
         if (data.status && data.status !== "generating") {
@@ -330,12 +333,23 @@ export function PemNeatResultClient({
           errorMessage={item.generation_error}
           retrying={retrying}
           onRetry={onRetry}
+          generationStage={generationStage ?? item.generation_stage}
           adminDetails={
             isAdmin
               ? (adminDiag ?? {
                   errorCode: item.last_error_code,
                   modelName: item.model_name,
                   failedStage: item.generation_stage,
+                  validationIssues: Array.isArray(
+                    (item.stage_outputs_json as { validationDiagnostics?: { issues?: string[] } })
+                      ?.validationDiagnostics?.issues,
+                  )
+                    ? (
+                        item.stage_outputs_json as {
+                          validationDiagnostics?: { issues?: string[] };
+                        }
+                      ).validationDiagnostics!.issues
+                    : undefined,
                 })
               : null
           }

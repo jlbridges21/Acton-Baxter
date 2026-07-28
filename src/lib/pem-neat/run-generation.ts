@@ -126,15 +126,17 @@ export async function runPemNeatGenerationJob(pemNeatId: string): Promise<void> 
       generationTrace: generated.diagnostics.trace ?? null,
     });
   } catch (genError) {
-    const code =
-      genError instanceof AppError
-        ? normalizePemErrorCode(genError.code)
-        : "PEM_FACT_EXTRACTION_FAILED";
-    const message = employeeFacingPemError(code);
-    const trace = (await store.get(pemNeatId)) as {
+    const latest = (await store.get(pemNeatId)) as {
       generation_trace_json?: PemGenerationTrace;
       stage_outputs_json?: PemStageOutputs;
     } | null;
+    const failedStage = latest?.generation_trace_json?.finalErrorStage ?? null;
+    const code =
+      genError instanceof AppError
+        ? normalizePemErrorCode(genError.code, failedStage)
+        : "PEM_FACT_EXTRACTION_FAILED";
+    const message = employeeFacingPemError(code, failedStage);
+    const trace = latest;
 
     await store.saveGenerationFailure(pemNeatId, {
       errorMessage: message,
@@ -147,7 +149,7 @@ export async function runPemNeatGenerationJob(pemNeatId: string): Promise<void> 
       },
       stageOutputs: trace?.stage_outputs_json ?? priorOutputs,
       generationTrace: trace?.generation_trace_json ?? null,
-      failedStage: trace?.generation_trace_json?.finalErrorStage ?? null,
+      failedStage,
     });
     throw genError instanceof AppError
       ? genError

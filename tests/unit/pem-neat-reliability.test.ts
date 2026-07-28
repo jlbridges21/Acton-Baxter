@@ -90,7 +90,12 @@ describe("PEM error mapping", () => {
     expect(normalizePemErrorCode("PEM_ASSESSMENT_SCHEMA_INVALID")).toBe(
       "PEM_ASSESSMENT_SCHEMA_INVALID",
     );
-    expect(employeeFacingPemError("PEM_ASSESSMENT_SCHEMA_INVALID")).toMatch(/safely finish|retry/i);
+    expect(normalizePemErrorCode("PEM_FACT_SCHEMA_INVALID", "sales_intelligence")).toBe(
+      "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID",
+    );
+    expect(employeeFacingPemError("PEM_SALES_INTELLIGENCE_SCHEMA_INVALID")).toMatch(
+      /sales intelligence/i,
+    );
     expect(employeeFacingPemError("PEM_LOW_EVIDENCE_COVERAGE")).toMatch(/enough information/i);
   });
 });

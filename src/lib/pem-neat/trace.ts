@@ -131,7 +131,10 @@ export function succeedTrace(trace: PemGenerationTrace) {
 }
 
 /** Employee-safe failure message (no internals). */
-export function employeeFacingPemError(code: string): string {
+export function employeeFacingPemError(code: string, stage?: string | null): string {
+  if (code === "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID" || stage === "sales_intelligence") {
+    return "Baxter completed the transcript review but couldn't finish the sales intelligence analysis. Your transcript and completed work are saved.";
+  }
   switch (code) {
     case "PEM_LOW_EVIDENCE_COVERAGE":
     case "PEM_FACT_EXTRACTION_EMPTY":
@@ -147,15 +150,25 @@ export function employeeFacingPemError(code: string): string {
       return "OpenAI quota or billing is preventing PEM generation.";
     case "PEM_NEAT_MODEL_NOT_AVAILABLE":
       return "Configured PEM AI model is not available to this OpenAI project.";
+    case "PEM_ASSESSMENT_SCHEMA_INVALID":
+      return "Baxter finished sales intelligence but couldn't complete the sales assessment. Your transcript and completed work are saved.";
+    case "PEM_HANDOFF_SCHEMA_INVALID":
+    case "PEM_EMAIL_SCHEMA_INVALID":
+      return "Baxter finished most of the analysis but couldn't complete the handoff package. Your transcript and completed work are saved.";
     default:
       return "Baxter couldn't safely finish this NEAT. Your transcript is saved and can be retried.";
   }
 }
 
 /** Map legacy codes to new stage-specific codes when possible. */
-export function normalizePemErrorCode(code: string): string {
+export function normalizePemErrorCode(code: string, stage?: string | null): string {
   if (code === "PEM_NEAT_SCHEMA_INVALID") return "PEM_FINAL_MERGE_INVALID";
-  if (code === "PEM_NEAT_INVALID_JSON") return "PEM_FACT_SCHEMA_INVALID";
+  // Pre-v2 pipeline reused PEM_FACT_SCHEMA_INVALID for SI failures.
+  if (code === "PEM_FACT_SCHEMA_INVALID") {
+    if (stage === "sales_intelligence") return "PEM_SALES_INTELLIGENCE_SCHEMA_INVALID";
+    return "PEM_FACT_LEDGER_SCHEMA_INVALID";
+  }
+  if (code === "PEM_NEAT_INVALID_JSON") return "PEM_FACT_LEDGER_SCHEMA_INVALID";
   if (code === "PEM_NEAT_LOW_EVIDENCE_COVERAGE") return "PEM_LOW_EVIDENCE_COVERAGE";
   if (code === "PEM_NEAT_OUTPUT_TRUNCATED") return "PEM_OUTPUT_TRUNCATED";
   if (code === "PEM_NEAT_PROVIDER_INCOMPLETE") return "PEM_PROVIDER_INCOMPLETE";
