@@ -18,6 +18,7 @@ import {
   Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
 
 export type KnowledgeCenterView =
   | "all"
@@ -34,7 +35,7 @@ export type KnowledgeCenterView =
   | "monitoring"
   | "governance";
 
-const NAV: Array<{
+const NAV_ALL: Array<{
   view: KnowledgeCenterView;
   label: string;
   href: string;
@@ -104,6 +105,10 @@ const NAV: Array<{
     icon: Settings,
   },
 ];
+
+const NAV = PROCESS_MONITORING_UI_ENABLED
+  ? NAV_ALL
+  : NAV_ALL.filter((item) => item.view !== "monitoring");
 
 export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeCenterView }) {
   const pathname = usePathname();

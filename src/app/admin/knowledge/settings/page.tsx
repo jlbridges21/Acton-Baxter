@@ -11,6 +11,7 @@ import { KnowledgeReindexClient } from "@/components/admin/knowledge-reindex-cli
 import { getEnv } from "@/lib/env";
 import { isGoogleOAuthConfigured } from "@/lib/connectors/google/oauth-config";
 import { KNOWLEDGE_INDEX_VERSION } from "@/lib/knowledge-index";
+import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
 
 export default async function KnowledgeSettingsPage() {
   const user = await requireActiveUser();
@@ -137,18 +138,20 @@ export default async function KnowledgeSettingsPage() {
                 Go to Rulebook →
               </a>
             </Card>
-            <Card>
-              <CardTitle className="text-base">Process Monitoring</CardTitle>
-              <CardDescription className="mt-2">
-                Automated compliance checks for opportunities against the process rulebook.
-              </CardDescription>
-              <a
-                href="/admin/baxter/monitoring"
-                className="mt-3 inline-block text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-              >
-                Go to Monitoring →
-              </a>
-            </Card>
+            {PROCESS_MONITORING_UI_ENABLED ? (
+              <Card>
+                <CardTitle className="text-base">Process Monitoring</CardTitle>
+                <CardDescription className="mt-2">
+                  Automated compliance checks for opportunities against the process rulebook.
+                </CardDescription>
+                <a
+                  href="/admin/baxter/monitoring"
+                  className="mt-3 inline-block text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                >
+                  Go to Monitoring →
+                </a>
+              </Card>
+            ) : null}
           </div>
         </KnowledgeCenterShell>
       </Suspense>

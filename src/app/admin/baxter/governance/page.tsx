@@ -5,6 +5,7 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getGovernanceAdminSummary } from "@/lib/baxter-ai/governance";
+import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
 
 export default async function BaxterGovernancePage() {
   const user = await requireActiveUser();
@@ -63,18 +64,20 @@ export default async function BaxterGovernancePage() {
                 — stages, roles, RACI, and required data
               </span>
             </li>
-            <li>
-              <Link
-                href="/admin/baxter/monitoring"
-                className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-              >
-                Process Monitoring
-              </Link>
-              <span className="text-[var(--acton-muted)]">
-                {" "}
-                — proactive GHL checks and findings
-              </span>
-            </li>
+            {PROCESS_MONITORING_UI_ENABLED ? (
+              <li>
+                <Link
+                  href="/admin/baxter/monitoring"
+                  className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                >
+                  Process Monitoring
+                </Link>
+                <span className="text-[var(--acton-muted)]">
+                  {" "}
+                  — proactive GHL checks and findings
+                </span>
+              </li>
+            ) : null}
             <li>
               <Link
                 href="/admin/knowledge/settings"

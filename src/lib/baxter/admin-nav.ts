@@ -13,6 +13,7 @@ import {
   Settings,
   Users,
 } from "lucide-react";
+import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
 
 export type AdminNavLink = {
   href: string;
@@ -23,7 +24,7 @@ export type AdminNavLink = {
 
 /** Shared admin nav definition — used by AppNav and unit tests. */
 export function getAdminNavLinks(): AdminNavLink[] {
-  return [
+  const links: AdminNavLink[] = [
     {
       href: "/",
       label: "Dashboard",
@@ -109,4 +110,7 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/admin/knowledge/settings"),
     },
   ];
+
+  if (PROCESS_MONITORING_UI_ENABLED) return links;
+  return links.filter((link) => link.href !== "/admin/baxter/monitoring");
 }
