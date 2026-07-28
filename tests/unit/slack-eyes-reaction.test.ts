@@ -10,12 +10,24 @@ const postSlackMessage = vi.fn(
   }),
 );
 
-const addSlackReaction = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({
-  ok: true,
-}));
-const removeSlackReaction = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({
-  ok: true,
-}));
+const addSlackReaction = vi.fn(
+  async (_input?: {
+    channel: string;
+    timestamp: string;
+    name?: string;
+  }): Promise<{ ok: boolean; error?: string }> => ({
+    ok: true,
+  }),
+);
+const removeSlackReaction = vi.fn(
+  async (_input?: {
+    channel: string;
+    timestamp: string;
+    name?: string;
+  }): Promise<{ ok: boolean; error?: string }> => ({
+    ok: true,
+  }),
+);
 
 const answerBaxterQuestion = vi.fn(async (): Promise<BaxterAnswer> => ({
   answer: "Hello from Baxter.",
@@ -34,9 +46,21 @@ vi.mock("@/lib/slack/client", async (importOriginal) => {
     ...actual,
     postSlackMessage: (input: SlackPostMessageInput) => postSlackMessage(input),
     addSlackReaction: (...args: unknown[]) =>
-      addSlackReaction(...(args as Parameters<typeof addSlackReaction>)),
+      addSlackReaction(...(args as [Parameters<typeof addSlackReaction>[0]])),
     removeSlackReaction: (...args: unknown[]) =>
-      removeSlackReaction(...(args as Parameters<typeof removeSlackReaction>)),
+      removeSlackReaction(...(args as [Parameters<typeof removeSlackReaction>[0]])),
+    addProcessingReaction: (input: { channel: string; timestamp: string }) =>
+      addSlackReaction({
+        channel: input.channel,
+        timestamp: input.timestamp,
+        name: "eyes",
+      } as never),
+    removeProcessingReaction: (input: { channel: string; timestamp: string }) =>
+      removeSlackReaction({
+        channel: input.channel,
+        timestamp: input.timestamp,
+        name: "eyes",
+      } as never),
   };
 });
 
@@ -191,7 +215,8 @@ describe("Slack 👀 processing reaction", () => {
 
     expect(answerBaxterQuestion).toHaveBeenCalled();
     expect(postSlackMessage).toHaveBeenCalled();
-    expect(removeSlackReaction).not.toHaveBeenCalled();
+    // Cleanup is always attempted (eyes may have been added at accept time).
+    expect(removeSlackReaction).toHaveBeenCalled();
     expect(updateSlackEventReceipt).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: "Ev2", status: "completed" }),
     );
@@ -236,5 +261,67 @@ describe("Slack 👀 processing reaction", () => {
 
   it("exports eyes reaction constant for Slack API name", () => {
     expect(SLACK_EYES_REACTION).toBe("eyes");
+  });
+});
+
+describe("Slack accept-time processing reaction", () => {
+  beforeEach(() => {
+    setSlackEnv();
+  });
+
+  it("adds eyes after accept for a DM and does not enqueue ignored bots", async () => {
+    const { acceptBaxterSlackEvent } = await import("@/lib/slack/baxter-events");
+
+    const ignored = await acceptBaxterSlackEvent({
+      eventId: "Ev-ignore-bot",
+      teamId: "T123",
+      event: {
+        type: "message",
+        bot_id: "B1",
+        channel: "D1",
+        text: "bot",
+        ts: "9.9",
+      },
+    });
+    expect(ignored.jobId).toBeUndefined();
+    expect(addSlackReaction).not.toHaveBeenCalled();
+
+    addSlackReaction.mockClear();
+    const accepted = await acceptBaxterSlackEvent({
+      eventId: "Ev-accept-dm",
+      teamId: "T123",
+      event: {
+        type: "message",
+        channel_type: "im",
+        channel: "D1",
+        user: "U1",
+        text: "Who is Baxter?",
+        ts: "10.10",
+        team: "T123",
+      },
+    });
+    expect(accepted.duplicate).toBe(false);
+    expect(accepted.jobId).toBeTruthy();
+    expect(addSlackReaction).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "D1", timestamp: "10.10", name: "eyes" }),
+    );
+  });
+
+  it("tolerates already_reacted on add", async () => {
+    addSlackReaction.mockResolvedValue({ ok: true }); // already_reacted mapped to ok in client
+    const { acceptBaxterSlackEvent } = await import("@/lib/slack/baxter-events");
+    const accepted = await acceptBaxterSlackEvent({
+      eventId: "Ev-already",
+      teamId: "T123",
+      event: {
+        type: "app_mention",
+        channel: "C1",
+        user: "U1",
+        text: "<@B> hi",
+        ts: "11.11",
+        team: "T123",
+      },
+    });
+    expect(accepted.jobId).toBeTruthy();
   });
 });

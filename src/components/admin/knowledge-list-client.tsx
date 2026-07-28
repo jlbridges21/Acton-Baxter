@@ -20,15 +20,29 @@ function statusTone(status: string) {
   return "amber" as const;
 }
 
-function sourceBadge(entry: KnowledgeEntry): { label: string; tone: "navy" | "amber" | "green" } {
+function sourceBadge(entry: KnowledgeEntry): {
+  label: string;
+  tone: "navy" | "amber" | "green";
+  typeLabel?: string;
+} {
+  const meta = (entry.metadata ?? {}) as Record<string, unknown>;
+  const googleMime = String((meta.google as { mimeType?: string } | undefined)?.mimeType ?? "");
+  const mime = String(meta.mimeType ?? googleMime ?? "").toLowerCase();
+  const filename = String(meta.originalFilename ?? entry.source_name ?? entry.title ?? "");
+  const isPdf = mime === "application/pdf" || mime.includes("pdf") || /\.pdf$/i.test(filename);
+
   if (
     entry.source_type === "Google Drive" ||
     (entry.metadata as { googleManaged?: boolean } | undefined)?.googleManaged
   ) {
-    return { label: "Google", tone: "amber" };
+    return {
+      label: isPdf ? "Google Drive PDF" : "Google",
+      tone: "amber",
+      typeLabel: isPdf ? "PDF" : undefined,
+    };
   }
   if (entry.source_type === "uploaded_document") {
-    return { label: "Upload", tone: "navy" };
+    return { label: isPdf ? "PDF" : "Upload", tone: "navy", typeLabel: isPdf ? "PDF" : undefined };
   }
   return { label: "Manual", tone: "green" };
 }
@@ -314,6 +328,11 @@ export function KnowledgeListClient({
                         >
                           {entry.title}
                         </Link>
+                        {badge.typeLabel ? (
+                          <p className="mt-0.5 text-xs font-medium text-[var(--acton-muted)]">
+                            {badge.typeLabel}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-3 py-3">
                         <Badge tone={badge.tone}>{badge.label}</Badge>

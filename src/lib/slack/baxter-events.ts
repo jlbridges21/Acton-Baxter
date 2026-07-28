@@ -10,11 +10,10 @@ import {
 import { employeeFacingSlackError, SLACK_ERROR_CODES } from "@/lib/slack/errors";
 import { buildSlackReplySegments } from "@/lib/slack/format";
 import {
-  addSlackReaction,
+  addProcessingReaction,
   postSlackMessage,
-  removeSlackReaction,
+  removeProcessingReaction,
   SlackClientError,
-  SLACK_EYES_REACTION,
 } from "@/lib/slack/client";
 import { claimSlackEventReceipt, updateSlackEventReceipt } from "@/lib/slack/receipts";
 import { observeSlackIdentities } from "@/lib/slack/profiles";
@@ -324,18 +323,14 @@ export async function handleBaxterSlackEvent(
 
   // React to the triggering user message (not the thread root unless they are the same).
   const reactionTs = event.ts ?? null;
-  let eyesAdded = false;
 
   async function tryAddEyesReaction() {
     if (!reactionTs) return;
-    const result = await addSlackReaction({
+    const result = await addProcessingReaction({
       channel: channelId,
       timestamp: reactionTs,
-      name: SLACK_EYES_REACTION,
     });
-    if (result.ok) {
-      eyesAdded = true;
-    } else {
+    if (!result.ok) {
       console.error("[slack.reaction.add_failed]", {
         channelId,
         timestamp: reactionTs,
@@ -345,11 +340,11 @@ export async function handleBaxterSlackEvent(
   }
 
   async function tryRemoveEyesReaction() {
-    if (!eyesAdded || !reactionTs) return;
-    const result = await removeSlackReaction({
+    // Always attempt cleanup — eyes may have been added at accept time in another process.
+    if (!reactionTs) return;
+    const result = await removeProcessingReaction({
       channel: channelId,
       timestamp: reactionTs,
-      name: SLACK_EYES_REACTION,
     });
     if (!result.ok) {
       console.error("[slack.reaction.remove_failed]", {
@@ -514,7 +509,7 @@ export async function acceptBaxterSlackEvent(input: {
   eventId: string;
   teamId: string | null;
   event: SlackIncomingEvent;
-}): Promise<{ duplicate: boolean; jobId?: string }> {
+}): Promise<{ duplicate: boolean; jobId?: string; eyesAdded?: boolean }> {
   const claim = await claimSlackEventReceipt({
     eventId: input.eventId,
     teamId: input.teamId,
@@ -526,11 +521,75 @@ export async function acceptBaxterSlackEvent(input: {
     return { duplicate: true };
   }
 
+  // Do not enqueue (or react) for events Baxter intentionally ignores.
+  if (shouldIgnoreSlackEvent(input.event)) {
+    await updateSlackEventReceipt({
+      eventId: input.eventId,
+      status: "ignored",
+      errorCode: SLACK_ERROR_CODES.EVENT_UNSUPPORTED,
+    });
+    return { duplicate: false };
+  }
+
+  const access = evaluateSlackAccess(input.event);
+  if (!access.allowed) {
+    logIgnoredSlackMention({
+      eventType: input.event.type,
+      teamId: input.teamId,
+      channelId: input.event.channel,
+      reason: access.reason ?? access.code ?? "access_denied",
+      code: access.code,
+    });
+    await updateSlackEventReceipt({
+      eventId: input.eventId,
+      status: "ignored",
+      errorCode: access.code,
+    });
+    return { duplicate: false };
+  }
+
   const job = await enqueueBaxterSlackReply({
     eventId: input.eventId,
     teamId: input.teamId,
     event: input.event,
   });
 
-  return { duplicate: false, jobId: job.id };
+  // Early 👀 after accept/dedupe — do not delay the Events API response on LLM work.
+  let eyesAdded = false;
+  const channel = input.event.channel;
+  const timestamp = input.event.ts;
+  if (channel && timestamp) {
+    const reaction = await addProcessingReaction({ channel, timestamp });
+    eyesAdded = reaction.ok;
+    if (!reaction.ok) {
+      console.error("[slack.reaction.add_failed]", {
+        channelId: channel,
+        timestamp,
+        error: reaction.error ?? null,
+        phase: "accept",
+      });
+    }
+  }
+
+  return { duplicate: false, jobId: job.id, eyesAdded };
+}
+
+/** Best-effort eyes cleanup for terminal slack_baxter_reply job failures. */
+export async function cleanupProcessingReactionFromJobMetadata(
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const event = metadata.event as SlackIncomingEvent | undefined;
+  if (!event?.channel || !event.ts) return;
+  const result = await removeProcessingReaction({
+    channel: event.channel,
+    timestamp: event.ts,
+  });
+  if (!result.ok) {
+    console.error("[slack.reaction.remove_failed]", {
+      channelId: event.channel,
+      timestamp: event.ts,
+      error: result.error ?? null,
+      phase: "terminal_job_failure",
+    });
+  }
 }

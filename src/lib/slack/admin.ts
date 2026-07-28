@@ -39,6 +39,9 @@ export async function getAdminSlackSnapshot() {
   const identity = await getSlackIdentityCacheStats();
   const health = await evaluateSlackHealth({
     recentErrors: stats.failedJobs > 0 || stats.recentErrorCodes.length > 0,
+    recentReactionScopeError: stats.recentErrorCodes.some((code) =>
+      /missing_scope|no_permission|reaction/i.test(code),
+    ),
   });
 
   const conversations = (await listRecentConversations(40)).filter((c) => c.channel === "slack");

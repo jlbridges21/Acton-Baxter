@@ -130,6 +130,8 @@ export async function importKnowledgeUpload(input: {
         uploadId: upload.id,
         originalFilename: input.filename,
         mimeType: preview.mimeType,
+        storageBucket: upload.storage_bucket,
+        storagePath: upload.storage_path,
         extractionStatus: preview.extractionStatus,
         extractionWarnings: preview.warnings,
         ...(preview.metadata ?? {}),

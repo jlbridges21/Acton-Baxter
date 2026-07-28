@@ -158,6 +158,28 @@ export type SlackReactionInput = {
   name?: string;
 };
 
+export async function addProcessingReaction(input: {
+  channel: string;
+  timestamp: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  return addSlackReaction({
+    channel: input.channel,
+    timestamp: input.timestamp,
+    name: SLACK_EYES_REACTION,
+  });
+}
+
+export async function removeProcessingReaction(input: {
+  channel: string;
+  timestamp: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  return removeSlackReaction({
+    channel: input.channel,
+    timestamp: input.timestamp,
+    name: SLACK_EYES_REACTION,
+  });
+}
+
 /**
  * Add a reaction to a Slack message. Cosmetic only — never throws.
  * Requires reactions:write. Failures are logged safely by the caller.

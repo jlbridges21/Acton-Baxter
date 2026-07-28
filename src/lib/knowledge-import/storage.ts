@@ -15,7 +15,7 @@ function shouldUseMemory(): boolean {
   }
 }
 
-type MemoryUpload = {
+export type KnowledgeUploadRecord = {
   id: string;
   knowledge_entry_id: string | null;
   storage_bucket: string;
@@ -34,6 +34,9 @@ type MemoryUpload = {
   metadata: Record<string, unknown>;
   bytes?: Buffer;
 };
+
+/** @deprecated Use KnowledgeUploadRecord */
+type MemoryUpload = KnowledgeUploadRecord;
 
 const globalMemory = globalThis as typeof globalThis & {
   __baxterKnowledgeUploads?: Map<string, MemoryUpload>;
@@ -208,7 +211,29 @@ export async function linkUploadToEntry(uploadId: string, entryId: string): Prom
   if (error && !isMissingTable(error)) throw error;
 }
 
-export async function listUploadsForEntry(entryId: string): Promise<MemoryUpload[]> {
+export async function findUploadById(uploadId: string): Promise<KnowledgeUploadRecord | null> {
+  if (shouldUseMemory()) {
+    return getMemory().get(uploadId) ?? null;
+  }
+  try {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("knowledge_uploads")
+      .select("*")
+      .eq("id", uploadId)
+      .maybeSingle();
+    if (error) {
+      if (isMissingTable(error)) return null;
+      throw error;
+    }
+    return (data as KnowledgeUploadRecord | null) ?? null;
+  } catch (error) {
+    if (isMissingTable(error)) return null;
+    throw error;
+  }
+}
+
+export async function listUploadsForEntry(entryId: string): Promise<KnowledgeUploadRecord[]> {
   if (shouldUseMemory()) {
     return Array.from(getMemory().values()).filter((row) => row.knowledge_entry_id === entryId);
   }
@@ -222,7 +247,7 @@ export async function listUploadsForEntry(entryId: string): Promise<MemoryUpload
       if (isMissingTable(error)) return [];
       throw error;
     }
-    return (data as MemoryUpload[]) ?? [];
+    return (data as KnowledgeUploadRecord[]) ?? [];
   } catch {
     return [];
   }

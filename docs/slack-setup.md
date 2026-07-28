@@ -117,9 +117,11 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 | `channels:read`      | Resolve **public** channel names for admin Activity              |
 | `reactions:write`    | Add/remove Baxter’s 👀 processing reaction on the user message   |
 
+Baxter adds 👀 **immediately after** accepting a Q&A event (post-dedupe), then removes it in a `finally` after the reply posts (or on terminal job failure). Reaction failures never block answers.
+
 **Already added in Slack (Jackson):** `users:read`, `users.profile:read`, `channels:read`.
 
-**Still needs a Slack app update + reinstall:** `reactions:write` (required for the 👀 processing indicator).
+**Still needs a Slack app update + reinstall if eyes do not appear:** `reactions:write` (required for the 👀 processing indicator). After changing OAuth scopes, **reinstall/re-authorize** the app to the Acton workspace.
 
 **Do NOT add** (secure pilot default):
 

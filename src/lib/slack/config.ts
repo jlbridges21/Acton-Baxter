@@ -4,6 +4,16 @@ import { getEnv } from "@/lib/env";
 
 export type SlackHealthStatus = "disabled" | "misconfigured" | "ready" | "warning" | "offline";
 
+export type SlackCapabilityState = "ok" | "off" | "needs_scope" | "unavailable";
+
+export type SlackCapabilities = {
+  qa: SlackCapabilityState;
+  dms: SlackCapabilityState;
+  mentions: SlackCapabilityState;
+  processingReactions: SlackCapabilityState;
+  processingReactionsDetail: string;
+};
+
 export type SlackRuntimeConfig = {
   enabled: boolean;
   signingSecretPresent: boolean;
@@ -159,13 +169,48 @@ export type SlackHealthSnapshot = {
   config: SlackRuntimeConfig;
   authOk: boolean | null;
   authError: string | null;
+  capabilities: SlackCapabilities;
 };
+
+export function getSlackCapabilities(
+  config: SlackRuntimeConfig,
+  options?: { recentReactionScopeError?: boolean },
+): SlackCapabilities {
+  if (!config.enabled || !config.readyForEvents) {
+    return {
+      qa: "unavailable",
+      dms: "unavailable",
+      mentions: "unavailable",
+      processingReactions: "unavailable",
+      processingReactionsDetail: "Slack is not ready for events.",
+    };
+  }
+
+  const processingReactions: SlackCapabilityState = options?.recentReactionScopeError
+    ? "needs_scope"
+    : "ok";
+
+  return {
+    qa: "ok",
+    dms: config.enableDms ? "ok" : "off",
+    mentions: config.enableChannelMentions ? "ok" : "off",
+    processingReactions,
+    processingReactionsDetail:
+      processingReactions === "needs_scope"
+        ? "Needs reactions:write — reinstall/re-authorize the Slack app after adding the scope."
+        : "👀 processing reactions enabled (requires reactions:write on the Slack app).",
+  };
+}
 
 export async function evaluateSlackHealth(options?: {
   authTest?: () => Promise<{ ok: boolean; error?: string }>;
   recentErrors?: boolean;
+  recentReactionScopeError?: boolean;
 }): Promise<SlackHealthSnapshot> {
   const config = getSlackRuntimeConfig();
+  const capabilities = getSlackCapabilities(config, {
+    recentReactionScopeError: options?.recentReactionScopeError,
+  });
 
   if (!config.enabled) {
     return {
@@ -175,6 +220,7 @@ export async function evaluateSlackHealth(options?: {
       config,
       authOk: null,
       authError: null,
+      capabilities,
     };
   }
 
@@ -186,6 +232,7 @@ export async function evaluateSlackHealth(options?: {
       config,
       authOk: null,
       authError: null,
+      capabilities,
     };
   }
 
@@ -210,6 +257,7 @@ export async function evaluateSlackHealth(options?: {
       config,
       authOk,
       authError,
+      capabilities,
     };
   }
 
@@ -221,6 +269,7 @@ export async function evaluateSlackHealth(options?: {
       config,
       authOk,
       authError,
+      capabilities,
     };
   }
 
@@ -232,6 +281,7 @@ export async function evaluateSlackHealth(options?: {
       config,
       authOk,
       authError,
+      capabilities,
     };
   }
 
@@ -243,5 +293,6 @@ export async function evaluateSlackHealth(options?: {
     config,
     authOk,
     authError,
+    capabilities,
   };
 }

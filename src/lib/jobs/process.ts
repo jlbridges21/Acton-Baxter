@@ -159,6 +159,11 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
     await failJob(job.id, message, {
       retryAt: shouldRetry ? new Date(Date.now() + 15_000).toISOString() : undefined,
     });
+    if (!shouldRetry && job.jobType === "slack_baxter_reply") {
+      const { cleanupProcessingReactionFromJobMetadata } =
+        await import("@/lib/slack/baxter-events");
+      await cleanupProcessingReactionFromJobMetadata(job.metadata);
+    }
     return "failed";
   }
 }

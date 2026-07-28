@@ -100,8 +100,18 @@ export function KnowledgeEntryDetailClient({
   const entryIndex = entry as EntryWithIndex;
   const isGoogle = entry.source_type === "Google Drive" || Boolean(meta.googleManaged);
   const isUpload = entry.source_type === "uploaded_document";
+  const viewerKind = detectViewerKind(entry, meta);
+  const isSpreadsheet = viewerKind === "spreadsheet";
 
-  const sourceLabel = isGoogle ? "Google Workspace" : isUpload ? "Uploaded" : "Manual";
+  const sourceLabel = isGoogle
+    ? viewerKind === "pdf"
+      ? "Google Drive PDF"
+      : "Google Workspace"
+    : isUpload
+      ? viewerKind === "pdf"
+        ? "PDF"
+        : "Uploaded"
+      : "Manual";
   const originalFilename = typeof meta.originalFilename === "string" ? meta.originalFilename : null;
   const lastSync =
     typeof meta.lastSyncedAt === "string"
@@ -111,9 +121,6 @@ export function KnowledgeEntryDetailClient({
         : typeof (meta.google as { lastSyncedAt?: string } | undefined)?.lastSyncedAt === "string"
           ? (meta.google as { lastSyncedAt: string }).lastSyncedAt
           : null;
-
-  const viewerKind = detectViewerKind(entry, meta);
-  const isSpreadsheet = viewerKind === "spreadsheet";
 
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "content", label: contentTabLabel(viewerKind) },
@@ -351,9 +358,12 @@ export function KnowledgeEntryDetailClient({
                   />
                 ) : viewerKind === "pdf" ? (
                   <PdfKnowledgeViewer
-                    title={entry.title}
+                    entryId={entry.id}
+                    title={originalFilename || entry.title}
                     pages={pdfPagesFromMeta(meta, entry.content)}
                     sourceUrl={entry.source_url}
+                    isGoogle={isGoogle}
+                    defaultPane="pdf"
                     ocrStatus={
                       Array.isArray(meta.pdfPages) && (meta.pdfPages as unknown[]).length
                         ? "Text extracted"

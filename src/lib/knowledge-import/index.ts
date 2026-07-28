@@ -21,6 +21,8 @@ export {
 export {
   resetKnowledgeUploadsMemoryForTests,
   findUploadByContentHash,
+  findUploadById,
   storeKnowledgeUploadFile,
 } from "./storage";
+export type { KnowledgeUploadRecord } from "./storage";
 export { hashContentText, hashContentBuffer, countWords, getUploadLimits } from "./utils";

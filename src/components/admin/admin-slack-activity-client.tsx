@@ -51,7 +51,18 @@ type Overview = {
 };
 
 type SnapshotExtras = {
-  health: { label: string; status: string; details: string };
+  health: {
+    label: string;
+    status: string;
+    details: string;
+    capabilities?: {
+      qa: string;
+      dms: string;
+      mentions: string;
+      processingReactions: string;
+      processingReactionsDetail: string;
+    };
+  };
   config: Record<string, unknown>;
   stats: {
     processedLast24h: number;
@@ -391,6 +402,47 @@ export function AdminSlackActivityClient({
               </span>
             </CardDescription>
             <p className="mt-2 text-sm text-[var(--acton-muted)]">{extras.health.details}</p>
+            {extras.health.capabilities ? (
+              <ul className="mt-4 space-y-1 text-sm text-[var(--acton-navy)]">
+                <li>
+                  Q&A{" "}
+                  {extras.health.capabilities.qa === "ok" ? (
+                    <span className="font-semibold text-emerald-700">✓</span>
+                  ) : (
+                    <span className="font-semibold text-amber-800">—</span>
+                  )}
+                </li>
+                <li>
+                  DMs{" "}
+                  {extras.health.capabilities.dms === "ok" ? (
+                    <span className="font-semibold text-emerald-700">✓</span>
+                  ) : (
+                    <span className="font-semibold text-amber-800">off</span>
+                  )}
+                </li>
+                <li>
+                  Mentions{" "}
+                  {extras.health.capabilities.mentions === "ok" ? (
+                    <span className="font-semibold text-emerald-700">✓</span>
+                  ) : (
+                    <span className="font-semibold text-amber-800">off</span>
+                  )}
+                </li>
+                <li>
+                  Processing reactions{" "}
+                  {extras.health.capabilities.processingReactions === "ok" ? (
+                    <span className="font-semibold text-emerald-700">✓</span>
+                  ) : extras.health.capabilities.processingReactions === "needs_scope" ? (
+                    <span className="font-semibold text-amber-800">Needs reactions:write</span>
+                  ) : (
+                    <span className="font-semibold text-amber-800">unavailable</span>
+                  )}
+                </li>
+                <li className="text-xs text-[var(--acton-muted)]">
+                  {extras.health.capabilities.processingReactionsDetail}
+                </li>
+              </ul>
+            ) : null}
             {extras.identity ? (
               <ul className="mt-3 space-y-1 text-sm text-[var(--acton-navy)]">
                 <li>
