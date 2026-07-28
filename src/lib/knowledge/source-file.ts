@@ -4,7 +4,6 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import { getKnowledgeEntry } from "@/lib/knowledge/queries";
 import { KnowledgeError, KNOWLEDGE_ERROR_CODES } from "@/lib/knowledge/errors";
 import {
-  createSignedUploadUrl,
   findUploadById,
   listUploadsForEntry,
   type KnowledgeUploadRecord,
@@ -17,9 +16,9 @@ export type KnowledgeSourceFileInfo = {
   kind: KnowledgeSourceFileKind;
   mimeType: string | null;
   originalFilename: string | null;
-  /** Short-lived URL for iframe (upload signed URL or Drive preview). */
+  /** Same-origin (or Drive preview) URL for iframe embedding. Never a Supabase signed URL. */
   viewUrl: string | null;
-  /** External open target (signed download or Google webViewLink). */
+  /** External/open target — same-origin stream for uploads; Google webViewLink for Drive. */
   openUrl: string | null;
   googleFileId: string | null;
   uploadId: string | null;
@@ -29,7 +28,9 @@ export type KnowledgeSourceFileInfo = {
   unavailableReason: string | null;
 };
 
-const SIGNED_URL_TTL_SECONDS = 120;
+export function knowledgePdfStreamPath(entryId: string): string {
+  return `/api/admin/knowledge/${entryId}/source-file?mode=stream`;
+}
 
 export function isPdfKnowledgeEntry(input: {
   mimeType?: string | null;
@@ -55,7 +56,8 @@ function googlePreviewUrl(fileId: string): string {
 
 /**
  * Resolve how to view the original PDF for a Knowledge entry (admin-only callers).
- * Never embeds binary into knowledge content — only short-lived / external URLs.
+ * Manual uploads always use the same-origin stream route so CSP/default-src 'self'
+ * can embed the PDF (Supabase signed URLs cannot be framed under Baxter's CSP).
  */
 export async function resolveKnowledgeSourceFile(
   entryId: string,
@@ -143,7 +145,7 @@ export async function resolveKnowledgeSourceFile(
     };
   }
 
-  // Manual upload path
+  // Manual upload path — always same-origin stream (never embed Supabase signed URLs).
   const uploadId = typeof meta.uploadId === "string" ? meta.uploadId : null;
   let upload: KnowledgeUploadRecord | null = null;
   if (uploadId) {
@@ -153,6 +155,8 @@ export async function resolveKnowledgeSourceFile(
     const linked = await listUploadsForEntry(entryId);
     upload = linked.find((row) => row.mime_type === "application/pdf") ?? linked[0] ?? null;
   }
+
+  const streamPath = knowledgePdfStreamPath(entryId);
 
   if (!upload) {
     return {
@@ -172,7 +176,6 @@ export async function resolveKnowledgeSourceFile(
     };
   }
 
-  // Ensure the upload belongs to this entry (or is unlinked but referenced by metadata).
   if (upload.knowledge_entry_id && upload.knowledge_entry_id !== entryId) {
     throw new KnowledgeError(
       "Upload does not belong to this Knowledge entry.",
@@ -181,16 +184,12 @@ export async function resolveKnowledgeSourceFile(
     );
   }
 
-  const signed = await createSignedUploadUrl(upload.id, SIGNED_URL_TTL_SECONDS);
-  // In mock/memory mode signed URLs are null — use authenticated stream endpoint instead.
-  const streamPath = `/api/admin/knowledge/${entryId}/source-file?mode=stream`;
-
   return {
     kind: "upload_pdf",
     mimeType: upload.mime_type || mimeType || "application/pdf",
     originalFilename: upload.original_filename || originalFilename,
-    viewUrl: signed ?? streamPath,
-    openUrl: signed ?? streamPath,
+    viewUrl: streamPath,
+    openUrl: streamPath,
     googleFileId: null,
     uploadId: upload.id,
     storageBucket: upload.storage_bucket,

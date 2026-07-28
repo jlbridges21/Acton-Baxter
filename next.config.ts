@@ -34,6 +34,9 @@ const nextConfig: NextConfig = {
               "img-src 'self' data: blob: https://*.supabase.co https://maps.gstatic.com https://maps.googleapis.com https://*.googleusercontent.com",
               "font-src 'self' https://fonts.gstatic.com data:",
               "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://maps.googleapis.com https://places.googleapis.com",
+              // PDF viewer: same-origin stream for uploads; Drive preview for Google PDFs.
+              "frame-src 'self' https://drive.google.com https://*.google.com",
+              "object-src 'self'",
               "frame-ancestors 'self'",
               "base-uri 'self'",
               "form-action 'self'",
@@ -41,6 +44,8 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // Knowledge PDF stream stays frameable by Baxter (global X-Frame-Options: SAMEORIGIN).
+      // Do not attach a second CSP here — browsers AND multiple CSP headers.
     ];
   },
 };

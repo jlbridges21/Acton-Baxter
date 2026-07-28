@@ -17,6 +17,11 @@ type SourceMeta = {
   originalFilename: string | null;
 };
 
+function isSameOriginViewerUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return url.startsWith("/") || url.includes("/api/admin/knowledge/");
+}
+
 export function PdfKnowledgeViewer({
   entryId,
   title,
@@ -39,9 +44,12 @@ export function PdfKnowledgeViewer({
   const [source, setSource] = useState<SourceMeta | null>(null);
   const [loadingSource, setLoadingSource] = useState(true);
   const [sourceError, setSourceError] = useState<string | null>(null);
+  const [iframeKey, setIframeKey] = useState(0);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+
     async function load() {
       setLoadingSource(true);
       setSourceError(null);
@@ -54,36 +62,45 @@ export function PdfKnowledgeViewer({
         if (!response.ok) {
           throw new Error(payload.error?.message ?? "Could not load PDF source");
         }
-        if (!cancelled) setSource(payload.source ?? null);
+        if (cancelled) return;
+        setSource(payload.source ?? null);
+        setIframeKey((k) => k + 1);
       } catch (err) {
-        if (!cancelled) {
-          setSourceError(err instanceof Error ? err.message : "Could not load PDF source");
-          // Fall back to Google webViewLink when meta endpoint fails
-          if (isGoogle && sourceUrl) {
-            setSource({
-              kind: "google_pdf",
-              viewUrl: sourceUrl,
-              openUrl: sourceUrl,
-              available: true,
-              unavailableReason: null,
-              originalFilename: title,
-            });
-          }
+        if (cancelled) return;
+        setSourceError(err instanceof Error ? err.message : "Could not load PDF source");
+        if (isGoogle && sourceUrl) {
+          setSource({
+            kind: "google_pdf",
+            viewUrl: null,
+            openUrl: sourceUrl,
+            available: false,
+            unavailableReason:
+              "Baxter couldn't embed this Google Drive PDF. Use Open in Google, or view extracted text.",
+            originalFilename: title,
+          });
+        } else {
+          setSource(null);
         }
       } finally {
         if (!cancelled) setLoadingSource(false);
       }
     }
+
     void load();
     return () => {
       cancelled = true;
     };
-  }, [entryId, isGoogle, sourceUrl, title]);
+  }, [entryId, isGoogle, sourceUrl, title, reloadToken]);
 
-  const openHref = source?.openUrl ?? sourceUrl ?? null;
+  function tryAgain() {
+    setReloadToken((n) => n + 1);
+  }
+
+  const openHref = source?.openUrl ?? (isGoogle ? sourceUrl : null) ?? null;
   const viewHref = source?.viewUrl ?? null;
-  const available = source?.available ?? Boolean(viewHref || openHref);
+  const available = Boolean(source?.available && viewHref);
   const openLabel = isGoogle || source?.kind === "google_pdf" ? "Open in Google" : "Open Original";
+  const sameOrigin = isSameOriginViewerUrl(viewHref);
 
   return (
     <div className="space-y-4">
@@ -140,35 +157,45 @@ export function PdfKnowledgeViewer({
       {pane === "pdf" ? (
         <div className="space-y-3">
           {loadingSource ? <p className="text-sm text-[var(--acton-muted)]">Loading PDF…</p> : null}
-          {sourceError && !available ? (
-            <p className="text-sm text-amber-900" role="status">
-              {sourceError}
-            </p>
-          ) : null}
           {!loadingSource && !available ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-950">
-              <p className="font-semibold">Original PDF unavailable</p>
+              <p className="font-semibold">PDF unavailable</p>
               <p className="mt-1">
                 {source?.unavailableReason ??
-                  "Baxter still has the previously extracted text for this version."}
+                  sourceError ??
+                  "Baxter couldn't load the original PDF."}
               </p>
-              <Button
-                type="button"
-                variant="secondary"
-                className="mt-3"
-                onClick={() => setPane("text")}
-              >
-                View extracted text
-              </Button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" onClick={() => tryAgain()}>
+                  Try Again
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => setPane("text")}>
+                  View Extracted Text
+                </Button>
+                {openHref && (isGoogle || source?.kind === "google_pdf") ? (
+                  <a
+                    href={openHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-9 items-center rounded-md border border-[var(--acton-border)] px-3 text-sm font-semibold text-[var(--acton-navy)]"
+                  >
+                    Open in Google
+                  </a>
+                ) : null}
+              </div>
             </div>
           ) : null}
-          {viewHref ? (
+          {available && viewHref ? (
             <iframe
+              key={iframeKey}
               title={`PDF viewer — ${title}`}
               src={viewHref}
               className="h-[75vh] w-full rounded-lg border border-[var(--acton-border)] bg-[var(--acton-gray-50)]"
-              // Sandbox keeps the embed contained; allow-same-origin needed for some Drive previews.
-              sandbox="allow-scripts allow-same-origin allow-popups allow-downloads"
+              // Same-origin PDF streams must not use sandbox — it breaks the native PDF viewer.
+              // Drive previews may need scripts; keep a light sandbox only for cross-origin.
+              {...(sameOrigin
+                ? {}
+                : { sandbox: "allow-scripts allow-same-origin allow-popups allow-downloads" })}
             />
           ) : null}
         </div>

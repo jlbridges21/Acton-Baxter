@@ -9,10 +9,48 @@ export const runtime = "nodejs";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+function parseRangeHeader(
+  rangeHeader: string | null,
+  size: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  if (!rangeHeader || !rangeHeader.startsWith("bytes=")) return null;
+  // Support a single range only (browser PDF viewers).
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match) return "unsatisfiable";
+  const startRaw = match[1];
+  const endRaw = match[2];
+  if (!startRaw && !endRaw) return "unsatisfiable";
+
+  let start: number;
+  let end: number;
+  if (!startRaw) {
+    // suffix: bytes=-N
+    const suffix = Number(endRaw);
+    if (!Number.isFinite(suffix) || suffix <= 0) return "unsatisfiable";
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(startRaw);
+    end = endRaw ? Number(endRaw) : size - 1;
+  }
+
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start < 0 ||
+    end < start ||
+    start >= size
+  ) {
+    return "unsatisfiable";
+  }
+  end = Math.min(end, size - 1);
+  return { start, end };
+}
+
 /**
  * Secure PDF source access for Knowledge Center.
- * - Default / ?mode=meta → JSON with short-lived view/open URLs (no public permanent links)
- * - ?mode=stream → streams the private upload bytes (auth required; for iframe when signed URL unavailable)
+ * - Default / ?mode=meta → JSON with same-origin view/open URLs (never Supabase signed URLs in UI)
+ * - ?mode=stream → streams private upload bytes for iframe / Open Original
  */
 export async function GET(request: Request, context: RouteContext) {
   try {
@@ -33,13 +71,48 @@ export async function GET(request: Request, context: RouteContext) {
         );
       }
       const safeName = file.filename.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "document.pdf";
-      return new Response(new Uint8Array(file.bytes), {
+      const mimeType = file.mimeType || "application/pdf";
+      const bytes = file.bytes;
+      const size = bytes.byteLength;
+      const range = parseRangeHeader(request.headers.get("range"), size);
+
+      const baseHeaders: Record<string, string> = {
+        "Content-Type": mimeType,
+        "Content-Disposition": `inline; filename="${safeName}"`,
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Content-Type-Options": "nosniff",
+        "Accept-Ranges": "bytes",
+        // Allow this PDF to be framed by Baxter itself (same-origin viewer).
+        "X-Frame-Options": "SAMEORIGIN",
+      };
+
+      if (range === "unsatisfiable") {
+        return new Response(null, {
+          status: 416,
+          headers: {
+            ...baseHeaders,
+            "Content-Range": `bytes */${size}`,
+          },
+        });
+      }
+
+      if (range) {
+        const slice = bytes.subarray(range.start, range.end + 1);
+        return new Response(new Uint8Array(slice), {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "Content-Length": String(slice.byteLength),
+            "Content-Range": `bytes ${range.start}-${range.end}/${size}`,
+          },
+        });
+      }
+
+      return new Response(new Uint8Array(bytes), {
         status: 200,
         headers: {
-          "Content-Type": file.mimeType || "application/pdf",
-          "Content-Disposition": `inline; filename="${safeName}"`,
-          "Cache-Control": "private, no-store, max-age=0",
-          "X-Content-Type-Options": "nosniff",
+          ...baseHeaders,
+          "Content-Length": String(size),
         },
       });
     }
@@ -55,7 +128,6 @@ export async function GET(request: Request, context: RouteContext) {
         googleFileId: info.googleFileId,
         available: info.available,
         unavailableReason: info.unavailableReason,
-        // Do not expose storage_path to the client UI — only signed/stream URLs.
       },
     });
   } catch (error) {
