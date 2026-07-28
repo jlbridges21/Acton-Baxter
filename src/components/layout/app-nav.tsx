@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, LogOut, Menu, PlusCircle, Search, X } from "lucide-react";
+import { ClipboardList, LayoutDashboard, LogOut, Menu, PlusCircle, Search, X } from "lucide-react";
+
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/branding/company-logo";
@@ -40,6 +41,24 @@ function employeeLinks(context: NavContext): NavLink[] {
         label: "New Research",
         icon: PlusCircle,
         match: (pathname) => pathname === "/reports/new",
+      },
+    ];
+  }
+
+  if (context === "pem-neat") {
+    return [
+      home,
+      {
+        href: "/pem-neats",
+        label: "PEM NEATs",
+        icon: ClipboardList,
+        match: (pathname) => pathname === "/pem-neats",
+      },
+      {
+        href: "/pem-neats/new",
+        label: "Add PEM NEAT",
+        icon: PlusCircle,
+        match: (pathname) => pathname === "/pem-neats/new",
       },
     ];
   }

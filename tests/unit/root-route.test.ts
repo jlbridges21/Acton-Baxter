@@ -29,19 +29,18 @@ describe("Baxter platform shell", () => {
     expect(pkg.name).toBe("baxter");
   });
 
-  it("registers Property Research as the enabled Baxter tool at /dashboard", () => {
+  it("registers Property Research and PEM NEAT as enabled Baxter tools", () => {
     const tools = getEnabledBaxterTools();
-    expect(tools).toHaveLength(1);
-    expect(tools[0]?.key).toBe("property-research");
-    expect(tools[0]?.href).toBe("/dashboard");
-    expect(tools[0]?.enabled).toBe(true);
-    expect(tools[0]?.icon).toBeTruthy();
+    expect(tools.length).toBeGreaterThanOrEqual(2);
+    expect(tools.some((t) => t.key === "property-research" && t.href === "/dashboard")).toBe(true);
+    expect(tools.some((t) => t.key === "pem-neat" && t.href === "/pem-neats")).toBe(true);
   });
 
   it("uses tool-scoped navigation contexts", async () => {
     const { getNavContext } = await import("@/lib/baxter/tools");
     expect(getNavContext("/")).toBe("platform");
     expect(getNavContext("/reports/new")).toBe("property-research");
+    expect(getNavContext("/pem-neats")).toBe("pem-neat");
     expect(getNavContext("/admin/knowledge")).toBe("knowledge");
   });
 

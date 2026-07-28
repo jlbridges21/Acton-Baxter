@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Cloud, House } from "lucide-react";
+import { BookOpen, Cloud, ClipboardList, House } from "lucide-react";
 
 export type BaxterTool = {
   key: string;
@@ -25,6 +25,16 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     enabled: true,
     icon: House,
     ctaLabel: "Open Property Research",
+  },
+  {
+    key: "pem-neat",
+    name: "Partnership Evaluation Meeting NEAT",
+    description:
+      "Turn a PEM transcript into sales intelligence, coaching, follow-up, and project handoff data.",
+    href: "/pem-neats",
+    enabled: true,
+    icon: ClipboardList,
+    ctaLabel: "Open PEM NEAT",
   },
 ];
 
@@ -59,7 +69,8 @@ export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTo
   });
 }
 
-export type NavContext = "platform" | "property-research" | "knowledge" | "platform-admin";
+export type NavContext =
+  "platform" | "property-research" | "pem-neat" | "knowledge" | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
   if (pathname.startsWith("/admin/knowledge")) {
@@ -68,6 +79,9 @@ export function getNavContext(pathname: string): NavContext {
   if (pathname.startsWith("/admin")) return "platform-admin";
   if (pathname === "/dashboard" || pathname.startsWith("/reports")) {
     return "property-research";
+  }
+  if (pathname.startsWith("/pem-neats")) {
+    return "pem-neat";
   }
   return "platform";
 }
