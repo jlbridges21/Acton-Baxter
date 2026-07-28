@@ -77,31 +77,79 @@ const nullableScoreSchema = z.preprocess((value) => {
   return Math.round(Math.min(10, Math.max(1, n)));
 }, z.number().int().min(1).max(10).nullable());
 
-/** Provenance-aware value used where reliability matters. */
-export const evidencedValueSchema = z.object({
-  value: z.string().nullable(),
-  evidenceType: evidenceTypeSchema.default("unknown"),
-  evidence: z.string().nullable().optional(),
-  timestamp: z.string().nullable().optional(),
-  confidence: z.enum(["high", "medium", "low", "unknown"]).optional().default("unknown"),
-});
+/** Provenance-aware value used where reliability matters. Coerces plain strings from models. */
+export const evidencedValueSchema = z.preprocess(
+  (value) => {
+    if (value == null || value === "") return null;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      return {
+        value: trimmed,
+        evidenceType: "unknown",
+        confidence: "medium",
+      };
+    }
+    if (typeof value === "object" && !Array.isArray(value)) {
+      const o = value as Record<string, unknown>;
+      const v = o.value ?? o.text ?? o.name ?? o.label;
+      if (v == null && !o.evidence) return null;
+      return {
+        value: v == null ? null : typeof v === "string" ? v : String(v),
+        evidenceType: o.evidenceType ?? "unknown",
+        evidence: o.evidence ?? null,
+        timestamp: o.timestamp ?? null,
+        confidence: o.confidence ?? "unknown",
+      };
+    }
+    return {
+      value: String(value),
+      evidenceType: "unknown",
+      confidence: "low",
+    };
+  },
+  z
+    .object({
+      value: z.string().nullable(),
+      evidenceType: evidenceTypeSchema.default("unknown"),
+      evidence: z.string().nullable().optional(),
+      timestamp: z.string().nullable().optional(),
+      confidence: z.enum(["high", "medium", "low", "unknown"]).optional().default("unknown"),
+    })
+    .nullable(),
+);
 
-export const painItemSchema = z.object({
-  statement: nonEmptyOrPlaceholder("Not established"),
-  surfaceReason: z.string().nullable().optional(),
-  deeperConsequence: z.string().nullable().optional(),
-  whyNow: z.string().nullable().optional(),
-  presentConsequence: z.string().nullable().optional(),
-  futureConsequence: z.string().nullable().optional(),
-  importance: z.string().nullable().optional(),
-  evidence: z.string().nullable().optional(),
-  evidenceType: evidenceTypeSchema.optional().catch("prospect_fact").default("prospect_fact"),
-  confidence: z
-    .enum(["high", "medium", "low", "unknown"])
-    .optional()
-    .catch("medium")
-    .default("medium"),
-});
+export const painItemSchema = z.preprocess(
+  (value) => {
+    if (typeof value === "string") {
+      const statement = value.trim();
+      return statement
+        ? {
+            statement,
+            evidenceType: "prospect_fact",
+            confidence: "medium",
+          }
+        : value;
+    }
+    return value;
+  },
+  z.object({
+    statement: nonEmptyOrPlaceholder("Not established"),
+    surfaceReason: z.string().nullable().optional(),
+    deeperConsequence: z.string().nullable().optional(),
+    whyNow: z.string().nullable().optional(),
+    presentConsequence: z.string().nullable().optional(),
+    futureConsequence: z.string().nullable().optional(),
+    importance: z.string().nullable().optional(),
+    evidence: z.string().nullable().optional(),
+    evidenceType: evidenceTypeSchema.optional().catch("prospect_fact").default("prospect_fact"),
+    confidence: z
+      .enum(["high", "medium", "low", "unknown"])
+      .optional()
+      .catch("medium")
+      .default("medium"),
+  }),
+);
 
 export const budgetSchema = z.object({
   statedBudget: evidencedValueSchema.nullable().optional(),
@@ -195,9 +243,11 @@ export const assessmentCategorySchema = z.object({
 export const projectFactSchema = z.object({
   topic: z.string().min(1),
   value: z.string().nullable(),
-  status: projectFactStatusSchema.default("UNKNOWN_NEEDS_VERIFICATION"),
+  status: projectFactStatusSchema
+    .catch("UNKNOWN_NEEDS_VERIFICATION")
+    .default("UNKNOWN_NEEDS_VERIFICATION"),
   evidence: z.string().nullable().optional(),
-  evidenceType: evidenceTypeSchema.optional().default("unknown"),
+  evidenceType: evidenceTypeSchema.optional().catch("unknown").default("unknown"),
 });
 
 /**

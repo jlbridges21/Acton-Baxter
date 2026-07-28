@@ -37,6 +37,10 @@ export type PemNeatRecord = PemNeatListItem & {
   analysis_metadata: Record<string, unknown>;
   deleted_at: string | null;
   deleted_by: string | null;
+  generation_stage?: string | null;
+  generation_trace_json?: Record<string, unknown>;
+  stage_outputs_json?: Record<string, unknown>;
+  generation_job_id?: string | null;
 };
 
 export type PemNeatGenerationRow = {
@@ -60,6 +64,9 @@ export type PemNeatGenerationRow = {
   input_tokens: number | null;
   output_tokens: number | null;
   created_at: string;
+  stage_outputs_json?: Record<string, unknown>;
+  generation_trace_json?: Record<string, unknown>;
+  failed_stage?: string | null;
 };
 
 export type CreatePemNeatRecordInput = {
@@ -101,6 +108,8 @@ export type SaveGenerationSuccessInput = {
   transcriptHash?: string | null;
   diagnostics?: Record<string, unknown>;
   finishReason?: string | null;
+  stageOutputs?: Record<string, unknown> | null;
+  generationTrace?: Record<string, unknown> | null;
 };
 
 export type SaveGenerationFailureInput = {
@@ -113,4 +122,13 @@ export type SaveGenerationFailureInput = {
   transcriptHash?: string | null;
   validationIssueCount?: number | null;
   diagnostics?: Record<string, unknown>;
+  stageOutputs?: Record<string, unknown> | null;
+  generationTrace?: Record<string, unknown> | null;
+  failedStage?: string | null;
+};
+
+export type UpdateGenerationProgressInput = {
+  stage: string;
+  trace?: Record<string, unknown> | null;
+  stageOutputs?: Record<string, unknown> | null;
 };

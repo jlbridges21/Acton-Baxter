@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { PemNeatResultClient } from "@/components/pem-neat/pem-neat-result-client";
+import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
 
@@ -24,7 +25,11 @@ export default async function PemNeatDetailPage({ params }: PageProps) {
 
   return (
     <AppShell user={user}>
-      <PemNeatResultClient item={item} generations={generations} />
+      <PemNeatResultClient
+        item={item}
+        generations={generations}
+        isAdmin={isAdminRole(user.profile.role)}
+      />
     </AppShell>
   );
 }

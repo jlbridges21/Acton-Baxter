@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
@@ -58,9 +58,11 @@ function parseBuildertrendFields(
 export function PemNeatResultClient({
   item,
   generations = [],
+  isAdmin = false,
 }: {
   item: PemNeatRecord;
   generations?: PemNeatGenerationRow[];
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("neat");
@@ -70,6 +72,15 @@ export function PemNeatResultClient({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generationStage, setGenerationStage] = useState<string | null>(
+    item.generation_stage ?? null,
+  );
+  const [adminDiag, setAdminDiag] = useState<{
+    failedStage?: string | null;
+    errorCode?: string | null;
+    modelName?: string | null;
+    stages?: Array<{ name?: unknown; status?: unknown }>;
+  } | null>(null);
 
   const result = isStructuredResult(item.structured_result) ? item.structured_result : null;
   const btFields = parseBuildertrendFields(result, item.buildertrend_fields);
@@ -82,6 +93,48 @@ export function PemNeatResultClient({
       Boolean(item.transcript_hash) &&
       Boolean(item.current_generation_transcript_hash) &&
       item.transcript_hash !== item.current_generation_transcript_hash);
+
+  useEffect(() => {
+    if (item.status !== "generating") return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/pem-neats/${item.id}/status`);
+        if (!response.ok || cancelled) return;
+        const data = (await response.json()) as {
+          status?: string;
+          generationStage?: string | null;
+          lastErrorCode?: string | null;
+          modelName?: string | null;
+          adminDiagnostics?: {
+            stages?: Array<{ name?: unknown; status?: unknown }>;
+            finalErrorCode?: string | null;
+            finalErrorStage?: string | null;
+          } | null;
+        };
+        if (data.generationStage) setGenerationStage(data.generationStage);
+        if (data.adminDiagnostics) {
+          setAdminDiag({
+            failedStage: data.adminDiagnostics.finalErrorStage,
+            errorCode: data.adminDiagnostics.finalErrorCode ?? data.lastErrorCode,
+            modelName: data.modelName,
+            stages: data.adminDiagnostics.stages,
+          });
+        }
+        if (data.status && data.status !== "generating") {
+          router.refresh();
+        }
+      } catch {
+        // ignore transient poll errors
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [item.id, item.status, router]);
 
   const followUpEmailCopy = result
     ? [
@@ -98,6 +151,7 @@ export function PemNeatResultClient({
     if (!response.ok) {
       throw new Error(data.error?.message ?? "Generation failed");
     }
+    setGenerationStage("queued");
     router.refresh();
   }, [item.id, router]);
 
@@ -269,13 +323,22 @@ export function PemNeatResultClient({
         </Card>
       ) : null}
 
-      {isGenerating ? <GeneratingCard /> : null}
+      {isGenerating ? <GeneratingCard generationStage={generationStage} /> : null}
 
       {showFailed ? (
         <GenerationFailedCard
           errorMessage={item.generation_error}
           retrying={retrying}
           onRetry={onRetry}
+          adminDetails={
+            isAdmin
+              ? (adminDiag ?? {
+                  errorCode: item.last_error_code,
+                  modelName: item.model_name,
+                  failedStage: item.generation_stage,
+                })
+              : null
+          }
         />
       ) : item.generation_error && result ? (
         <Card className="border-amber-200 bg-amber-50">

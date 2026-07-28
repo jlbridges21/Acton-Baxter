@@ -229,7 +229,7 @@ export function NeatSalesIntelligencePanel({
                 <p className="text-sm font-medium text-[var(--acton-navy)]">Decision makers</p>
                 <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-[var(--acton-muted)]">
                   {sales.decisionProcess.decisionMakers.map((dm, i) => (
-                    <li key={i}>{dm.value}</li>
+                    <li key={i}>{dm?.value ?? "—"}</li>
                   ))}
                 </ul>
               </div>

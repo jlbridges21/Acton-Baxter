@@ -13,6 +13,7 @@ import type {
   SaveGenerationSuccessInput,
   UpdatePemNeatSourceInput,
   UpdatePemNeatSourceResult,
+  UpdateGenerationProgressInput,
 } from "./types";
 
 export function hashTranscript(transcript: string): string {
@@ -97,6 +98,9 @@ function emptyGenerationRow(
     input_tokens: null,
     output_tokens: null,
     created_at: nowIso(),
+    stage_outputs_json: {},
+    generation_trace_json: {},
+    failed_stage: null,
     ...partial,
   };
 }
@@ -117,6 +121,11 @@ export interface PemNeatStore {
   saveGenerationFailure(id: string, input: SaveGenerationFailureInput): Promise<PemNeatRecord>;
   listGenerations(id: string): Promise<PemNeatGenerationRow[]>;
   getGeneration(id: string, generationId: string): Promise<PemNeatGenerationRow | null>;
+  updateGenerationProgress(
+    id: string,
+    input: UpdateGenerationProgressInput,
+  ): Promise<PemNeatRecord>;
+  setGenerationJobId(id: string, jobId: string | null): Promise<void>;
 }
 
 function toListItem(row: PemNeatRecord): PemNeatListItem {
@@ -171,6 +180,10 @@ class MemoryPemNeatStore implements PemNeatStore {
       analysis_stale: false,
       deleted_at: null,
       deleted_by: null,
+      generation_stage: null,
+      generation_trace_json: {},
+      stage_outputs_json: {},
+      generation_job_id: null,
       created_at: timestamp,
       updated_at: timestamp,
     };
@@ -301,10 +314,38 @@ class MemoryPemNeatStore implements PemNeatStore {
       generation_error: null,
       last_error_code: null,
       generating_started_at: nowIso(),
+      generation_stage: "queued",
       updated_at: nowIso(),
     };
     getMemoryState().neats.set(id, updated);
     return structuredClone(updated);
+  }
+
+  async updateGenerationProgress(
+    id: string,
+    input: UpdateGenerationProgressInput,
+  ): Promise<PemNeatRecord> {
+    const existing = getMemoryState().neats.get(id);
+    if (!existing || !isActive(existing)) throw new NotFoundError("PEM NEAT not found");
+    const updated: PemNeatRecord = {
+      ...existing,
+      generation_stage: input.stage,
+      generation_trace_json: input.trace ?? existing.generation_trace_json ?? {},
+      stage_outputs_json: input.stageOutputs ?? existing.stage_outputs_json ?? {},
+      updated_at: nowIso(),
+    };
+    getMemoryState().neats.set(id, updated);
+    return structuredClone(updated);
+  }
+
+  async setGenerationJobId(id: string, jobId: string | null): Promise<void> {
+    const existing = getMemoryState().neats.get(id);
+    if (!existing || !isActive(existing)) throw new NotFoundError("PEM NEAT not found");
+    getMemoryState().neats.set(id, {
+      ...existing,
+      generation_job_id: jobId,
+      updated_at: nowIso(),
+    });
   }
 
   async saveGenerationSuccess(
@@ -332,6 +373,8 @@ class MemoryPemNeatStore implements PemNeatStore {
       input_tokens: input.inputTokens ?? null,
       output_tokens: input.outputTokens ?? null,
       created_at: timestamp,
+      stage_outputs_json: input.stageOutputs ?? {},
+      generation_trace_json: input.generationTrace ?? {},
     });
     gens.push(genRow);
     getMemoryState().generations.set(id, gens);
@@ -348,6 +391,9 @@ class MemoryPemNeatStore implements PemNeatStore {
       generation_error: null,
       last_error_code: null,
       generating_started_at: null,
+      generation_stage: "completed",
+      generation_trace_json: input.generationTrace ?? {},
+      stage_outputs_json: input.stageOutputs ?? {},
       analysis_stale: false,
       current_generation_transcript_hash: transcriptHash,
       generated_at: existing.generated_at ?? timestamp,
@@ -385,6 +431,9 @@ class MemoryPemNeatStore implements PemNeatStore {
         diagnostics_json: input.diagnostics ?? {},
         latency_ms: input.latencyMs ?? null,
         created_at: timestamp,
+        stage_outputs_json: input.stageOutputs ?? {},
+        generation_trace_json: input.generationTrace ?? {},
+        failed_stage: input.failedStage ?? null,
       }),
     );
     getMemoryState().generations.set(id, gens);
@@ -401,6 +450,9 @@ class MemoryPemNeatStore implements PemNeatStore {
       generation_error: input.errorMessage,
       last_error_code: input.errorCode ?? null,
       generating_started_at: null,
+      generation_stage: input.failedStage ?? "failed",
+      generation_trace_json: input.generationTrace ?? existing.generation_trace_json ?? {},
+      stage_outputs_json: input.stageOutputs ?? existing.stage_outputs_json ?? {},
       model_provider: input.modelProvider ?? existing.model_provider,
       model_name: input.modelName ?? existing.model_name,
       generation_latency_ms: input.latencyMs ?? existing.generation_latency_ms,
@@ -456,6 +508,10 @@ function mapRow(row: Record<string, unknown>): PemNeatRecord {
     analysis_stale: Boolean(row.analysis_stale),
     deleted_at: row.deleted_at ? String(row.deleted_at) : null,
     deleted_by: row.deleted_by ? String(row.deleted_by) : null,
+    generation_stage: row.generation_stage ? String(row.generation_stage) : null,
+    generation_trace_json: (row.generation_trace_json as Record<string, unknown>) ?? {},
+    stage_outputs_json: (row.stage_outputs_json as Record<string, unknown>) ?? {},
+    generation_job_id: row.generation_job_id ? String(row.generation_job_id) : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   };
@@ -485,6 +541,9 @@ function mapGenerationRow(row: Record<string, unknown>): PemNeatGenerationRow {
     input_tokens: row.input_tokens != null ? Number(row.input_tokens) : null,
     output_tokens: row.output_tokens != null ? Number(row.output_tokens) : null,
     created_at: String(row.created_at),
+    stage_outputs_json: (row.stage_outputs_json as Record<string, unknown>) ?? {},
+    generation_trace_json: (row.generation_trace_json as Record<string, unknown>) ?? {},
+    failed_stage: row.failed_stage ? String(row.failed_stage) : null,
   };
 }
 
@@ -658,6 +717,7 @@ class SupabasePemNeatStore implements PemNeatStore {
         generation_error: null,
         last_error_code: null,
         generating_started_at: nowIso(),
+        generation_stage: "queued",
       })
       .eq("id", id)
       .is("deleted_at", null)
@@ -665,6 +725,37 @@ class SupabasePemNeatStore implements PemNeatStore {
       .single();
     if (error) throw pemNeatStoreError(error);
     return mapRow(data as Record<string, unknown>);
+  }
+
+  async updateGenerationProgress(
+    id: string,
+    input: UpdateGenerationProgressInput,
+  ): Promise<PemNeatRecord> {
+    const supabase = createServiceClient();
+    const patch: Record<string, unknown> = {
+      generation_stage: input.stage,
+    };
+    if (input.trace !== undefined) patch.generation_trace_json = input.trace ?? {};
+    if (input.stageOutputs !== undefined) patch.stage_outputs_json = input.stageOutputs ?? {};
+    const { data, error } = await supabase
+      .from("pem_neats")
+      .update(patch)
+      .eq("id", id)
+      .is("deleted_at", null)
+      .select("*")
+      .single();
+    if (error) throw pemNeatStoreError(error, "Unable to update PEM generation progress");
+    return mapRow(data as Record<string, unknown>);
+  }
+
+  async setGenerationJobId(id: string, jobId: string | null): Promise<void> {
+    const supabase = createServiceClient();
+    const { error } = await supabase
+      .from("pem_neats")
+      .update({ generation_job_id: jobId })
+      .eq("id", id)
+      .is("deleted_at", null);
+    if (error) throw pemNeatStoreError(error);
   }
 
   async saveGenerationSuccess(
@@ -700,6 +791,8 @@ class SupabasePemNeatStore implements PemNeatStore {
       transcript_hash: transcriptHash,
       finish_reason: input.finishReason ?? null,
       diagnostics_json: input.diagnostics ?? {},
+      stage_outputs_json: input.stageOutputs ?? {},
+      generation_trace_json: input.generationTrace ?? {},
     });
     if (genError) throw pemNeatStoreError(genError, "Unable to save PEM NEAT generation history");
 
@@ -717,6 +810,9 @@ class SupabasePemNeatStore implements PemNeatStore {
         generation_error: null,
         last_error_code: null,
         generating_started_at: null,
+        generation_stage: "completed",
+        generation_trace_json: input.generationTrace ?? {},
+        stage_outputs_json: input.stageOutputs ?? {},
         analysis_stale: false,
         current_generation_transcript_hash: transcriptHash,
         generated_at: existing.generated_at ?? timestamp,
@@ -764,6 +860,9 @@ class SupabasePemNeatStore implements PemNeatStore {
       validation_issue_count: input.validationIssueCount ?? null,
       diagnostics_json: input.diagnostics ?? {},
       latency_ms: input.latencyMs ?? null,
+      stage_outputs_json: input.stageOutputs ?? {},
+      generation_trace_json: input.generationTrace ?? {},
+      failed_stage: input.failedStage ?? null,
     });
 
     let status: PemNeatRecord["status"] = "failed";
@@ -778,6 +877,9 @@ class SupabasePemNeatStore implements PemNeatStore {
         generation_error: input.errorMessage,
         last_error_code: input.errorCode ?? null,
         generating_started_at: null,
+        generation_stage: input.failedStage ?? "failed",
+        generation_trace_json: input.generationTrace ?? existing.generation_trace_json ?? {},
+        stage_outputs_json: input.stageOutputs ?? existing.stage_outputs_json ?? {},
         model_provider: input.modelProvider ?? existing.model_provider,
         model_name: input.modelName ?? existing.model_name,
         generation_latency_ms: input.latencyMs ?? existing.generation_latency_ms,

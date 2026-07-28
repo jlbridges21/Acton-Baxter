@@ -152,58 +152,143 @@ ${input.transcript}
 }
 
 export function buildFactExtractionStagePrompt(): string {
+  return buildFactLedgerStagePrompt();
+}
+
+export function buildFactLedgerStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
-STAGE: FACT EXTRACTION ONLY.
-Return JSON with keys:
-salesIntelligence (customerStory, customerPain, type1Pain, type2Pain, budget, decisionProcess, schedule, competitionAlternatives, actonRecommendation, nextSteps),
-projectIntelligence, productionNotes, analysisMetadata, metadata.transcriptQuality/limitations.
+STAGE A — FACT LEDGER ONLY (do not assess; do not write the email).
+Extract a RICH internal fact ledger from the transcript.
+Messy speaker labels are OK — classify speaker as customer | advisor | unknown when unsure.
 
-Extract CUSTOMER MEANING — story, pain drivers, budget nuance, decision dynamics, project/site facts, commitments.
-Do NOT invent. DO synthesize from evidenced discussion.
-Use null / [] ONLY when the topic was truly not discussed.
-Do NOT include assessment categories or BuilderTrend fields.
+Return JSON:
+{
+  "customerContext": [{ "summary", "speaker?", "timestamp?", "sourceHint?", "confidence?" }],
+  "project": [...],
+  "motivation": [...],  // Type 1 / why build
+  "partnerConcerns": [...],  // Type 2 / why partner
+  "budget": [{ "summary", "amount?", "speaker?", "meaning?", "scope?", "confidence?" }],
+  "decision": [...],
+  "schedule": [...],
+  "commitments": [...],
+  "nextSteps": [...],
+  "pemProcessEvidence": [...],  // rapport, PALO, discovery, close, etc.
+  "limitations": []
+}
+
+Capture EVERY distinct budget statement separately (ideal vs stretch vs competitor quote).
+UNKNOWN topics → omit or leave empty arrays. Do NOT invent.
+Do NOT return final NEAT assessment/email/BuilderTrend scaffolding.`;
+}
+
+export function buildSalesIntelligenceStagePrompt(): string {
+  return `${buildPemNeatSystemPrompt()}
+
+STAGE B — SALES INTELLIGENCE SYNTHESIS.
+You receive a validated Fact Ledger (working source). Synthesize the NEAT salesIntelligence section.
+
+Return JSON with salesIntelligence only:
+customerStory, customerPain, type1Pain[], type2Pain[], budget, decisionProcess, schedule,
+competitionAlternatives[], actonRecommendation { fit, reasoning }, nextSteps { prospect[], acton[] },
+meetingOutcome { classification, explanation }, qualification { classification, reasoning, risks[] }.
+
+For budget/decision makers use objects: { "value": "...", "evidenceType": "prospect_fact", "evidence?": "..." }
+OR plain strings (Baxter will coerce). Prefer nuanced budget (ideal vs stretch vs ceiling).
+Do NOT invent amounts. Do NOT reverse-engineer Type 2 from Acton pitch.
 ${buildPemNeatSchemaHint()}`;
 }
 
 export function buildAssessmentStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
-STAGE: SALES ASSESSMENT ONLY.
-Using established facts AND transcript behavior, return JSON with:
-assessment { categories (all 12 keys), topStrengths, topImprovements, oneThing },
+STAGE C — SALES ASSESSMENT ONLY.
+Using the Fact Ledger + transcript evidence, grade salesperson execution.
+
+Return JSON:
+assessment {
+  categories: all 12 keys with score (1-10 or null), status, evidence, whatWorked, coachingOpportunity,
+  topStrengths (≤3), topImprovements (≤3), oneThing
+},
 meetingOutcome { classification, explanation },
 qualification { classification, reasoning, risks }.
 
-Score salesperson execution from questions asked, follow-up depth, topic coverage, summaries, close.
-Poor execution = low score. NOT_DETERMINABLE only when transcript evidence for that section is absent/incomplete.
+Poor execution = LOW SCORE. NOT_DETERMINABLE only when transcript evidence for that section is absent.
+For a complete PEM, most categories should be scoreable.
 Include palo sub-object on palo_upfront_contract.`;
+}
+
+export function buildEmailStagePrompt(): string {
+  return `${buildPemNeatSystemPrompt()}
+
+STAGE D — CUSTOMER FOLLOW-UP EMAIL ONLY.
+Using validated Sales Intelligence (customer-safe facts), return JSON:
+{ "followUpEmail": { "subject", "body" } }
+
+Customer-specific thank-you reflecting their goals/concerns, project direction, agreed next steps.
+Never use: Type 1/2 labels, scores, qualification, coaching, internal strategy.
+Do not invent promises.`;
 }
 
 export function buildHandoffStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
-STAGE: CUSTOMER EMAIL + BUILDERTrend HANDOFF ONLY.
-Return JSON with: followUpEmail { subject, body }, buildertrendFields (evidenced values only; null when unknown),
-internalOpportunityNotes (max 2500 chars), productionNotes.
+STAGE E — PROJECT INTELLIGENCE + BUILDERTREND HANDOFF ONLY.
+Using Fact Ledger + Sales Intelligence, return JSON:
+{
+  "projectIntelligence": { "facts": [{ "topic", "value", "status", "evidence?" }], "summary?" },
+  "buildertrendFields": { /* only supported keys; null when unknown */ },
+  "internalOpportunityNotes": "max 2500 chars",
+  "productionNotes": []
+}
 
-Email must be customer-specific from validated facts — not a generic thank-you.
-BuilderTrend fields are operational; no sales coaching.`;
+UNKNOWN is valid → null. No sales coaching in BuilderTrend fields. No invention.`;
+}
+
+export function buildQualityReviewStagePrompt(): string {
+  return `${buildPemNeatSystemPrompt()}
+
+STAGE F — QUALITY REVIEWER (not the author).
+Compare Fact Ledger vs the generated NEAT. Return JSON:
+{
+  "pass": boolean,
+  "severity": "none" | "low" | "medium" | "high",
+  "issues": [{
+    "section": string,
+    "type": "contradiction" | "unsupported" | "omission" | "attribution" | "assessment" | "email" | "other",
+    "explanation": string,
+    "suggestedCorrection": string | null
+  }]
+}
+
+Flag: unsupported numeric claims, Type 2 reverse-engineered from pitch, collapsed budget meanings,
+customer/advisor attribution errors, assessment inconsistent with evidence, internal language in email,
+important evidenced topics omitted from Customer Story/Pain.
+Grounded paraphrase is OK — do NOT require exact transcript string matches.
+pass=true when no material issues remain.`;
+}
+
+export function buildCorrectionStagePrompt(): string {
+  return `${buildPemNeatSystemPrompt()}
+
+STAGE — CORRECTION PASS.
+Apply the quality review suggested corrections to the NEAT sections provided.
+Return a JSON patch with only the corrected keys among:
+salesIntelligence, assessment, followUpEmail, projectIntelligence, buildertrendFields, internalOpportunityNotes, productionNotes.
+Do not invent new facts. Prefer Fact Ledger evidence.`;
 }
 
 export function buildRecoveryFactPrompt(missing: string[]): string {
   return `${buildPemNeatSystemPrompt()}
 
-STAGE: RECOVERY FACT EXTRACTION.
-A prior extraction returned almost no content despite a substantive PEM transcript.
+STAGE: FACT LEDGER RECOVERY.
+A prior Fact Ledger was nearly empty despite a substantive PEM transcript.
 This is an extraction retry — NOT permission to invent.
 
 Missing / empty categories to re-extract if evidenced:
 ${missing.map((m) => `- ${m}`).join("\n")}
 
-Return the same FACT EXTRACTION JSON shape.
-Ground every claim in transcript evidence. Synthesize where supported. Leave null only if truly absent.
-${buildPemNeatSchemaHint()}`;
+Return the Fact Ledger JSON shape (customerContext, project, motivation, partnerConcerns, budget, decision, schedule, commitments, nextSteps, pemProcessEvidence, limitations).`;
 }
 
 /** Compact JSON schema hint for the model (keys/enums). */
@@ -215,13 +300,14 @@ export function buildPemNeatSchemaHint(): string {
     "customerPain": "central tension synthesis or null",
     "type1Pain": [{ "statement": "...", "whyNow?", "evidence?" }],
     "type2Pain": [{ "statement": "...", "evidence?" }],
-    "budget": { "range?", "target?", "hardCeiling?", "scope?", "fundingSource?", "firmness?", "summary?", "competitorAnchors": [], "advisorEstimates": [], "risks": [], "unknowns": [] },
+    "budget": { "range?", "target": {"value":"..."}, "hardCeiling": {"value":"..."}, "scope?", "fundingSource?", "firmness?", "summary?", "competitorAnchors": [], "advisorEstimates": [], "risks": [], "unknowns": [] },
     "decisionProcess": { "decisionMakers": [{"value":"..."}], "criteria": [], "alternatives": [], "process?", "timing?", "summary?" },
-    "schedule": { "drivers": [], "summary?" },
+    "schedule": { "desiredStart": {"value":"..."}, "drivers": [], "summary?" },
     "competitionAlternatives": [],
     "actonRecommendation": { "fit?", "reasoning?" },
-    "nextSteps": { "prospect": [], "acton": [] }
-  },
-  "projectIntelligence": { "facts": [{ "topic", "value", "status": "CONFIRMED|HOMEOWNER_REPORTED|ADVISOR_ESTIMATE|UNKNOWN_NEEDS_VERIFICATION", "evidence?" }] }
+    "nextSteps": { "prospect": [], "acton": [] },
+    "meetingOutcome": { "classification": "YES|NO|DECISION_DATE|DECISION_DATE_NOT_SECURED", "explanation" },
+    "qualification": { "classification": "...", "reasoning", "risks": [] }
+  }
 }`;
 }

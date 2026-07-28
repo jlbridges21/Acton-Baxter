@@ -43,17 +43,16 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
- * Total PEM generation lock / wall-clock budget for the multi-stage pipeline.
- * Per-stage OpenAI calls use getPemNeatStageTimeoutMs() (same env, or 90s default).
- * Route maxDuration is 300s on Vercel — keep this under that.
+ * Total PEM generation lock / wall-clock budget for the multi-stage async pipeline.
+ * Per-stage OpenAI calls use getPemNeatStageTimeoutMs().
  */
 export function getPemNeatProviderTimeoutMs(): number {
   const raw = process.env.PEM_NEAT_TIMEOUT_MS;
   if (raw && /^\d+$/.test(raw)) {
-    // Env is per-stage; total ≈ 3 stages + recovery headroom.
-    const stage = Math.min(Math.max(Number(raw), 30_000), 180_000);
-    return Math.min(stage * 3 + 30_000, 290_000);
+    const stage = Math.min(Math.max(Number(raw), 30_000), 300_000);
+    // Up to ~8 primary stages + recovery/correction headroom
+    return Math.min(stage * 10 + 60_000, 900_000);
   }
-  // Default: 90s/stage × 3 + buffer, under Vercel 300s maxDuration.
-  return 270_000;
+  // Default: allow long GPT-5.4 multi-stage runs (15 minutes).
+  return 900_000;
 }

@@ -7,6 +7,7 @@ import { recordCronInvocation } from "@/lib/jobs/cron-metrics";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 800;
 
 export async function POST(request: Request) {
   try {

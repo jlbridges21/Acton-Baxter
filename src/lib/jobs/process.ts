@@ -125,6 +125,21 @@ async function processSlackMonitoringReaction(job: ReportJob): Promise<void> {
   await handleMonitoringReaction(job.metadata);
 }
 
+async function processPemNeatGenerate(job: ReportJob): Promise<void> {
+  const pemNeatId = typeof job.metadata.pemNeatId === "string" ? job.metadata.pemNeatId : null;
+  if (!pemNeatId) {
+    throw new Error("pem_neat_generate job requires metadata.pemNeatId");
+  }
+  const { getPemNeatStore } = await import("@/lib/pem-neat/store");
+  const existing = await getPemNeatStore().get(pemNeatId);
+  // Prefer Next.js after() runner; cron is a durable backup if still generating.
+  if (!existing || existing.status !== "generating") {
+    return;
+  }
+  const { runPemNeatGenerationJob } = await import("@/lib/pem-neat/run-generation");
+  await runPemNeatGenerationJob(pemNeatId);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -141,6 +156,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processBaxterAlertDelivery(job);
     } else if (job.jobType === "slack_monitoring_reaction") {
       await processSlackMonitoringReaction(job);
+    } else if (job.jobType === "pem_neat_generate") {
+      await processPemNeatGenerate(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

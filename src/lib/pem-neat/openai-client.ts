@@ -595,10 +595,10 @@ export function getPemNeatReasoningEffort(): OpenAiReasoningEffort {
 export function getPemNeatStageTimeoutMs(): number {
   const raw = process.env.PEM_NEAT_TIMEOUT_MS;
   if (raw && /^\d+$/.test(raw)) {
-    return Math.min(Math.max(Number(raw), 30_000), 180_000);
+    return Math.min(Math.max(Number(raw), 30_000), 300_000);
   }
-  // Reasoning models need more headroom per stage than legacy chat defaults.
-  return 90_000;
+  // GPT-5.4 reasoning stages need substantial headroom.
+  return 180_000;
 }
 
 /** Exported for unit tests — HTTP → PEM error mapping. */
