@@ -3,6 +3,7 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { ASSESSMENT_CATEGORY_LABELS, PEM_NEAT_STANDARD_VERSION } from "./constants";
+import { getPemNeatProviderTimeoutMs, isAbortError } from "./errors";
 import { buildMockPemNeatResult } from "./mock-result";
 import {
   buildPemNeatSchemaHint,
@@ -66,8 +67,9 @@ async function callOpenAiJson(messages: Array<{ role: string; content: string }>
   }
 
   const model = (env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o").trim();
+  const timeoutMs = getPemNeatProviderTimeoutMs();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), env.EXTERNAL_API_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -100,10 +102,10 @@ async function callOpenAiJson(messages: Array<{ role: string; content: string }>
     }
 
     if (!response.ok) {
-      throw new AppError("PEM NEAT generation failed", {
-        code: "PEM_NEAT_PROVIDER_ERROR",
-        statusCode: 502,
-      });
+      throw new AppError(
+        "Unable to generate PEM NEAT. Baxter couldn't complete the analysis with the AI provider.",
+        { code: "PEM_NEAT_PROVIDER_ERROR", statusCode: 502 },
+      );
     }
 
     const content = data?.choices?.[0]?.message?.content;
@@ -120,6 +122,18 @@ async function callOpenAiJson(messages: Array<{ role: string; content: string }>
       inputTokens: data.usage?.prompt_tokens ?? null,
       outputTokens: data.usage?.completion_tokens ?? null,
     };
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new AppError(
+        "Unable to generate PEM NEAT. Analysis timed out — your transcript has been saved. Try again.",
+        { code: "PEM_NEAT_TIMEOUT", statusCode: 504, cause: error },
+      );
+    }
+    if (error instanceof AppError) throw error;
+    throw new AppError(
+      "Unable to generate PEM NEAT. Baxter couldn't complete the analysis. Your transcript has been saved.",
+      { code: "PEM_NEAT_PROVIDER_ERROR", statusCode: 502, cause: error },
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -128,7 +142,9 @@ async function callOpenAiJson(messages: Array<{ role: string; content: string }>
 /**
  * Purpose-built PEM NEAT generation. Does not route through Knowledge Q&A.
  */
-export async function generatePemNeat(input: GeneratePemNeatInput): Promise<GeneratePemNeatOutput> {
+export async function generatePemNeat(
+  input: GeneratePemNeatInput,
+): Promise<GeneratePemNeatOutput> {
   const started = Date.now();
   const stage0 = stage0ValidateTranscript(input.transcript);
   if (!stage0.ok) {
@@ -191,10 +207,10 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
   try {
     parsedJson = JSON.parse(rawContent);
   } catch {
-    throw new AppError("PEM NEAT generation returned invalid JSON", {
-      code: "PEM_NEAT_INVALID_JSON",
-      statusCode: 502,
-    });
+    throw new AppError(
+      "Baxter generated an incomplete analysis and could not safely save it. Try again.",
+      { code: "PEM_NEAT_INVALID_JSON", statusCode: 502 },
+    );
   }
 
   let result: PemNeatStructuredResult;
@@ -226,45 +242,24 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
           ? outputTokens + repair.outputTokens
           : (outputTokens ?? repair.outputTokens);
     } catch {
-      throw new AppError("PEM NEAT output failed validation", {
-        code: "PEM_NEAT_SCHEMA_INVALID",
-        statusCode: 502,
-      });
+      throw new AppError(
+        "Baxter generated an incomplete analysis and could not safely save it. Try again.",
+        { code: "PEM_NEAT_SCHEMA_INVALID", statusCode: 502 },
+      );
     }
   }
 
   const checkIssues = runDeterministicNeatChecks(result, input.transcript);
-  if (checkIssues.length) {
-    result = {
-      ...result,
-      analysisMetadata: {
-        ...result.analysisMetadata,
-        limitations: [
-          ...(result.analysisMetadata.limitations ?? []),
-          ...checkIssues.map((i) => `QC: ${i}`),
-        ],
-        stage0Notes: [...(result.analysisMetadata.stage0Notes ?? []), ...stage0Notes],
-      },
-    };
-    const hard = checkIssues.filter((i) => i.startsWith("HARD:"));
-    if (hard.length) {
-      throw new AppError("PEM NEAT failed quality checks", {
-        code: "PEM_NEAT_QC_FAILED",
-        statusCode: 502,
-      });
-    }
-  } else {
-    result = {
-      ...result,
-      analysisMetadata: {
-        ...result.analysisMetadata,
-        stage0Notes: [...(result.analysisMetadata.stage0Notes ?? []), ...stage0Notes],
-      },
-    };
-  }
-
   result = {
     ...result,
+    analysisMetadata: {
+      ...result.analysisMetadata,
+      limitations: [
+        ...(result.analysisMetadata.limitations ?? []),
+        ...checkIssues.filter((i) => !i.startsWith("HARD:")).map((i) => `QC: ${i}`),
+      ],
+      stage0Notes: [...(result.analysisMetadata.stage0Notes ?? []), ...stage0Notes],
+    },
     metadata: {
       ...result.metadata,
       prospectName: input.prospectName,
@@ -289,3 +284,5 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
 export function getPemNeatStandardVersion() {
   return PEM_NEAT_STANDARD_VERSION;
 }
+
+export const PEM_NEAT_ROUTE_MAX_DURATION_SECONDS = 180;

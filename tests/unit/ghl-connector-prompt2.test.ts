@@ -253,7 +253,7 @@ describe("GHL Write Permissions", () => {
   const salespersonUser: Profile = {
     id: "sales-1",
     full_name: "Sales User",
-    role: "salesperson",
+    role: "user",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };

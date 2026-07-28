@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { AdminUsersClient } from "@/components/admin/admin-users-client";
 import { isAdminRole } from "@/lib/auth/roles";
+import { isSuperAdmin } from "@/lib/auth/super-admin";
 import { requireActiveUser } from "@/lib/auth/session";
+import { listDepartments } from "@/lib/org/departments";
 import { getReportStore } from "@/lib/research/report-store";
 import { createServiceClient } from "@/lib/supabase/admin";
 
@@ -12,7 +14,12 @@ export default async function AdminUsersPage() {
     redirect("/dashboard");
   }
 
-  const profiles = await getReportStore().listProfiles();
+  const [profiles, departments] = await Promise.all([
+    getReportStore().listProfiles(),
+    listDepartments({ includeInactive: true }),
+  ]);
+
+  const departmentNameById = new Map(departments.map((d) => [d.id, d.name]));
   const emailById = new Map<string, string>();
 
   try {
@@ -32,14 +39,18 @@ export default async function AdminUsersPage() {
   const enriched = profiles.map((profile) => ({
     ...profile,
     email: emailById.get(profile.id) ?? null,
+    department_name:
+      profile.department_name ??
+      (profile.department_id ? (departmentNameById.get(profile.department_id) ?? null) : null),
   }));
 
   return (
     <AppShell user={user}>
       <AdminUsersClient
         initialProfiles={enriched}
+        initialDepartments={departments}
         viewerEmail={user.email}
-        viewerIsSuperAdmin={user.email.trim().toLowerCase() === "baxter@actonadu.com"}
+        viewerIsSuperAdmin={isSuperAdmin(user)}
       />
     </AppShell>
   );

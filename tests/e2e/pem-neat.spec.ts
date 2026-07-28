@@ -31,16 +31,16 @@ test("PEM NEAT create, generate, reopen from library", async ({ page }) => {
   await page.waitForURL(/\/pem-neats\/[0-9a-f-]+$/, { timeout: 60_000 });
 
   await expect(page.getByRole("heading", { name: "Alex Prospect" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "NEAT" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "BuilderTrend Custom Fields" })).toBeVisible();
-  await expect(page.getByText("Notes — Sales intelligence")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "NEAT" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "BuilderTrend Custom Fields" })).toBeVisible();
+  await expect(page.getByText(/Customer Story|SALES INTELLIGENCE/i).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "BuilderTrend Custom Fields" }).click();
-  await expect(page.getByText("BuilderTrend Custom Fields").first()).toBeVisible();
-  await expect(page.getByText(/copy\/paste|handoff/i).first()).toBeVisible();
+  await page.getByRole("tab", { name: "BuilderTrend Custom Fields" }).click();
+  await expect(page.getByText("Notes for internal users").first()).toBeVisible();
+  await expect(page.getByText(/Copy All|copy\/paste|handoff/i).first()).toBeVisible();
 
-  await page.getByRole("button", { name: "NEAT" }).click();
-  await expect(page.getByText("Notes — Sales intelligence")).toBeVisible();
+  await page.getByRole("tab", { name: "NEAT" }).click();
+  await expect(page.getByText(/Customer Story|SALES INTELLIGENCE/i).first()).toBeVisible();
 
   const detailUrl = page.url();
   await page.goto("/pem-neats");
@@ -48,5 +48,5 @@ test("PEM NEAT create, generate, reopen from library", async ({ page }) => {
   await page.getByRole("link", { name: "Open" }).first().click();
   await expect(page).toHaveURL(detailUrl);
   await expect(page.getByRole("heading", { name: "Alex Prospect" })).toBeVisible();
-  await expect(page.getByText("Notes — Sales intelligence")).toBeVisible();
+  await expect(page.getByText(/Customer Story|SALES INTELLIGENCE/i).first()).toBeVisible();
 });

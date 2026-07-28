@@ -14,6 +14,8 @@ export type Profile = {
   id: string;
   full_name: string;
   role: UserRole;
+  department_id?: string | null;
+  department_name?: string | null;
   created_at: string;
   updated_at: string;
 };

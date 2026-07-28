@@ -9,14 +9,23 @@ type PageProps = { params: Promise<{ id: string }> };
 export default async function PemNeatDetailPage({ params }: PageProps) {
   const user = await requireActiveUser();
   const { id } = await params;
-  const item = await getPemNeatStore().get(id);
+  const store = getPemNeatStore();
+  const item = await store.get(id);
   if (!item) {
     notFound();
   }
 
+  let generationCount: number | null = null;
+  try {
+    const generations = await store.listGenerations(id);
+    generationCount = generations.length;
+  } catch {
+    generationCount = null;
+  }
+
   return (
     <AppShell user={user}>
-      <PemNeatResultClient item={item} />
+      <PemNeatResultClient item={item} generationCount={generationCount} />
     </AppShell>
   );
 }

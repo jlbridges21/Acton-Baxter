@@ -40,7 +40,7 @@ export default defineConfig({
       E2E_TEST_USER_ID: "00000000-0000-4000-8000-000000000001",
       E2E_TEST_USER_EMAIL: "test@actonadu.local",
       E2E_TEST_USER_NAME: "Test Salesperson",
-      E2E_TEST_USER_ROLE: "salesperson",
+      E2E_TEST_USER_ROLE: "user",
     },
   },
 });

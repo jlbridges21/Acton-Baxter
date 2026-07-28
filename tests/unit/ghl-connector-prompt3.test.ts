@@ -142,7 +142,7 @@ describe("GHL Prompt 3 — write permission UX", () => {
     const sales: Profile = {
       id: "u1",
       full_name: "Sales",
-      role: "salesperson",
+      role: "user",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };

@@ -35,8 +35,8 @@ export function canUserWriteGhl(user: Profile | null): GhlWritePermission {
     };
   }
 
-  // Salespeople can write if enabled
-  if (user.role === "salesperson") {
+  // Standard users can write if enabled (GHL policy role "salesperson" is separate from Baxter profile role)
+  if (user.role === "user") {
     const salesWritesEnabled =
       (process.env.ENABLE_GHL_WRITES_FOR_SALES ?? "").toLowerCase() === "true" ||
       process.env.ENABLE_GHL_WRITES_FOR_SALES === "1";
@@ -76,6 +76,7 @@ function getAllowedActionsForRole(role: string): GhlActionType[] {
   ];
 
   // All roles with write access get the same actions for now
+  // GHL access-policy uses "salesperson" as its own role concept (not Baxter profile.role).
   if (role === "admin" || role === "salesperson") {
     return baseActions;
   }

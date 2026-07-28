@@ -104,10 +104,10 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/admin/branding"),
     },
     {
-      href: "/admin/knowledge/settings",
+      href: "/admin/settings",
       label: "Settings",
       icon: Settings,
-      match: (pathname) => pathname.startsWith("/admin/knowledge/settings"),
+      match: (pathname) => pathname === "/admin/settings" || pathname.startsWith("/admin/settings/"),
     },
   ];
 

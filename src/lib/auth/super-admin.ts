@@ -16,21 +16,22 @@ export function isSuperAdminEmail(email: string | null | undefined): boolean {
 
 /**
  * Check if a user is a super-admin.
- * Super-admin = bootstrap email match (baxter@actonadu.com).
+ * Super-admin = bootstrap email match OR profile.role === 'super_admin'.
  */
 export function isSuperAdmin(user: {
   email?: string | null;
   profile?: { role?: string };
 }): boolean {
-  return isSuperAdminEmail(user.email);
+  return isSuperAdminEmail(user.email) || user.profile?.role === "super_admin";
 }
 
 /**
- * Check if a user is an admin (has admin role).
+ * Check if a user is an admin (has admin or super_admin role).
  * All admins can edit rulebook drafts.
  */
 export function isAdminRole(user: { profile?: { role?: string } }): boolean {
-  return user.profile?.role === "admin";
+  const role = user.profile?.role;
+  return role === "admin" || role === "super_admin";
 }
 
 /**

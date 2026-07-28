@@ -1,4 +1,4 @@
-import { isAppAccessRole } from "@/lib/auth/roles";
+import { isAdminRole, isAppAccessRole } from "@/lib/auth/roles";
 import { getEnv } from "@/lib/env";
 import { AuthenticationError, AuthorizationError } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
@@ -22,7 +22,7 @@ function testBypassUser(): AuthUser | null {
   const id = env.E2E_TEST_USER_ID || "00000000-0000-4000-8000-000000000001";
   const email = env.E2E_TEST_USER_EMAIL || "test@actonadu.local";
   const fullName = env.E2E_TEST_USER_NAME || "Test Salesperson";
-  const role = (env.E2E_TEST_USER_ROLE || "salesperson") as UserRole;
+  const role = (env.E2E_TEST_USER_ROLE || "user") as UserRole;
   const now = new Date().toISOString();
 
   return {
@@ -85,7 +85,7 @@ export async function getOptionalUser(): Promise<AuthUser | null> {
   }
 }
 
-/** Authenticated user with salesperson or admin access (not pending new_user). */
+/** Authenticated user with user, admin, or super_admin access (not pending new_user). */
 export async function requireActiveUser(): Promise<AuthUser> {
   const user = await requireUser();
   if (!isAppAccessRole(user.profile.role)) {
@@ -98,7 +98,7 @@ export async function requireActiveUser(): Promise<AuthUser> {
 
 export async function requireAdmin(): Promise<AuthUser> {
   const user = await requireActiveUser();
-  if (user.profile.role !== "admin") {
+  if (!isAdminRole(user.profile.role)) {
     throw new AuthorizationError("Admin access required");
   }
   return user;

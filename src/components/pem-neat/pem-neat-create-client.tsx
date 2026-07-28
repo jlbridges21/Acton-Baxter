@@ -62,16 +62,27 @@ export function PemNeatCreateClient({
       });
       const data = (await response.json()) as {
         id?: string;
+        status?: string;
+        message?: string;
         error?: { message?: string };
       };
+
+      if (data.id) {
+        router.push(`/pem-neats/${data.id}`);
+        router.refresh();
+        return;
+      }
+
       if (!response.ok) {
-        throw new Error(data.error?.message ?? "Generation failed");
+        throw new Error(
+          data.error?.message ??
+            "We couldn't save your PEM NEAT. Check your connection and try again.",
+        );
       }
-      if (!data.id) {
-        throw new Error("Save succeeded but no record id was returned");
-      }
-      router.push(`/pem-neats/${data.id}`);
-      router.refresh();
+
+      throw new Error(
+        "Your transcript may have been saved, but we couldn't open the result page. Try again or check the library.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
       setSubmitting(false);

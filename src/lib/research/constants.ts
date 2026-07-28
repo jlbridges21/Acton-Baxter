@@ -1,5 +1,5 @@
 export const REPORT_STATUSES = ["queued", "researching", "complete", "failed"] as const;
-export const USER_ROLES = ["admin", "salesperson", "new_user"] as const;
+export const USER_ROLES = ["new_user", "user", "admin", "super_admin"] as const;
 export const CONFIDENCE_LEVELS = ["high", "medium", "low", "unavailable"] as const;
 export const CONFLICT_SEVERITIES = ["information", "warning", "critical"] as const;
 export const SOURCE_TYPES = [

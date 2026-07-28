@@ -62,7 +62,7 @@ describe("knowledge permissions and tags", () => {
   });
 
   it("blocks non-admins from managing knowledge", () => {
-    expect(() => assertCanManageKnowledge("salesperson")).toThrow(AuthorizationError);
+    expect(() => assertCanManageKnowledge("user")).toThrow(AuthorizationError);
   });
 
   it("only allows employees to read approved internal entries", () => {

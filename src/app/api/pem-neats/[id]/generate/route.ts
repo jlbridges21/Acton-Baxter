@@ -7,6 +7,8 @@ import { getPemNeatStore } from "@/lib/pem-neat/store";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+export const maxDuration = 180;
+
 /** Regenerate from the stored original transcript. Failure preserves last successful result. */
 export async function POST(_request: Request, context: RouteContext) {
   try {

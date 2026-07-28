@@ -4,8 +4,13 @@ import { RateLimitError, AppError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createPemNeatInputSchema } from "@/lib/pem-neat/schemas";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
-import { generatePemNeat, getPemNeatStandardVersion } from "@/lib/pem-neat/generate";
+import {
+  generatePemNeat,
+  getPemNeatStandardVersion,
+} from "@/lib/pem-neat/generate";
 import { resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
+
+export const maxDuration = 180;
 
 export async function GET(request: Request) {
   try {
@@ -24,6 +29,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  let createdId: string | null = null;
   try {
     const user = await requireActiveUser();
     const rate = checkRateLimit(`pem-neat-create:${user.id}`, { limit: 10, windowMs: 60_000 });
@@ -35,7 +41,7 @@ export async function POST(request: Request) {
     const parsed = createPemNeatInputSchema.parse(body);
     const salesperson = await resolveSalespersonDisplayName(parsed.salespersonUserId);
     if (!salesperson) {
-      throw new AppError("Select a valid salesperson from Baxter users", {
+      throw new AppError("Select a valid salesperson from the Sales department", {
         code: "VALIDATION_ERROR",
         statusCode: 400,
       });
@@ -50,6 +56,7 @@ export async function POST(request: Request) {
       transcript: parsed.transcript,
       createdBy: user.id,
     });
+    createdId = record.id;
 
     await store.markGenerating(record.id);
 
@@ -88,17 +95,41 @@ export async function POST(request: Request) {
 
       return jsonOk({ id: saved.id, status: saved.status }, { status: 201 });
     } catch (genError) {
-      const message = genError instanceof Error ? genError.message : "Generation failed";
-      await store.saveGenerationFailure(record.id, {
-        errorMessage: message.slice(0, 500),
-      });
+      const message =
+        genError instanceof AppError
+          ? genError.message
+          : "Unable to generate PEM NEAT. Baxter couldn't complete the analysis. Your transcript has been saved.";
+      try {
+        await store.saveGenerationFailure(record.id, {
+          errorMessage: message.slice(0, 500),
+        });
+      } catch (persistError) {
+        console.error("[pem-neat] failed to persist generation failure", {
+          id: record.id,
+          code: persistError instanceof AppError ? persistError.code : "UNKNOWN",
+        });
+      }
       console.error("[pem-neat] generation failed", {
         id: record.id,
         code: genError instanceof AppError ? genError.code : "UNKNOWN",
       });
-      throw genError;
+      // Record persisted — return id so the client can open Retry without re-pasting.
+      return jsonOk(
+        {
+          id: record.id,
+          status: "failed",
+          message,
+        },
+        { status: 201 },
+      );
     }
   } catch (error) {
+    if (createdId) {
+      console.error("[pem-neat] create path error after persist", {
+        id: createdId,
+        code: error instanceof AppError ? error.code : "UNKNOWN",
+      });
+    }
     return jsonError(error, "POST /api/pem-neats");
   }
 }

@@ -9,8 +9,16 @@ import {
   createPemNeatInputSchema,
   parsePemNeatStructuredResult,
   pemNeatStructuredResultSchema,
+  sanitizeCustomerEmailBody,
   validateFollowUpEmailCustomerSafe,
 } from "@/lib/pem-neat/schemas";
+import {
+  BUILDERTREND_FIELD_DEFS,
+  buildCopyAllFieldsText,
+  formatBudgetDisplay,
+  getCopyableValue,
+  getDisplayValue,
+} from "@/lib/pem-neat/buildertrend-display";
 import { buildMockPemNeatResult } from "@/lib/pem-neat/mock-result";
 import { getPemNeatStore, resetPemNeatMemoryStoreForTests } from "@/lib/pem-neat/store";
 import { prepareTranscriptForModel, stage0ValidateTranscript } from "@/lib/pem-neat/transcript";
@@ -65,21 +73,23 @@ describe("PEM NEAT schema", () => {
     expect(() => pemNeatStructuredResultSchema.parse(bad)).toThrow();
   });
 
-  it("rejects invalid assessment score", () => {
+  it("clamps out-of-range assessment scores into 1–10", () => {
     const result = buildMockPemNeatResult({
       prospectName: "Alex Prospect",
       advisorName: "Test Salesperson",
     });
     result.assessment.categories[0]!.score = 11;
-    expect(() => pemNeatStructuredResultSchema.parse(result)).toThrow();
+    const parsed = pemNeatStructuredResultSchema.parse(result);
+    expect(parsed.assessment.categories[0]?.score).toBe(10);
   });
 
-  it("rejects invalid BuilderTrend enum", () => {
-    expect(() =>
-      buildertrendFieldsSchema.parse({
-        preferredContactMethod: "Carrier pigeon",
-      }),
-    ).toThrow();
+  it("coerces invalid BuilderTrend enum fields to null / empty", () => {
+    const parsed = buildertrendFieldsSchema.parse({
+      preferredContactMethod: "Carrier pigeon",
+      bedBathCount: "9 Bed / 9 Bath",
+    });
+    expect(parsed.preferredContactMethod).toBeNull();
+    expect(parsed.bedBathCount).toBeNull();
   });
 
   it("accepts null BuilderTrend fields", () => {
@@ -105,13 +115,42 @@ describe("PEM NEAT schema", () => {
     expect(issues.length).toBeGreaterThan(0);
   });
 
-  it("requires all assessment categories", () => {
+  it("sanitizes internal email language instead of failing parse", () => {
+    const result = buildMockPemNeatResult({
+      prospectName: "Alex Prospect",
+      advisorName: "Test Salesperson",
+    });
+    result.followUpEmail.body =
+      "Thanks for meeting. Your Type 1 pain is clear and qualification is STRONGLY_QUALIFIED.";
+    const parsed = parsePemNeatStructuredResult(result);
+    expect(parsed.followUpEmail.body).not.toMatch(/Type 1 pain/i);
+    expect(parsed.followUpEmail.body).not.toMatch(/STRONGLY_QUALIFIED/);
+    expect(parsed.analysisMetadata.limitations?.some((l) => l.includes("Sanitized"))).toBe(true);
+  });
+
+  it("sanitizes customer email body helper", () => {
+    const sanitized = sanitizeCustomerEmailBody(
+      "Your Type 1 pain and qualification score / 10 need coaching.",
+    );
+    expect(sanitized).not.toMatch(/Type 1 pain/i);
+    expect(sanitized).not.toMatch(/score\s*\/\s*10/i);
+  });
+
+  it("normalizes partial assessment categories to 12", () => {
     const result = buildMockPemNeatResult({
       prospectName: "Alex Prospect",
       advisorName: "Test Salesperson",
     });
     result.assessment.categories = result.assessment.categories.slice(0, 11);
-    expect(() => parsePemNeatStructuredResult(result)).toThrow();
+    const parsed = parsePemNeatStructuredResult(result);
+    expect(parsed.assessment.categories).toHaveLength(12);
+    expect(new Set(parsed.assessment.categories.map((c) => c.key)).size).toBe(12);
+  });
+
+  it("coerces customerBudget currency string to number", () => {
+    const parsed = buildertrendFieldsSchema.parse({ customerBudget: "$1,000,000" });
+    expect(parsed.customerBudget).toBe(1000000);
+    expect(formatBudgetDisplay(parsed.customerBudget)).toBe("$1,000,000");
   });
 
   it("keeps Type 1 and Type 2 distinct in fixture", () => {
@@ -131,6 +170,38 @@ describe("PEM NEAT schema", () => {
       expect(outcome).toMatch(/^[A-Z_]+$/);
     }
     expect(ASSESSMENT_CATEGORY_KEYS).toHaveLength(12);
+  });
+});
+
+describe("BuilderTrend display helpers", () => {
+  it("shows Not established for empty display but empty copyable value", () => {
+    const fields = buildertrendFieldsSchema.parse({});
+    const def = BUILDERTREND_FIELD_DEFS.find((d) => d.key === "customerStory")!;
+    expect(getDisplayValue(fields, def)).toBe("Not established");
+    expect(getCopyableValue(fields, def)).toBe("");
+  });
+
+  it("copies customerBudget without dollar sign", () => {
+    const fields = buildertrendFieldsSchema.parse({ customerBudget: 1000000 });
+    const def = BUILDERTREND_FIELD_DEFS.find((d) => d.key === "customerBudget")!;
+    expect(getDisplayValue(fields, def)).toBe("$1,000,000");
+    expect(getCopyableValue(fields, def)).toBe("1000000");
+  });
+
+  it("copies priorities as newline bullets", () => {
+    const fields = buildertrendFieldsSchema.parse({
+      customerPriorities: ["Communication", "Quality"],
+    });
+    const def = BUILDERTREND_FIELD_DEFS.find((d) => d.key === "customerPriorities")!;
+    expect(getCopyableValue(fields, def)).toBe("- Communication\n- Quality");
+    expect(buildCopyAllFieldsText(fields)).toContain("Customer Priorities:\n- Communication");
+  });
+
+  it("omits empty fields from copy all", () => {
+    const fields = buildertrendFieldsSchema.parse({ customerStory: "ADU for parent" });
+    const text = buildCopyAllFieldsText(fields);
+    expect(text).toContain("Customer Story:\nADU for parent");
+    expect(text).not.toContain("Square Feet:");
   });
 });
 
@@ -177,14 +248,14 @@ describe("PEM NEAT stage 0 and long transcript", () => {
 });
 
 describe("PEM NEAT deterministic QC", () => {
-  it("hard-fails internal email language", () => {
+  it("flags internal sales terminology in follow-up email QC", () => {
     const result = buildMockPemNeatResult({
       prospectName: "Alex Prospect",
       advisorName: "Test Salesperson",
     });
     result.followUpEmail.body = "Your Type 1 pain score is 10/10.";
     const issues = runDeterministicNeatChecks(result, SAMPLE_TRANSCRIPT);
-    expect(issues.some((i) => i.startsWith("HARD:"))).toBe(true);
+    expect(issues.some((i) => i.includes("internal sales terminology"))).toBe(true);
   });
 
   it("passes mock fixture against sample transcript grounding", () => {

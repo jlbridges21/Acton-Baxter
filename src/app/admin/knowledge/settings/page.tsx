@@ -59,7 +59,7 @@ export default async function KnowledgeSettingsPage() {
     <AppShell user={user}>
       <Suspense fallback={<div>Loading…</div>}>
         <KnowledgeCenterShell
-          title="Settings"
+          title="Knowledge Settings"
           subtitle="Knowledge Center configuration at a glance."
           activeView="settings"
           hideTopActions

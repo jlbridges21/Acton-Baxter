@@ -12,7 +12,7 @@ export function runDeterministicNeatChecks(
   const lowerTranscript = transcript.toLowerCase();
 
   for (const msg of validateFollowUpEmailCustomerSafe(result.followUpEmail.body)) {
-    issues.push(`HARD: ${msg}`);
+    issues.push(msg);
   }
 
   // Exact quotes in coaching/evidence longer than 40 chars should appear in transcript

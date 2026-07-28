@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   ASSESSMENT_CATEGORY_KEYS,
+  ASSESSMENT_CATEGORY_LABELS,
   ASSESSMENT_STATUSES,
   BED_BATH_COUNTS,
   CUSTOMER_PRIORITIES,
@@ -11,9 +12,30 @@ import {
   PROJECT_FACT_STATUSES,
   PROJECT_TYPES,
   QUALIFICATION_LEVELS,
+  type AssessmentCategoryKey,
 } from "./constants";
 
 const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
+
+/** Coerce currency/strings from models into number | null. */
+export const nullableNumberSchema = z.preprocess((value) => {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.-]/g, "");
+    if (!cleaned) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}, z.number().nullable());
+
+const nullableScoreSchema = z.preprocess((value) => {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(Math.min(10, Math.max(1, n)));
+}, z.number().int().min(1).max(10).nullable());
 
 export const evidenceTypeSchema = z.enum(EVIDENCE_TYPES);
 export const assessmentStatusSchema = z.enum(ASSESSMENT_STATUSES);
@@ -123,8 +145,8 @@ export const paloDetailSchema = z.object({
 export const assessmentCategorySchema = z.object({
   key: z.enum(ASSESSMENT_CATEGORY_KEYS),
   label: z.string().min(1),
-  score: z.number().int().min(1).max(10).nullable(),
-  status: assessmentStatusSchema,
+  score: nullableScoreSchema,
+  status: assessmentStatusSchema.catch("NOT_DETERMINABLE"),
   evidence: z.string().nullable().optional(),
   whatWorked: z.string().nullable().optional(),
   coachingOpportunity: z.string().nullable().optional(),
@@ -146,13 +168,16 @@ export const projectFactSchema = z.object({
  */
 export const buildertrendFieldsSchema = z.object({
   notesForInternalUsers: z.string().nullable().default(null),
-  squareFeet: z.number().nullable().default(null),
+  squareFeet: nullableNumberSchema.default(null),
   /** Customer's working/top-end budget as a number when defensible; else null. */
-  customerBudget: z.number().nullable().default(null),
+  customerBudget: nullableNumberSchema.default(null),
   customerStory: z.string().nullable().default(null),
   customerPain1: z.string().nullable().default(null),
   customerPain: z.string().nullable().default(null),
-  customerPriorities: z.array(z.enum(CUSTOMER_PRIORITIES)).default([]),
+  customerPriorities: z
+    .array(z.enum(CUSTOMER_PRIORITIES))
+    .catch([])
+    .default([]),
   customerPrioritiesOther: z.string().nullable().default(null),
   designHandoff: z.string().nullable().default(null),
   decisionMakingProcess: z.string().nullable().default(null),
@@ -165,19 +190,23 @@ export const buildertrendFieldsSchema = z.object({
   internalStrategyNotes: z.string().nullable().default(null),
   projectIntelligence: z.string().nullable().default(null),
   scheduleGoals: z.string().nullable().default(null),
-  preferredContactMethod: z.enum(PREFERRED_CONTACT_METHODS).nullable().default(null),
+  preferredContactMethod: z
+    .enum(PREFERRED_CONTACT_METHODS)
+    .nullable()
+    .catch(null)
+    .default(null),
   salesCommitments: z.string().nullable().default(null),
   personalityTraits: z.string().nullable().default(null),
   assumptionsDuringSales: z.string().nullable().default(null),
   scopeClarifications: z.string().nullable().default(null),
-  bedBathCount: z.enum(BED_BATH_COUNTS).nullable().default(null),
+  bedBathCount: z.enum(BED_BATH_COUNTS).nullable().catch(null).default(null),
   accessibilityRequirement: z.string().nullable().default(null),
   cityZoningFeedback: z.string().nullable().default(null),
   accessConstructionIssue: z.string().nullable().default(null),
   responsivenessExpected: z.string().nullable().default(null),
   nextSteps: z.string().nullable().default(null),
   recommendedBrModels: z.string().nullable().default(null),
-  projectType: z.enum(PROJECT_TYPES).nullable().default(null),
+  projectType: z.enum(PROJECT_TYPES).nullable().catch(null).default(null),
   projectTypeOther: z.string().nullable().default(null),
 });
 
@@ -240,7 +269,8 @@ export const salesIntelligenceSchema = z.object({
 });
 
 export const assessmentSchema = z.object({
-  categories: z.array(assessmentCategorySchema).min(12).max(12),
+  /** Accept partial lists; parsePemNeatStructuredResult fills missing categories. */
+  categories: z.array(assessmentCategorySchema).min(1).max(20),
   topStrengths: z.array(z.string()).max(3).default([]),
   topImprovements: z.array(z.string()).max(3).default([]),
   oneThing: z.string().min(1),
@@ -364,27 +394,73 @@ export function assertAssessmentCategoriesComplete(categories: AssessmentCategor
   return missing.map((k) => `Missing assessment category: ${k}`);
 }
 
+function placeholderCategory(key: AssessmentCategoryKey): AssessmentCategory {
+  return {
+    key,
+    label: ASSESSMENT_CATEGORY_LABELS[key],
+    score: null,
+    status: "NOT_DETERMINABLE",
+    evidence: "Category was missing from model output; marked not determinable.",
+    whatWorked: null,
+    coachingOpportunity: null,
+    timestamps: [],
+  };
+}
+
+/** Ensure exactly the 12 required categories (fill gaps; drop unknown duplicates). */
+export function normalizeAssessmentCategories(
+  categories: AssessmentCategory[],
+): AssessmentCategory[] {
+  const byKey = new Map<AssessmentCategoryKey, AssessmentCategory>();
+  for (const category of categories) {
+    if (!byKey.has(category.key)) {
+      byKey.set(category.key, category);
+    }
+  }
+  return ASSESSMENT_CATEGORY_KEYS.map(
+    (key) => byKey.get(key) ?? placeholderCategory(key),
+  );
+}
+
+/** Soften internal sales language in customer-facing email without rejecting the NEAT. */
+export function sanitizeCustomerEmailBody(body: string): string {
+  return body
+    .replace(/\bType\s*[12]\s*pain\b/gi, "priorities")
+    .replace(/\b(STRONGLY_QUALIFIED|QUALIFIED_WITH_RISKS|EARLY_EXPLORATORY|WEAKLY_QUALIFIED|DISQUALIFIED)\b/g, "")
+    .replace(/\bqualification\b/gi, "fit")
+    .replace(/\bcoaching\b/gi, "follow-up")
+    .replace(/\bscore\s*\/\s*10\b/gi, "")
+    .replace(/\bPALO\b/g, "meeting structure")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export function parsePemNeatStructuredResult(raw: unknown): PemNeatStructuredResult {
   const parsed = pemNeatStructuredResultSchema.parse(raw);
-  const catIssues = assertAssessmentCategoriesComplete(parsed.assessment.categories);
-  if (catIssues.length) {
-    throw new z.ZodError(
-      catIssues.map((msg) => ({
-        code: "custom" as const,
-        message: msg,
-        path: ["assessment", "categories"],
-      })),
-    );
-  }
+  parsed.assessment.categories = normalizeAssessmentCategories(parsed.assessment.categories);
+
   const emailIssues = validateFollowUpEmailCustomerSafe(parsed.followUpEmail.body);
   if (emailIssues.length) {
-    throw new z.ZodError(
-      emailIssues.map((msg) => ({
-        code: "custom" as const,
-        message: msg,
-        path: ["followUpEmail", "body"],
-      })),
+    parsed.followUpEmail = {
+      ...parsed.followUpEmail,
+      body: sanitizeCustomerEmailBody(parsed.followUpEmail.body),
+    };
+    parsed.analysisMetadata = {
+      ...parsed.analysisMetadata,
+      limitations: [
+        ...(parsed.analysisMetadata.limitations ?? []),
+        ...emailIssues.map((i) => `Sanitized follow-up email: ${i}`),
+      ],
+    };
+  }
+
+  // Truncate overlong internal notes rather than failing the whole NEAT.
+  if (parsed.internalOpportunityNotes.length > INTERNAL_NOTES_MAX_CHARS) {
+    parsed.internalOpportunityNotes = parsed.internalOpportunityNotes.slice(
+      0,
+      INTERNAL_NOTES_MAX_CHARS,
     );
   }
+
   return parsed;
 }

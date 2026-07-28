@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getEnv } from "@/lib/env";
+import { NotFoundError } from "@/lib/errors";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { PEM_NEAT_STANDARD_VERSION } from "./constants";
+import { pemNeatStoreError } from "./errors";
 import type {
   CreatePemNeatRecordInput,
   PemNeatGenerationRow,
@@ -157,7 +159,7 @@ class MemoryPemNeatStore implements PemNeatStore {
 
   async markGenerating(id: string): Promise<PemNeatRecord> {
     const existing = getMemoryState().neats.get(id);
-    if (!existing) throw new Error("PEM NEAT not found");
+    if (!existing) throw new NotFoundError("PEM NEAT not found");
     const updated: PemNeatRecord = {
       ...existing,
       status: "generating",
@@ -173,7 +175,7 @@ class MemoryPemNeatStore implements PemNeatStore {
     input: SaveGenerationSuccessInput,
   ): Promise<PemNeatRecord> {
     const existing = getMemoryState().neats.get(id);
-    if (!existing) throw new Error("PEM NEAT not found");
+    if (!existing) throw new NotFoundError("PEM NEAT not found");
     const timestamp = nowIso();
     const gens = getMemoryState().generations.get(id) ?? [];
     const generationIndex = gens.length + 1;
@@ -225,7 +227,7 @@ class MemoryPemNeatStore implements PemNeatStore {
     input: SaveGenerationFailureInput,
   ): Promise<PemNeatRecord> {
     const existing = getMemoryState().neats.get(id);
-    if (!existing) throw new Error("PEM NEAT not found");
+    if (!existing) throw new NotFoundError("PEM NEAT not found");
     const timestamp = nowIso();
     const gens = getMemoryState().generations.get(id) ?? [];
     gens.push({
@@ -317,14 +319,14 @@ class SupabasePemNeatStore implements PemNeatStore {
       })
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error, "Unable to create PEM NEAT");
     return mapRow(data as Record<string, unknown>);
   }
 
   async get(id: string): Promise<PemNeatRecord | null> {
     const supabase = createServiceClient();
     const { data, error } = await supabase.from("pem_neats").select("*").eq("id", id).maybeSingle();
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error, "Unable to load PEM NEAT");
     return data ? mapRow(data as Record<string, unknown>) : null;
   }
 
@@ -358,7 +360,7 @@ class SupabasePemNeatStore implements PemNeatStore {
     }
 
     const { data, error } = await query;
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error);
     return (data ?? []).map((row) => toListItem(mapRow(row as Record<string, unknown>)));
   }
 
@@ -370,7 +372,7 @@ class SupabasePemNeatStore implements PemNeatStore {
       .eq("id", id)
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error);
     return mapRow(data as Record<string, unknown>);
   }
 
@@ -380,7 +382,7 @@ class SupabasePemNeatStore implements PemNeatStore {
   ): Promise<PemNeatRecord> {
     const supabase = createServiceClient();
     const existing = await this.get(id);
-    if (!existing) throw new Error("PEM NEAT not found");
+    if (!existing) throw new NotFoundError("PEM NEAT not found");
 
     const { data: genRows } = await supabase
       .from("pem_neat_generations")
@@ -404,7 +406,7 @@ class SupabasePemNeatStore implements PemNeatStore {
       input_tokens: input.inputTokens ?? null,
       output_tokens: input.outputTokens ?? null,
     });
-    if (genError) throw new Error(genError.message);
+    if (genError) throw pemNeatStoreError(genError, "Unable to save PEM NEAT generation history");
 
     const timestamp = nowIso();
     const { data, error } = await supabase
@@ -429,7 +431,7 @@ class SupabasePemNeatStore implements PemNeatStore {
       .eq("id", id)
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error);
     return mapRow(data as Record<string, unknown>);
   }
 
@@ -439,7 +441,7 @@ class SupabasePemNeatStore implements PemNeatStore {
   ): Promise<PemNeatRecord> {
     const supabase = createServiceClient();
     const existing = await this.get(id);
-    if (!existing) throw new Error("PEM NEAT not found");
+    if (!existing) throw new NotFoundError("PEM NEAT not found");
 
     const { data: genRows } = await supabase
       .from("pem_neat_generations")
@@ -472,7 +474,7 @@ class SupabasePemNeatStore implements PemNeatStore {
       .eq("id", id)
       .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error);
     return mapRow(data as Record<string, unknown>);
   }
 
@@ -483,7 +485,7 @@ class SupabasePemNeatStore implements PemNeatStore {
       .select("*")
       .eq("pem_neat_id", id)
       .order("generation_index", { ascending: true });
-    if (error) throw new Error(error.message);
+    if (error) throw pemNeatStoreError(error);
     return (data ?? []).map((row) => ({
       id: String(row.id),
       pem_neat_id: String(row.pem_neat_id),
