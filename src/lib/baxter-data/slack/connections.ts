@@ -188,7 +188,7 @@ export async function createSlackSearchOAuthState(input: {
     const { error } = await supabase.from("slack_search_oauth_states").insert({
       state,
       baxter_user_id: input.baxterUserId,
-      return_path: input.returnPath ?? "/admin/slack",
+      return_path: input.returnPath ?? "/settings/integrations",
       expires_at: expires,
     });
     if (error) return null;

@@ -31,6 +31,8 @@ export type SlackIncomingEvent = {
   thread_ts?: string;
   team?: string;
   event_ts?: string;
+  /** Present on AI-enabled app message / app_mention events for Real-time Search. */
+  action_token?: string;
 };
 
 export type SlackBaxterReplyPayload = {
@@ -410,6 +412,8 @@ export async function handleBaxterSlackEvent(
       channel: "slack",
       externalThreadId: stableExternalThreadId,
       externalUserId: event.user ?? null,
+      slackTeamId: teamId,
+      slackActionToken: event.action_token ?? null,
     });
 
     const segments = buildSlackReplySegments(result);

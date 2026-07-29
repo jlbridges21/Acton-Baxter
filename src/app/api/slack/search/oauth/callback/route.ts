@@ -22,7 +22,7 @@ function redirectResult(request: Request, path: string, params: Record<string, s
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const returnFallback = "/admin/slack";
+  const returnFallback = "/settings/integrations";
 
   try {
     await requireActiveUser();

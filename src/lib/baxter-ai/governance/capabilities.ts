@@ -12,6 +12,7 @@ import {
 export const BAXTER_CURRENT_CAPABILITIES = [
   "Answer questions in the Baxter web app (acton-baxter.vercel.app)",
   "Answer questions in Acton ADU Slack (DMs and @Baxter mentions)",
+  "Search live Slack conversations the requester is authorized to access (when Slack Search is enabled)",
   "Search approved Knowledge Base and Google Workspace–synced Docs/Sheets",
   "Use structured spreadsheet knowledge for exact facts and aggregates",
   "Cite approved Acton sources for company-specific answers",

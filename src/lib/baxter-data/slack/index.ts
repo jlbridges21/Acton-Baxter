@@ -1,8 +1,8 @@
 /**
- * Slack live evidence provider (Prompt 1).
+ * Slack live evidence provider.
  *
  * Slack remains the source of truth — no message mirror in Supabase.
- * Prompt 2 wires retrieveSlackEvidence into answerBaxterQuestion().
+ * Prompt 2: retrieveSlackForAnswer() integrates into answerBaxterQuestion().
  */
 
 export { SLACK_SOURCE_TYPE } from "./types";
@@ -36,6 +36,9 @@ export { resolvePersonFromDirectory, resolvePeople, formatPersonLabel } from "./
 export { resolveChannelFromDirectory, resolveChannels, formatChannelLabel } from "./channels";
 export { executeSlackSearchPlan } from "./search";
 export { retrieveSlackEvidence, planAndDescribeSlackSearch } from "./evidence";
+export { retrieveSlackForAnswer } from "./orchestrate";
+export { detectSlackSearchRole, isStrongSlackQuestion } from "./when";
+export { classifySlackStatementStrength, selectSlackEvidenceForModel } from "./select";
 export { formatSlackEvidenceExcerpt, formatSlackEvidenceForAdmin } from "./format";
 export {
   getSlackSearchDiagnosticsSnapshot,

@@ -28,6 +28,7 @@ export function resolveSourceKind(input: {
   mimeType?: string | null;
 }): BaxterSourceKind {
   const t = input.sourceType.toLowerCase();
+  if (t === "slack") return "slack";
   if (t === "pem_neat" || t === "pem neat") return "pem_neat";
   if (t === "gohighlevel" || t === "go highlevel") return "gohighlevel";
   if (t === "rulebook" || t === "process_rulebook") return "rulebook";
@@ -56,6 +57,8 @@ export function resolveOpenLabel(kind: BaxterSourceKind): string {
       return "Open Rulebook";
     case "capability":
       return "Open in Baxter";
+    case "slack":
+      return "View in Slack";
     default:
       return "Open Knowledge Entry";
   }
@@ -118,6 +121,7 @@ export function isSafeHttpUrl(value: string | null | undefined): boolean {
   if (!value) return false;
   if (value.startsWith("/knowledge/")) return true;
   if (value.startsWith("/pem-neats")) return true;
+  if (value.startsWith("/settings/")) return true;
   if (
     value.startsWith("/dashboard") ||
     value.startsWith("/reports") ||

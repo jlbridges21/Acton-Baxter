@@ -155,29 +155,10 @@ export async function executeSlackSearchPlan(input: {
         };
         break;
       }
-      // Fall back once to legacy search.messages for user tokens
-      if (
-        pages === 1 &&
-        input.credential.tokenKind === "user" &&
-        (response.error === "method_not_supported" ||
-          response.error === "unknown_method" ||
-          response.error === "not_allowed_token_type" ||
-          response.error === "missing_scope")
-      ) {
-        notes.push(
-          `assistant.search.context unavailable (${response.error}); trying search.messages.`,
-        );
-        return executeLegacySearchMessages({
-          ...input,
-          query,
-          channelTypes,
-          start,
-          notes,
-        });
-      }
+      // Real-time Search only — no legacy search API fallback.
       incomplete = {
         code: mapSlackSearchApiError(response.error),
-        message: "Slack search request failed.",
+        message: "Slack Real-time Search request failed.",
         retryable: false,
       };
       break;
@@ -251,102 +232,6 @@ export async function executeSlackSearchPlan(input: {
       exactNewestGuaranteed:
         input.plan.intent === "latest_message" ? results.length <= 1 && sort === "timestamp" : null,
       notes,
-    },
-  };
-}
-
-async function executeLegacySearchMessages(input: {
-  plan: SlackQueryPlan;
-  credential: SlackCredentialResolution;
-  deps?: SlackSearchDeps;
-  query: string;
-  channelTypes: string[];
-  start: number;
-  notes: string[];
-}): Promise<ExecuteSlackSearchResult> {
-  // Legacy search.messages only accepts user tokens with search:read
-  if (!input.channelTypes.includes("public_channel") && input.channelTypes.length === 0) {
-    return {
-      results: [],
-      incomplete: {
-        code: SLACK_SEARCH_ERROR_CODES.PERMISSION_DENIED,
-        message: "No channel types available for legacy search.",
-        retryable: false,
-      },
-      diagnostics: {
-        endpoint: "search.messages",
-        latencyMs: Date.now() - input.start,
-        resultCount: 0,
-        paginationCount: 0,
-        rateLimited: false,
-        exactNewestGuaranteed: null,
-        notes: input.notes,
-      },
-    };
-  }
-
-  const sort = input.plan.sort === "relevance" ? "score" : "timestamp";
-  const sortDir = input.plan.sort === "oldest" ? "asc" : "desc";
-  const response = await apiCall(input.deps, "search.messages", input.credential.token, {
-    query: input.query,
-    sort,
-    sort_dir: sortDir,
-    count: Math.min(input.plan.limit, 20),
-  });
-
-  if (!response.ok) {
-    return {
-      results: [],
-      incomplete: {
-        code: mapSlackSearchApiError(response.error),
-        message: "Legacy Slack search.messages failed.",
-        retryable: response.error === "ratelimited",
-      },
-      diagnostics: {
-        endpoint: "search.messages",
-        latencyMs: Date.now() - input.start,
-        resultCount: 0,
-        paginationCount: 1,
-        rateLimited: response.error === "ratelimited",
-        exactNewestGuaranteed: null,
-        notes: input.notes,
-      },
-    };
-  }
-
-  const matches =
-    ((response.data.messages as { matches?: Array<Record<string, unknown>> } | undefined)
-      ?.matches as Array<Record<string, unknown>> | undefined) ?? [];
-
-  const results: SlackMessageEvidence[] = [];
-  for (const match of matches) {
-    const channel = match.channel as
-      { id?: string; name?: string; is_private?: boolean } | undefined;
-    const normalized = normalizeSearchMessage({
-      message_ts: match.ts,
-      channel_id: channel?.id,
-      channel_name: channel?.name,
-      is_private: channel?.is_private,
-      author_user_id: match.user,
-      author_name: match.username,
-      content: match.text,
-      permalink: match.permalink,
-      thread_ts: match.thread_ts,
-    });
-    if (normalized) results.push(normalized);
-  }
-
-  return {
-    results,
-    incomplete: null,
-    diagnostics: {
-      endpoint: "search.messages",
-      latencyMs: Date.now() - input.start,
-      resultCount: results.length,
-      paginationCount: 1,
-      rateLimited: false,
-      exactNewestGuaranteed: null,
-      notes: input.notes,
     },
   };
 }

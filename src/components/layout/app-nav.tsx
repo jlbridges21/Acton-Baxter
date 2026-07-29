@@ -66,6 +66,17 @@ function employeeLinks(context: NavContext): NavLink[] {
   return [home];
 }
 
+function accountLinks(): NavLink[] {
+  return [
+    {
+      href: "/settings/integrations",
+      label: "Integrations",
+      icon: Search,
+      match: (pathname) => pathname.startsWith("/settings/"),
+    },
+  ];
+}
+
 /** Full admin menu — always available so Users and tools are never hidden. */
 function adminLinks(): NavLink[] {
   return getAdminNavLinks();
@@ -92,7 +103,7 @@ export function AppNav({
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAdmin = userRole === "admin";
   const context = getNavContext(pathname);
-  const links = isAdmin ? adminLinks() : employeeLinks(context);
+  const links = isAdmin ? adminLinks() : [...employeeLinks(context), ...accountLinks()];
 
   async function handleLogout() {
     try {

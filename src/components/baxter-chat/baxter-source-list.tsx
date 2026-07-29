@@ -35,7 +35,9 @@ export function BaxterSourceList({ sources }: { sources: BaxterSourceReference[]
             <p className="text-[var(--acton-muted)]">
               {source.sourceKind === "pem_neat"
                 ? "Partnership Evaluation Meeting"
-                : source.sourceKind.replace(/_/g, " ")}{" "}
+                : source.sourceKind === "slack"
+                  ? "Slack"
+                  : source.sourceKind.replace(/_/g, " ")}{" "}
               · {formatRelativeUpdated(source.lastUpdated)} ·{" "}
               {confidenceLabel(source.relevanceScore)}
             </p>

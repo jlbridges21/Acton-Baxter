@@ -1,5 +1,4 @@
 import { requireActiveUser } from "@/lib/auth/session";
-import { isAdminRole } from "@/lib/auth/roles";
 import { createSlackSearchOAuthState } from "@/lib/baxter-data/slack/connections";
 import {
   getSlackSearchOAuthRedirectUri,
@@ -11,22 +10,13 @@ import { getEnv } from "@/lib/env";
 export const runtime = "nodejs";
 
 /**
- * Start per-user Slack OAuth for Real-time Search.
- * Admins can link from /admin/slack; employees can link when Prompt 2 exposes settings.
+ * Start per-user Slack OAuth for Real-time Search (web employees + admins).
  */
 export async function GET(request: Request) {
   try {
     const user = await requireActiveUser();
     const url = new URL(request.url);
-    const returnPath = url.searchParams.get("return") || "/admin/slack";
-
-    // For Prompt 1, OAuth linking is admin-initiated; Prompt 2 may open to all employees.
-    if (!isAdminRole(user.profile.role) && !url.searchParams.get("self")) {
-      return Response.redirect(
-        new URL("/admin/slack?slack_search_error=admin_only", request.url),
-        302,
-      );
-    }
+    const returnPath = url.searchParams.get("return") || "/settings/integrations";
 
     const config = getSlackSearchRuntimeConfig();
     if (!config.searchEnabled) {

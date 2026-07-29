@@ -61,6 +61,8 @@ function sourceTypeLabel(source: BaxterSourceReference): string {
       return "Process Rulebook";
     case "capability":
       return "Baxter";
+    case "slack":
+      return "Slack";
     default:
       return "Knowledge Base";
   }
@@ -70,6 +72,10 @@ export function formatSlackSourceLine(source: BaxterSourceReference): string {
   const title = escapeSlackMrkdwn(source.title || source.citationLabel);
   const type = sourceTypeLabel(source);
   const absolute = sanitizeSourceUrl(source.sourceUrl);
+
+  if (source.sourceKind === "slack" && absolute && source.availability === "available") {
+    return `• <${absolute}|View in Slack> — ${title}`;
+  }
 
   if (absolute && source.availability === "available") {
     return `• <${absolute}|${title}> — ${type}`;

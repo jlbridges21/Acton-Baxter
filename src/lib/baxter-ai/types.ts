@@ -12,7 +12,8 @@ export type BaxterSourceKind =
   | "pem_neat"
   | "gohighlevel"
   | "rulebook"
-  | "capability";
+  | "capability"
+  | "slack";
 
 export type BaxterAnswerMode =
   "identity" | "grounded" | "general" | "mixed" | "clarification" | "error";
@@ -42,6 +43,13 @@ export type BaxterQuestionInput = {
   conversationId?: string | null;
   externalThreadId?: string | null;
   externalUserId?: string | null;
+  /** Slack workspace team id when known (Events API). */
+  slackTeamId?: string | null;
+  /**
+   * Slack Real-time Search action_token from message/app_mention events.
+   * Required for bot-token public search; never log or expose to the model.
+   */
+  slackActionToken?: string | null;
 };
 
 export type BaxterAnswer = {

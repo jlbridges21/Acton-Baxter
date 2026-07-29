@@ -149,7 +149,7 @@ export function scopesToCapabilities(scopes: string[]): {
 } {
   const set = new Set(scopes.map((s) => s.trim()).filter(Boolean));
   const has = (...names: string[]) => names.some((n) => set.has(n));
-  // Legacy search:read implies broad user search (including private/DM for that user).
+  // Legacy search:read (deprecated search API) — capability display only if an older token still has it.
   const legacySearch = has("search:read");
   return {
     publicChannels: legacySearch || has("search:read.public"),

@@ -8,6 +8,7 @@ import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
 import { isGhlConfigured, isGhlEnabled } from "@/lib/connectors/ghl/config";
 import { isGoogleWorkspaceConfigured } from "@/lib/connectors/google/auth";
 import { isActiveRulebookKnown } from "@/lib/rulebook/capabilities";
+import { isSlackSearchEnabled } from "@/lib/baxter-data/slack/config";
 
 export type BaxterCapabilityAudience = "employee" | "admin";
 export type BaxterCapabilityStatus =
@@ -48,6 +49,7 @@ export type CapabilityRuntimeHealth = {
   rulebookKnown: boolean;
   monitoringKnown: boolean;
   monitoringUiEnabled: boolean;
+  slackSearchEnabled: boolean;
 };
 
 export function getCapabilityRuntimeHealth(
@@ -60,6 +62,7 @@ export function getCapabilityRuntimeHealth(
     rulebookKnown: isActiveRulebookKnown(),
     monitoringKnown: false,
     monitoringUiEnabled: PROCESS_MONITORING_UI_ENABLED,
+    slackSearchEnabled: isSlackSearchEnabled(),
     ...overrides,
   };
 }
@@ -128,11 +131,56 @@ export function buildBaxterCapabilityCatalog(
       enabled: true,
       webRoute: null,
       createRoute: null,
-      adminRoute: "/admin/connectors",
+      adminRoute: "/admin/slack",
       supportedActions: ["DM Baxter", "@mention Baxter", "/clear in Slack"],
       limitations: ["Only works in allowed Slack workspaces/channels configured by admins"],
       helpTopics: ["slack", "dm baxter"],
       synonyms: ["slack", "dm", "@baxter"],
+      sourceOfTruth: "connectors",
+    },
+    {
+      key: "slack_search",
+      name: "Slack Search",
+      shortDescription:
+        "Search live Slack conversations your account is authorized to access — what someone said, recent updates, decisions, and channel discussions.",
+      detailedDescription:
+        "Baxter searches Slack live at query time using Slack Real-time Search. It can find what someone said, the latest update on a topic, who mentioned something, decisions, and time-window summaries, then link you back to the messages. It only searches Slack content your Slack authorization allows. Slack is conversational context, not automatic approved policy. Messages are not mirrored into Baxter's database.",
+      category: "slack",
+      audience: ["employee", "admin"],
+      rolesAllowed: ["*", "user", "admin", "super_admin"],
+      status: health.slackSearchEnabled ? "available" : "disabled",
+      enabled: health.slackSearchEnabled,
+      webRoute: "/settings/integrations",
+      createRoute: null,
+      adminRoute: "/admin/slack",
+      supportedActions: [
+        "What did someone say",
+        "Latest update on a topic",
+        "Who mentioned something",
+        "When did we decide",
+        "Summarize a channel/time window",
+        "Combine Slack with PEM/GHL/Knowledge",
+      ],
+      limitations: [
+        "Only searches Slack content your Slack authorization allows",
+        "Does not invent organizational memory or mirror Slack into Knowledge",
+        "Web users must connect Slack Search under Settings → Integrations",
+      ],
+      helpTopics: [
+        "search slack",
+        "what did someone say",
+        "latest on",
+        "who mentioned",
+        "connect slack",
+      ],
+      synonyms: [
+        "slack search",
+        "slack history",
+        "what did jess say",
+        "last message",
+        "conversation",
+        "who mentioned",
+      ],
       sourceOfTruth: "connectors",
     },
     {

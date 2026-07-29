@@ -53,6 +53,14 @@ import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./convers
 import { answerCapabilityHelp, buildCapabilityPromptBlock } from "@/lib/baxter/capability-help";
 import { retrievePemEvidence } from "@/lib/baxter-data/pem-neats";
 import { writePemConversationState } from "@/lib/baxter-data/pem-neats/conversation-state";
+import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
+import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
+import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
+import { readSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
+import {
+  buildSourceAuthorityPromptBlock,
+  classifySourceAuthority,
+} from "@/lib/baxter-ai/source-authority";
 import type { BaxterSourceReference } from "./types";
 
 /**
@@ -525,9 +533,116 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     contextItems = [...renumbered, ...rest].slice(0, 8);
   }
 
+  // Live Slack conversational evidence (authorized before model; not Knowledge).
+  const priorSlack = readSlackConversationState(conversation.metadata ?? {});
+  const slackRoleEarly = detectSlackSearchRole({
+    question,
+    hasOtherStrongEvidence: contextItems.length > 0,
+    followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
+  });
+
+  const slackRuntime = await retrieveSlackForAnswer({
+    question,
+    requester: {
+      baxterUserId: input.userId,
+      slackUserId: input.externalUserId,
+      slackTeamId: input.slackTeamId ?? null,
+      actionToken: input.slackActionToken ?? null,
+      allowPublicOnlyFallback: false,
+    },
+    conversationMetadata: conversation.metadata ?? {},
+    hasOtherStrongEvidence: contextItems.length > 0,
+    roleOverride: slackRoleEarly === "skip" ? "skip" : undefined,
+  }).catch(() => null);
+
+  if (slackRuntime?.nextConversationState) {
+    const nextMeta = writeSlackConversationState(
+      conversation.metadata ?? {},
+      slackRuntime.nextConversationState,
+    );
+    conversation.metadata = nextMeta;
+    await updateBaxterConversationMetadata(conversation.id, nextMeta).catch(() => undefined);
+  }
+
+  if (slackRuntime?.diagnostics.ran) {
+    logBaxterDiagnostic("slackEvidence", {
+      code: "SLACK_RETRIEVAL",
+      route: "answerBaxterQuestion",
+      conversationId: conversation.id,
+      safeMessage: JSON.stringify({
+        role: slackRuntime.diagnostics.role,
+        intent: slackRuntime.diagnostics.intent,
+        resultCount: slackRuntime.diagnostics.resultCount,
+        selectedCount: slackRuntime.diagnostics.selectedCount,
+        searchCount: slackRuntime.diagnostics.searchCount,
+        incomplete: slackRuntime.diagnostics.incomplete,
+        incompleteCode: slackRuntime.diagnostics.incompleteCode,
+        authorization: slackRuntime.diagnostics.authorization,
+        rateLimited: slackRuntime.diagnostics.rateLimited,
+        durationMs: slackRuntime.diagnostics.durationMs,
+      }),
+    });
+  }
+
+  // Primary Slack question with auth/no-results — answer without inventing Slack content.
+  if (
+    slackRuntime &&
+    slackRuntime.diagnostics.role === "primary" &&
+    slackRuntime.selected.length === 0 &&
+    (slackRuntime.authNote || slackRuntime.noResultsNote || slackRuntime.incompleteNote)
+  ) {
+    const parts = [
+      slackRuntime.authNote,
+      slackRuntime.noResultsNote,
+      slackRuntime.incompleteNote,
+    ].filter(Boolean);
+    // If other sources exist, continue to LLM with a Slack note instead of short-circuiting.
+    if (contextItems.length === 0 && parts.length) {
+      const answer = parts.join("\n\n");
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: answer,
+        insufficientKnowledge: !slackRuntime.authNote,
+        confidence: "medium",
+        modelProvider: "slack-search",
+        modelName: "no-results",
+        sources: [],
+        sourceEntryIds: [],
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer,
+        sources: [],
+        confidence: "medium",
+        insufficientKnowledge: !slackRuntime.authNote,
+        answerMode: slackRuntime.authNote ? "clarification" : "grounded",
+      });
+    }
+  }
+
+  if (slackRuntime?.items.length) {
+    const slackItems = slackRuntime.items.map((item, index) => ({
+      ...item,
+      number: index + 1,
+    }));
+    const offset = slackItems.length;
+    const rest = contextItems.map((item, index) => ({
+      ...item,
+      number: offset + index + 1,
+    }));
+    // Prefer Slack-first for primary conversational questions; otherwise append.
+    contextItems =
+      slackRuntime.diagnostics.role === "primary"
+        ? [...slackItems, ...rest].slice(0, 12)
+        : [...rest, ...slackItems].slice(0, 12);
+  }
+
   // Deterministic structured answer when we have a direct field value
-  let direct =
-    evidence.structured && !evidence.structured.ambiguous
+  // Skip when Slack conversational evidence is in play (current-vs-official conflicts need LLM).
+  let direct = slackRuntime?.selected.length
+    ? null
+    : evidence.structured && !evidence.structured.ambiguous
       ? draftDirectStructuredAnswer(question, evidence.structured)
       : evidence.structured?.ambiguous
         ? evidence.structured.clarificationPrompt
@@ -680,14 +795,36 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   try {
     const provider = getBaxterLlmProvider();
+    const authority = classifySourceAuthority(question);
+    const slackNotes = [
+      slackRuntime?.authNote,
+      slackRuntime?.incompleteNote,
+      slackRuntime?.noResultsNote && slackRuntime.selected.length === 0
+        ? slackRuntime.noResultsNote
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
     const identityContext =
       questionClass === "baxter_identity"
         ? [
             buildBaxterIdentityContext(),
             "",
             buildCapabilityPromptBlock(profile?.role ?? null),
-          ].join("\n")
-        : buildBaxterIdentityContext();
+            "",
+            buildSourceAuthorityPromptBlock(authority),
+            slackNotes ? `\nSlack retrieval note:\n${slackNotes}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : [
+            buildBaxterIdentityContext(),
+            "",
+            buildSourceAuthorityPromptBlock(authority),
+            slackNotes ? `\nSlack retrieval note:\n${slackNotes}` : null,
+          ]
+            .filter(Boolean)
+            .join("\n");
     const llm = await provider.generateAnswer({
       question,
       contextItems,
