@@ -3,10 +3,18 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
-function YesNo({ value }: { value: boolean }) {
+function StatusLabel({
+  value,
+  yes = "Available",
+  no = "Not connected",
+}: {
+  value: boolean;
+  yes?: string;
+  no?: string;
+}) {
   return (
-    <span className={value ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
-      {value ? "Yes" : "No"}
+    <span className={value ? "font-semibold text-emerald-700" : "font-semibold text-amber-800"}>
+      {value ? yes : no}
     </span>
   );
 }
@@ -14,12 +22,12 @@ function YesNo({ value }: { value: boolean }) {
 function flashMessage(flash: string | null): { tone: "ok" | "err"; text: string } | null {
   if (!flash) return null;
   if (flash === "linked") {
-    return { tone: "ok", text: "Slack Search linked successfully." };
+    return { tone: "ok", text: "Slack Search connected successfully." };
   }
   if (flash === "misconfigured" || flash === "redirect_uri") {
     return {
       tone: "err",
-      text: "Slack authorization is not configured correctly. Contact a Baxter admin.",
+      text: "Slack authorization is not configured correctly. Contact a Baxter admin (Redirect URL may be missing in Slack).",
     };
   }
   if (flash === "oauth_cancelled") {
@@ -37,6 +45,8 @@ export function SlackIntegrationsClient(props: {
   slackUserName: string | null;
   workspaceLabel: string;
   status: string | null;
+  /** Baxter bot can recall public channel history without personal OAuth. */
+  botPublicRecallAvailable: boolean;
   capabilities: {
     publicChannels: boolean;
     privateChannels: boolean;
@@ -52,9 +62,9 @@ export function SlackIntegrationsClient(props: {
   return (
     <Card className="space-y-4 p-5">
       <div>
-        <CardTitle>Slack Search</CardTitle>
+        <CardTitle>Slack Recall</CardTitle>
         <CardDescription className="mt-1">
-          {props.connected ? "Connected" : "Not connected"}
+          Baxter&apos;s normal Slack access vs optional personal Slack Search authorization.
         </CardDescription>
       </div>
 
@@ -76,61 +86,74 @@ export function SlackIntegrationsClient(props: {
         </p>
       ) : null}
 
-      {props.connected ? (
+      <div className="space-y-3 rounded-md border border-[var(--acton-border)] p-3">
+        <p className="text-sm font-semibold text-[var(--acton-navy)]">Baxter access</p>
         <dl className="grid gap-2 text-sm text-[var(--acton-navy)] sm:grid-cols-2">
           <div>
-            Slack account:{" "}
-            <span className="font-medium">{props.slackUserName ?? "Slack user"}</span>
+            Public channel recall:{" "}
+            <StatusLabel value={props.botPublicRecallAvailable} no="Unavailable" />
           </div>
           <div>
             Workspace: <span className="font-medium">{props.workspaceLabel}</span>
           </div>
-          <div>
-            Public channels: <YesNo value={props.capabilities.publicChannels} />
-          </div>
-          <div>
-            Private channels: <YesNo value={props.capabilities.privateChannels} />
-          </div>
-          <div>
-            DMs: <YesNo value={props.capabilities.dms} />
-          </div>
-          <div>
-            Group DMs: <YesNo value={props.capabilities.groupDms} />
-          </div>
         </dl>
-      ) : (
+        <p className="text-xs text-[var(--acton-muted)]">
+          Public `/recall` and `@Baxter` questions can use Baxter&apos;s bot token without personal
+          OAuth when the bot can access the channel.
+        </p>
+      </div>
+
+      <div className="space-y-3 rounded-md border border-[var(--acton-border)] p-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-sm font-semibold text-[var(--acton-navy)]">Personal Slack Search</p>
+          <p className="text-sm text-[var(--acton-muted)]">
+            {props.connected ? "Connected" : "Not connected"}
+          </p>
+        </div>
+        {props.connected ? (
+          <p className="text-sm text-[var(--acton-navy)]">
+            Connected as: <span className="font-medium">{props.slackUserName ?? "Slack user"}</span>
+          </p>
+        ) : null}
         <dl className="grid gap-2 text-sm text-[var(--acton-navy)] sm:grid-cols-2">
           <div>
-            Public channels: <YesNo value={false} />
+            Private channel search:{" "}
+            <StatusLabel
+              value={props.connected && props.capabilities.privateChannels}
+              yes="Yes"
+              no="Not connected"
+            />
           </div>
           <div>
-            Private channels: <YesNo value={false} />
+            DM search:{" "}
+            <StatusLabel
+              value={props.connected && props.capabilities.dms}
+              yes="Yes"
+              no="Not connected"
+            />
           </div>
           <div>
-            DMs: <YesNo value={false} />
+            Group DM search:{" "}
+            <StatusLabel
+              value={props.connected && props.capabilities.groupDms}
+              yes="Yes"
+              no="Not connected"
+            />
           </div>
           <div>
-            Group DMs: <YesNo value={false} />
+            Public search (your token):{" "}
+            <StatusLabel
+              value={props.connected && props.capabilities.publicChannels}
+              yes="Yes"
+              no="Not connected"
+            />
           </div>
         </dl>
-      )}
-
-      <div className="space-y-2 text-sm text-[var(--acton-muted)]">
-        <p>
-          Optional personal Slack authorization for searching private channels and DMs you are
-          allowed to see.
+        <p className="text-xs text-[var(--acton-muted)]">
+          Connect your Slack account only when you need Baxter to search private channels and DMs
+          you can access. Slash `/pem` does not require this — it only needs your Slack account to
+          match a Baxter user.
         </p>
-        <ul className="list-disc space-y-1 pl-5">
-          <li>Public Baxter Q&amp;A can work without linking.</li>
-          <li>
-            Slash <code className="text-xs">/pem</code> does not require Slack Search — it only
-            needs your Slack account to match a Baxter user.
-          </li>
-          <li>
-            Private channel / DM <code className="text-xs">/recall</code> requires this
-            authorization.
-          </li>
-        </ul>
       </div>
 
       {props.missing.length ? (

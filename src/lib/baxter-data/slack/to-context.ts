@@ -85,9 +85,10 @@ export function formatSlackNoResultsNote(question: string): string {
 
 export function formatSlackAuthRequiredNote(connectUrl: string): string {
   return [
-    "I need your Slack Search connection to look that up with your Slack permissions (especially for private channels and DMs).",
-    "Connect Slack in Baxter Integrations, then ask again — Baxter searches live and does not copy Slack history into Knowledge.",
-    `Connect Slack: ${connectUrl}`,
+    "I need your personal Slack Search connection to look that up with your Slack permissions (private channels and DMs).",
+    "Public channel history Baxter already can access does not require this step.",
+    "Connect Slack Search in Baxter Integrations, then ask again — Baxter searches live and does not copy Slack history into Knowledge.",
+    `Connect Slack Search: ${connectUrl}`,
   ].join("\n");
 }
 

@@ -162,7 +162,15 @@ For local development (optional):
 6. In Baxter, open `/settings/integrations` → **Connect Slack Search** and complete the authorize flow.
 7. Confirm `/admin/slack` shows the same OAuth callback URI under Slack Search diagnostics.
 
-Baxter builds `redirect_uri` from `SLACK_SEARCH_OAUTH_REDIRECT_URI` when set, otherwise `${APP_BASE_URL}/api/slack/search/oauth/callback`. Production should resolve to the Vercel callback above.
+Baxter builds `redirect_uri` from **`SLACK_SEARCH_OAUTH_REDIRECT_URI`** when set, otherwise `${APP_BASE_URL}` / `${NEXT_PUBLIC_APP_URL}` + `/api/slack/search/oauth/callback`.
+
+**Recommended Vercel env (production):**
+
+```
+SLACK_SEARCH_OAUTH_REDIRECT_URI=https://acton-baxter.vercel.app/api/slack/search/oauth/callback
+```
+
+Authorize URL and token exchange both call the same helper — they must stay identical. Redirect URL changes in Slack do **not** require reinstall; **User Token Scope** changes do.
 
 Enable search with `ENABLE_SLACK_SEARCH=true`. Apply Supabase migration **029**. See `docs/slack-search.md` for architecture.
 

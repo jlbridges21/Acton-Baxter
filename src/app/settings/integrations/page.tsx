@@ -38,6 +38,7 @@ export default async function IntegrationsSettingsPage({
           slackUserName={linked?.slackUserName ?? null}
           workspaceLabel="Acton ADU"
           status={linked?.status ?? null}
+          botPublicRecallAvailable={config.readyForPublicBotSearch}
           capabilities={{
             publicChannels: caps.publicChannels,
             privateChannels: caps.privateChannels,

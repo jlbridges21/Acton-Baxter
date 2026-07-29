@@ -232,7 +232,7 @@ describe("private bot-member history", () => {
 });
 
 describe("archived channel exclusion", () => {
-  it("does not join or history-fetch archived channels in topic RTS fallback path", async () => {
+  it("does not history-fetch archived channels in topic public scan", async () => {
     const callSlackApi = vi.fn(async (method: string) => {
       if (method === "conversations.join" || method === "conversations.history") {
         throw new Error(`must not call ${method} for archived fallback`);
@@ -269,14 +269,82 @@ describe("archived channel exclusion", () => {
             isArchived: true,
             isMember: false,
           },
-          ...fixtureChannels,
         ],
       },
     });
 
-    expect(result.incomplete?.code).toBe("BAXTER_SLACK_SEARCH_AUTH_REQUIRED");
-    expect(result.diagnostics.notes.some((n) => /weak multi-channel scan/i.test(n))).toBe(true);
+    expect(result.incomplete).toBeNull();
+    expect(result.results).toEqual([]);
+    expect(
+      result.diagnostics.notes.some((n) =>
+        /bounded public-channel scan|no public channel/i.test(n),
+      ),
+    ).toBe(true);
     expect(callSlackApi).not.toHaveBeenCalled();
+  });
+
+  it("scans public channels for RACI without requiring user OAuth", async () => {
+    const callSlackApi = vi.fn(
+      async (method: string, options?: { body?: Record<string, unknown> }) => {
+        if (method === "conversations.history") {
+          expect(options?.body?.channel).toBe("C_PM");
+          return {
+            ok: true,
+            data: {
+              messages: [
+                {
+                  user: "U_JESS",
+                  text: "Latest on the RACI matrix: ready for review Friday.",
+                  ts: "1700000001.000100",
+                },
+              ],
+            },
+          };
+        }
+        return { ok: false, error: "unexpected", data: {} };
+      },
+    );
+
+    const result = await executeSlackSearchPlan({
+      plan: {
+        intent: "latest_update",
+        people: [],
+        channels: [],
+        keywords: ["raci", "matrix"],
+        phrases: ["RACI matrix"],
+        decisionLanguage: [],
+        timeRange: null,
+        sort: "newest",
+        limit: 10,
+        includeThreads: false,
+        includeNearbyContext: false,
+        naturalQuery: "What is the latest update on the RACI matrix?",
+      },
+      credential: {
+        ...botCred("bot_public"),
+        slackTeamId: FIXTURE_TEAM_ID,
+      },
+      deps: {
+        callSlackApi,
+        listCachedChannels: async () => [
+          {
+            id: "C_PM",
+            name: "project-management",
+            displayLabel: "#project-management",
+            teamId: FIXTURE_TEAM_ID,
+            kind: "public_channel",
+            isPrivate: false,
+            isArchived: false,
+            isMember: true,
+          },
+        ],
+      },
+    });
+
+    expect(result.incomplete).toBeNull();
+    expect(result.results.length).toBeGreaterThan(0);
+    expect(result.results[0]?.text).toMatch(/RACI/i);
+    expect(result.incomplete?.code).not.toBe("BAXTER_SLACK_SEARCH_AUTH_REQUIRED");
   });
 });
 

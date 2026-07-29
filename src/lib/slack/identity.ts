@@ -153,4 +153,7 @@ async function findAuthUserIdByEmail(email: string): Promise<string | null> {
 }
 
 export const PEM_UNMAPPED_SLACK_USER_MESSAGE =
-  "Baxter couldn’t match your Slack account to a Baxter user. Ask an admin to link your Acton email to your Baxter account, or create the PEM at the web app.";
+  "Baxter couldn’t match your Slack account to an Acton Baxter user. Ask an admin to make sure your Baxter account email matches your Slack email, or create the PEM at the web app.";
+
+/** Canonical name used by slash-command / PEM identity resolution. */
+export const resolveBaxterProfileForSlackUser = resolveBaxterUserForSlackIdentity;

@@ -319,15 +319,78 @@ export async function executeSlackSearchPlan(input: {
       };
     }
 
-    // Broad topic without action_token / user OAuth: do NOT pretend an 8-channel scan is workspace search.
+    // Broad topic without action_token: scan a bounded set of public channels the bot can read.
+    // Do NOT return AUTH_REQUIRED before attempting available public history.
+    const teamId = input.credential.slackTeamId?.trim() || "";
+    const listChannels = input.deps?.listCachedChannels;
+    const directoryChannels =
+      listChannels && teamId
+        ? await listChannels(teamId).catch(() => [])
+        : listChannels
+          ? await listChannels("").catch(() => [])
+          : [];
+    const publicCandidates = directoryChannels
+      .filter(
+        (c) =>
+          !c.isArchived &&
+          !c.isPrivate &&
+          (c.kind === "public_channel" || (!c.kind && c.id.startsWith("C"))),
+      )
+      .sort((a, b) => Number(Boolean(b.isMember)) - Number(Boolean(a.isMember)))
+      .slice(0, 8);
+
+    if (
+      publicCandidates.length > 0 &&
+      (input.plan.keywords.length > 0 || input.plan.phrases.length)
+    ) {
+      const terms = [
+        ...input.plan.keywords,
+        ...input.plan.phrases.flatMap((p) => p.split(/\s+/)),
+      ].filter((t) => t.trim().length >= 2);
+      const collected: SlackMessageEvidence[] = [];
+      let pages = 0;
+      for (const ch of publicCandidates) {
+        if (collected.length >= input.plan.limit) break;
+        const hist = await fetchChannelHistoryWindow({
+          credential: input.credential,
+          channelId: ch.id,
+          channelName: ch.name,
+          channelKind: ch.kind ?? "public_channel",
+          limit: 25,
+          timeRange: input.plan.timeRange,
+          deps: input.deps,
+        });
+        pages += hist.pagesFetched;
+        notes.push(...hist.notes.map((n) => `#${ch.name ?? ch.id}: ${n}`));
+        const hits = filterMessagesByKeywords(hist.messages, terms);
+        collected.push(...hits);
+      }
+      collected.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+      const sliced = collected.slice(0, input.plan.limit);
+      return {
+        results: sliced,
+        incomplete: null,
+        diagnostics: {
+          endpoint: "conversations.history",
+          latencyMs: Date.now() - start,
+          resultCount: sliced.length,
+          paginationCount: pages,
+          rateLimited: false,
+          exactNewestGuaranteed: null,
+          notes: [
+            ...notes,
+            `bot_public bounded public-channel scan (${publicCandidates.length} channels).`,
+            sliced.length
+              ? "Found keyword matches in bot-accessible public history."
+              : "No keyword matches in scanned public channels (not an OAuth failure).",
+          ],
+        },
+      };
+    }
+
     return {
       results: [],
-      incomplete: {
-        code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
-        message:
-          "I couldn't run a full Slack workspace search with the current authorization. Public channel history works for exact channels; workspace-wide search needs a Slack action token (from Slack) or a linked Slack Search connection.",
-        retryable: false,
-      },
+      incomplete: null,
       diagnostics: {
         endpoint: null,
         latencyMs: Date.now() - start,
@@ -337,7 +400,7 @@ export async function executeSlackSearchPlan(input: {
         exactNewestGuaranteed: null,
         notes: [
           ...notes,
-          "Workspace semantic search unavailable without action_token or user OAuth — skipped weak multi-channel scan.",
+          "bot_public topic search: no public channel directory to scan. Ask with a #channel, or connect Slack Search for workspace-wide search.",
         ],
       },
     };

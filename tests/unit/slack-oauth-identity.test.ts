@@ -59,12 +59,21 @@ describe("Slack Search OAuth redirect URI", () => {
     const config = getSlackSearchRuntimeConfig();
     expect(config.oauthRedirectUriConfigured).toBe(true);
     expect(config.oauthAuthorizeUrl).toContain(
-      encodeURIComponent("https://acton-baxter.vercel.app/api/slack/search/oauth/callback"),
+      "redirect_uri=https%3A%2F%2Facton-baxter.vercel.app%2Fapi%2Fslack%2Fsearch%2Foauth%2Fcallback",
     );
     expect(config.oauthAuthorizeUrl).toContain("user_scope=");
     expect(config.oauthAuthorizeUrl).toContain(encodeURIComponent(SLACK_SEARCH_USER_SCOPES[0]!));
     // Bot install scope intentionally empty for user-token OAuth.
     expect(config.oauthAuthorizeUrl).toMatch(/[?&]scope=(?:&|$)/);
+  });
+
+  it("token exchange uses the same redirect_uri as authorize", async () => {
+    const authorizeUri = getSlackSearchOAuthRedirectUri();
+    expect(authorizeUri).toBe("https://acton-baxter.vercel.app/api/slack/search/oauth/callback");
+    // Callback route imports the same helper — regression lock against divergence.
+    const { getSlackSearchOAuthRedirectUri: exchangeUri } =
+      await import("@/lib/baxter-data/slack/config");
+    expect(exchangeUri()).toBe(authorizeUri);
   });
 
   it("normalize strips query/hash noise", () => {
