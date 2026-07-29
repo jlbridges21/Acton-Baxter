@@ -175,9 +175,32 @@ export async function runOpenAiDiagnosticTest() {
   const started = Date.now();
   try {
     const provider = new OpenAIBaxterProvider();
+    const { buildBaxterOpenAiRequest } = await import("./openai-provider");
+    const preview = buildBaxterOpenAiRequest({
+      model: provider.model,
+      systemPrompt: "Diagnostic.",
+      userPrompt: "Reply OK as JSON answer.",
+    });
     const result = await provider.generateAnswer({
       question: "Reply with the word OK as the answer field value.",
-      contextItems: [],
+      contextItems: [
+        {
+          number: 1,
+          id: "diag-synthetic",
+          title: "Synthetic diagnostic evidence",
+          summary: "Bounded test evidence",
+          contentExcerpt: "This is synthetic evidence for provider health — not production data.",
+          category: "Diagnostic",
+          tags: ["diagnostic"],
+          sourceName: "Baxter diagnostics",
+          sourceUrl: null,
+          sourceType: "capability",
+          mimeType: null,
+          updatedAt: new Date().toISOString(),
+          citationLabel: "Baxter diagnostic",
+          relevanceScore: 100,
+        },
+      ],
       channel: "web",
       questionClass: "general_knowledge",
       identityContext: "Diagnostic test.",
@@ -188,6 +211,8 @@ export async function runOpenAiDiagnosticTest() {
       pass: ok,
       answerPreview: result.answer.slice(0, 200),
       model: result.modelName,
+      api: preview.api,
+      requestMode: "baxter_answer_json",
       latencyMs: result.latencyMs ?? Date.now() - started,
       code: null as string | null,
       guidance: [] as string[],
@@ -197,10 +222,18 @@ export async function runOpenAiDiagnosticTest() {
       error && typeof error === "object" && "code" in error
         ? String((error as { code?: string }).code ?? "BAXTER_UNKNOWN_ERROR")
         : "BAXTER_UNKNOWN_ERROR";
+    const details =
+      error && typeof error === "object" && "details" in error
+        ? (error as { details?: Record<string, unknown> | null }).details
+        : null;
     return {
       pass: false,
       answerPreview: employeeFacingErrorMessage(code),
-      model: null,
+      model: details?.model ?? null,
+      api: details?.api ?? null,
+      openaiCode: details?.openaiCode ?? null,
+      openaiParam: details?.openaiParam ?? null,
+      requestMode: "baxter_answer_json",
       latencyMs: Date.now() - started,
       code,
       guidance: openaiAdminGuidance(code),

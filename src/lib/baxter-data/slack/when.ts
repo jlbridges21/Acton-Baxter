@@ -61,12 +61,12 @@ export function detectSlackSearchRole(input: {
   }
 
   // Current-status questions without other evidence → fallback Slack
-  if (/\b(latest|current|status|update|right now|where are we)\b/i.test(q)) {
+  if (
+    /\b(latest|current|status|update|right now|where are we|when will|when is|be ready|ready for)\b/i.test(
+      q,
+    )
+  ) {
     return input.hasOtherStrongEvidence ? "fallback" : "primary";
-  }
-
-  if (!input.hasOtherStrongEvidence && /\b(when will|when is|ready for)\b/i.test(q)) {
-    return "fallback";
   }
 
   return "skip";

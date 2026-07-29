@@ -39,6 +39,14 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
   if (/\bwhat (is|was) the latest\b|\blatest on\b|\blatest update\b/.test(q)) {
     return "latest_update";
   }
+  // Current-status timing questions ("When will the RACI matrix be ready?")
+  if (
+    /\bwhen will\b|\bwhen is\b.*\bready\b|\bbe ready\b|\bready (by|for|on|friday|monday|tomorrow)\b/.test(
+      q,
+    )
+  ) {
+    return "latest_update";
+  }
   if (/\bwhat happened\b|\bwhat (conversations|discussions) have there been\b/.test(q)) {
     return "time_window_summary";
   }

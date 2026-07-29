@@ -38,6 +38,12 @@ export class BaxterProviderError extends BaxterAiError {
   readonly retryable: boolean;
   readonly retryAfterSeconds: number | null;
   readonly providerRequestId: string | null;
+  readonly details: {
+    api?: string | null;
+    model?: string | null;
+    openaiCode?: string | null;
+    openaiParam?: string | null;
+  } | null;
 
   constructor(
     message: string,
@@ -48,6 +54,12 @@ export class BaxterProviderError extends BaxterAiError {
       cause?: unknown;
       retryAfterSeconds?: number | null;
       providerRequestId?: string | null;
+      details?: {
+        api?: string | null;
+        model?: string | null;
+        openaiCode?: string | null;
+        openaiParam?: string | null;
+      } | null;
     },
   ) {
     const code =
@@ -63,6 +75,7 @@ export class BaxterProviderError extends BaxterAiError {
     this.retryable = Boolean(options?.retryable);
     this.retryAfterSeconds = options?.retryAfterSeconds ?? null;
     this.providerRequestId = options?.providerRequestId ?? null;
+    this.details = options?.details ?? null;
   }
 }
 
@@ -85,6 +98,12 @@ export function employeeFacingErrorMessage(code: string): string {
     case "BAXTER_OPENAI_TIMEOUT":
     case "BAXTER_OPENAI_SERVICE_UNAVAILABLE":
       return `Baxter couldn’t complete that response right now. Please try again in a few minutes. Reference: ${code}`;
+    case "BAXTER_OPENAI_BAD_REQUEST":
+      return `Baxter couldn’t complete that response right now. Please try again in a few minutes. Reference: ${code}`;
+    case "BAXTER_OPENAI_MODEL_NOT_AVAILABLE":
+      return `Baxter’s AI model isn’t available right now. An administrator needs to check the model settings. Reference: ${code}`;
+    case "BAXTER_OPENAI_OUTPUT_TRUNCATED":
+      return `Baxter’s answer was cut off before it finished. Please try again. Reference: ${code}`;
     default:
       return `${EMPLOYEE_SAFE_CHAT_ERROR} Reference: ${code}`;
   }
@@ -129,6 +148,20 @@ export function classifyOpenAiHttpError(
     return {
       code: "BAXTER_OPENAI_AUTH_FAILED",
       message: "OpenAI authorization failed",
+      retryable: false,
+      retryAfterSeconds: null,
+    };
+  }
+
+  if (
+    status === 404 ||
+    combined.includes("model_not_found") ||
+    combined.includes("does not exist") ||
+    combined.includes("model_not_available")
+  ) {
+    return {
+      code: "BAXTER_OPENAI_MODEL_NOT_AVAILABLE",
+      message: "Configured OpenAI model is not available",
       retryable: false,
       retryAfterSeconds: null,
     };
@@ -209,6 +242,17 @@ export function classifyOpenAiHttpError(
     };
   }
 
+  if (status === 400) {
+    const param = body?.error?.param ? ` param=${body.error.param}` : "";
+    const codeHint = body?.error?.code ? ` openai_code=${body.error.code}` : "";
+    return {
+      code: "BAXTER_OPENAI_BAD_REQUEST",
+      message: `OpenAI rejected the request (400)${codeHint}${param}`,
+      retryable: false,
+      retryAfterSeconds: null,
+    };
+  }
+
   return {
     code: "BAXTER_OPENAI_BAD_REQUEST",
     message: `OpenAI request failed (${status})`,
@@ -254,6 +298,23 @@ export function openaiAdminGuidance(code: string): string[] {
         "Temporary provider throttling. Wait and retry.",
         "Reduce concurrent diagnostics or duplicate chat submissions.",
         "Optionally set BAXTER_OPENAI_FALLBACK_MODEL for temporary model-specific limits.",
+      ];
+    case "BAXTER_OPENAI_BAD_REQUEST":
+      return [
+        "OpenAI rejected the request shape (HTTP 400).",
+        "Check Vercel logs for api/model/openaiCode/openaiParam (no secrets).",
+        "GPT-5.x models must use the Responses API with max_output_tokens (not Chat Completions max_tokens).",
+        "Confirm BAXTER_CHAT_MODEL / BAXTER_OPENAI_MODEL matches a model allowed for the project.",
+        "Retest with Diagnostics → Test primary reasoning / Test Baxter answer provider.",
+      ];
+    case "BAXTER_OPENAI_MODEL_NOT_AVAILABLE":
+      return [
+        "Configured chat model is not available to this OpenAI project.",
+        "Verify BAXTER_CHAT_MODEL (or BAXTER_OPENAI_MODEL) exists and is enabled for the API key’s project.",
+      ];
+    case "BAXTER_OPENAI_OUTPUT_TRUNCATED":
+      return [
+        "Model hit max_output_tokens before finishing. Retry; consider raising output budget if recurrent.",
       ];
     default:
       return [

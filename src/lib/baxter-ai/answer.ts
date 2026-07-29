@@ -592,7 +592,10 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   });
 
   // Persist follow-up state, including explicit clears after topic reset.
-  if (slackRuntime && (slackRuntime.nextConversationState || slackRuntime.diagnostics.followUpReset)) {
+  if (
+    slackRuntime &&
+    (slackRuntime.nextConversationState || slackRuntime.diagnostics.followUpReset)
+  ) {
     const nextMeta = writeSlackConversationState(
       conversation.metadata ?? {},
       slackRuntime.nextConversationState,
@@ -949,9 +952,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       .filter(
         (row) =>
           row.sourceKind !== "slack" &&
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-            row.id,
-          ),
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.id),
       )
       .map(({ id, relevanceScore, order }) => ({ id, relevanceScore, order }));
 

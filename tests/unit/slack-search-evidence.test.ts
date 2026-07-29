@@ -63,6 +63,10 @@ describe("Slack search intents", () => {
     expect(detectSlackSearchIntent("What is the latest on the RACI matrix?")).toBe("latest_update");
   });
 
+  it("detects latest_update for when-will-ready timing questions", () => {
+    expect(detectSlackSearchIntent("When will the RACI matrix be ready?")).toBe("latest_update");
+  });
+
   it("detects mention_search", () => {
     expect(detectSlackSearchIntent("Who mentioned changing the sales presentation?")).toBe(
       "mention_search",

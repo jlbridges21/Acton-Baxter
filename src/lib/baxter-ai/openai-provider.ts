@@ -1,6 +1,11 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
+import {
+  buildOpenAiJsonRequest,
+  extractOpenAiResponsesText,
+  type BuiltOpenAiJsonRequest,
+} from "@/lib/openai/json-request";
 import { parseBaxterLlmOutputLenient } from "./schemas";
 import { buildBaxterSystemPrompt, buildBaxterUserPrompt } from "./prompts";
 import {
@@ -8,6 +13,7 @@ import {
   BaxterProviderError,
   classifyOpenAiHttpError,
   isTemporaryOpenAiCode,
+  logBaxterDiagnostic,
   type OpenAiErrorBody,
 } from "./errors";
 import { recordOpenAiCall } from "./openai-metrics";
@@ -16,6 +22,7 @@ import type { BaxterLLMInput, BaxterLLMOutput } from "./types";
 
 /** Max automatic retries for temporary provider failures (attempts = 1 + retries). */
 const MAX_TEMPORARY_RETRIES = 2;
+const DEFAULT_MAX_OUTPUT_TOKENS = 1200;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -50,9 +57,62 @@ function resolveFallbackModel(): string | null {
   return fallback;
 }
 
+function ensureStringContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  return String(value);
+}
+
 /**
- * OpenAI Baxter provider using HTTP chat/completions.
- * Use getBaxterLlmProvider from ./providers for primary + fallback resolution.
+ * Build the capability-aware OpenAI request for Baxter Q&A (exported for tests).
+ */
+export function buildBaxterOpenAiRequest(input: {
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  maxOutputTokens?: number;
+  temperature?: number;
+}): BuiltOpenAiJsonRequest {
+  return buildOpenAiJsonRequest({
+    model: input.model,
+    maxOutputTokens: input.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    temperature: input.temperature ?? 0.3,
+    jsonObject: true,
+    messages: [
+      { role: "system", content: ensureStringContent(input.systemPrompt) },
+      { role: "user", content: ensureStringContent(input.userPrompt) },
+    ],
+  });
+}
+
+function extractChatContent(data: Record<string, unknown> | null): string | null {
+  if (!data) return null;
+  const choices = data.choices;
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== "object") return null;
+  const message = (choices[0] as { message?: { content?: unknown } }).message;
+  const content = message?.content;
+  return typeof content === "string" && content.trim() ? content.trim() : null;
+}
+
+function extractUsage(data: Record<string, unknown> | null, api: "responses" | "chat_completions") {
+  if (!data || typeof data.usage !== "object" || !data.usage) {
+    return { inputTokens: null as number | null, outputTokens: null as number | null };
+  }
+  const usage = data.usage as Record<string, unknown>;
+  if (api === "responses") {
+    return {
+      inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : null,
+      outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : null,
+    };
+  }
+  return {
+    inputTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null,
+    outputTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : null,
+  };
+}
+
+/**
+ * OpenAI Baxter provider — capability-aware Responses API (GPT-5.x) or Chat Completions (GPT-4o).
  */
 export class OpenAIBaxterProvider implements BaxterLLMProvider {
   readonly key = "openai" as const;
@@ -83,50 +143,70 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
     const started = Date.now();
     let attempt = 0;
 
+    const systemPrompt = buildBaxterSystemPrompt(input.question);
+    const userPrompt = buildBaxterUserPrompt(input);
+
     while (attempt <= MAX_TEMPORARY_RETRIES) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), env.EXTERNAL_API_TIMEOUT_MS);
       try {
-        const body = {
+        const built = buildBaxterOpenAiRequest({
           model: activeModel,
-          temperature: 0.3,
-          max_tokens: 1200,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: buildBaxterSystemPrompt(input.question) },
-            { role: "user", content: buildBaxterUserPrompt(input) },
-          ],
-        };
+          systemPrompt,
+          userPrompt,
+        });
 
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        const response = await fetch(built.url, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(built.body),
           signal: controller.signal,
         });
 
         const providerRequestId =
           response.headers.get("x-request-id") ?? response.headers.get("openai-request-id");
         const text = await response.text();
-        type OpenAiChatResponse = OpenAiErrorBody & {
-          choices?: Array<{ message?: { content?: string } }>;
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
-          model?: string;
-        };
-        let data: OpenAiChatResponse | null = null;
+        let data: (OpenAiErrorBody & Record<string, unknown>) | null = null;
         try {
-          data = text ? (JSON.parse(text) as OpenAiChatResponse) : null;
+          data = text ? (JSON.parse(text) as OpenAiErrorBody & Record<string, unknown>) : null;
         } catch {
           data = null;
         }
 
         if (!response.ok) {
           const classified = classifyOpenAiHttpError(response.status, data, response.headers);
+          const openaiParam =
+            data && typeof data.error === "object" && data.error
+              ? ((data.error as { param?: string }).param ?? null)
+              : null;
+          const openaiCode =
+            data && typeof data.error === "object" && data.error
+              ? ((data.error as { code?: string }).code ?? null)
+              : null;
+
+          logBaxterDiagnostic("openaiProvider", {
+            code: classified.code,
+            route: "OpenAIBaxterProvider.generateAnswer",
+            safeMessage: JSON.stringify({
+              stage: "llm_request",
+              httpStatus: response.status,
+              model: activeModel,
+              api: built.api,
+              openaiCode,
+              openaiParam,
+              messageCount: 2,
+              approxInputChars: systemPrompt.length + userPrompt.length,
+              sourceKinds: [
+                ...new Set(input.contextItems.map((c) => c.sourceType).filter(Boolean)),
+              ],
+            }),
+          });
 
           // One optional fallback model for temporary model-specific limits only.
+          // Do not fall back on deterministic BAD_REQUEST (wrong request contract).
           if (
             !fallbackAttempted &&
             fallbackModel &&
@@ -172,10 +252,53 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
             retryable: classified.retryable,
             retryAfterSeconds: classified.retryAfterSeconds,
             providerRequestId,
+            details: {
+              api: built.api,
+              model: activeModel,
+              openaiCode,
+              openaiParam,
+            },
           });
         }
 
-        const content = data?.choices?.[0]?.message?.content?.trim();
+        // Incomplete Responses API
+        if (built.api === "responses" && data && data.status === "incomplete") {
+          const reason =
+            data.incomplete_details &&
+            typeof data.incomplete_details === "object" &&
+            data.incomplete_details
+              ? String((data.incomplete_details as { reason?: string }).reason ?? "incomplete")
+              : "incomplete";
+          const code =
+            reason === "max_output_tokens"
+              ? "BAXTER_OPENAI_OUTPUT_TRUNCATED"
+              : "BAXTER_OPENAI_MALFORMED_RESPONSE";
+          recordOpenAiCall({
+            at: new Date().toISOString(),
+            ok: false,
+            code,
+            httpStatus: response.status,
+            latencyMs: Date.now() - started,
+            model: activeModel,
+            retryCount,
+            providerRequestId,
+            inputTokens: null,
+            outputTokens: null,
+            usedFallback,
+          });
+          throw new BaxterProviderError(
+            reason === "max_output_tokens"
+              ? "OpenAI truncated the answer before it finished"
+              : "OpenAI returned an incomplete response",
+            { code, providerRequestId },
+          );
+        }
+
+        const content =
+          built.api === "responses"
+            ? extractOpenAiResponsesText(data ?? {})
+            : extractChatContent(data);
+
         if (!content) {
           recordOpenAiCall({
             at: new Date().toISOString(),
@@ -198,8 +321,9 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
 
         const parsed = parseBaxterLlmOutputLenient(content);
         const latencyMs = Date.now() - started;
-        const inputTokens = data?.usage?.prompt_tokens ?? null;
-        const outputTokens = data?.usage?.completion_tokens ?? null;
+        const usage = extractUsage(data, built.api);
+        const inputTokens = usage.inputTokens;
+        const outputTokens = usage.outputTokens;
 
         if (parsed.structured) {
           recordOpenAiCall({

@@ -34,11 +34,20 @@ describe("Slack search decision (Prompt 2)", () => {
     expect(detectSlackSearchRole({ question: "What is an ADU?" })).toBe("skip");
   });
 
-  it("uses Slack as fallback for status when other evidence missing", () => {
+  it("uses Slack as primary for when-will-ready status when other evidence missing", () => {
     expect(
       detectSlackSearchRole({
         question: "When will the RACI matrix be ready?",
         hasOtherStrongEvidence: false,
+      }),
+    ).toBe("primary");
+  });
+
+  it("uses Slack as fallback for when-will-ready when Rulebook/Knowledge already strong", () => {
+    expect(
+      detectSlackSearchRole({
+        question: "When will the RACI matrix be ready?",
+        hasOtherStrongEvidence: true,
       }),
     ).toBe("fallback");
   });
