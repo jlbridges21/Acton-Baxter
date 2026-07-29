@@ -101,10 +101,12 @@ export function resolveChannelFromDirectory(
   const q = query.trim();
   if (!q) return { status: "not_found", query: q };
 
-  if (/^[CGD][A-Z0-9]+$/i.test(q)) {
-    const byId = directory.find((c) => c.id === q);
+  if (/^[CGD][A-Z0-9_]+$/i.test(q)) {
+    const id = q.toUpperCase();
+    const byId = directory.find((c) => c.id.toUpperCase() === id);
     if (byId) return { status: "resolved", channel: byId };
-    return { status: "not_found", query: q };
+    // Keep uppercase ID so live hydrate / notFound messaging stays authoritative
+    return { status: "not_found", query: id };
   }
 
   const exact: ResolvedSlackChannel[] = [];
@@ -117,9 +119,11 @@ export function resolveChannelFromDirectory(
 
   if (exact.length === 1) return { status: "resolved", channel: exact[0]! };
   if (exact.length > 1) {
+    const active = exact.filter((c) => !c.isArchived);
+    if (active.length === 1) return { status: "resolved", channel: active[0]! };
     return {
       status: "ambiguous",
-      ambiguity: { query: q, candidates: exact.slice(0, 8) },
+      ambiguity: { query: q, candidates: (active.length ? active : exact).slice(0, 8) },
     };
   }
   if (fuzzy.length === 1) return { status: "resolved", channel: fuzzy[0]! };
@@ -154,11 +158,43 @@ export async function resolveChannels(
         seen.add(result.channel.id);
         channels.push(result.channel);
       }
-    } else if (result.status === "ambiguous") {
-      ambiguities.push(result.ambiguity);
-    } else {
-      notFound.push(result.query);
+      continue;
     }
+    if (result.status === "ambiguous") {
+      ambiguities.push(result.ambiguity);
+      continue;
+    }
+
+    // Live hydrate exact Slack IDs when cache misses
+    const idQuery = query.trim();
+    if (/^[CG][A-Z0-9_]+$/i.test(idQuery)) {
+      try {
+        const { hydrateChannelById } = await import("./access");
+        let token = "";
+        try {
+          const { getEnv } = await import("@/lib/env");
+          token = getEnv().SLACK_BOT_TOKEN?.trim() ?? "";
+        } catch {
+          token = (process.env.SLACK_BOT_TOKEN ?? "").trim();
+        }
+        if (token) {
+          const hydrated = await hydrateChannelById({
+            channelId: idQuery.toUpperCase(),
+            teamId,
+            token,
+            deps,
+          });
+          if (hydrated && !seen.has(hydrated.id)) {
+            seen.add(hydrated.id);
+            channels.push(hydrated);
+            continue;
+          }
+        }
+      } catch {
+        // fall through to notFound
+      }
+    }
+    notFound.push(result.query);
   }
 
   return { channels, ambiguities, notFound };

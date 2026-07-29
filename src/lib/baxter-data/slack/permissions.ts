@@ -41,18 +41,40 @@ export function capabilitiesFromScopes(
   if (base.dms) allowed.push("im");
   if (base.groupDms) allowed.push("mpim");
 
-  // Bot paths are public-only regardless of accidental private scopes.
-  if (tokenKind === "bot_with_action_token" || tokenKind === "bot_public") {
+  // Bot history can read public channels and private channels the bot is in.
+  // Slack API enforces membership. RTS private/DM still follows scopes + action_token/user OAuth.
+  if (tokenKind === "bot_public") {
     return {
       publicChannels: true,
-      privateChannels: false,
+      privateChannels: true,
       dms: false,
       groupDms: false,
       threadContext: true,
       permalinks: true,
       userLevelAuthorization: userLevel,
       tokenKind,
-      allowedChannelTypes: ["public_channel"],
+      allowedChannelTypes: ["public_channel", "private_channel"],
+    };
+  }
+
+  if (tokenKind === "bot_with_action_token") {
+    const allowed: SlackChannelKind[] = ["public_channel"];
+    // action_token RTS may include private when search:read.private is installed
+    if (base.privateChannels || scopes.includes("search:read.private")) {
+      allowed.push("private_channel");
+    }
+    if (base.dms || scopes.includes("search:read.im")) allowed.push("im");
+    if (base.groupDms || scopes.includes("search:read.mpim")) allowed.push("mpim");
+    return {
+      publicChannels: true,
+      privateChannels: allowed.includes("private_channel"),
+      dms: allowed.includes("im"),
+      groupDms: allowed.includes("mpim"),
+      threadContext: true,
+      permalinks: true,
+      userLevelAuthorization: userLevel,
+      tokenKind,
+      allowedChannelTypes: allowed,
     };
   }
 
@@ -183,10 +205,13 @@ export async function resolveSearchCredential(
   if (canUseBotPublic && botToken) {
     const scopes = [
       "search:read.public",
+      "search:read.private",
       "search:read.users",
       "channels:history",
       "channels:read",
       "channels:join",
+      "groups:history",
+      "groups:read",
     ];
     if (requester.actionToken) {
       return {

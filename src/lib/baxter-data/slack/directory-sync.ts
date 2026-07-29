@@ -41,8 +41,9 @@ async function apiCall(
   token: string,
   body: Record<string, unknown>,
 ): Promise<SlackApiCallResult> {
-  if (deps?.callSlackApi) return deps.callSlackApi(method, { token, body });
-  return callSlackApi(method, { token, body, timeoutMs: 15_000 });
+  // Prefer form-urlencoded for list pagination — Slack cursor handling is most reliable this way.
+  if (deps?.callSlackApi) return deps.callSlackApi(method, { token, body, form: true });
+  return callSlackApi(method, { token, body, form: true, timeoutMs: 15_000 });
 }
 
 async function loadBotToken(): Promise<string> {
@@ -238,10 +239,25 @@ async function paginateUsers(input: {
   let botsSkipped = 0;
   let pages = 0;
   let cursor: string | null = null;
-  const seenCursors = new Set<string>();
+  const requestedCursors = new Set<string>();
 
   while (pages < MAX_USER_PAGES) {
     pages += 1;
+    if (cursor) {
+      if (requestedCursors.has(cursor)) {
+        errors.push("users.list: repeated request cursor detected");
+        return {
+          upserted,
+          activeHumans,
+          botsSkipped,
+          pages,
+          complete: false,
+          incompleteReason: "cursor_cycle",
+          errors,
+        };
+      }
+      requestedCursors.add(cursor);
+    }
     const body: Record<string, unknown> = { limit: PAGE_SIZE };
     if (cursor) body.cursor = cursor;
     const result = await apiCall(input.deps, "users.list", input.token, body);
@@ -296,7 +312,7 @@ async function paginateUsers(input: {
     }
 
     const next = nextCursor(result.data);
-    if (!next) {
+    if (!next || next === cursor) {
       return {
         upserted,
         activeHumans,
@@ -307,19 +323,6 @@ async function paginateUsers(input: {
         errors,
       };
     }
-    if (seenCursors.has(next) || next === cursor) {
-      errors.push("users.list: repeated cursor detected");
-      return {
-        upserted,
-        activeHumans,
-        botsSkipped,
-        pages,
-        complete: false,
-        incompleteReason: "cursor_cycle",
-        errors,
-      };
-    }
-    seenCursors.add(next);
     cursor = next;
   }
 
@@ -356,10 +359,27 @@ async function paginateChannels(input: {
   let archivedChannels = 0;
   let pages = 0;
   let cursor: string | null = null;
-  const seenCursors = new Set<string>();
+  const requestedCursors = new Set<string>();
+  const seenChannelIds = new Set<string>();
 
   while (pages < MAX_CHANNEL_PAGES) {
     pages += 1;
+    if (cursor) {
+      if (requestedCursors.has(cursor)) {
+        errors.push("conversations.list: repeated request cursor detected");
+        return {
+          upserted,
+          publicChannels,
+          privateChannels,
+          archivedChannels,
+          pages,
+          complete: false,
+          incompleteReason: "cursor_cycle",
+          errors,
+        };
+      }
+      requestedCursors.add(cursor);
+    }
     const body: Record<string, unknown> = {
       types: "public_channel,private_channel",
       exclude_archived: false,
@@ -385,12 +405,18 @@ async function paginateChannels(input: {
     const batch: Array<
       Partial<SlackChannelProfileRecord> & { team_id: string; slack_channel_id: string }
     > = [];
+    let newOnPage = 0;
     for (const ch of channels) {
       const id = String(ch.id ?? "");
       if (!id) continue;
+      if (!seenChannelIds.has(id)) {
+        seenChannelIds.add(id);
+        newOnPage += 1;
+      }
       const name = String(ch.name || "").trim() || null;
       const isPrivate = Boolean(ch.is_private);
       const isArchived = Boolean(ch.is_archived);
+      const isMember = typeof ch.is_member === "boolean" ? Boolean(ch.is_member) : null;
       const isIm = Boolean(ch.is_im);
       const isMpim = Boolean(ch.is_mpim);
       let channelType = "public_channel";
@@ -404,11 +430,13 @@ async function paginateChannels(input: {
         name,
         channel_type: channelType,
         is_private: isPrivate,
+        is_archived: isArchived,
+        is_member: isMember,
         last_resolved_at: input.refreshedAt,
         resolve_error: null,
       });
       if (isArchived) archivedChannels += 1;
-      if (isPrivate) privateChannels += 1;
+      else if (isPrivate) privateChannels += 1;
       else publicChannels += 1;
     }
     if (batch.length) {
@@ -429,8 +457,22 @@ async function paginateChannels(input: {
         errors,
       };
     }
-    if (seenCursors.has(next) || next === cursor) {
-      errors.push("conversations.list: repeated cursor detected");
+    // Slack occasionally echoes the request cursor when finished — treat as complete.
+    if (next === cursor) {
+      return {
+        upserted,
+        publicChannels,
+        privateChannels,
+        archivedChannels,
+        pages,
+        complete: true,
+        incompleteReason: null,
+        errors,
+      };
+    }
+    // No new channel IDs on this page but a next_cursor remains → stop as partial (avoid loops).
+    if (channels.length > 0 && newOnPage === 0) {
+      errors.push("conversations.list: page returned only duplicate channel IDs");
       return {
         upserted,
         publicChannels,
@@ -442,7 +484,6 @@ async function paginateChannels(input: {
         errors,
       };
     }
-    seenCursors.add(next);
     cursor = next;
   }
 

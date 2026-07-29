@@ -33,6 +33,8 @@ export type SlackChannelProfileRecord = {
   name: string | null;
   channel_type: string | null;
   is_private: boolean;
+  is_archived?: boolean;
+  is_member?: boolean | null;
   last_resolved_at: string | null;
   last_seen_at: string | null;
   resolve_error: string | null;
@@ -223,6 +225,8 @@ export async function upsertSlackChannelProfile(
     name: input.name ?? existing?.name ?? null,
     channel_type: input.channel_type ?? existing?.channel_type ?? null,
     is_private: input.is_private ?? existing?.is_private ?? false,
+    is_archived: input.is_archived ?? existing?.is_archived ?? false,
+    is_member: input.is_member === undefined ? (existing?.is_member ?? null) : input.is_member,
     last_resolved_at: input.last_resolved_at ?? existing?.last_resolved_at ?? null,
     last_seen_at: input.last_seen_at ?? existing?.last_seen_at ?? null,
     resolve_error:
@@ -305,6 +309,8 @@ export async function batchUpsertSlackChannelProfiles(
     name: input.name ?? null,
     channel_type: input.channel_type ?? null,
     is_private: input.is_private ?? false,
+    is_archived: input.is_archived ?? false,
+    is_member: input.is_member ?? null,
     last_resolved_at: input.last_resolved_at ?? now,
     last_seen_at: input.last_seen_at ?? null,
     resolve_error: input.resolve_error ?? null,

@@ -52,6 +52,8 @@ async function fetchChannelHistoryWindow(input: {
   if (
     !result.ok &&
     (result.error === "not_in_channel" || result.error === "channel_not_found") &&
+    !input.channelKind?.includes("private") &&
+    input.channelKind !== "private_channel" &&
     (input.credential.tokenKind === "bot_public" ||
       input.credential.tokenKind === "bot_with_action_token")
   ) {
@@ -158,6 +160,26 @@ export async function executeSlackSearchPlan(input: {
         },
       };
     }
+    if (latest.accessDenied) {
+      return {
+        results: [],
+        incomplete: {
+          code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
+          message:
+            "That Slack channel is resolved but not accessible with the current Slack credentials. Link Slack Search to search with your visibility, or invite Baxter to the channel.",
+          retryable: false,
+        },
+        diagnostics: {
+          endpoint: "conversations.history",
+          latencyMs: Date.now() - start,
+          resultCount: 0,
+          paginationCount: latest.pagesFetched,
+          rateLimited: false,
+          exactNewestGuaranteed: false,
+          notes: [...notes, "Channel inaccessible — not falling back to RTS."],
+        },
+      };
+    }
     notes.push(
       "conversations.history did not return a matching newest message; falling back if RTS available.",
     );
@@ -222,7 +244,7 @@ export async function executeSlackSearchPlan(input: {
           exactNewestGuaranteed: true,
           notes: [
             ...notes,
-            "bot_public latest_message: no matching author in recent public channel history.",
+            "bot_public latest_message: no matching author in accessible channel history.",
           ],
         },
       };
@@ -262,6 +284,26 @@ export async function executeSlackSearchPlan(input: {
         deps: input.deps,
       });
       notes.push(...latest.notes);
+      if (latest.accessDenied) {
+        return {
+          results: [],
+          incomplete: {
+            code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
+            message:
+              "That Slack channel is resolved but not accessible with Baxter's bot token. Link Slack Search to search with your visibility.",
+            retryable: false,
+          },
+          diagnostics: {
+            endpoint: "conversations.history",
+            latencyMs: Date.now() - start,
+            resultCount: 0,
+            paginationCount: latest.pagesFetched,
+            rateLimited: false,
+            exactNewestGuaranteed: false,
+            notes: [...notes, "Channel inaccessible to bot — authorization required."],
+          },
+        };
+      }
       return {
         results: latest.message ? [latest.message] : [],
         incomplete: null,
@@ -277,63 +319,13 @@ export async function executeSlackSearchPlan(input: {
       };
     }
 
-    // Topic / status without a resolved channel: bounded public-channel history scan
-    if (input.plan.keywords.length > 0 && input.deps?.listCachedChannels) {
-      const teamId = input.credential.slackTeamId ?? "";
-      const directory = await input.deps.listCachedChannels(teamId);
-      const publicChannels = directory
-        .filter((c) => !c.isPrivate && c.kind === "public_channel")
-        .slice(0, 8);
-      const scanned: SlackMessageEvidence[] = [];
-      let pages = 0;
-      for (const channel of publicChannels) {
-        if (scanned.length >= input.plan.limit) break;
-        const hist = await fetchChannelHistoryWindow({
-          credential: input.credential,
-          channelId: channel.id,
-          channelName: channel.name,
-          channelKind: channel.kind,
-          limit: 40,
-          timeRange: input.plan.timeRange,
-          deps: input.deps,
-        });
-        pages += hist.pagesFetched;
-        notes.push(...hist.notes.map((n) => `#${channel.name}: ${n}`));
-        const hits = filterMessagesByKeywords(hist.messages, input.plan.keywords);
-        for (const hit of hits) {
-          if (input.plan.people.length && hit.authorId) {
-            const allowed = new Set(input.plan.people.map((p) => p.id));
-            if (!allowed.has(hit.authorId)) continue;
-          }
-          scanned.push(hit);
-          if (scanned.length >= input.plan.limit) break;
-        }
-      }
-      scanned.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
-      return {
-        results: scanned.slice(0, input.plan.limit),
-        incomplete: null,
-        diagnostics: {
-          endpoint: "conversations.history",
-          latencyMs: Date.now() - start,
-          resultCount: scanned.length,
-          paginationCount: pages,
-          rateLimited: false,
-          exactNewestGuaranteed: null,
-          notes: [
-            ...notes,
-            `bot_public bounded public-channel keyword scan (${publicChannels.length} channels).`,
-          ],
-        },
-      };
-    }
-
+    // Broad topic without action_token / user OAuth: do NOT pretend an 8-channel scan is workspace search.
     return {
       results: [],
       incomplete: {
         code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
         message:
-          "Workspace-wide Slack search needs a linked Slack Search connection (or a Slack action token). I couldn't run a public-channel history scan for this question.",
+          "I couldn't run a full Slack workspace search with the current authorization. Public channel history works for exact channels; workspace-wide search needs a Slack action token (from Slack) or a linked Slack Search connection.",
         retryable: false,
       },
       diagnostics: {
@@ -343,7 +335,10 @@ export async function executeSlackSearchPlan(input: {
         paginationCount: 0,
         rateLimited: false,
         exactNewestGuaranteed: null,
-        notes: [...notes, "bot_public cannot run assistant.search.context without action_token."],
+        notes: [
+          ...notes,
+          "Workspace semantic search unavailable without action_token or user OAuth — skipped weak multi-channel scan.",
+        ],
       },
     };
   }

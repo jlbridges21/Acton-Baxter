@@ -1,4 +1,5 @@
 import { callSlackApi } from "./api";
+import { resolveChannelAccess } from "./access";
 import { normalizeHistoryMessage } from "./normalize";
 import type {
   SlackApiCallResult,
@@ -106,10 +107,16 @@ export async function fetchPermalink(input: {
   return typeof result.data.permalink === "string" ? result.data.permalink : null;
 }
 
+function isSkippableHistorySubtype(subtype: unknown): boolean {
+  if (!subtype || typeof subtype !== "string") return false;
+  // Keep normal messages and thread broadcasts; skip channel join/leave noise etc.
+  if (subtype === "thread_broadcast") return false;
+  return true;
+}
+
 /**
- * Exact newest message for person+channel when possible via conversations.history.
- * Returns metadata about whether newest is guaranteed.
- * For public channels, may attempt conversations.join once if bot is not a member.
+ * Exact newest message for person+channel via conversations.history (+ selective replies).
+ * Access is decided by membership/privacy — not "private ⇒ OAuth required".
  */
 export async function fetchLatestMessageInChannel(input: {
   credential: SlackCredentialResolution;
@@ -120,6 +127,7 @@ export async function fetchLatestMessageInChannel(input: {
   exactNewestGuaranteed: boolean;
   pagesFetched: number;
   notes: string[];
+  accessDenied?: boolean;
 }> {
   const channel = input.plan.channels[0];
   const person = input.plan.people[0];
@@ -128,26 +136,45 @@ export async function fetchLatestMessageInChannel(input: {
     return { message: null, exactNewestGuaranteed: false, pagesFetched: 0, notes };
   }
 
-  // Private channels require user-level credentials — never join private.
-  if (channel.isPrivate || channel.kind === "private_channel") {
-    if (
-      input.credential.tokenKind === "bot_public" ||
-      input.credential.tokenKind === "bot_with_action_token"
-    ) {
-      notes.push("Skipped bot history for private channel — user OAuth required.");
-      return { message: null, exactNewestGuaranteed: false, pagesFetched: 0, notes };
-    }
+  const access = await resolveChannelAccess({
+    channel,
+    credential: input.credential,
+    deps: input.deps,
+  });
+  notes.push(...access.notes);
+  const resolvedChannel = access.channel;
+
+  if (access.isArchived) {
+    notes.push("Channel is archived — skipped default latest-message retrieval.");
+    return { message: null, exactNewestGuaranteed: true, pagesFetched: 0, notes };
+  }
+
+  if (!access.canReadHistory) {
+    notes.push(
+      access.requiresUserOauth
+        ? "Channel resolved but inaccessible with bot token — user OAuth required."
+        : "Channel history not available with current credentials.",
+    );
+    return {
+      message: null,
+      exactNewestGuaranteed: false,
+      pagesFetched: 0,
+      notes,
+      accessDenied: true,
+    };
   }
 
   let cursor: string | undefined;
   let pages = 0;
   const maxPages = 8;
   let attemptedJoin = false;
+  // Recent thread roots to probe for newer replies (bounded).
+  const threadRootsToProbe: string[] = [];
 
   while (pages < maxPages) {
     pages += 1;
     const body: Record<string, unknown> = {
-      channel: channel.id,
+      channel: resolvedChannel.id,
       limit: 100,
     };
     if (cursor) body.cursor = cursor;
@@ -160,15 +187,15 @@ export async function fetchLatestMessageInChannel(input: {
     if (!result.ok) {
       if (
         !attemptedJoin &&
-        !channel.isPrivate &&
-        channel.kind !== "private_channel" &&
+        access.canJoin &&
+        !access.isPrivate &&
         (result.error === "not_in_channel" || result.error === "channel_not_found") &&
         (input.credential.tokenKind === "bot_public" ||
           input.credential.tokenKind === "bot_with_action_token")
       ) {
         attemptedJoin = true;
         const join = await apiCall(input.deps, "conversations.join", input.credential.token, {
-          channel: channel.id,
+          channel: resolvedChannel.id,
         });
         notes.push(
           join.ok
@@ -180,24 +207,45 @@ export async function fetchLatestMessageInChannel(input: {
           continue;
         }
       }
+      if (
+        access.isPrivate &&
+        (result.error === "not_in_channel" ||
+          result.error === "channel_not_found" ||
+          result.error === "missing_scope")
+      ) {
+        notes.push(`Private history denied: ${result.error}`);
+        return {
+          message: null,
+          exactNewestGuaranteed: false,
+          pagesFetched: pages,
+          notes,
+          accessDenied: true,
+        };
+      }
       notes.push(`conversations.history failed: ${result.error ?? "unknown"}`);
       return { message: null, exactNewestGuaranteed: false, pagesFetched: pages, notes };
     }
 
     const messages = (result.data.messages as Array<Record<string, unknown>> | undefined) ?? [];
     for (const m of messages) {
+      const replyCount = Number(m.reply_count ?? 0);
+      const ts = String(m.ts ?? "");
+      if (replyCount > 0 && ts && threadRootsToProbe.length < 6) {
+        threadRootsToProbe.push(ts);
+      }
+
       if (person && String(m.user ?? "") !== person.id) continue;
-      if (m.subtype && m.subtype !== "thread_broadcast") continue;
+      if (isSkippableHistorySubtype(m.subtype)) continue;
       const normalized = normalizeHistoryMessage({
         message: m,
-        channelId: channel.id,
-        channelName: channel.name,
-        channelKind: channel.kind,
+        channelId: resolvedChannel.id,
+        channelName: resolvedChannel.name,
+        channelKind: resolvedChannel.kind,
       });
       if (!normalized) continue;
       const permalink = await fetchPermalink({
         credential: input.credential,
-        channelId: channel.id,
+        channelId: resolvedChannel.id,
         messageTs: normalized.messageTs,
         deps: input.deps,
       });
@@ -217,6 +265,49 @@ export async function fetchLatestMessageInChannel(input: {
       ?.next_cursor;
     if (!next) break;
     cursor = next;
+  }
+
+  // Probe recent threads for a newer reply from the person (bounded).
+  if (person && threadRootsToProbe.length) {
+    notes.push(`Probing ${threadRootsToProbe.length} recent thread(s) for replies.`);
+    let best: SlackMessageEvidence | null = null;
+    for (const rootTs of threadRootsToProbe) {
+      const replies = await fetchThreadContext({
+        credential: input.credential,
+        channelId: resolvedChannel.id,
+        threadTs: rootTs,
+        limit: 50,
+        deps: input.deps,
+      });
+      for (const reply of replies) {
+        if (reply.authorId !== person.id) continue;
+        if (!best || (reply.timestamp ?? "") > (best.timestamp ?? "")) {
+          best = {
+            ...reply,
+            channelName: resolvedChannel.name,
+            channelKind: resolvedChannel.kind,
+            authorName: person.displayName,
+          };
+        }
+      }
+    }
+    if (best) {
+      if (!best.permalink) {
+        best.permalink = await fetchPermalink({
+          credential: input.credential,
+          channelId: resolvedChannel.id,
+          messageTs: best.messageTs,
+          deps: input.deps,
+        });
+      }
+      notes.push("Found newest matching activity in a thread reply.");
+      return {
+        message: best,
+        exactNewestGuaranteed: true,
+        pagesFetched: pages,
+        notes,
+      };
+    }
   }
 
   notes.push(

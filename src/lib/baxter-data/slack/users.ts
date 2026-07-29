@@ -46,10 +46,10 @@ export function resolvePersonFromDirectory(
   const q = query.trim();
   if (!q) return { status: "not_found", query: q };
 
-  if (/^U[A-Z0-9]+$/i.test(q)) {
-    const byId = directory.find((p) => p.id === q);
+  if (/^U[A-Z0-9_]+$/i.test(q)) {
+    const byId = directory.find((p) => p.id.toUpperCase() === q.toUpperCase());
     if (byId) return { status: "resolved", person: byId };
-    return { status: "not_found", query: q };
+    return { status: "not_found", query: q.toUpperCase() };
   }
 
   const nq = normalizeName(q);

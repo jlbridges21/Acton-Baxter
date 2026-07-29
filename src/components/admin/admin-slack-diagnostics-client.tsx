@@ -21,6 +21,7 @@ type SearchSnapshot = {
     channelsCached: number;
     publicChannels: number;
     privateChannels: number;
+    archivedChannels?: number;
     activeHumans: number;
     lastUserResolvedAt: string | null;
     lastChannelResolvedAt: string | null;
@@ -296,9 +297,12 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                   <span className="font-medium">{search.directory.channelsCached}</span>
                 </div>
                 <div>
-                  Public / private:{" "}
+                  Public / private / archived:{" "}
                   <span className="font-medium">
                     {search.directory.publicChannels} / {search.directory.privateChannels}
+                    {typeof search.directory.archivedChannels === "number"
+                      ? ` / ${search.directory.archivedChannels}`
+                      : ""}
                   </span>
                 </div>
                 <div>

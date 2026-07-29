@@ -31,28 +31,36 @@ export async function listCachedSlackUsers(teamId: string): Promise<ResolvedSlac
 export async function listCachedSlackChannels(teamId: string): Promise<ResolvedSlackChannel[]> {
   try {
     const rows = await listAllSlackChannelProfiles();
-    return rows
-      .filter((row) => !teamId || row.team_id === teamId)
-      .map((row) => {
-        const rawName = row.name?.trim() ?? "";
-        if (!rawName) return null;
-        const isPrivate = Boolean(row.is_private);
-        const kind = inferChannelKind({
-          id: row.slack_channel_id,
-          isPrivate,
-          channelType: row.channel_type,
-        });
-        return {
-          id: row.slack_channel_id,
-          name: rawName,
-          displayLabel: `#${rawName.replace(/^#/, "")}`,
-          teamId: row.team_id,
-          kind,
-          isPrivate,
-        } satisfies ResolvedSlackChannel;
+    const mapped: ResolvedSlackChannel[] = [];
+    for (const row of rows) {
+      if (teamId && row.team_id !== teamId) continue;
+      const rawName = row.name?.trim() ?? "";
+      if (!rawName) continue;
+      const isPrivate = Boolean(row.is_private);
+      const isArchived = Boolean(row.is_archived);
+      const kind = inferChannelKind({
+        id: row.slack_channel_id,
+        isPrivate,
+        channelType: row.channel_type,
+      });
+      mapped.push({
+        id: row.slack_channel_id,
+        name: rawName,
+        displayLabel: `#${rawName.replace(/^#/, "")}`,
+        teamId: row.team_id,
+        kind,
+        isPrivate,
+        isArchived,
+        isMember: row.is_member ?? null,
+      });
+    }
+    return mapped
+      .sort((a, b) => {
+        const aArch = a.isArchived ? 1 : 0;
+        const bArch = b.isArchived ? 1 : 0;
+        if (aArch !== bArch) return aArch - bArch;
+        return a.name.localeCompare(b.name);
       })
-      .filter((c): c is ResolvedSlackChannel => Boolean(c))
-      .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 5000);
   } catch {
     return [];
@@ -62,8 +70,11 @@ export async function listCachedSlackChannels(teamId: string): Promise<ResolvedS
 export type SlackDirectoryHealth = {
   usersCached: number;
   channelsCached: number;
+  /** Non-archived public channels with names */
   publicChannels: number;
+  /** Non-archived private channels with names */
   privateChannels: number;
+  archivedChannels: number;
   activeHumans: number;
   lastUserResolvedAt: string | null;
   lastChannelResolvedAt: string | null;
@@ -78,8 +89,9 @@ export async function getSlackDirectoryHealth(teamId: string): Promise<SlackDire
     const users = allUsers.filter((u) => !teamId || u.team_id === teamId);
     const channels = allChannels.filter((c) => !teamId || c.team_id === teamId);
     const activeHumans = users.filter((u) => !u.is_bot && !u.is_deleted).length;
-    const publicChannels = channels.filter((c) => !c.is_private && c.name).length;
-    const privateChannels = channels.filter((c) => c.is_private && c.name).length;
+    const archivedChannels = channels.filter((c) => c.is_archived && c.name).length;
+    const publicChannels = channels.filter((c) => !c.is_private && !c.is_archived && c.name).length;
+    const privateChannels = channels.filter((c) => c.is_private && !c.is_archived && c.name).length;
     const lastUser = users
       .map((u) => u.last_resolved_at)
       .filter((v): v is string => Boolean(v))
@@ -95,6 +107,7 @@ export async function getSlackDirectoryHealth(teamId: string): Promise<SlackDire
       channelsCached: channels.length,
       publicChannels,
       privateChannels,
+      archivedChannels,
       activeHumans,
       lastUserResolvedAt: lastUser ?? null,
       lastChannelResolvedAt: lastChannel ?? null,
@@ -105,6 +118,7 @@ export async function getSlackDirectoryHealth(teamId: string): Promise<SlackDire
       channelsCached: 0,
       publicChannels: 0,
       privateChannels: 0,
+      archivedChannels: 0,
       activeHumans: 0,
       lastUserResolvedAt: null,
       lastChannelResolvedAt: null,

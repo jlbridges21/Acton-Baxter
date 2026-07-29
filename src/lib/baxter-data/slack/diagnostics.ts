@@ -68,6 +68,7 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string, te
       channelsCached: directory.channelsCached,
       publicChannels: directory.publicChannels,
       privateChannels: directory.privateChannels,
+      archivedChannels: directory.archivedChannels,
       activeHumans: directory.activeHumans,
       lastUserResolvedAt: directory.lastUserResolvedAt,
       lastChannelResolvedAt: directory.lastChannelResolvedAt,
@@ -148,10 +149,13 @@ export async function runSlackSearchAdminTest(input: {
     }
     const refreshed = await refreshAndListDirectory(teamId, undefined, { mode: "full" });
     const r = refreshed.refresh;
-    const success = !r.timedOut && r.errors.length === 0;
+    // Useful partial directories (e.g. cursor_cycle after 200 channels) are still success.
+    const usable = r.usersUpserted > 0 || r.channelsUpserted > 0;
+    const success = usable || (!r.timedOut && r.errors.length === 0);
     return {
       success,
       ok: success,
+      status: r.paginationComplete && !r.timedOut ? "complete" : "partial",
       action: input.action,
       summary: {
         users: {
@@ -197,14 +201,15 @@ export async function runSlackSearchAdminTest(input: {
         users: refreshed.users.length,
         channels: refreshed.channels.length,
       },
-      error: success
-        ? undefined
-        : {
-            code: r.timedOut
-              ? "BAXTER_SLACK_DIRECTORY_TIMEOUT"
-              : "BAXTER_SLACK_DIRECTORY_REFRESH_FAILED",
-            message: r.errors[0] ?? "Directory refresh failed",
-          },
+      error:
+        success || !r.timedOut
+          ? undefined
+          : {
+              code: r.timedOut
+                ? "BAXTER_SLACK_DIRECTORY_TIMEOUT"
+                : "BAXTER_SLACK_DIRECTORY_REFRESH_FAILED",
+              message: r.errors[0] ?? "Directory refresh failed",
+            },
     };
   }
 
@@ -285,29 +290,81 @@ export async function runSlackSearchAdminTest(input: {
     const channels = await listCachedSlackChannels(teamId);
     const q = query || "project-management";
     const result = resolveChannelFromDirectory(q, channels);
+    if (result.status === "resolved") {
+      let accessNotes: string[] = [];
+      let botHistory: string = "not_tested";
+      try {
+        const { resolveChannelAccess } = await import("./access");
+        const { resolveSearchCredential } = await import("./permissions");
+        const cred = await resolveSearchCredential({
+          ...input.requester,
+          allowPublicOnlyFallback: true,
+          slackUserId: input.requester.slackUserId ?? "admin-diagnostic",
+        });
+        if (cred.ok) {
+          const access = await resolveChannelAccess({
+            channel: result.channel,
+            credential: cred.credential,
+          });
+          accessNotes = access.notes;
+          botHistory = access.canReadHistory
+            ? "available"
+            : access.requiresUserOauth
+              ? "requires_user_oauth"
+              : "unavailable";
+          return {
+            ok: true,
+            action: input.action,
+            query: q,
+            channelsCached: channels.length,
+            result: {
+              id: access.channel.id,
+              name: access.channel.name,
+              displayLabel: access.channel.displayLabel,
+              kind: access.channel.kind,
+              isPrivate: access.isPrivate,
+              isArchived: access.isArchived,
+              botMember: access.isMember,
+              botHistory,
+              accessNotes,
+            },
+          };
+        }
+      } catch {
+        // fall through to basic result
+      }
+      return {
+        ok: true,
+        action: input.action,
+        query: q,
+        channelsCached: channels.length,
+        result: {
+          id: result.channel.id,
+          name: result.channel.name,
+          displayLabel: result.channel.displayLabel,
+          kind: result.channel.kind,
+          isPrivate: result.channel.isPrivate,
+          isArchived: result.channel.isArchived ?? null,
+          botMember: result.channel.isMember ?? null,
+          botHistory,
+        },
+      };
+    }
     return {
-      ok: result.status === "resolved",
+      ok: false,
       action: input.action,
       query: q,
       channelsCached: channels.length,
       result:
-        result.status === "resolved"
+        result.status === "ambiguous"
           ? {
-              id: result.channel.id,
-              name: result.channel.name,
-              displayLabel: result.channel.displayLabel,
-              kind: result.channel.kind,
-              isPrivate: result.channel.isPrivate,
+              ambiguous: true,
+              candidates: result.ambiguity.candidates.map((c) => ({
+                name: c.name,
+                displayLabel: c.displayLabel,
+              })),
             }
-          : result.status === "ambiguous"
-            ? {
-                ambiguous: true,
-                candidates: result.ambiguity.candidates.map((c) => ({
-                  name: c.name,
-                  displayLabel: c.displayLabel,
-                })),
-              }
-            : { notFound: true },
+          : { notFound: true },
     };
   }
 

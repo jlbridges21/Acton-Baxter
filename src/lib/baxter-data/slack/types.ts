@@ -34,6 +34,10 @@ export type ResolvedSlackChannel = {
   teamId: string;
   kind: SlackChannelKind;
   isPrivate: boolean;
+  /** Cached/live membership for the bot (or inspecting token). */
+  isMember?: boolean | null;
+  /** Archived channels are excluded from default retrieval. */
+  isArchived?: boolean | null;
 };
 
 export type SlackTimeRange = {

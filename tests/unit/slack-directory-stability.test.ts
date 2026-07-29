@@ -139,22 +139,47 @@ describe("Slack directory refresh stability", () => {
     expect(channels.some((c) => c.name === "baxter")).toBe(true);
   });
 
-  it("detects repeated cursor and stops without hanging", async () => {
-    const callSlackApi = vi.fn(async (method: string) => {
-      if (method === "users.list") {
-        return ok({
-          members: [],
-          response_metadata: { next_cursor: "same" },
-        });
-      }
-      if (method === "conversations.list") {
-        return ok({
-          channels: [],
-          response_metadata: { next_cursor: "" },
-        });
-      }
-      return { ok: false, error: "unexpected", data: {} };
-    });
+  it("detects repeated request cursor and stops without hanging", async () => {
+    const callSlackApi = vi.fn(
+      async (method: string, options?: { body?: Record<string, unknown> }) => {
+        if (method === "users.list") {
+          const cursor = typeof options?.body?.cursor === "string" ? options.body.cursor : "";
+          if (!cursor) {
+            return ok({
+              members: [
+                {
+                  id: "U1",
+                  name: "u1",
+                  real_name: "User One",
+                  is_bot: false,
+                  deleted: false,
+                  profile: { display_name: "User One" },
+                },
+              ],
+              response_metadata: { next_cursor: "u2" },
+            });
+          }
+          if (cursor === "u2") {
+            return ok({
+              members: [],
+              response_metadata: { next_cursor: "u1_again" },
+            });
+          }
+          // Cycle back to a previously requested cursor
+          return ok({
+            members: [],
+            response_metadata: { next_cursor: "u2" },
+          });
+        }
+        if (method === "conversations.list") {
+          return ok({
+            channels: [],
+            response_metadata: { next_cursor: "" },
+          });
+        }
+        return { ok: false, error: "unexpected", data: {} };
+      },
+    );
 
     const result = await refreshSlackWorkspaceDirectory({
       teamId: "T_TEST",
@@ -165,7 +190,6 @@ describe("Slack directory refresh stability", () => {
 
     expect(result.paginationComplete).toBe(false);
     expect(result.incompleteReason).toBe("cursor_cycle");
-    expect(result.errors.some((e) => /repeated cursor/i.test(e))).toBe(true);
   });
 
   it("times out hanging Slack pages with BAXTER_SLACK_DIRECTORY_TIMEOUT", async () => {

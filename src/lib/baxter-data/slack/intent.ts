@@ -240,9 +240,24 @@ export function extractKeywords(question: string, extraDrop: string[] = []): str
 
 export function extractChannelMentions(question: string): string[] {
   const names: string[] = [];
+
+  // Slack mrkdwn channel mentions: <#C123> or <#C123|name>
+  for (const m of question.matchAll(/<#([CG][A-Z0-9_]+)(?:\|([^>]*))?>/gi)) {
+    if (m[1]) names.push(m[1].toUpperCase());
+  }
+
+  // Bare Slack channel IDs when clearly referenced
+  for (const m of question.matchAll(/\b(?:channel\s+|in\s+|from\s+|#)?([CG][A-Z0-9_]{8,})\b/gi)) {
+    if (m[1] && /^[CG][A-Z0-9_]+$/i.test(m[1])) names.push(m[1].toUpperCase());
+  }
+
   const hash = question.matchAll(/#([\w-]+)/g);
   for (const m of hash) {
-    if (m[1]) names.push(m[1]);
+    if (m[1]) {
+      // Skip if this was already captured as a Slack ID (C… / G…)
+      if (/^[CG][A-Z0-9]+$/i.test(m[1])) names.push(m[1].toUpperCase());
+      else names.push(m[1]);
+    }
   }
 
   // "in the baxter channel" / "about the project-management channel" / "from the sales channel"
@@ -252,7 +267,12 @@ export function extractChannelMentions(question: string): string[] {
   ];
   for (const re of namedPatterns) {
     for (const m of question.matchAll(re)) {
-      if (m[1]) names.push(m[1].replace(/\s+/g, "-").toLowerCase());
+      if (m[1]) {
+        const raw = m[1].trim();
+        // Ignore mrkdwn leftovers
+        if (raw.includes("<") || raw.includes(">")) continue;
+        names.push(raw.replace(/\s+/g, "-").toLowerCase());
+      }
     }
   }
 
@@ -268,16 +288,18 @@ export function extractChannelMentions(question: string): string[] {
   return [
     ...new Set(
       names
-        .map((n) =>
-          n
+        .map((n) => {
+          const trimmed = n.trim();
+          if (/^[CG][A-Z0-9_]+$/i.test(trimmed)) return trimmed.toUpperCase();
+          return trimmed
             .replace(/^#/, "")
             .toLowerCase()
             .replace(/\bchannels?\b/g, "")
             .replace(/^(the|a|an)-?/, "")
             .replace(/\s+/g, "-")
             .replace(/-+/g, "-")
-            .replace(/^-|-$/g, ""),
-        )
+            .replace(/^-|-$/g, "");
+        })
         .filter((n) => n.length >= 2),
     ),
   ];
@@ -290,6 +312,11 @@ export function extractChannelMentions(question: string): string[] {
 export function extractPersonQueries(question: string): string[] {
   const q = question.trim();
   const out: string[] = [];
+
+  // Slack mrkdwn user mentions: <@U123> or <@U123|name>
+  for (const m of q.matchAll(/<@([UW][A-Z0-9_]+)(?:\|([^>]*))?>/gi)) {
+    if (m[1]) out.push(m[1].toUpperCase());
+  }
 
   const whatDid = q.match(/\bwhat did ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?) say\b/i);
   if (whatDid?.[1]) out.push(whatDid[1]);
