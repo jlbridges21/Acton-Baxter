@@ -47,6 +47,7 @@ import {
   handleGhlWriteProposal,
   retrieveGhlLiveEvidence,
 } from "./ghl-runtime";
+import { shouldSkipSlackForGhlContactField } from "./ghl-intent";
 import { createServiceClient } from "@/lib/supabase/admin";
 import type { Profile } from "@/lib/research/db-types";
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
@@ -371,8 +372,17 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   let contextItems = evidence.contextItems;
 
   // Merge live GoHighLevel operational evidence when the question is CRM-related.
+  let ghlEvidence: Awaited<ReturnType<typeof retrieveGhlLiveEvidence>> | null = null;
   if (isGhlConfigured()) {
-    const ghlEvidence = await retrieveGhlLiveEvidence(question).catch(() => null);
+    ghlEvidence = await retrieveGhlLiveEvidence(question).catch(() => null);
+    if (ghlEvidence?.diagnostics) {
+      logBaxterDiagnostic("ghlEvidence", {
+        code: "GHL_ENTITY_RESOLUTION",
+        route: "answerBaxterQuestion",
+        conversationId: conversation.id,
+        safeMessage: JSON.stringify(ghlEvidence.diagnostics),
+      });
+    }
     if (ghlEvidence?.ambiguityWarning) {
       const message = await appendAssistantMessage({
         conversationId: conversation.id,
@@ -405,6 +415,34 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         number: kbOffset + index + 1,
       }));
       contextItems = [...renumbered, ...kbItems].slice(0, 8);
+    }
+
+    // Deterministic contact-field answers (address/phone/email/city) — no Slack/LLM guessing.
+    if (ghlEvidence?.deterministicAnswer && ghlEvidence.items.length > 0) {
+      const sources = ghlEvidence.items.map((item) => contextItemToSourceReference(item));
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: ghlEvidence.deterministicAnswer,
+        insufficientKnowledge: false,
+        confidence: "high",
+        modelProvider: "ghl-resolve",
+        modelName: "deterministic-contact-field",
+        sources,
+        sourceEntryIds: sources.map((s, index) => ({
+          id: s.knowledgeEntryId || ghlEvidence!.items[index]!.id,
+          relevanceScore: 100,
+          order: index + 1,
+        })),
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: ghlEvidence.deterministicAnswer,
+        sources,
+        confidence: "high",
+        insufficientKnowledge: false,
+        answerMode: "grounded",
+      });
     }
   }
 
@@ -546,87 +584,135 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     (item) => `${item.title ?? ""}\n${item.summary ?? ""}\n${item.contentExcerpt ?? ""}`,
   );
   const otherEvidenceSatisfies = nonSlackEvidenceSatisfiesQuestion(question, knowledgeExcerpts);
+  // CRM contact-field asks (address/phone/email/…) must not fall through to Slack.
+  const skipSlackForGhlContactField = shouldSkipSlackForGhlContactField(question);
   const forceSlack =
-    Boolean(input.slackRecallForced) || shouldForceSlackDespiteOtherEvidence(question);
-  const hasOtherStrongEvidence = otherEvidenceSatisfies && !forceSlack && contextItems.length > 0;
-  const slackRoleEarly = input.slackRecallForced
-    ? "primary"
-    : detectSlackSearchRole({
-        question,
-        hasOtherStrongEvidence,
-        followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
-      });
+    !skipSlackForGhlContactField &&
+    (Boolean(input.slackRecallForced) || shouldForceSlackDespiteOtherEvidence(question));
+  const hasOtherStrongEvidence =
+    (otherEvidenceSatisfies || skipSlackForGhlContactField) &&
+    !forceSlack &&
+    contextItems.length > 0;
+  const slackRoleEarly = skipSlackForGhlContactField
+    ? "skip"
+    : input.slackRecallForced
+      ? "primary"
+      : detectSlackSearchRole({
+          question,
+          hasOtherStrongEvidence,
+          followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
+        });
   // Slack-origin requests can use bot public-channel history without a separate web OAuth link.
   const allowPublicOnlyFallback =
     input.channel === "slack" || Boolean(input.externalUserId) || forceSlack;
 
-  const slackRuntime = await retrieveSlackForAnswer({
-    question,
-    requester: {
-      baxterUserId: input.userId,
-      slackUserId: input.externalUserId,
-      slackTeamId: input.slackTeamId ?? null,
-      actionToken: input.slackActionToken ?? null,
-      allowPublicOnlyFallback,
-    },
-    conversationMetadata: conversation.metadata ?? {},
-    hasOtherStrongEvidence,
-    roleOverride:
-      forceSlack && slackRoleEarly === "skip"
-        ? "primary"
-        : !otherEvidenceSatisfies && slackRoleEarly === "fallback"
-          ? "primary"
-          : slackRoleEarly === "skip"
-            ? "skip"
-            : undefined,
-  }).catch((error) => {
-    logBaxterDiagnostic("slackEvidence", {
-      code: "SLACK_RETRIEVAL_FAILED",
-      route: "answerBaxterQuestion",
-      conversationId: conversation.id,
-      safeMessage: error instanceof Error ? error.message.slice(0, 160) : "Slack retrieval failed",
-    });
-    const retrievalStatus = {
-      status: "error" as const,
-      intent: null,
-      channel: null,
-      person: null,
-      resultCount: 0,
-      credentialPath: null,
-      retrievalMethod: null,
-      employeeNote:
-        "Slack search is temporarily unavailable, so I couldn't check Slack for this question.",
-    };
-    return {
-      items: [],
-      selected: [],
-      plan: null,
-      nextConversationState: null,
-      authNote: null,
-      noResultsNote: null,
-      incompleteNote: retrievalStatus.employeeNote,
-      retrievalStatus,
-      retrievalStatusPrompt: formatSlackRetrievalStatusForModel(retrievalStatus),
-      diagnostics: {
-        role: slackRoleEarly === "skip" && forceSlack ? "primary" : slackRoleEarly,
-        ran: true,
-        intent: null,
-        resultCount: 0,
-        selectedCount: 0,
-        searchCount: 0,
-        threadsExpanded: 0,
-        incomplete: true,
-        incompleteCode: "SLACK_RETRIEVAL_FAILED",
-        authorization: "unavailable" as const,
-        rateLimited: false,
-        durationMs: 0,
-        followUpReset: false,
-        retrievalStatus: "error" as const,
-        retrievalMethod: null,
-        notes: ["retrieveSlackForAnswer threw"],
-      },
-    };
-  });
+  const slackRuntime = skipSlackForGhlContactField
+    ? ({
+        items: [],
+        selected: [],
+        plan: null,
+        nextConversationState: null,
+        authNote: null,
+        noResultsNote: null,
+        incompleteNote: null,
+        retrievalStatus: {
+          status: "skipped",
+          intent: null,
+          channel: null,
+          person: null,
+          resultCount: 0,
+          credentialPath: null,
+          retrievalMethod: null,
+          employeeNote: null,
+        },
+        retrievalStatusPrompt: "",
+        diagnostics: {
+          role: "skip",
+          ran: false,
+          intent: null,
+          resultCount: 0,
+          selectedCount: 0,
+          searchCount: 0,
+          threadsExpanded: 0,
+          incomplete: false,
+          incompleteCode: null,
+          authorization: "none",
+          rateLimited: false,
+          durationMs: 0,
+          followUpReset: false,
+          retrievalStatus: "skipped",
+          retrievalMethod: null,
+          notes: ["skipped_for_ghl_contact_field"],
+        },
+      } satisfies Awaited<ReturnType<typeof retrieveSlackForAnswer>>)
+    : await retrieveSlackForAnswer({
+        question,
+        requester: {
+          baxterUserId: input.userId,
+          slackUserId: input.externalUserId,
+          slackTeamId: input.slackTeamId ?? null,
+          actionToken: input.slackActionToken ?? null,
+          allowPublicOnlyFallback,
+        },
+        conversationMetadata: conversation.metadata ?? {},
+        hasOtherStrongEvidence,
+        roleOverride:
+          forceSlack && slackRoleEarly === "skip"
+            ? "primary"
+            : !otherEvidenceSatisfies && slackRoleEarly === "fallback"
+              ? "primary"
+              : slackRoleEarly === "skip"
+                ? "skip"
+                : undefined,
+      }).catch((error) => {
+        logBaxterDiagnostic("slackEvidence", {
+          code: "SLACK_RETRIEVAL_FAILED",
+          route: "answerBaxterQuestion",
+          conversationId: conversation.id,
+          safeMessage:
+            error instanceof Error ? error.message.slice(0, 160) : "Slack retrieval failed",
+        });
+        const retrievalStatus = {
+          status: "error" as const,
+          intent: null,
+          channel: null,
+          person: null,
+          resultCount: 0,
+          credentialPath: null,
+          retrievalMethod: null,
+          employeeNote:
+            "Slack search is temporarily unavailable, so I couldn't check Slack for this question.",
+        };
+        return {
+          items: [],
+          selected: [],
+          plan: null,
+          nextConversationState: null,
+          authNote: null,
+          noResultsNote: null,
+          incompleteNote: retrievalStatus.employeeNote,
+          retrievalStatus,
+          retrievalStatusPrompt: formatSlackRetrievalStatusForModel(retrievalStatus),
+          diagnostics: {
+            role: slackRoleEarly === "skip" && forceSlack ? "primary" : slackRoleEarly,
+            ran: true,
+            intent: null,
+            resultCount: 0,
+            selectedCount: 0,
+            searchCount: 0,
+            threadsExpanded: 0,
+            incomplete: true,
+            incompleteCode: "SLACK_RETRIEVAL_FAILED",
+            authorization: "unavailable" as const,
+            rateLimited: false,
+            durationMs: 0,
+            followUpReset: false,
+            retrievalStatus: "error" as const,
+            retrievalMethod: null,
+            notes: ["retrieveSlackForAnswer threw"],
+          },
+        };
+      });
 
   // Persist follow-up state, including explicit clears after topic reset.
   if (

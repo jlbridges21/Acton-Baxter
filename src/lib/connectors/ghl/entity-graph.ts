@@ -7,7 +7,7 @@ import type {
   GhlConversation,
   GhlMessage,
 } from "./types";
-import { getContactById, searchContacts } from "./resources/contacts";
+import { getContactById, hydrateGhlContact, searchContacts } from "./resources/contacts";
 import { listOpportunitiesByContact, getOpportunityById } from "./resources/opportunities";
 import { listPipelines } from "./resources/pipelines";
 import { listUsers } from "./resources/users";
@@ -116,35 +116,6 @@ export async function resolveGhlEntityGraph(
   return enrichGraph(query, retrievedAt, search.contacts[0]!, undefined, options);
 }
 
-/**
- * Search/list payloads are often thin. Prefer full GET /contacts/:id when an id is known.
- * Failure keeps the thin contact so secondary enrichment never blanks the answer.
- */
-async function hydrateFullContact(contact: GhlContact): Promise<GhlContact> {
-  if (!contact.id) return contact;
-  const full = await getContactById(contact.id).catch(() => null);
-  if (!full) return contact;
-  return {
-    ...contact,
-    ...full,
-    address1: full.address1 ?? contact.address1,
-    city: full.city ?? contact.city,
-    state: full.state ?? contact.state,
-    postalCode: full.postalCode ?? contact.postalCode,
-    country: full.country ?? contact.country,
-    email: full.email ?? contact.email,
-    phone: full.phone ?? contact.phone,
-    tags: full.tags?.length ? full.tags : contact.tags,
-    customFields:
-      Object.keys(full.customFields || {}).length > 0 ? full.customFields : contact.customFields,
-    assignedTo: full.assignedTo ?? contact.assignedTo,
-    source: full.source ?? contact.source,
-    companyName: full.companyName ?? contact.companyName,
-    dateAdded: full.dateAdded ?? contact.dateAdded,
-    dateUpdated: full.dateUpdated ?? contact.dateUpdated,
-  };
-}
-
 async function enrichGraph(
   query: string,
   retrievedAt: string,
@@ -173,7 +144,7 @@ async function enrichGraph(
     };
   }
 
-  const hydratedContact = await hydrateFullContact(contact);
+  const hydratedContact = await hydrateGhlContact(contact);
 
   const [opps, pipelines, users, fields] = await Promise.all([
     seedOpps

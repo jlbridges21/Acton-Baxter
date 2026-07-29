@@ -87,6 +87,7 @@ export async function hydrateContactRows(contacts: GhlContact[]): Promise<Hydrat
 
   // Search payloads are often thin (city without address1). Batch-fetch full contacts
   // only when street is missing from the search row — concurrency capped in getContactsByIds.
+  // Same merge rules as hydrateGhlContact (shared with Baxter AI evidence path).
   const needsFull = contacts.filter((c) => c.id && !c.address1).map((c) => c.id);
   const fullById =
     needsFull.length > 0 ? await getContactsByIds(needsFull) : new Map<string, GhlContact>();
@@ -106,6 +107,10 @@ export async function hydrateContactRows(contacts: GhlContact[]): Promise<Hydrat
           phone: full.phone ?? c.phone,
           tags: full.tags?.length ? full.tags : c.tags,
           assignedTo: full.assignedTo ?? c.assignedTo,
+          source: full.source ?? c.source,
+          companyName: full.companyName ?? c.companyName,
+          dateAdded: full.dateAdded ?? c.dateAdded,
+          dateUpdated: full.dateUpdated ?? c.dateUpdated,
         }
       : c;
     const address = contactAddressFromGhl(merged);

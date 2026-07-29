@@ -330,8 +330,13 @@ export function rankContactMatches(
   contacts: GhlContact[],
   searchQuery: string,
 ): AmbiguousContactMatch[] {
-  const query = searchQuery.toLowerCase().trim();
-  const queryParts = query.split(/\s+/);
+  const query = searchQuery
+    .toLowerCase()
+    .trim()
+    .replace(/['\u2019]s\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const queryParts = query.split(/\s+/).filter(Boolean);
 
   return contacts
     .map((contact) => {

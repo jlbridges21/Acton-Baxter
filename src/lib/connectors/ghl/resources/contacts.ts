@@ -184,6 +184,36 @@ export async function getContactById(contactId: string): Promise<GhlContact | nu
   }
 }
 
+/**
+ * Canonical full-contact hydrator shared by admin Contacts UI and Baxter AI evidence.
+ * Search/list payloads are often thin; prefer GET /contacts/:id when an id is known.
+ * Failure keeps the thin contact so secondary enrichment never blanks the answer.
+ */
+export async function hydrateGhlContact(contact: GhlContact): Promise<GhlContact> {
+  if (!contact.id) return contact;
+  const full = await getContactById(contact.id).catch(() => null);
+  if (!full) return contact;
+  return {
+    ...contact,
+    ...full,
+    address1: full.address1 ?? contact.address1,
+    city: full.city ?? contact.city,
+    state: full.state ?? contact.state,
+    postalCode: full.postalCode ?? contact.postalCode,
+    country: full.country ?? contact.country,
+    email: full.email ?? contact.email,
+    phone: full.phone ?? contact.phone,
+    tags: full.tags?.length ? full.tags : contact.tags,
+    customFields:
+      Object.keys(full.customFields || {}).length > 0 ? full.customFields : contact.customFields,
+    assignedTo: full.assignedTo ?? contact.assignedTo,
+    source: full.source ?? contact.source,
+    companyName: full.companyName ?? contact.companyName,
+    dateAdded: full.dateAdded ?? contact.dateAdded,
+    dateUpdated: full.dateUpdated ?? contact.dateUpdated,
+  };
+}
+
 export async function findContactByEmail(email: string): Promise<GhlContact | null> {
   const result = await searchContacts({ email, limit: 1 });
   return result.contacts[0] ?? null;
@@ -200,13 +230,17 @@ export async function findContactsFuzzy(
   options: { limit?: number } = {},
 ): Promise<AmbiguousContactMatch[]> {
   const limit = options.limit ?? 10;
-  const result = await searchContacts({ query: searchQuery, limit: Math.max(limit * 2, 20) });
+  const cleaned = searchQuery
+    .replace(/['\u2019]s\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const result = await searchContacts({ query: cleaned, limit: Math.max(limit * 2, 20) });
 
   if (result.contacts.length === 0) {
     return [];
   }
 
-  const ranked = rankContactMatches(result.contacts, searchQuery);
+  const ranked = rankContactMatches(result.contacts, cleaned);
   return ranked.slice(0, limit);
 }
 

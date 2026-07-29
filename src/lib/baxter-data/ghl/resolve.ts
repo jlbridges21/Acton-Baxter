@@ -14,6 +14,7 @@ import { listPipelines, findPipelineByName } from "@/lib/connectors/ghl/resource
 import { findTagByName } from "@/lib/connectors/ghl/resources/tags";
 import { getCustomFieldByKey } from "@/lib/connectors/ghl/resources/custom-fields";
 import type { GhlContact, GhlOpportunity, GhlPipeline } from "@/lib/connectors/ghl/types";
+import { normalizeGhlQuestionText, stripContactNamePossessive } from "@/lib/baxter-ai/ghl-intent";
 
 export type EntityResolutionResult<T> = {
   resolved: boolean;
@@ -22,6 +23,13 @@ export type EntityResolutionResult<T> = {
   ambiguous: boolean;
   ambiguityMessage?: string;
   notFound: boolean;
+  /** Safe diagnostics (ids/counts only). */
+  diagnostics?: {
+    searchAttempted: boolean;
+    matchCount: number;
+    selectedContactId: string | null;
+    selectionReason: string | null;
+  };
 };
 
 /**
@@ -42,7 +50,18 @@ export async function resolveContact(input: {
     if (input.email) {
       const contact = await findContactByEmail(input.email);
       if (contact) {
-        return { resolved: true, entity: contact, ambiguous: false, notFound: false };
+        return {
+          resolved: true,
+          entity: contact,
+          ambiguous: false,
+          notFound: false,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: 1,
+            selectedContactId: contact.id,
+            selectionReason: "email_exact",
+          },
+        };
       }
     }
 
@@ -50,21 +69,91 @@ export async function resolveContact(input: {
     if (input.phone) {
       const contact = await findContactByPhone(input.phone);
       if (contact) {
-        return { resolved: true, entity: contact, ambiguous: false, notFound: false };
+        return {
+          resolved: true,
+          entity: contact,
+          ambiguous: false,
+          notFound: false,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: 1,
+            selectedContactId: contact.id,
+            selectionReason: "phone_exact",
+          },
+        };
       }
     }
 
     // Try name search (may be ambiguous)
     if (input.name) {
-      const matches = await findContactsFuzzy(input.name, { limit: 5 });
+      const cleanedName = stripContactNamePossessive(normalizeGhlQuestionText(input.name));
+      const matches = await findContactsFuzzy(cleanedName, { limit: 8 });
       const contacts = matches.map((m) => m.contact);
 
       if (contacts.length === 0) {
-        return { resolved: false, ambiguous: false, notFound: true };
+        return {
+          resolved: false,
+          ambiguous: false,
+          notFound: true,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: 0,
+            selectedContactId: null,
+            selectionReason: null,
+          },
+        };
       }
 
       if (contacts.length === 1) {
-        return { resolved: true, entity: contacts[0], ambiguous: false, notFound: false };
+        return {
+          resolved: true,
+          entity: contacts[0],
+          ambiguous: false,
+          notFound: false,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: 1,
+            selectedContactId: contacts[0]!.id,
+            selectionReason: "unique_match",
+          },
+        };
+      }
+
+      // Prefer a single clear exact-name (or first+last exact) hit over ambiguous near-matches.
+      const exactName = matches.filter(
+        (m) =>
+          m.matchedOn.includes("name_exact") ||
+          (m.matchedOn.includes("firstName_exact") && m.matchedOn.includes("lastName_exact")),
+      );
+      if (exactName.length === 1) {
+        return {
+          resolved: true,
+          entity: exactName[0]!.contact,
+          ambiguous: false,
+          notFound: false,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: matches.length,
+            selectedContactId: exactName[0]!.contact.id,
+            selectionReason: "unique_exact_among_many",
+          },
+        };
+      }
+
+      const highOnly = matches.filter((m) => m.confidence === "high");
+      if (highOnly.length === 1) {
+        return {
+          resolved: true,
+          entity: highOnly[0]!.contact,
+          ambiguous: false,
+          notFound: false,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: matches.length,
+            selectedContactId: highOnly[0]!.contact.id,
+            selectionReason: "unique_high_confidence",
+          },
+        };
       }
 
       // Multiple matches - return ambiguity
@@ -74,6 +163,12 @@ export async function resolveContact(input: {
         ambiguous: true,
         ambiguityMessage: formatContactAmbiguity(contacts),
         notFound: false,
+        diagnostics: {
+          searchAttempted: true,
+          matchCount: matches.length,
+          selectedContactId: null,
+          selectionReason: "ambiguous",
+        },
       };
     }
 

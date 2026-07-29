@@ -495,6 +495,18 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
   ambiguityWarning?: string;
   intent: GhlIntentDetection;
   handledInsight?: boolean;
+  deterministicAnswer?: string | null;
+  diagnostics?: {
+    query: string;
+    entityType: "contact" | "none";
+    requestedField: string | null;
+    ghlContactSearchAttempted: boolean;
+    matchesFound: number;
+    selectedContactId: string | null;
+    fullContactHydrated: boolean | null;
+    addressPresent: boolean | null;
+    explicitGhl: boolean;
+  };
 }> {
   if (!isGhlConfigured()) {
     return {
@@ -511,6 +523,7 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
   }
 
   const intent = detectGhlIntent(question);
+  const requestedField = intent.entities.requestedField ?? null;
 
   if (String(intent.intent).startsWith("insight_")) {
     const insightText = await runInsightReport(intent).catch(
@@ -547,31 +560,66 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     intent.entities.opportunityName ||
     intent.entities.contactEmail ||
     intent.entities.contactPhone;
-  if (
-    name &&
-    (intent.intent === "contact_lookup" ||
+
+  // Explicit GHL / contact-field asks must use the entity graph even when intent was weak.
+  const forceEntityGraph =
+    Boolean(name) &&
+    (intent.explicitGhl ||
+      intent.intent === "contact_lookup" ||
       intent.intent === "opportunity_lookup" ||
       intent.intent === "general_crm" ||
       intent.intent === "conversation_lookup" ||
-      intent.intent === "calendar_query")
-  ) {
+      intent.intent === "calendar_query" ||
+      requestedField === "address" ||
+      requestedField === "phone" ||
+      requestedField === "email" ||
+      requestedField === "city");
+
+  if (name && forceEntityGraph) {
     const { resolveGhlEntityGraph, formatCustomerSnapshot } =
       await import("@/lib/connectors/ghl/entity-graph");
+    const {
+      buildDeterministicGhlContactFieldAnswer,
+      contactAddressFromGhl,
+      isContactLevelGhlQuestion,
+    } = await import("@/lib/connectors/ghl/address");
     const graph = await resolveGhlEntityGraph(name, {
       includeAppointments: true,
       includeConversations: true,
     }).catch(() => null);
+
+    const address = graph?.contact ? contactAddressFromGhl(graph.contact) : null;
+    const diagnostics = {
+      query: name,
+      entityType: "contact" as const,
+      requestedField,
+      ghlContactSearchAttempted: true,
+      matchesFound: graph?.ambiguous ? 2 : graph?.contact ? 1 : 0,
+      selectedContactId: graph?.contact?.id ?? null,
+      fullContactHydrated: graph?.contact ? true : null,
+      addressPresent: address ? address.present : null,
+      explicitGhl: Boolean(intent.explicitGhl),
+    };
+
+    console.info(
+      "[GHL entity resolution]",
+      JSON.stringify({
+        ...diagnostics,
+        // No PII field values — ids/counts only
+      }),
+    );
+
     if (graph?.ambiguous) {
       return {
         items: [],
         contextText: "",
         ambiguityWarning: graph.clarificationMessage ?? undefined,
         intent,
+        diagnostics,
       };
     }
     if (graph?.contact) {
       const snapshot = formatCustomerSnapshot(graph, { question });
-      const { isContactLevelGhlQuestion } = await import("@/lib/connectors/ghl/address");
       // Contact-level asks (address, phone, email, tags, …) must not be blocked by
       // opportunity disambiguation — the admin UI already shows full contact details.
       const ambiguityWarning =
@@ -580,6 +628,9 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
         !isContactLevelGhlQuestion(question)
           ? graph.clarificationMessage
           : undefined;
+      const deterministicAnswer = ambiguityWarning
+        ? null
+        : buildDeterministicGhlContactFieldAnswer(question, graph.contact);
       return {
         items: [
           {
@@ -606,8 +657,17 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
         contextText: snapshot,
         ambiguityWarning,
         intent,
+        deterministicAnswer,
+        diagnostics,
       };
     }
+
+    return {
+      items: [],
+      contextText: "",
+      intent,
+      diagnostics,
+    };
   }
 
   const result = await buildGhlContext(question).catch(() => null);
@@ -617,6 +677,17 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
       contextText: "",
       intent: result?.intent ?? intent,
       ambiguityWarning: result?.ambiguityWarning,
+      diagnostics: {
+        query: name || question.slice(0, 80),
+        entityType: "none",
+        requestedField,
+        ghlContactSearchAttempted: Boolean(name),
+        matchesFound: 0,
+        selectedContactId: null,
+        fullContactHydrated: null,
+        addressPresent: null,
+        explicitGhl: Boolean(intent.explicitGhl),
+      },
     };
   }
 

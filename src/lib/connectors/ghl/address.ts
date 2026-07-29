@@ -184,7 +184,7 @@ export function contactMatchesAddressQuery(
 export function detectGhlSnapshotFocus(question: string): GhlSnapshotFocus[] {
   const q = question.toLowerCase();
   const focuses: GhlSnapshotFocus[] = [];
-  if (/\b(address|street|mailing|full address|lives?|located|zip|postal)\b/.test(q)) {
+  if (/\b(address|street|mailing|full address|lives?|located|zip|postal|city)\b/.test(q)) {
     focuses.push("address");
   }
   if (/\b(phone|mobile|cell|telephone)\b/.test(q)) {
@@ -220,4 +220,71 @@ export function detectGhlSnapshotFocus(question: string): GhlSnapshotFocus[] {
   }
   if (!focuses.length) focuses.push("general");
   return focuses;
+}
+
+/**
+ * Deterministic CRM contact-field answers from a hydrated GHL contact.
+ * Prefer this over LLM paraphrase for address/phone/email/city when evidence is loaded.
+ */
+export function buildDeterministicGhlContactFieldAnswer(
+  question: string,
+  contact: Pick<
+    GhlContact,
+    | "firstName"
+    | "lastName"
+    | "name"
+    | "email"
+    | "phone"
+    | "address1"
+    | "city"
+    | "state"
+    | "postalCode"
+    | "country"
+  >,
+): string | null {
+  const focuses = detectGhlSnapshotFocus(question);
+  const name =
+    contact.name?.trim() ||
+    [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() ||
+    "This contact";
+  const address = contactAddressFromGhl(contact);
+  const q = question.toLowerCase();
+  const wantsCityOnly = /\bcity\b/.test(q) && !/\b(address|street|zip|postal)\b/.test(q);
+
+  if (wantsCityOnly) {
+    if (contact.city?.trim()) {
+      return `${name} is in ${contact.city.trim()} in GoHighLevel.`;
+    }
+    if (address.present) {
+      return `I checked the full GoHighLevel contact record for ${name}. It has address details, but no city is saved.`;
+    }
+    return `I checked the full GoHighLevel contact record for ${name}. No city is saved.`;
+  }
+
+  if (focuses.includes("address")) {
+    if (address.hasStreet && address.formatted) {
+      return `${name}'s address in GoHighLevel is ${address.formatted}.`;
+    }
+    if (address.present && !address.hasStreet) {
+      const place = contact.city?.trim() || address.formatted;
+      return `I checked the full GoHighLevel contact record. It lists ${place}, but no street address is saved.`;
+    }
+    return `I checked the full GoHighLevel contact record for ${name}. No address is saved.`;
+  }
+
+  if (focuses.includes("phone")) {
+    if (contact.phone?.trim()) {
+      return `${name}'s phone number in GoHighLevel is ${contact.phone.trim()}.`;
+    }
+    return `I checked the full GoHighLevel contact record for ${name}. No phone number is saved.`;
+  }
+
+  if (focuses.includes("email")) {
+    if (contact.email?.trim()) {
+      return `${name}'s email in GoHighLevel is ${contact.email.trim()}.`;
+    }
+    return `I checked the full GoHighLevel contact record for ${name}. No email is saved.`;
+  }
+
+  return null;
 }

@@ -37,9 +37,13 @@ export type GhlIntentDetection = {
     tagName?: string;
     userId?: string;
     dateRange?: { start?: string; end?: string };
+    requestedField?:
+      "address" | "phone" | "email" | "city" | "owner" | "tags" | "source" | "stage" | "other";
   };
   isWriteIntent: boolean;
   requiresConfirmation: boolean;
+  /** True when the user explicitly named GHL / CRM / GoHighLevel. */
+  explicitGhl?: boolean;
 };
 
 const CRM_KEYWORDS = [
@@ -79,15 +83,55 @@ const WRITE_KEYWORDS = [
   "reassign",
 ];
 
+/** Normalize curly quotes/apostrophes so possessive patterns match Slack/iOS text. */
+export function normalizeGhlQuestionText(question: string): string {
+  return question
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E]/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Strip trailing possessive ('s) so "Stanley Quan's" → "Stanley Quan". */
+export function stripContactNamePossessive(name: string): string {
+  return name
+    .replace(/['\u2019]s\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const CONTACT_FIELD =
+  "(?:full\\s+)?(?:street\\s+)?address|phone(?:\\s+number)?|email|e-mail|city|zip(?:\\s*code)?|postal(?:\\s*code)?|tags?|owner";
+
 const LOOKUP_PATTERNS = [
   /who\s+is\s+(\w+(?:\s+\w+)?)/i,
   /find\s+(?:contact|lead|customer)\s+(?:for\s+)?(.+)/i,
   /look\s*up\s+(.+)/i,
   /show\s+me\s+(.+?)(?:'s|s')?\s+(?:info|details|contact)/i,
-  /what(?:'s|\s+is)\s+(.+?)(?:'s|\s+)?\s*(?:email|phone|address|status)/i,
+  // ASCII + already-normalized curly apostrophes
+  new RegExp(String.raw`what(?:'s|\s+is)\s+(.+?)(?:'s|\s+)?\s*(?:${CONTACT_FIELD}|status)`, "i"),
+  /what\s+city\s+is\s+(.+?)\s+in\b/i,
+  /what\s+(?:email|phone(?:\s+number)?|address)\s+(?:do\s+we\s+have\s+)?(?:for|of)\s+(.+)/i,
   /contact\s+info(?:rmation)?\s+for\s+(.+)/i,
-  /(\S+@\S+\.\S+)/i, // Email pattern
-  /(\+?\d{1}[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})/i, // Phone pattern
+  // Explicit GHL / CRM search phrasing
+  new RegExp(
+    String.raw`(?:search|look\s*up|find|get|check)\s+(?:in\s+)?(?:ghl|gohighlevel|crm|go\s*high\s*level)\s+(?:for\s+)?(.+?)(?:'s)?\s+(?:${CONTACT_FIELD})`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`(?:search|look\s*up|find|get|check)\s+(?:ghl|gohighlevel|crm)\s+for\s+(.+?)(?:'s)?(?:\s+(?:${CONTACT_FIELD}))?$`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`(.+?)(?:'s)?\s+(?:${CONTACT_FIELD})\s+in\s+(?:ghl|gohighlevel|crm|go\s*high\s*level)`,
+    "i",
+  ),
+  new RegExp(
+    String.raw`(?:${CONTACT_FIELD})\s+(?:in\s+)?(?:ghl|gohighlevel|crm)\s+(?:for|of)\s+(.+)`,
+    "i",
+  ),
+  /(\S+@\S+\.\S+)/i,
+  /(\+?\d{1}[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})/i,
 ];
 
 const OPPORTUNITY_PATTERNS = [
@@ -130,27 +174,67 @@ const STAGE_LOOKUP_PATTERNS = [
   /what(?:'s|\s+is)\s+going\s+on\s+with\s+(.+)/i,
 ];
 
+function detectRequestedField(question: string): GhlIntentDetection["entities"]["requestedField"] {
+  const q = question.toLowerCase();
+  if (/\b(address|street|mailing|zip|postal)\b/.test(q)) return "address";
+  if (/\b(phone|mobile|cell|telephone)\b/.test(q)) return "phone";
+  if (/\b(e-?mail)\b/.test(q) && !/\blast email|email we sent\b/.test(q)) return "email";
+  if (/\bcity\b/.test(q)) return "city";
+  if (/\b(tags?|tagged)\b/.test(q)) return "tags";
+  if (/\b(owner|assigned|who owns)\b/.test(q)) return "owner";
+  if (/\b(stage|pipeline|opportunit)\b/.test(q)) return "stage";
+  return "other";
+}
+
+function isExplicitGhlMention(question: string): boolean {
+  return /\b(ghl|gohighlevel|go\s*high\s*level|crm)\b/i.test(question);
+}
+
+function cleanExtractedName(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  let name = stripContactNamePossessive(raw);
+  // Drop trailing CRM noise from capture groups
+  name = name
+    .replace(/\b(in\s+)?(ghl|gohighlevel|crm|go\s*high\s*level)\b/gi, "")
+    .replace(
+      /\b(full\s+)?(street\s+)?address|phone(\s+number)?|e-?mail|city|zip|postal|tags?|owner\b/gi,
+      "",
+    )
+    .replace(/[?.,!:;]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!name || name.length < 2) return undefined;
+  // Reject if it looks like a sentence fragment without a person name
+  if (/^(the|a|an|our|my|this|that)\b/i.test(name) && name.split(/\s+/).length < 2) {
+    return undefined;
+  }
+  return name;
+}
+
 /**
  * Detect if a question requires GHL CRM data.
  */
 export function detectGhlIntent(question: string): GhlIntentDetection {
-  const lower = question.toLowerCase();
+  const normalized = normalizeGhlQuestionText(question);
+  const lower = normalized.toLowerCase();
   const entities: GhlIntentDetection["entities"] = {};
+  const explicitGhl = isExplicitGhlMention(normalized);
+  const requestedField = detectRequestedField(normalized);
+  if (requestedField !== "other") entities.requestedField = requestedField;
 
-  // Check for write intent first
   const hasWriteKeyword = WRITE_KEYWORDS.some((kw) => lower.includes(kw));
 
   for (const pattern of WRITE_PATTERNS) {
-    const match = question.match(pattern);
+    const match = normalized.match(pattern);
     if (match) {
-      // Determine write type
       if (lower.includes("tag")) {
         return {
           intent: "write_tag",
           confidence: 0.9,
-          entities: { tagName: match[1], contactName: match[2] },
+          entities: { tagName: match[1], contactName: cleanExtractedName(match[2]) },
           isWriteIntent: true,
           requiresConfirmation: true,
+          explicitGhl,
         };
       }
       if (lower.includes("mark") || lower.includes("move") || lower.includes("stage")) {
@@ -158,30 +242,32 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
           intent: "write_opportunity",
           confidence: 0.9,
           entities: {
-            contactName: match[1]?.trim(),
-            opportunityName: match[1]?.trim(),
+            contactName: cleanExtractedName(match[1]),
+            opportunityName: cleanExtractedName(match[1]),
             stageName: match[2]?.trim(),
+            requestedField: "stage",
           },
           isWriteIntent: true,
           requiresConfirmation: true,
+          explicitGhl,
         };
       }
       if (lower.includes("update") || lower.includes("change") || lower.includes("set")) {
         return {
           intent: "write_contact",
           confidence: 0.85,
-          entities: { contactName: match[1]?.trim() },
+          entities: { contactName: cleanExtractedName(match[1]), requestedField },
           isWriteIntent: true,
           requiresConfirmation: true,
+          explicitGhl,
         };
       }
     }
   }
 
-  // Read-only CRM insight reports (Prompt 3) — deterministic filters, not LLM over raw dumps
   if (
-    /without\s+an?\s+owner|no\s+owner|unowned|missing\s+an?\s+owner/i.test(question) &&
-    /opportunit|deal|open/i.test(question)
+    /without\s+an?\s+owner|no\s+owner|unowned|missing\s+an?\s+owner/i.test(normalized) &&
+    /opportunit|deal|open/i.test(normalized)
   ) {
     return {
       intent: "insight_unowned",
@@ -189,11 +275,12 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
       entities,
       isWriteIntent: false,
       requiresConfirmation: false,
+      explicitGhl,
     };
   }
   if (
-    /stale|no\s+recent\s+activity|stuck\s+in/i.test(question) &&
-    /opportunit|deal|stage/i.test(question)
+    /stale|no\s+recent\s+activity|stuck\s+in/i.test(normalized) &&
+    /opportunit|deal|stage/i.test(normalized)
   ) {
     return {
       intent: "insight_stale",
@@ -201,11 +288,12 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
       entities,
       isWriteIntent: false,
       requiresConfirmation: false,
+      explicitGhl,
     };
   }
   if (
     /appointments?\s+(today|this\s+week)|who\s+has\s+appointments|meetings?\s+(today|this\s+week)/i.test(
-      question,
+      normalized,
     )
   ) {
     return {
@@ -214,35 +302,40 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
       entities,
       isWriteIntent: false,
       requiresConfirmation: false,
+      explicitGhl,
     };
   }
-  if (/unread\s+messages?|who\s+responded\s+recently/i.test(question)) {
+  if (/unread\s+messages?|who\s+responded\s+recently/i.test(normalized)) {
     return {
       intent: "insight_unread",
       confidence: 0.8,
       entities,
       isWriteIntent: false,
       requiresConfirmation: false,
+      explicitGhl,
     };
   }
 
-  // Stage / "what happens next" lookups
+  // Stage lookups before contact field lookups (avoid "stage" matching address patterns)
   for (const pattern of STAGE_LOOKUP_PATTERNS) {
-    const match = question.match(pattern);
+    const match = normalized.match(pattern);
     if (match?.[1]) {
       return {
         intent: "opportunity_lookup",
         confidence: 0.9,
-        entities: { contactName: match[1].trim() },
+        entities: {
+          contactName: cleanExtractedName(match[1]),
+          requestedField: "stage",
+        },
         isWriteIntent: false,
         requiresConfirmation: false,
+        explicitGhl,
       };
     }
   }
 
-  // Check for calendar queries
   for (const pattern of CALENDAR_PATTERNS) {
-    const match = question.match(pattern);
+    const match = normalized.match(pattern);
     if (match) {
       return {
         intent: "calendar_query",
@@ -250,57 +343,70 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
         entities: {},
         isWriteIntent: false,
         requiresConfirmation: false,
+        explicitGhl,
       };
     }
   }
 
-  // Check for pipeline queries
   for (const pattern of PIPELINE_PATTERNS) {
-    if (pattern.test(question)) {
+    if (pattern.test(normalized)) {
       return {
         intent: "pipeline_info",
         confidence: 0.9,
         entities: {},
         isWriteIntent: false,
         requiresConfirmation: false,
+        explicitGhl,
       };
     }
   }
 
-  // Check for opportunity queries
-  for (const pattern of OPPORTUNITY_PATTERNS) {
-    const match = question.match(pattern);
-    if (match) {
-      // Check if asking for list or specific lookup
-      if (lower.includes("all ") || lower.includes("list ") || lower.includes("show me ")) {
+  // Opportunity patterns — skip when this is clearly a contact-field ask (address/phone/email)
+  const isContactFieldAsk =
+    requestedField === "address" ||
+    requestedField === "phone" ||
+    requestedField === "email" ||
+    requestedField === "city" ||
+    requestedField === "tags";
+
+  if (!isContactFieldAsk) {
+    for (const pattern of OPPORTUNITY_PATTERNS) {
+      const match = normalized.match(pattern);
+      if (match) {
+        if (lower.includes("all ") || lower.includes("list ") || lower.includes("show me ")) {
+          return {
+            intent: "opportunity_list",
+            confidence: 0.8,
+            entities: { stageName: match[1], requestedField: "stage" },
+            isWriteIntent: false,
+            requiresConfirmation: false,
+            explicitGhl,
+          };
+        }
         return {
-          intent: "opportunity_list",
-          confidence: 0.8,
-          entities: { stageName: match[1] },
+          intent: "opportunity_lookup",
+          confidence: 0.85,
+          entities: {
+            opportunityName: cleanExtractedName(match[1]),
+            contactName: cleanExtractedName(match[1]),
+            requestedField: "stage",
+          },
           isWriteIntent: false,
           requiresConfirmation: false,
+          explicitGhl,
         };
       }
-      return {
-        intent: "opportunity_lookup",
-        confidence: 0.85,
-        entities: { opportunityName: match[1] || undefined, contactName: match[1] || undefined },
-        isWriteIntent: false,
-        requiresConfirmation: false,
-      };
     }
   }
 
-  // Check for contact lookup patterns
   for (const pattern of LOOKUP_PATTERNS) {
-    const match = question.match(pattern);
+    const match = normalized.match(pattern);
     if (match) {
-      const value = match[1]?.trim();
+      const value = cleanExtractedName(match[1]);
       if (value) {
-        // Determine if it's email or phone
         if (value.includes("@")) {
           entities.contactEmail = value;
-        } else if (/\d{3}/.test(value)) {
+        } else if (/\d{3}/.test(value) && value.replace(/\D/g, "").length >= 7) {
           entities.contactPhone = value;
         } else {
           entities.contactName = value;
@@ -308,19 +414,18 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
 
         return {
           intent: "contact_lookup",
-          confidence: 0.85,
+          confidence: explicitGhl || isContactFieldAsk ? 0.95 : 0.85,
           entities,
           isWriteIntent: false,
           requiresConfirmation: false,
+          explicitGhl,
         };
       }
     }
   }
 
-  // Check for general CRM keywords
   const hasCrmKeyword = CRM_KEYWORDS.some((kw) => lower.includes(kw));
-  if (hasCrmKeyword) {
-    // Determine more specific intent based on context
+  if (hasCrmKeyword || explicitGhl || isContactFieldAsk) {
     if (lower.includes("list") || lower.includes("all ") || lower.includes("show me ")) {
       if (lower.includes("contact") || lower.includes("lead") || lower.includes("customer")) {
         return {
@@ -329,6 +434,7 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
           entities,
           isWriteIntent: false,
           requiresConfirmation: false,
+          explicitGhl,
         };
       }
       if (lower.includes("opportunit") || lower.includes("deal")) {
@@ -338,16 +444,43 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
           entities,
           isWriteIntent: false,
           requiresConfirmation: false,
+          explicitGhl,
+        };
+      }
+    }
+
+    // Address/phone without extracted name still marks contact_lookup when we can salvage a name
+    if (isContactFieldAsk) {
+      const salvage =
+        cleanExtractedName(
+          normalized.match(
+            /(?:for|of)\s+([A-Za-z][A-Za-z .'-]{1,60}?)(?:\s+(?:in\s+)?(?:ghl|gohighlevel|crm))?[.?!]?$/i,
+          )?.[1],
+        ) ||
+        cleanExtractedName(
+          normalized.match(
+            /^([A-Za-z][A-Za-z .'-]{1,60}?)(?:'s)?\s+(?:full\s+)?(?:street\s+)?address/i,
+          )?.[1],
+        );
+      if (salvage) {
+        return {
+          intent: "contact_lookup",
+          confidence: 0.9,
+          entities: { ...entities, contactName: salvage, requestedField },
+          isWriteIntent: false,
+          requiresConfirmation: false,
+          explicitGhl,
         };
       }
     }
 
     return {
-      intent: "general_crm",
-      confidence: 0.5,
+      intent: explicitGhl || isContactFieldAsk ? "contact_lookup" : "general_crm",
+      confidence: explicitGhl ? 0.85 : 0.5,
       entities,
       isWriteIntent: hasWriteKeyword,
       requiresConfirmation: hasWriteKeyword,
+      explicitGhl,
     };
   }
 
@@ -357,28 +490,53 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
     entities: {},
     isWriteIntent: false,
     requiresConfirmation: false,
+    explicitGhl: false,
   };
 }
 
-/**
- * Check if a question requires GHL data.
- */
 export function requiresGhlData(question: string): boolean {
   const detection = detectGhlIntent(question);
   return detection.intent !== "none" && detection.confidence >= 0.5;
 }
 
-/**
- * Check if a question is a write intent.
- */
 export function isWriteIntent(question: string): boolean {
   const detection = detectGhlIntent(question);
   return detection.isWriteIntent;
 }
 
 /**
- * Get a user-friendly description of the detected intent.
+ * CRM contact-field questions should not invoke Slack retrieval.
  */
+export function shouldSkipSlackForGhlContactField(question: string): boolean {
+  if (/\b(slack|#\w+|what did .+ say|who (said|mentioned)|in #)\b/i.test(question)) {
+    return false;
+  }
+  const intent = detectGhlIntent(question);
+  if (intent.explicitGhl) {
+    const field = intent.entities.requestedField;
+    if (
+      field === "address" ||
+      field === "phone" ||
+      field === "email" ||
+      field === "city" ||
+      field === "tags" ||
+      field === "owner"
+    ) {
+      return true;
+    }
+  }
+  const field = intent.entities.requestedField;
+  return (
+    intent.intent === "contact_lookup" &&
+    (field === "address" ||
+      field === "phone" ||
+      field === "email" ||
+      field === "city" ||
+      field === "tags" ||
+      field === "owner")
+  );
+}
+
 export function describeGhlIntent(detection: GhlIntentDetection): string {
   switch (detection.intent) {
     case "contact_lookup":
