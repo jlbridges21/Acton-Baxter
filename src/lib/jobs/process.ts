@@ -6,7 +6,7 @@ import { runPropertyResearch } from "@/lib/research/run-property-research";
 import { getReportStore } from "@/lib/research/report-store";
 import { postSlackMessage } from "@/lib/slack/client";
 import { buildSlackCompletionMessage, buildSlackFailureMessage } from "@/lib/slack/messages";
-import { claimNextJob, completeJob, failJob } from "./queue";
+import { claimNextJob, completeJob, failJob, reclaimStaleRunningJobs } from "./queue";
 import type { ReportJob } from "./types";
 
 class JobDeferredError extends Error {
@@ -105,7 +105,7 @@ async function processGoogleKnowledgeSync(job: ReportJob): Promise<void> {
 
 async function processSlackBaxterReply(job: ReportJob): Promise<void> {
   const { processSlackBaxterReplyJob } = await import("@/lib/slack/baxter-events");
-  await processSlackBaxterReplyJob(job.metadata);
+  await processSlackBaxterReplyJob(job.metadata, { jobId: job.id });
 }
 
 async function processBaxterMonitorSweep(_job: ReportJob): Promise<void> {
@@ -172,7 +172,11 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
     }
     const message = error instanceof Error ? error.message : "Job failed";
     logServerError(`processJob:${job.jobType}`, error);
-    const shouldRetry = job.attempts < 3;
+    const terminal =
+      error instanceof Error &&
+      (error.name === "BaxterSlackTerminalError" ||
+        (error as Error & { retryable?: boolean }).retryable === false);
+    const shouldRetry = !terminal && job.attempts < 3;
     await failJob(job.id, message, {
       retryAt: shouldRetry ? new Date(Date.now() + 15_000).toISOString() : undefined,
     });
@@ -185,14 +189,23 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
   }
 }
 
-export async function processQueuedJobs(options?: {
-  limit?: number;
-}): Promise<{ processed: number; completed: number; failed: number; deferred: number }> {
+export async function processQueuedJobs(options?: { limit?: number }): Promise<{
+  processed: number;
+  completed: number;
+  failed: number;
+  deferred: number;
+  reclaimed: number;
+}> {
   const limit = options?.limit ?? 5;
   let processed = 0;
   let completed = 0;
   let failed = 0;
   let deferred = 0;
+
+  // Reclaim jobs left "running" after process death / Vercel timeout.
+  const { reclaimed } = await reclaimStaleRunningJobs({
+    olderThanMs: 5 * 60_000,
+  });
 
   for (let i = 0; i < limit; i += 1) {
     const job = await claimNextJob();
@@ -204,5 +217,5 @@ export async function processQueuedJobs(options?: {
     else failed += 1;
   }
 
-  return { processed, completed, failed, deferred };
+  return { processed, completed, failed, deferred, reclaimed };
 }

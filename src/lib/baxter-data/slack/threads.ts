@@ -17,7 +17,7 @@ async function apiCall(
   if (deps?.callSlackApi) {
     return deps.callSlackApi(method, { token, body });
   }
-  return callSlackApi(method, { token, body });
+  return callSlackApi(method, { token, body, timeoutMs: 15_000 });
 }
 
 /**

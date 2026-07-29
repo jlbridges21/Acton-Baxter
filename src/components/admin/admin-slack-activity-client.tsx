@@ -82,7 +82,7 @@ type SnapshotExtras = {
     lastMetadataRefresh: string | null;
   };
   search?: {
-    status: "ready" | "needs_setup" | "disabled";
+    status: "ready" | "limited" | "needs_attention" | "offline" | "disabled" | "needs_setup";
     workspaceLabel: string;
     searchEnabled: boolean;
     readyForUserOauth: boolean;
@@ -116,7 +116,20 @@ function YesNo({ value }: { value: boolean }) {
 
 function formatWhen(iso: string | null | undefined) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString();
+  // Fixed locale + UTC so SSR and client hydration match (React #418).
+  try {
+    return new Date(iso).toLocaleString("en-US", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return iso;
+  }
 }
 
 export function AdminSlackActivityClient({
@@ -513,10 +526,8 @@ export function AdminSlackActivityClient({
                   : "none"}
               </li>
             </ul>
-            <div className="mt-4">
-              <AdminSlackDiagnosticsClient search={extras.search ?? null} />
-            </div>
           </details>
+          <AdminSlackDiagnosticsClient search={extras.search ?? null} />
         </div>
       ) : null}
 

@@ -13,6 +13,9 @@ export const SLACK_SEARCH_ERROR_CODES = {
   PERMISSION_DENIED: "BAXTER_SLACK_PERMISSION_DENIED",
   CONTRACT_ERROR: "BAXTER_SLACK_SEARCH_CONTRACT_ERROR",
   MISCONFIGURED: "BAXTER_SLACK_SEARCH_MISCONFIGURED",
+  DIRECTORY_TIMEOUT: "BAXTER_SLACK_DIRECTORY_TIMEOUT",
+  HISTORY_TIMEOUT: "BAXTER_SLACK_HISTORY_TIMEOUT",
+  ANSWER_TIMEOUT: "BAXTER_SLACK_ANSWER_TIMEOUT",
 } as const;
 
 export type SlackSearchErrorCode =
@@ -45,6 +48,8 @@ export function mapSlackSearchApiError(
     case "channel_not_found":
     case "context_channel_not_found":
       return SLACK_SEARCH_ERROR_CODES.CHANNEL_NOT_FOUND;
+    case "timeout":
+      return SLACK_SEARCH_ERROR_CODES.HISTORY_TIMEOUT;
     default:
       return SLACK_SEARCH_ERROR_CODES.CONTRACT_ERROR;
   }
@@ -71,6 +76,12 @@ export function employeeFacingSlackSearchError(code: string): string {
       return "Slack search is temporarily rate-limited. Please try again in a minute.";
     case SLACK_SEARCH_ERROR_CODES.PERMISSION_DENIED:
       return "Baxter can’t search that Slack content with your current permissions.";
+    case SLACK_SEARCH_ERROR_CODES.DIRECTORY_TIMEOUT:
+      return "I couldn't finish the Slack lookup because Slack directory access timed out. Please try again, or ask an admin to refresh Slack Directory.";
+    case SLACK_SEARCH_ERROR_CODES.HISTORY_TIMEOUT:
+      return "I couldn't complete the Slack lookup right now because Slack history timed out. Please try again.";
+    case SLACK_SEARCH_ERROR_CODES.ANSWER_TIMEOUT:
+      return "I couldn't complete the Slack lookup in time. Please try again.";
     default:
       return `Baxter couldn’t complete Slack search right now. Reference: ${code}`;
   }

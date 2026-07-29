@@ -4,8 +4,13 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Default per-request Slack Web API timeout (AbortController). */
+export const SLACK_API_DEFAULT_TIMEOUT_MS = 15_000;
+/** Cap Retry-After sleeps so a single call cannot stall for minutes. */
+const MAX_RETRY_AFTER_SECONDS = 10;
+
 /**
- * Low-level Slack Web API caller with bounded rate-limit retries.
+ * Low-level Slack Web API caller with bounded rate-limit retries and hard timeouts.
  * Never logs tokens or message bodies.
  */
 export async function callSlackApi(
@@ -15,33 +20,59 @@ export async function callSlackApi(
     body?: Record<string, unknown>;
     form?: boolean;
     maxRetries?: number;
+    timeoutMs?: number;
   },
 ): Promise<SlackApiCallResult> {
   const maxRetries = options.maxRetries ?? 2;
+  const timeoutMs = options.timeoutMs ?? SLACK_API_DEFAULT_TIMEOUT_MS;
   let last: SlackApiCallResult = { ok: false, error: "request_failed", data: {} };
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const response = await fetch(`https://slack.com/api/${method}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${options.token}`,
-        "Content-Type": options.form
-          ? "application/x-www-form-urlencoded"
-          : "application/json; charset=utf-8",
-      },
-      body: options.form
-        ? new URLSearchParams(
-            Object.entries(options.body ?? {}).flatMap(([k, v]) => {
-              if (v === undefined || v === null) return [];
-              if (Array.isArray(v)) return [[k, v.join(",")] as [string, string]];
-              if (typeof v === "boolean" || typeof v === "number") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(`https://slack.com/api/${method}`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${options.token}`,
+          "Content-Type": options.form
+            ? "application/x-www-form-urlencoded"
+            : "application/json; charset=utf-8",
+        },
+        body: options.form
+          ? new URLSearchParams(
+              Object.entries(options.body ?? {}).flatMap(([k, v]) => {
+                if (v === undefined || v === null) return [];
+                if (Array.isArray(v)) return [[k, v.join(",")] as [string, string]];
+                if (typeof v === "boolean" || typeof v === "number") {
+                  return [[k, String(v)] as [string, string]];
+                }
                 return [[k, String(v)] as [string, string]];
-              }
-              return [[k, String(v)] as [string, string]];
-            }),
-          ).toString()
-        : JSON.stringify(options.body ?? {}),
-    });
+              }),
+            ).toString()
+          : JSON.stringify(options.body ?? {}),
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      const aborted =
+        (error instanceof Error && error.name === "AbortError") ||
+        (typeof DOMException !== "undefined" &&
+          error instanceof DOMException &&
+          error.name === "AbortError");
+      last = {
+        ok: false,
+        error: aborted ? "timeout" : "request_failed",
+        data: {},
+        httpStatus: aborted ? 408 : undefined,
+        retryAfterSeconds: null,
+      };
+      if (aborted || attempt >= maxRetries) return last;
+      continue;
+    } finally {
+      clearTimeout(timer);
+    }
 
     const retryAfterHeader = response.headers.get("Retry-After");
     const retryAfter = retryAfterHeader ? Number(retryAfterHeader) : null;
@@ -59,7 +90,7 @@ export async function callSlackApi(
         httpStatus: 429,
       };
       if (attempt < maxRetries) {
-        const wait = Math.min(Math.max(last.retryAfterSeconds ?? 2, 1), 10);
+        const wait = Math.min(Math.max(last.retryAfterSeconds ?? 2, 1), MAX_RETRY_AFTER_SECONDS);
         await sleep(wait * 1000);
         continue;
       }

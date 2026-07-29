@@ -12,6 +12,8 @@ import {
 } from "@/lib/slack/admin";
 import { runSlackSearchAdminTest } from "@/lib/baxter-data/slack/diagnostics";
 
+export const maxDuration = 60;
+
 export async function GET() {
   try {
     const admin = await requireAdmin();
@@ -43,11 +45,14 @@ export async function POST(request: Request) {
           "test_channel_summary",
           "refresh_directory",
           "sandbox_search",
+          "test_slack_recall",
         ]),
         channelOrUserId: z.string().optional(),
         text: z.string().optional(),
         question: z.string().optional(),
         query: z.string().optional(),
+        person: z.string().optional(),
+        channel: z.string().optional(),
         teamId: z.string().optional(),
       })
       .parse(body);
@@ -86,7 +91,8 @@ export async function POST(request: Request) {
       parsed.action === "test_latest_message" ||
       parsed.action === "test_channel_summary" ||
       parsed.action === "refresh_directory" ||
-      parsed.action === "sandbox_search"
+      parsed.action === "sandbox_search" ||
+      parsed.action === "test_slack_recall"
     ) {
       const teamId =
         parsed.teamId ||
@@ -96,6 +102,8 @@ export async function POST(request: Request) {
         result: await runSlackSearchAdminTest({
           action: parsed.action,
           query: parsed.query ?? parsed.question,
+          person: parsed.person,
+          channel: parsed.channel,
           teamId,
           requester: {
             baxterUserId: admin.profile.id,

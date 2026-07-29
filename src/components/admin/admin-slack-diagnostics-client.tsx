@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 
 type ActionResult = unknown;
 
 type SearchSnapshot = {
-  status: "ready" | "needs_setup" | "disabled";
+  status: "ready" | "limited" | "needs_attention" | "offline" | "disabled" | "needs_setup";
   workspaceLabel: string;
   searchEnabled: boolean;
   searchEnabledLabel?: string;
@@ -24,7 +25,9 @@ type SearchSnapshot = {
     lastUserResolvedAt: string | null;
     lastChannelResolvedAt: string | null;
     staleHint: string | null;
+    health?: "ready" | "needs_attention";
   };
+  workspaceSearchNote?: string;
   capabilities: {
     publicChannels: boolean;
     privateChannels: boolean;
@@ -68,10 +71,74 @@ function YesNo({ value }: { value: boolean }) {
   );
 }
 
+function statusLabel(status: NonNullable<SearchSnapshot>["status"]) {
+  switch (status) {
+    case "ready":
+      return "Ready";
+    case "limited":
+      return "Limited";
+    case "needs_attention":
+      return "Needs attention";
+    case "offline":
+      return "Offline";
+    case "disabled":
+      return "Disabled";
+    default:
+      return "Needs setup";
+  }
+}
+
+/** Deterministic UTC stamp for SSR/client parity (avoids React #418). */
+function formatUtcStamp(iso: string | null | undefined) {
+  if (!iso) return "never";
+  try {
+    return (
+      new Date(iso).toLocaleString("en-US", {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }) + " UTC"
+    );
+  } catch {
+    return iso;
+  }
+}
+
+function formatRefreshSummary(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as {
+    summary?: {
+      users?: { discovered?: number; activeHumans?: number };
+      channels?: { discovered?: number; public?: number; private?: number; archived?: number };
+      pages?: { users?: number; channels?: number };
+      complete?: boolean;
+      durationMs?: number;
+      warnings?: string[];
+    };
+    usersDiscovered?: number;
+    activeHumans?: number;
+    publicChannelsDiscovered?: number;
+    privateChannelsVisible?: number;
+  };
+  const s = r.summary;
+  if (!s) {
+    if (r.usersDiscovered == null) return null;
+    return `Users: ${r.usersDiscovered} discovered (${r.activeHumans ?? "?"} active humans). Channels: ${r.publicChannelsDiscovered ?? "?"} public / ${r.privateChannelsVisible ?? "?"} private.`;
+  }
+  const warnings = s.warnings?.length ? ` Warnings: ${s.warnings.join("; ")}` : "";
+  return `Users: ${s.users?.discovered ?? 0} discovered, ${s.users?.activeHumans ?? 0} active humans. Channels: ${s.channels?.discovered ?? 0} discovered (${s.channels?.public ?? 0} public / ${s.channels?.private ?? 0} private / ${s.channels?.archived ?? 0} archived). Pages: users ${s.pages?.users ?? 0}, channels ${s.pages?.channels ?? 0}. Complete: ${s.complete ? "Yes" : "Partial"}. Duration: ${s.durationMs ?? 0} ms.${warnings}`;
+}
+
 export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapshot }) {
+  const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ActionResult>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshSummary, setRefreshSummary] = useState<string | null>(null);
   const [destination, setDestination] = useState("");
   const [testText, setTestText] = useState("");
   const [dryRunQuestion, setDryRunQuestion] = useState("Who is Baxter?");
@@ -85,20 +152,44 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
     setBusy(action);
     setError(null);
     setResult(null);
+    if (action === "refresh_directory") setRefreshSummary(null);
+    const controller = new AbortController();
+    const timeoutMs = action === "refresh_directory" ? 60_000 : 45_000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch("/api/admin/slack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...body }),
+        signal: controller.signal,
       });
-      const payload = await response.json();
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(payload?.error?.message ?? "Request failed");
       }
-      setResult(payload.result ?? payload);
+      const next = payload.result ?? payload;
+      setResult(next);
+      if (action === "refresh_directory") {
+        const summary = formatRefreshSummary(next);
+        if (summary) setRefreshSummary(summary);
+        if (next && typeof next === "object" && (next as { success?: boolean }).success === false) {
+          setError((next as { error?: { message?: string } }).error?.message ?? "Refresh failed");
+        } else {
+          router.refresh();
+        }
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      if (err instanceof Error && err.name === "AbortError") {
+        setError(
+          action === "refresh_directory"
+            ? "Refresh failed — request timed out. Try again."
+            : "Request timed out. Try again.",
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Request failed");
+      }
     } finally {
+      clearTimeout(timer);
       setBusy(null);
     }
   }
@@ -109,13 +200,7 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
         <div className="space-y-3 rounded-lg border border-[var(--acton-border)] p-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-sm font-semibold text-[var(--acton-navy)]">Slack Search</p>
-            <p className="text-sm text-[var(--acton-muted)]">
-              {search.status === "ready"
-                ? "Ready"
-                : search.status === "disabled"
-                  ? "Disabled"
-                  : "Needs setup"}
-            </p>
+            <p className="text-sm text-[var(--acton-muted)]">{statusLabel(search.status)}</p>
           </div>
           <dl className="grid gap-2 text-sm text-[var(--acton-navy)] md:grid-cols-2">
             <div>
@@ -219,26 +304,32 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                 <div>
                   Users refreshed:{" "}
                   <span className="font-medium">
-                    {search.directory.lastUserResolvedAt ?? "never"}
+                    {formatUtcStamp(search.directory.lastUserResolvedAt)}
                   </span>
                 </div>
                 <div>
                   Channels refreshed:{" "}
                   <span className="font-medium">
-                    {search.directory.lastChannelResolvedAt ?? "never"}
+                    {formatUtcStamp(search.directory.lastChannelResolvedAt)}
                   </span>
                 </div>
               </dl>
               {search.directory.staleHint ? (
                 <p className="text-sm text-amber-800">{search.directory.staleHint}</p>
               ) : null}
+              {search.workspaceSearchNote && !search.capabilities.workspaceSearch ? (
+                <p className="text-sm text-[var(--acton-muted)]">{search.workspaceSearchNote}</p>
+              ) : null}
               <Button
                 type="button"
                 disabled={Boolean(busy)}
-                onClick={() => run("refresh_directory")}
+                onClick={() => void run("refresh_directory")}
               >
                 {busy === "refresh_directory" ? "Refreshing…" : "Refresh Slack Directory"}
               </Button>
+              {refreshSummary ? (
+                <p className="text-sm text-[var(--acton-navy)]">{refreshSummary}</p>
+              ) : null}
               <div className="flex flex-wrap gap-2 pt-2">
                 <input
                   className="min-w-[10rem] flex-1 rounded border border-[var(--acton-border)] px-3 py-2 text-sm"
@@ -249,7 +340,7 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                 <Button
                   type="button"
                   disabled={Boolean(busy) || !directoryQuery.trim()}
-                  onClick={() => run("test_channel_resolution", { query: directoryQuery })}
+                  onClick={() => void run("test_channel_resolution", { query: directoryQuery })}
                 >
                   Resolve channel
                 </Button>
@@ -262,9 +353,21 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                 <Button
                   type="button"
                   disabled={Boolean(busy) || !personQuery.trim()}
-                  onClick={() => run("test_user_resolution", { query: personQuery })}
+                  onClick={() => void run("test_user_resolution", { query: personQuery })}
                 >
                   Resolve person
+                </Button>
+                <Button
+                  type="button"
+                  disabled={Boolean(busy) || !personQuery.trim() || !directoryQuery.trim()}
+                  onClick={() =>
+                    void run("test_slack_recall", {
+                      person: personQuery,
+                      channel: directoryQuery,
+                    })
+                  }
+                >
+                  {busy === "test_slack_recall" ? "Testing…" : "Test Slack Recall"}
                 </Button>
               </div>
             </div>

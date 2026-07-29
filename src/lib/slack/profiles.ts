@@ -247,6 +247,93 @@ export async function upsertSlackChannelProfile(
   return record;
 }
 
+/** Batch upsert users for directory refresh — skips per-row cache reads. */
+export async function batchUpsertSlackUserProfiles(
+  rows: Array<Partial<SlackUserProfileRecord> & { team_id: string; slack_user_id: string }>,
+): Promise<number> {
+  if (!rows.length) return 0;
+  const now = nowIso();
+  const records: SlackUserProfileRecord[] = rows.map((input) => ({
+    slack_user_id: input.slack_user_id,
+    team_id: input.team_id,
+    display_name: input.display_name ?? null,
+    real_name: input.real_name ?? null,
+    username: input.username ?? null,
+    email: input.email ?? null,
+    avatar_url: input.avatar_url ?? null,
+    is_bot: input.is_bot ?? false,
+    is_deleted: input.is_deleted ?? false,
+    last_resolved_at: input.last_resolved_at ?? now,
+    last_seen_at: input.last_seen_at ?? null,
+    resolve_error: input.resolve_error ?? null,
+    created_at: now,
+    updated_at: now,
+  }));
+
+  if (shouldUseMemory()) {
+    for (const record of records) {
+      getMemory().users.set(userKey(record.team_id, record.slack_user_id), record);
+    }
+    return records.length;
+  }
+
+  try {
+    const supabase = createServiceClient();
+    // Chunk to keep payload reasonable
+    const chunkSize = 100;
+    for (let i = 0; i < records.length; i += chunkSize) {
+      const chunk = records.slice(i, i + chunkSize);
+      await supabase.from("slack_user_profiles").upsert(chunk, {
+        onConflict: "team_id,slack_user_id",
+      });
+    }
+  } catch {
+    // table may be missing until migration 019
+  }
+  return records.length;
+}
+
+/** Batch upsert channels for directory refresh — skips per-row cache reads. */
+export async function batchUpsertSlackChannelProfiles(
+  rows: Array<Partial<SlackChannelProfileRecord> & { team_id: string; slack_channel_id: string }>,
+): Promise<number> {
+  if (!rows.length) return 0;
+  const now = nowIso();
+  const records: SlackChannelProfileRecord[] = rows.map((input) => ({
+    slack_channel_id: input.slack_channel_id,
+    team_id: input.team_id,
+    name: input.name ?? null,
+    channel_type: input.channel_type ?? null,
+    is_private: input.is_private ?? false,
+    last_resolved_at: input.last_resolved_at ?? now,
+    last_seen_at: input.last_seen_at ?? null,
+    resolve_error: input.resolve_error ?? null,
+    created_at: now,
+    updated_at: now,
+  }));
+
+  if (shouldUseMemory()) {
+    for (const record of records) {
+      getMemory().channels.set(channelKey(record.team_id, record.slack_channel_id), record);
+    }
+    return records.length;
+  }
+
+  try {
+    const supabase = createServiceClient();
+    const chunkSize = 100;
+    for (let i = 0; i < records.length; i += chunkSize) {
+      const chunk = records.slice(i, i + chunkSize);
+      await supabase.from("slack_channel_profiles").upsert(chunk, {
+        onConflict: "team_id,slack_channel_id",
+      });
+    }
+  } catch {
+    // table may be missing until migration 019
+  }
+  return records.length;
+}
+
 export async function resolveSlackUserProfile(input: {
   teamId: string;
   slackUserId: string;

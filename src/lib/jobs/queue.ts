@@ -288,6 +288,111 @@ export async function failJob(
   if (error) throw error;
 }
 
+export async function reclaimStaleRunningJobs(options?: {
+  olderThanMs?: number;
+  jobTypes?: ReportJob["jobType"][];
+}): Promise<{ reclaimed: number }> {
+  const olderThanMs = options?.olderThanMs ?? 5 * 60_000;
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+  const now = nowIso();
+  let reclaimed = 0;
+
+  if (usesMemoryJobStore()) {
+    for (const job of getMemoryState().jobs.values()) {
+      if (job.status !== "running" || !job.lockedAt || job.lockedAt > cutoff) continue;
+      if (options?.jobTypes && !options.jobTypes.includes(job.jobType)) continue;
+      getMemoryState().jobs.set(job.id, {
+        ...job,
+        status: "queued",
+        availableAt: now,
+        lockedAt: null,
+        lastError: "Reclaimed stale running job",
+        updatedAt: now,
+        metadata: {
+          ...job.metadata,
+          stage: "reclaimed",
+          reclaimedAt: now,
+        },
+      });
+      reclaimed += 1;
+    }
+    return { reclaimed };
+  }
+
+  const supabase = createServiceClient();
+  let query = supabase
+    .from("report_jobs")
+    .select("id, job_type, metadata_json")
+    .eq("status", "running")
+    .lt("locked_at", cutoff)
+    .limit(50);
+  if (options?.jobTypes?.length) {
+    query = query.in("job_type", options.jobTypes);
+  }
+  const { data, error } = await query;
+  if (error) throw error;
+  for (const row of (data as Array<{
+    id: string;
+    job_type: string;
+    metadata_json: Record<string, unknown> | null;
+  }> | null) ?? []) {
+    const metadata = {
+      ...(row.metadata_json ?? {}),
+      stage: "reclaimed",
+      reclaimedAt: now,
+    };
+    const { error: updateError } = await supabase
+      .from("report_jobs")
+      .update({
+        status: "queued",
+        available_at: now,
+        locked_at: null,
+        last_error: "Reclaimed stale running job",
+        updated_at: now,
+        metadata_json: metadata,
+      })
+      .eq("id", row.id)
+      .eq("status", "running");
+    if (!updateError) reclaimed += 1;
+  }
+  return { reclaimed };
+}
+
+/** Merge safe operational stage metadata onto a job (no message bodies). */
+export async function patchJobMetadata(
+  jobId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const now = nowIso();
+  if (usesMemoryJobStore()) {
+    const job = getMemoryState().jobs.get(jobId);
+    if (!job) return;
+    getMemoryState().jobs.set(jobId, {
+      ...job,
+      metadata: { ...job.metadata, ...patch },
+      updatedAt: now,
+    });
+    return;
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("report_jobs")
+    .select("metadata_json")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error || !data) return;
+  const existing = ((data as { metadata_json: Record<string, unknown> | null }).metadata_json ??
+    {}) as Record<string, unknown>;
+  await supabase
+    .from("report_jobs")
+    .update({
+      metadata_json: { ...existing, ...patch },
+      updated_at: now,
+    })
+    .eq("id", jobId);
+}
+
 export function resetMemoryJobsForTests() {
   globalMemory.__actonJobsMemory = { jobs: new Map() };
 }

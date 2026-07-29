@@ -94,22 +94,37 @@ export async function retrieveSlackEvidence(
           deps,
         });
 
-  // Refresh-on-miss: one directory sync then re-plan when entity missing from cache.
+  // Refresh-on-miss: one fast directory sync then re-plan when entity missing from cache.
   // Skip when tests inject a static directory (listCached* provided).
+  // Must not stall answer jobs — uses fast mode (~12s wall clock).
   if (
     !input.plan &&
     (planned.notFound.channels.length > 0 || planned.notFound.people.length > 0) &&
     input.deps?.listCachedUsers == null &&
     input.deps?.listCachedChannels == null
   ) {
-    notes.push("Directory miss — refreshing Slack users/channels once");
-    const refreshed = await refreshAndListDirectory(resolvedTeamId, {
-      ...deps,
-      callSlackApi: deps.callSlackApi,
-    });
-    notes.push(
-      `Directory refresh: users=${refreshed.refresh.usersUpserted} channels=${refreshed.refresh.channelsUpserted} complete=${refreshed.refresh.paginationComplete}`,
+    notes.push("Directory miss — refreshing Slack users/channels once (fast)");
+    const refreshed = await refreshAndListDirectory(
+      resolvedTeamId,
+      {
+        ...deps,
+        callSlackApi: deps.callSlackApi,
+      },
+      { mode: "fast" },
     );
+    notes.push(
+      `Directory refresh: users=${refreshed.refresh.usersUpserted} channels=${refreshed.refresh.channelsUpserted} complete=${refreshed.refresh.paginationComplete} timedOut=${refreshed.refresh.timedOut} durationMs=${refreshed.refresh.durationMs}`,
+    );
+    if (refreshed.refresh.timedOut) {
+      console.info(
+        JSON.stringify({
+          scope: "slack.answer",
+          stage: "directory_resolution",
+          status: "timeout",
+          durationMs: refreshed.refresh.durationMs,
+        }),
+      );
+    }
     deps = {
       ...deps,
       listCachedUsers: async () => refreshed.users,

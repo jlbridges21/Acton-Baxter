@@ -1,7 +1,7 @@
 import "server-only";
 
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
-import { enqueueJob } from "@/lib/jobs/queue";
+import { enqueueJob, patchJobMetadata } from "@/lib/jobs/queue";
 import {
   getSlackRuntimeConfig,
   isSlackChannelAllowed,
@@ -18,6 +18,30 @@ import {
 import { claimSlackEventReceipt, updateSlackEventReceipt } from "@/lib/slack/receipts";
 import { observeSlackIdentities } from "@/lib/slack/profiles";
 import { logServerError } from "@/lib/errors";
+import {
+  employeeFacingSlackSearchError,
+  SLACK_SEARCH_ERROR_CODES,
+} from "@/lib/baxter-data/slack/errors";
+
+/** Wall-clock budget for a Slack Baxter answer (below process-jobs maxDuration). */
+const SLACK_ANSWER_TIMEOUT_MS = 55_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise.finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error(`${label} timed out after ${timeoutMs}ms`);
+        err.name = "TimeoutError";
+        (err as Error & { code?: string }).code = SLACK_SEARCH_ERROR_CODES.ANSWER_TIMEOUT;
+        reject(err);
+      }, timeoutMs);
+    }),
+  ]);
+}
 
 export type SlackIncomingEvent = {
   type?: string;
@@ -225,7 +249,7 @@ export async function enqueueBaxterSlackReply(payload: SlackBaxterReplyPayload) 
  */
 export async function handleBaxterSlackEvent(
   event: SlackIncomingEvent,
-  options?: { eventId?: string; teamId?: string | null },
+  options?: { eventId?: string; teamId?: string | null; jobId?: string },
 ): Promise<void> {
   const config = getSlackRuntimeConfig();
   const eventId = options?.eventId;
@@ -398,23 +422,52 @@ export async function handleBaxterSlackEvent(
     : externalThreadId;
 
   await tryAddEyesReaction();
+  const answerStarted = Date.now();
   try {
+    if (options?.jobId) {
+      await patchJobMetadata(options.jobId, {
+        stage: "answer_generation",
+        stageStartedAt: new Date().toISOString(),
+      });
+    }
+
     const identities = await observeSlackIdentities({
       teamId: teamId ?? "unknown",
       slackUserId: event.user ?? null,
       slackChannelId: channelId,
     });
 
-    const result = await answerBaxterQuestion({
-      question: text,
-      userId: null,
-      userName: identities.userLabel,
-      channel: "slack",
-      externalThreadId: stableExternalThreadId,
-      externalUserId: event.user ?? null,
-      slackTeamId: teamId,
-      slackActionToken: event.action_token ?? null,
-    });
+    console.info(
+      JSON.stringify({
+        scope: "slack.answer",
+        stage: "answer_generation",
+        jobId: options?.jobId ?? null,
+        eventId: eventId ?? null,
+        status: "started",
+      }),
+    );
+
+    const result = await withTimeout(
+      answerBaxterQuestion({
+        question: text,
+        userId: null,
+        userName: identities.userLabel,
+        channel: "slack",
+        externalThreadId: stableExternalThreadId,
+        externalUserId: event.user ?? null,
+        slackTeamId: teamId,
+        slackActionToken: event.action_token ?? null,
+      }),
+      SLACK_ANSWER_TIMEOUT_MS,
+      "Slack Baxter answer",
+    );
+
+    if (options?.jobId) {
+      await patchJobMetadata(options.jobId, {
+        stage: "slack_post",
+        stageStartedAt: new Date().toISOString(),
+      });
+    }
 
     const segments = buildSlackReplySegments(result);
     for (const segment of segments) {
@@ -437,9 +490,29 @@ export async function handleBaxterSlackEvent(
         },
       });
     }
+
+    if (options?.jobId) {
+      await patchJobMetadata(options.jobId, {
+        stage: "completed",
+        elapsedMs: Date.now() - answerStarted,
+      });
+    }
+
+    console.info(
+      JSON.stringify({
+        scope: "slack.answer",
+        stage: "completed",
+        jobId: options?.jobId ?? null,
+        eventId: eventId ?? null,
+        elapsedMs: Date.now() - answerStarted,
+        status: "success",
+      }),
+    );
   } catch (error) {
-    const code =
-      error instanceof SlackClientError
+    const timedOut = error instanceof Error && error.name === "TimeoutError";
+    const code = timedOut
+      ? SLACK_SEARCH_ERROR_CODES.ANSWER_TIMEOUT
+      : error instanceof SlackClientError
         ? error.baxterCode
         : (resultErrorCode(error) ?? SLACK_ERROR_CODES.JOB_FAILED);
 
@@ -451,13 +524,36 @@ export async function handleBaxterSlackEvent(
       isDm: access.isDm,
       slackError: error instanceof SlackClientError ? error.slackError : null,
       httpStatus: error instanceof SlackClientError ? error.httpStatus : null,
+      elapsedMs: Date.now() - answerStarted,
     });
+
+    console.info(
+      JSON.stringify({
+        scope: "slack.answer",
+        stage: timedOut ? "answer_generation" : "failed",
+        jobId: options?.jobId ?? null,
+        eventId: eventId ?? null,
+        elapsedMs: Date.now() - answerStarted,
+        status: timedOut ? "timeout" : "error",
+        code,
+      }),
+    );
+
+    if (options?.jobId) {
+      await patchJobMetadata(options.jobId, {
+        stage: timedOut ? "timeout" : "failed",
+        errorCode: code,
+        elapsedMs: Date.now() - answerStarted,
+      });
+    }
 
     try {
       await postSlackMessage({
         channel: channelId,
         ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
-        text: employeeFacingSlackError(code),
+        text: timedOut
+          ? employeeFacingSlackSearchError(SLACK_SEARCH_ERROR_CODES.ANSWER_TIMEOUT)
+          : employeeFacingSlackError(code),
       });
     } catch (postError) {
       logServerError("handleBaxterSlackEvent:errorReply", {
@@ -477,7 +573,17 @@ export async function handleBaxterSlackEvent(
         errorCode: code,
       });
     }
+
+    // User already received a failure reply — fail the job without retry loops.
+    const terminal = new Error(timedOut ? "Slack answer timed out" : `Slack reply failed: ${code}`);
+    terminal.name = "BaxterSlackTerminalError";
+    (terminal as Error & { code?: string; retryable?: boolean }).code = code;
+    (terminal as Error & { retryable?: boolean }).retryable = false;
+    throw terminal;
   } finally {
+    if (options?.jobId) {
+      await patchJobMetadata(options.jobId, { stage: "cleanup" }).catch(() => undefined);
+    }
     await tryRemoveEyesReaction();
   }
 }
@@ -498,14 +604,27 @@ async function markPostFailure(eventId: string | undefined, error: unknown) {
 /**
  * Job processor entry for slack_baxter_reply.
  */
-export async function processSlackBaxterReplyJob(metadata: Record<string, unknown>): Promise<void> {
+export async function processSlackBaxterReplyJob(
+  metadata: Record<string, unknown>,
+  options?: { jobId?: string },
+): Promise<void> {
   const event = metadata.event as SlackIncomingEvent | undefined;
   const eventId = typeof metadata.eventId === "string" ? metadata.eventId : undefined;
   const teamId = typeof metadata.teamId === "string" ? metadata.teamId : null;
   if (!event) {
     throw new Error("slack_baxter_reply job missing event metadata");
   }
-  await handleBaxterSlackEvent(event, { eventId, teamId });
+  if (options?.jobId) {
+    await patchJobMetadata(options.jobId, {
+      stage: "received",
+      stageStartedAt: new Date().toISOString(),
+    });
+  }
+  await handleBaxterSlackEvent(event, {
+    eventId,
+    teamId,
+    jobId: options?.jobId,
+  });
 }
 
 /** Claim + enqueue a Slack Baxter reply job. Caller should process via after()/cron. */

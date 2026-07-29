@@ -27,7 +27,7 @@ async function apiCall(
   body: Record<string, unknown>,
 ): Promise<SlackApiCallResult> {
   if (deps?.callSlackApi) return deps.callSlackApi(method, { token, body });
-  return callSlackApi(method, { token, body });
+  return callSlackApi(method, { token, body, timeoutMs: 15_000 });
 }
 
 async function fetchChannelHistoryWindow(input: {

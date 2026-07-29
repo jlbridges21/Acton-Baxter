@@ -4,6 +4,7 @@ import { AuthenticationError, AuthorizationError } from "@/lib/errors";
 import { createClient } from "@/lib/supabase/server";
 import { getReportStore } from "@/lib/research/report-store";
 import type { Profile, UserRole } from "@/lib/research/db-types";
+import { cookies } from "next/headers";
 
 export type AuthUser = {
   id: string;
@@ -11,7 +12,9 @@ export type AuthUser = {
   profile: Profile;
 };
 
-function testBypassUser(): AuthUser | null {
+const E2E_ROLE_COOKIE = "baxter_e2e_role";
+
+async function testBypassUser(): Promise<AuthUser | null> {
   const env = getEnv();
   // Next.js forces NODE_ENV to "development" under `next dev`, so Playwright
   // cannot rely on NODE_ENV=test. Bypass is still blocked in production.
@@ -22,7 +25,16 @@ function testBypassUser(): AuthUser | null {
   const id = env.E2E_TEST_USER_ID || "00000000-0000-4000-8000-000000000001";
   const email = env.E2E_TEST_USER_EMAIL || "test@actonadu.local";
   const fullName = env.E2E_TEST_USER_NAME || "Test Salesperson";
-  const role = (env.E2E_TEST_USER_ROLE || "user") as UserRole;
+  let role = (env.E2E_TEST_USER_ROLE || "user") as UserRole;
+  try {
+    const jar = await cookies();
+    const cookieRole = jar.get(E2E_ROLE_COOKIE)?.value;
+    if (cookieRole === "admin" || cookieRole === "super_admin" || cookieRole === "user") {
+      role = cookieRole;
+    }
+  } catch {
+    // cookies() unavailable outside a request
+  }
   const now = new Date().toISOString();
 
   return {
@@ -39,7 +51,7 @@ function testBypassUser(): AuthUser | null {
 }
 
 export async function requireUser(): Promise<AuthUser> {
-  const bypass = testBypassUser();
+  const bypass = await testBypassUser();
   if (bypass) {
     await getReportStore().ensureProfile(bypass.profile);
     return bypass;

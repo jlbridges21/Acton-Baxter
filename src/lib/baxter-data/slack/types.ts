@@ -184,6 +184,8 @@ export type SlackSearchDeps = {
       token: string;
       body?: Record<string, unknown>;
       form?: boolean;
+      maxRetries?: number;
+      timeoutMs?: number;
     },
   ) => Promise<SlackApiCallResult>;
   listCachedUsers?: (teamId: string) => Promise<ResolvedSlackPerson[]>;

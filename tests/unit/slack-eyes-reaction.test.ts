@@ -259,6 +259,45 @@ describe("Slack 👀 processing reaction", () => {
     expect(answerBaxterQuestion).not.toHaveBeenCalled();
   });
 
+  it("removes eyes and posts failure when answer times out", async () => {
+    answerBaxterQuestion.mockImplementationOnce(
+      () =>
+        new Promise(() => {
+          /* never resolves */
+        }),
+    );
+
+    // Use a short timeout by mocking withTimeout path — call answer that hangs;
+    // handleBaxterSlackEvent uses 55s timeout. Spy via short-circuit: reject with TimeoutError.
+    answerBaxterQuestion.mockReset();
+    answerBaxterQuestion.mockImplementationOnce(async () => {
+      const err = new Error("Slack Baxter answer timed out after 1ms");
+      err.name = "TimeoutError";
+      throw err;
+    });
+
+    await expect(
+      handleBaxterSlackEvent(
+        {
+          type: "message",
+          channel_type: "im",
+          channel: "D1",
+          user: "U1",
+          text: "what did James say last in the baxter channel?",
+          ts: "9.9",
+          team: "T123",
+        },
+        { eventId: "Ev-timeout", teamId: "T123" },
+      ),
+    ).rejects.toMatchObject({ name: "BaxterSlackTerminalError" });
+
+    expect(postSlackMessage).toHaveBeenCalled();
+    expect(removeSlackReaction).toHaveBeenCalled();
+    expect(updateSlackEventReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: "Ev-timeout", status: "failed" }),
+    );
+  });
+
   it("exports eyes reaction constant for Slack API name", () => {
     expect(SLACK_EYES_REACTION).toBe("eyes");
   });
