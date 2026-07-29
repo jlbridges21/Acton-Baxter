@@ -92,6 +92,14 @@ type Snapshot = {
     lastErrorCode: string | null;
     activeCount: number | null;
   };
+  baxterAwareness?: {
+    pemEvidenceProvider: string;
+    completedPems: number | null;
+    stalePems: number | null;
+    deletedExcluded: boolean;
+    capabilityCount: number;
+    enabledCapabilityCount: number;
+  };
 };
 
 function YesNo({ value }: { value: boolean }) {
@@ -408,6 +416,41 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             Test PEM AI
           </Button>
         </div>
+      </Card>
+
+      <Card>
+        <CardTitle>Baxter awareness</CardTitle>
+        <CardDescription className="mt-1">
+          PEM evidence provider and live capability registry used by web chat and Slack.
+        </CardDescription>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+          <div>
+            <dt className="text-[var(--acton-muted)]">PEM Evidence Provider</dt>
+            <dd>{snapshot.baxterAwareness?.pemEvidenceProvider ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Completed PEMs</dt>
+            <dd>{snapshot.baxterAwareness?.completedPems ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Stale</dt>
+            <dd>{snapshot.baxterAwareness?.stalePems ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Deleted excluded</dt>
+            <dd>
+              <YesNo value={snapshot.baxterAwareness?.deletedExcluded ?? true} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Capability registry</dt>
+            <dd>
+              {snapshot.baxterAwareness
+                ? `${snapshot.baxterAwareness.capabilityCount} capabilities / ${snapshot.baxterAwareness.enabledCapabilityCount} enabled`
+                : "—"}
+            </dd>
+          </div>
+        </dl>
       </Card>
 
       <Card>

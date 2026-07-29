@@ -4,7 +4,15 @@ export type BaxterMessageRole = "user" | "assistant" | "system";
 export type BaxterConversationStatus = "active" | "closed" | "error";
 export type BaxterLlmProviderName = "openai" | "anthropic";
 export type BaxterSourceKind =
-  "manual" | "knowledge_entry" | "google_doc" | "google_sheet" | "google_file";
+  | "manual"
+  | "knowledge_entry"
+  | "google_doc"
+  | "google_sheet"
+  | "google_file"
+  | "pem_neat"
+  | "gohighlevel"
+  | "rulebook"
+  | "capability";
 
 export type BaxterAnswerMode =
   "identity" | "grounded" | "general" | "mixed" | "clarification" | "error";

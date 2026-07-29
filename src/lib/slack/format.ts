@@ -24,7 +24,14 @@ export function sanitizeSourceUrl(url: string | null | undefined): string | null
   const trimmed = url.trim();
   if (!trimmed || UNSAFE_PROTOCOLS.test(trimmed)) return null;
 
-  if (trimmed.startsWith("/knowledge/")) {
+  if (
+    trimmed.startsWith("/knowledge/") ||
+    trimmed.startsWith("/pem-neats") ||
+    trimmed.startsWith("/dashboard") ||
+    trimmed.startsWith("/reports") ||
+    trimmed.startsWith("/admin/") ||
+    trimmed === "/"
+  ) {
     const base = getPublicAppBaseUrl();
     return `${base}${trimmed}`;
   }
@@ -46,6 +53,14 @@ function sourceTypeLabel(source: BaxterSourceReference): string {
       return "Google Sheet";
     case "google_file":
       return "Google File";
+    case "pem_neat":
+      return "PEM NEAT";
+    case "gohighlevel":
+      return "GoHighLevel";
+    case "rulebook":
+      return "Process Rulebook";
+    case "capability":
+      return "Baxter";
     default:
       return "Knowledge Base";
   }

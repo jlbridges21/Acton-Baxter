@@ -32,9 +32,10 @@ export function baxterHelpText(channel: "web" | "slack"): string {
       : "• `/clear` or **New chat** — start a fresh conversation";
   const lines = [
     "Here’s how to work with Baxter:",
-    "• Ask normal questions about Acton knowledge, projects, or general help",
+    "• Ask normal questions about Acton knowledge, PEM NEATs, projects, or general help",
+    "• Ask about saved PEMs (for example: “What was Alex’s Type 1 pain?”)",
     clearLine,
-    "• Official Acton answers cite Sources when they use approved knowledge",
+    "• Official Acton answers cite Sources when they use approved knowledge or PEM NEATs",
   ];
 
   if (isGhlConfigured()) {

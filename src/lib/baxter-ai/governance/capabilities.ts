@@ -1,8 +1,13 @@
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import { isActiveRulebookKnown } from "@/lib/rulebook/capabilities";
+import {
+  buildBaxterCapabilityCatalog,
+  getCapabilityRuntimeHealth,
+} from "@/lib/baxter/capability-registry";
 
 /**
  * Current Baxter capabilities — only claim what is actually connected.
+ * Prefer buildCapabilitiesBlock() / the capability registry for live answers.
  */
 export const BAXTER_CURRENT_CAPABILITIES = [
   "Answer questions in the Baxter web app (acton-baxter.vercel.app)",
@@ -10,6 +15,8 @@ export const BAXTER_CURRENT_CAPABILITIES = [
   "Search approved Knowledge Base and Google Workspace–synced Docs/Sheets",
   "Use structured spreadsheet knowledge for exact facts and aggregates",
   "Cite approved Acton sources for company-specific answers",
+  "Generate and review PEM NEATs; answer questions about completed PEMs",
+  "Help with Property Research navigation and prior reports",
   "Help with general explanations, drafting, and summarization",
   "Draft customer-facing copy only when requested, clearly marked for human review",
 ] as const;
@@ -20,6 +27,7 @@ export const BAXTER_CURRENT_LIMITATIONS = [
   "Does not invent official Acton policies, pricing, RACI, or project facts",
   "Does not take autonomous action in external systems",
   "Does not evaluate individuals or speculate about intent",
+  "No direct BuilderTrend API — PEM BuilderTrend fields are copy/paste handoff only",
 ] as const;
 
 let monitoringCapabilityCached: boolean = false;
@@ -40,34 +48,34 @@ export function isMonitoringCapabilityKnown(): boolean {
 }
 
 export function buildCapabilitiesBlock(): string {
-  const capabilities: string[] = [...BAXTER_CURRENT_CAPABILITIES];
+  const health = getCapabilityRuntimeHealth({
+    monitoringKnown: monitoringCapabilityCached,
+  });
+  const catalog = buildBaxterCapabilityCatalog(health);
+  const capabilities: string[] = [];
   const limitations: string[] = [...BAXTER_CURRENT_LIMITATIONS];
 
-  const ghlConfigured = isGhlConfigured();
-  if (ghlConfigured) {
-    capabilities.push(
-      "Read/search live GoHighLevel CRM data (contacts, opportunities, pipelines, calendars, conversations)",
-    );
-    limitations.push(
-      "GoHighLevel CRM updates require an authorized user and explicit confirmation before any write",
-    );
-    limitations.unshift("No live Buildertrend or Domo access yet");
-  } else {
-    limitations.unshift("No live Buildertrend, GoHighLevel, or Domo access yet");
+  for (const cap of catalog) {
+    if (cap.key === "process_monitoring" && !cap.enabled) continue;
+    if (cap.audience.length === 1 && cap.audience[0] === "admin") continue;
+    if (cap.key === "gohighlevel" && !cap.enabled) {
+      limitations.unshift("GoHighLevel is not currently connected for live CRM lookups");
+      continue;
+    }
+    if (!cap.enabled && cap.status === "disabled") continue;
+    capabilities.push(cap.shortDescription);
+    for (const limit of cap.limitations.slice(0, 1)) {
+      if (limit && !limitations.includes(limit)) limitations.push(limit);
+    }
   }
 
-  // Claim only when evidence path (or admin) has confirmed an active rulebook exists.
-  // Avoid async DB inside system-prompt assembly (breaks OpenAI retry tests that stub fetch).
-  if (isActiveRulebookKnown()) {
+  if (!isGhlConfigured()) {
+    // already handled via catalog disconnect note
+  }
+
+  if (isActiveRulebookKnown() && !capabilities.some((c) => /rulebook/i.test(c))) {
     capabilities.push(
       "Answer responsibility and required-data questions from Acton's active Process Rulebook",
-    );
-  }
-
-  // Claim proactive monitoring when enabled
-  if (isMonitoringCapabilityKnown()) {
-    capabilities.push(
-      "Proactive monitoring: detect unowned opportunities, stale deals, missing required data, and config health issues (GHL only)",
     );
   }
 

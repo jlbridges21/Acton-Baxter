@@ -22,6 +22,12 @@ import { getBaxterVisionProvider } from "./vision";
 import { getKnowledgeHealthSummary } from "./knowledge-health";
 import { getGovernanceAdminSummary, assembleBaxterRuntime } from "./governance";
 import { getPemNeatHealthSnapshot } from "@/lib/pem-neat/health";
+import {
+  capabilityRegistryStats,
+  getCapabilityRuntimeHealth,
+} from "@/lib/baxter/capability-registry";
+import { isMonitoringCapabilityKnown } from "@/lib/baxter-ai/governance/capabilities";
+import { createServiceClient } from "@/lib/supabase/admin";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
@@ -29,6 +35,31 @@ export async function getBaxterDiagnosticsSnapshot() {
   const embedding = getEmbeddingConfig();
   const vision = getBaxterVisionProvider();
   const pemNeat = await getPemNeatHealthSnapshot();
+  const capabilityHealth = getCapabilityRuntimeHealth({
+    monitoringKnown: isMonitoringCapabilityKnown(),
+  });
+  const capabilityStats = capabilityRegistryStats(capabilityHealth);
+
+  let completedPems: number | null = pemNeat.activeCount;
+  let stalePems: number | null = null;
+  try {
+    const supabase = createServiceClient();
+    const { count: completedCount } = await supabase
+      .from("pem_neats")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "completed")
+      .is("deleted_at", null);
+    const { count: staleCount } = await supabase
+      .from("pem_neats")
+      .select("id", { count: "exact", head: true })
+      .or("status.eq.needs_regeneration,analysis_stale.eq.true")
+      .is("deleted_at", null);
+    completedPems = completedCount ?? completedPems;
+    stalePems = staleCount ?? 0;
+  } catch {
+    // memory/E2E — leave counts from pemNeat health
+  }
+
   const entries = await listAllKnowledgeEntriesForRetrieval();
   const approvedInternal = entries.filter(
     (entry) => entry.status === "approved" && entry.visibility === "internal",
@@ -129,6 +160,14 @@ export async function getBaxterDiagnosticsSnapshot() {
       recentErrorCodes: Array.from(new Set(errorCodes)).slice(0, 10),
     },
     pemNeat,
+    baxterAwareness: {
+      pemEvidenceProvider: pemNeat.databaseReady || pemNeat.activeCount != null ? "Ready" : "Error",
+      completedPems,
+      stalePems,
+      deletedExcluded: true,
+      capabilityCount: capabilityStats.total,
+      enabledCapabilityCount: capabilityStats.enabled,
+    },
   };
 }
 

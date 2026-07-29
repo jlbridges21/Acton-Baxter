@@ -27,7 +27,7 @@ export function classifyBaxterQuestion(question: string): BaxterQuestionClass {
   }
 
   if (
-    /\b(who (are|is) (you|baxter)|what (are|is) (you|baxter)|what can you do|how do you work|what do you know\b|what information can you|what (sources|systems) can you|are you customer|can you access (buildertrend|gohighlevel|domo)|what version|runtime version)\b/.test(
+    /\b(who (are|is) (you|baxter)|what (are|is) (you|baxter)|what can you do|how do you work|what do you know\b|what information can you|what (sources|systems) can you|are you customer|can you access (buildertrend|gohighlevel|domo)|what version|runtime version|what tools|how do i (generate|create|make) (a )?(pem )?neat|what is (a )?(pem|neat))\b/.test(
       q,
     ) ||
     q === "what do you know" ||

@@ -49,6 +49,10 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import type { Profile } from "@/lib/research/db-types";
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./conversation-context";
+import { answerCapabilityHelp, buildCapabilityPromptBlock } from "@/lib/baxter/capability-help";
+import { retrievePemEvidence } from "@/lib/baxter-data/pem-neats";
+import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
+import type { BaxterSourceReference } from "./types";
 
 /**
  * Shared Baxter answering entry point for web and Slack.
@@ -212,8 +216,8 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   }
 
   // GoHighLevel pending confirm/cancel + write proposals (never mutate without confirmation).
+  const profile = await loadProfileForGhl(input.userId);
   if (isGhlConfigured()) {
-    const profile = await loadProfileForGhl(input.userId);
     const pendingHandled = await handleGhlPendingConfirmation({
       question,
       conversationId: conversation.id,
@@ -298,6 +302,51 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     }
   }
 
+  // Deterministic capability / how-to / PEM definition answers (no vector search).
+  const capabilityHelp = answerCapabilityHelp({
+    question,
+    role: profile?.role ?? null,
+    profile,
+  });
+  if (capabilityHelp) {
+    const sources: BaxterSourceReference[] = capabilityHelp.links.map((link, index) => ({
+      title: link.label,
+      sourceName: "Baxter",
+      category: "Baxter capability",
+      sourceUrl: link.href,
+      citationLabel: link.label,
+      sourceKind: "capability" as const,
+      openLabel: link.label,
+      lastUpdated: null,
+      relevanceScore: 100,
+      availability: "available" as const,
+      knowledgeEntryId: `capability-${index}-${link.href}`,
+    }));
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: capabilityHelp.answer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "capability-registry",
+      modelName: "help",
+      sources,
+      sourceEntryIds: sources.map((s, index) => ({
+        id: s.knowledgeEntryId!,
+        relevanceScore: 100,
+        order: index + 1,
+      })),
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer: capabilityHelp.answer,
+      sources,
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "identity",
+    });
+  }
+
   // Fast path: identity questions with no need for OpenAI when KB is empty.
   const historyEarly = await getRecentConversationHistory(conversation.id, {
     limit: 10,
@@ -354,6 +403,86 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       number: currentOffset + index + 1,
     }));
     contextItems = [...contextItems, ...rulebookItems].slice(0, 8);
+  }
+
+  // Merge completed PEM NEAT structured evidence (first-class; not Knowledge Base text).
+  const pemEvidence = await retrievePemEvidence({
+    question,
+    history: historyEarly,
+    role: profile?.role ?? null,
+    channel: input.channel,
+  }).catch(() => ({ items: [], clarification: null as string | null, staleWarning: null }));
+
+  if (pemEvidence.clarification) {
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: pemEvidence.clarification,
+      insufficientKnowledge: false,
+      confidence: "medium",
+      modelProvider: "pem-neats",
+      modelName: "entity-resolution",
+      sources: [],
+      sourceEntryIds: [],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer: pemEvidence.clarification,
+      sources: [],
+      confidence: "medium",
+      insufficientKnowledge: false,
+      answerMode: "clarification",
+    });
+  }
+
+  if (pemEvidence.items.length > 0) {
+    const renumbered = pemEvidence.items.map((item, index) => ({
+      ...item,
+      number: index + 1,
+    }));
+    const offset = renumbered.length;
+    const rest = contextItems.map((item, index) => ({
+      ...item,
+      number: offset + index + 1,
+    }));
+    contextItems = [...renumbered, ...rest].slice(0, 8);
+  }
+
+  // Degraded mode: answer PEM lookups from structured evidence when OpenAI is unavailable.
+  const openaiConfiguredEarly = Boolean((getEnv().OPENAI_API_KEY ?? "").trim());
+  if (
+    !openaiConfiguredEarly &&
+    pemEvidence.items.length > 0 &&
+    detectPemIntent(question).intent === "record_lookup"
+  ) {
+    const item = contextItems[0]!;
+    const sources = [contextItemToSourceReference(item)];
+    const answer = [item.contentExcerpt, "", `(Source: ${item.citationLabel})`].join("\n");
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: answer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "pem-neats",
+      modelName: "structured-evidence",
+      sources,
+      sourceEntryIds: [
+        {
+          id: item.id,
+          relevanceScore: item.relevanceScore,
+          order: 1,
+        },
+      ],
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer,
+      sources,
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "grounded",
+    });
   }
 
   // Deterministic structured answer when we have a direct field value
@@ -511,13 +640,21 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   try {
     const provider = getBaxterLlmProvider();
+    const identityContext =
+      questionClass === "baxter_identity"
+        ? [
+            buildBaxterIdentityContext(),
+            "",
+            buildCapabilityPromptBlock(profile?.role ?? null),
+          ].join("\n")
+        : buildBaxterIdentityContext();
     const llm = await provider.generateAnswer({
       question,
       contextItems,
       userName: input.userName,
       channel: input.channel,
       questionClass,
-      identityContext: buildBaxterIdentityContext(),
+      identityContext,
       history,
     });
 
@@ -712,6 +849,24 @@ function needsOpenAiForIdentityFollowUp(question: string): boolean {
 
 async function loadProfileForGhl(userId: string | null): Promise<Profile | null> {
   if (!userId) return null;
+  const env = getEnv();
+  // Avoid hanging network profile lookups in memory/E2E/unit-test modes.
+  if (
+    env.E2E_TEST_AUTH_BYPASS ||
+    env.NEXT_PUBLIC_SUPABASE_URL.includes("127.0.0.1") ||
+    env.NEXT_PUBLIC_SUPABASE_URL.includes("example.supabase.co") ||
+    env.NEXT_PUBLIC_SUPABASE_ANON_KEY.startsWith("test-")
+  ) {
+    return {
+      id: userId,
+      full_name: "Test User",
+      role: "user",
+      department_id: null,
+      department_name: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
   try {
     const supabase = createServiceClient();
     const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();

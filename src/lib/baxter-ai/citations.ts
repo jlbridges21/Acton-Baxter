@@ -27,6 +27,11 @@ export function resolveSourceKind(input: {
   sourceType: string;
   mimeType?: string | null;
 }): BaxterSourceKind {
+  const t = input.sourceType.toLowerCase();
+  if (t === "pem_neat" || t === "pem neat") return "pem_neat";
+  if (t === "gohighlevel" || t === "go highlevel") return "gohighlevel";
+  if (t === "rulebook" || t === "process_rulebook") return "rulebook";
+  if (t === "capability" || t === "baxter_capability") return "capability";
   if (input.sourceType === "Google Drive") {
     if (input.mimeType === GOOGLE_DOC_MIME) return "google_doc";
     if (input.mimeType === GOOGLE_SHEET_MIME) return "google_sheet";
@@ -43,6 +48,14 @@ export function resolveOpenLabel(kind: BaxterSourceKind): string {
       return "Open Google Sheet";
     case "google_file":
       return "Open Google File";
+    case "pem_neat":
+      return "Open NEAT";
+    case "gohighlevel":
+      return "Open GoHighLevel";
+    case "rulebook":
+      return "Open Rulebook";
+    case "capability":
+      return "Open in Baxter";
     default:
       return "Open Knowledge Entry";
   }
@@ -55,7 +68,13 @@ export function contextItemToSourceReference(item: BaxterContextItem): BaxterSou
   });
 
   let sourceUrl: string | null = null;
-  if (isSafeAbsoluteHttpUrl(item.sourceUrl)) {
+  if (isSafeHttpUrl(item.sourceUrl)) {
+    sourceUrl = item.sourceUrl;
+  } else if (sourceKind === "pem_neat") {
+    sourceUrl = item.sourceUrl?.startsWith("/pem-neats/")
+      ? item.sourceUrl
+      : `/pem-neats/${item.id}`;
+  } else if (sourceKind === "capability" && item.sourceUrl?.startsWith("/")) {
     sourceUrl = item.sourceUrl;
   } else if (sourceKind === "knowledge_entry" || sourceKind === "manual") {
     sourceUrl = `/knowledge/${item.id}`;
@@ -98,6 +117,15 @@ export function isSafeAbsoluteHttpUrl(value: string | null | undefined): boolean
 export function isSafeHttpUrl(value: string | null | undefined): boolean {
   if (!value) return false;
   if (value.startsWith("/knowledge/")) return true;
+  if (value.startsWith("/pem-neats")) return true;
+  if (
+    value.startsWith("/dashboard") ||
+    value.startsWith("/reports") ||
+    value.startsWith("/admin/") ||
+    value === "/"
+  ) {
+    return true;
+  }
   return isSafeAbsoluteHttpUrl(value);
 }
 

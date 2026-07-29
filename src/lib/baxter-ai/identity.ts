@@ -1,6 +1,7 @@
 /**
  * Built-in Baxter identity — version-controlled minimum profile.
  * Permanent behavior lives in governance/runtime; this supports fast identity answers.
+ * Detailed "what can you do" answers come from the live capability registry in answer.ts.
  */
 import { BAXTER_CURRENT_CAPABILITIES, BAXTER_CURRENT_LIMITATIONS } from "./governance/capabilities";
 import { BAXTER_RUNTIME_VERSION } from "./governance/version";
@@ -16,7 +17,10 @@ export const BAXTER_IDENTITY = {
     "Approved Knowledge Base entries (manual)",
     "Synchronized Google Workspace documents (when the Google connector is configured and healthy)",
     "Structured spreadsheet knowledge units",
-    "Built-in Baxter identity profile for explaining Baxter itself",
+    "Completed PEM NEAT structured sales intelligence (when authorized)",
+    "Live GoHighLevel CRM evidence (when connected)",
+    "Process Rulebook evidence (when an active rulebook is loaded)",
+    "Built-in Baxter capability registry for explaining Baxter itself",
   ],
   runtimeVersion: BAXTER_RUNTIME_VERSION,
 } as const;
@@ -27,12 +31,13 @@ export function buildBaxterIdentityContext(): string {
     `Company: ${BAXTER_IDENTITY.company}`,
     `Runtime version: ${BAXTER_IDENTITY.runtimeVersion}`,
     `Summary: ${BAXTER_IDENTITY.summary}`,
-    "Capabilities:",
+    "Capabilities (summary — prefer the live capability registry for current tool status):",
     ...BAXTER_IDENTITY.capabilities.map((item) => `- ${item}`),
     "Limitations:",
     ...BAXTER_IDENTITY.limitations.map((item) => `- ${item}`),
     "Current sources Baxter can use:",
     ...BAXTER_IDENTITY.sources.map((item) => `- ${item}`),
+    "Hard limits: no direct BuilderTrend API (PEM handoff fields are copy/paste only); CRM writes require confirmation when enabled.",
   ].join("\n");
 }
 
@@ -42,32 +47,30 @@ export function answerFromBaxterIdentity(question: string): string {
     return `I’m running Baxter runtime v${BAXTER_RUNTIME_VERSION}.`;
   }
   if (/what can you (do|help)|what do you (do|help)|capabilities|how (can|do) you help/.test(q)) {
+    // Prefer answerCapabilityHelp in answer.ts; this remains a safe fallback.
     return [
-      BAXTER_IDENTITY.summary,
+      "I’m Baxter, Acton ADU’s internal AI teammate.",
       "",
-      "I can help with:",
-      ...BAXTER_IDENTITY.capabilities.map((item) => `• ${item}`),
+      "I can help with Acton knowledge, PEM NEATs (including questions about completed meetings), Property Research, connected CRM lookups when GoHighLevel is available, Process Rulebook questions when loaded, and general writing/analysis — here and in Slack.",
       "",
-      "Important limitations:",
-      ...BAXTER_IDENTITY.limitations.map((item) => `• ${item}`),
+      "I don’t have a direct BuilderTrend API connection (I can prepare PEM handoff fields for copy/paste), and I won’t change CRM records without confirmation.",
     ].join("\n");
   }
   if (
     /what (information|sources|systems)|what can you access|what do you (have|know)\??$/.test(q)
   ) {
     return [
-      "Here’s what I can currently use:",
+      "Here’s what I can currently use when available:",
       ...BAXTER_IDENTITY.sources.map((item) => `• ${item}`),
       "",
-      "I do not currently have live access to Buildertrend, GoHighLevel, or Domo.",
-      "Ask me about Acton procedures if they are in the approved Knowledge Base, or ask general questions anytime.",
+      "Ask “what can you do?” for a role-aware overview of current tools and limits.",
     ].join("\n");
   }
   return [
     BAXTER_IDENTITY.summary,
     "",
-    "I use approved Acton Knowledge Base entries and synchronized Google Workspace sources for company-specific answers, and I cite those sources when I use them.",
-    "I can also help with general questions and writing. I’m not customer-facing and I’m not a decision-maker — verify important decisions with the responsible teammate.",
+    "I use approved Acton knowledge, completed PEM NEATs, connected systems like GoHighLevel when configured, and the Process Rulebook when loaded — and I cite sources when I use them.",
+    "I’m not customer-facing and I’m not a decision-maker — verify important decisions with the responsible teammate.",
   ].join("\n");
 }
 

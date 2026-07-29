@@ -109,7 +109,7 @@ describe("Baxter governance runtime", () => {
 
   it("does not claim unconnected Buildertrend live access in runtime", () => {
     const prompt = buildBaxterSystemPrompt();
-    expect(prompt).toMatch(/No live Buildertrend/i);
+    expect(prompt).toMatch(/No (live|direct) Builder[Tt]rend/i);
     expect(prompt).not.toMatch(/Buildertrend data is synced daily/i);
   });
 });

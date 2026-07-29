@@ -6,10 +6,13 @@ export type BaxterTool = {
   name: string;
   description: string;
   href: string;
+  /** Preferred create/start route when different from href. */
+  createHref?: string;
   enabled: boolean;
   adminOnly?: boolean;
   icon: LucideIcon;
   ctaLabel: string;
+  aliases?: string[];
 };
 
 /**
@@ -22,9 +25,11 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     name: "Property Research Tool",
     description: "Research property, parcel, zoning, and planning information for PEM preparation.",
     href: "/dashboard",
+    createHref: "/reports/new",
     enabled: true,
     icon: House,
     ctaLabel: "Open Property Research",
+    aliases: ["property research", "property reports", "zoning", "parcel"],
   },
   {
     key: "pem-neat",
@@ -32,9 +37,11 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     description:
       "Turn a PEM transcript into sales intelligence, coaching, follow-up, and project handoff data.",
     href: "/pem-neats",
+    createHref: "/pem-neats/new",
     enabled: true,
     icon: ClipboardList,
     ctaLabel: "Open PEM NEAT",
+    aliases: ["pem", "neat", "pem neat", "sales meeting", "transcript", "buildertrend handoff"],
   },
 ];
 
