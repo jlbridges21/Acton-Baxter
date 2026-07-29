@@ -108,6 +108,16 @@ export async function GET(request: Request) {
       });
     }
 
+    // Also persist identity mapping so /pem works without relying on Search alone.
+    if (tokenData.team?.id) {
+      const { upsertSlackUserMapping } = await import("@/lib/slack/identity");
+      await upsertSlackUserMapping({
+        slackTeamId: tokenData.team.id,
+        slackUserId: tokenData.authed_user.id,
+        appUserId: consumed.baxterUserId,
+      }).catch(() => undefined);
+    }
+
     return redirectResult(request, consumed.returnPath || returnFallback, {
       slack_search: "linked",
     });

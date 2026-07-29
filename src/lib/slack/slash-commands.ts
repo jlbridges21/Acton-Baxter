@@ -8,13 +8,10 @@ import { getPublicAppBaseUrl } from "@/lib/slack/config";
 import { buildSlackExternalThreadId } from "@/lib/slack/baxter-events";
 import { buildBaxterSlackText, splitSlackMessage } from "@/lib/slack/format";
 import type { SlackCommandAck, SlackCommandPayload } from "@/lib/slack/commands";
-import { listSalespeople } from "@/lib/pem-neat/salespeople";
+import { listSalespeople, resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
 import { createPemNeatInputSchema } from "@/lib/pem-neat/schemas";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
 import { startPemNeatGeneration } from "@/lib/pem-neat/run-generation";
-import { resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
-import { createServiceClient } from "@/lib/supabase/admin";
-import { isAppAccessRole } from "@/lib/auth/roles";
 
 /** Slack plain_text_input max length for multiline blocks. */
 export const SLACK_PEM_TRANSCRIPT_MAX_CHARS = 3000;
@@ -162,33 +159,17 @@ async function slackApiPost(
 
 /**
  * Resolve Slack user → Baxter profile for PEM creation.
- * Requires a connected Slack Search link (Settings → Integrations).
+ * Uses Slack identity mapping (email / mappings / incidental Search link).
+ * Does NOT require Slack Search OAuth.
  */
 export async function resolveBaxterUserIdForSlackPem(input: {
   slackUserId: string;
   slackTeamId: string;
 }): Promise<{ userId: string; displayName: string | null } | null> {
-  const supabase = createServiceClient();
-
-  const { data: linked } = await supabase
-    .from("slack_search_connections")
-    .select("baxter_user_id")
-    .eq("slack_user_id", input.slackUserId)
-    .eq("slack_team_id", input.slackTeamId)
-    .eq("status", "connected")
-    .maybeSingle();
-
-  if (!linked?.baxter_user_id) return null;
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, full_name, role")
-    .eq("id", linked.baxter_user_id)
-    .maybeSingle();
-  if (profile && isAppAccessRole(profile.role)) {
-    return { userId: String(profile.id), displayName: profile.full_name ?? null };
-  }
-  return null;
+  const { resolveBaxterUserForSlackIdentity } = await import("@/lib/slack/identity");
+  const matched = await resolveBaxterUserForSlackIdentity(input);
+  if (!matched) return null;
+  return { userId: matched.userId, displayName: matched.displayName };
 }
 
 export async function buildPemCreateModalView(input: {
@@ -293,9 +274,10 @@ export async function handlePemSlashCommand(
   });
   if (!mapped) {
     const base = getPublicAppBaseUrl();
+    const { PEM_UNMAPPED_SLACK_USER_MESSAGE } = await import("@/lib/slack/identity");
     return {
       response_type: "ephemeral",
-      text: `PEM NEATs require a linked Acton Baxter account. Connect Slack Search under <${base}/settings/integrations|Settings → Integrations>, or create the PEM at <${base}/pem-neats/new|PEM NEATs>.`,
+      text: `${PEM_UNMAPPED_SLACK_USER_MESSAGE}\n\nWeb: <${base}/pem-neats/new|Create PEM NEAT>`,
     };
   }
 

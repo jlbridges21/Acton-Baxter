@@ -58,6 +58,7 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string, te
     readyForPublicBotSearch: config.readyForPublicBotSearch,
     missingForUserOauth: config.missingForUserOauth,
     oauthRedirectUri: config.oauthRedirectUri,
+    oauthRedirectUriConfigured: config.oauthRedirectUriConfigured,
     userLevelAuthorization: connection?.linked
       ? ("configured" as const)
       : envPublicOnly || config.readyForPublicBotSearch

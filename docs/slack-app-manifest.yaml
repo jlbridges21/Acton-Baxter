@@ -37,6 +37,7 @@ features:
 oauth_config:
   redirect_urls:
     - https://acton-baxter.vercel.app/api/slack/search/oauth/callback
+    - http://localhost:3000/api/slack/search/oauth/callback
   scopes:
     bot:
       # Required — conversational Baxter

@@ -242,4 +242,9 @@ Manifest: `docs/slack-app-manifest.yaml`
 | `/api/slack/commands/recall`   | Explicitly search Slack history    | `/recall`         |
 | `/api/slack/interactions`      | Handle PEM modal `view_submission` | _(interactivity)_ |
 
-Plain-text `/clear` and `/help` in DMs still work via the Events API. Slash commands are shortcuts that use the same underlying Baxter logic. `/recall` forces live Slack retrieval as primary intent. `/pem` requires Interactivity enabled and a linked Baxter account (Settings → Integrations → Slack Search).
+Plain-text `/clear` and `/help` in DMs still work via the Events API. Slash commands are shortcuts that use the same underlying Baxter logic.
+
+- `/help` — always works; no Slack Search OAuth; no OpenAI.
+- `/clear` — resets conversation using Slack user/thread identity only; no Slack Search OAuth.
+- `/recall` — forces live Slack retrieval. Public history can use the bot path; private channels/DMs need the employee’s Slack Search link under Settings → Integrations.
+- `/pem` — requires Interactivity plus a Slack→Baxter user match (email / mapping). **Does not require Slack Search OAuth.**

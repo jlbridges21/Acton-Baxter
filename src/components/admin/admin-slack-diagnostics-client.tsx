@@ -15,6 +15,7 @@ type SearchSnapshot = {
   readyForPublicBotSearch?: boolean;
   missingForUserOauth: string[];
   oauthRedirectUri: string;
+  oauthRedirectUriConfigured?: boolean;
   userLevelAuthorization: "configured" | "not_configured" | "partial";
   directory?: {
     usersCached: number;
@@ -244,7 +245,29 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
             <div>
               Permalinks: <YesNo value={search.capabilities.permalinks} />
             </div>
+            <div className="md:col-span-2">
+              Slack Search OAuth callback:{" "}
+              <code className="text-xs font-medium break-all">
+                {search.oauthRedirectUri || "—"}
+              </code>
+            </div>
+            <div>
+              OAuth callback configured:{" "}
+              <YesNo
+                value={Boolean(
+                  search.oauthRedirectUri &&
+                  search.oauthRedirectUri.includes("/api/slack/search/oauth/callback"),
+                )}
+              />
+            </div>
           </dl>
+          {search.oauthRedirectUri ? (
+            <p className="text-xs text-[var(--acton-muted)]">
+              If Slack shows <span className="font-medium">redirect_uri did not match</span>, add
+              this exact URL under Slack API → OAuth &amp; Permissions → Redirect URLs, then Save.
+              Changing user scopes usually requires reinstalling the app.
+            </p>
+          ) : null}
           {search.capabilityHealth ? (
             <dl className="grid gap-2 border-t border-[var(--acton-border)] pt-3 text-sm text-[var(--acton-navy)] md:grid-cols-2">
               <div>
@@ -391,7 +414,7 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
             </p>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <a href="/api/slack/search/oauth/start">
+            <a href="/api/slack/search/oauth/start?return=/admin/slack">
               <Button type="button">
                 {search.connection?.linked ? "Reconnect Slack Search" : "Link Slack Search"}
               </Button>

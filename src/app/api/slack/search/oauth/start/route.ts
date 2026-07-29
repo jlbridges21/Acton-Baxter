@@ -46,6 +46,7 @@ export async function GET(request: Request) {
     const env = getEnv();
     const params = new URLSearchParams({
       client_id: env.SLACK_CLIENT_ID,
+      scope: "",
       user_scope: SLACK_SEARCH_USER_SCOPES.join(","),
       redirect_uri: getSlackSearchOAuthRedirectUri(),
       state: stateRow.state,

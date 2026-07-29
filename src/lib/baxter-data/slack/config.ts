@@ -4,19 +4,26 @@ import { getEnv } from "@/lib/env";
 import { getPublicAppBaseUrl } from "@/lib/slack/config";
 import { isTokenEncryptionConfigured } from "@/lib/security/secret-box";
 
+/** Canonical production Slack Search OAuth callback (must match Slack app Redirect URLs). */
+export const SLACK_SEARCH_OAUTH_CALLBACK_PATH = "/api/slack/search/oauth/callback";
+
 export const SLACK_SEARCH_USER_SCOPES = [
+  // Real-time Search — visibility limited to the authorizing employee
   "search:read.public",
   "search:read.private",
   "search:read.im",
   "search:read.mpim",
   "search:read.users",
   "search:read.files",
+  // Identity + directory for requester-scoped resolution
   "users:read",
   "users:read.email",
+  // Exact thread / nearby history after search hits
   "channels:history",
   "groups:history",
   "im:history",
   "mpim:history",
+  // Channel metadata for private/public resolution under the user token
   "channels:read",
   "groups:read",
 ] as const;
@@ -37,6 +44,7 @@ export type SlackSearchRuntimeConfig = {
   encryptionConfigured: boolean;
   userTokenEnvPresent: boolean;
   oauthRedirectUri: string;
+  oauthRedirectUriConfigured: boolean;
   oauthAuthorizeUrl: string | null;
   missingForUserOauth: string[];
   readyForUserOauth: boolean;
@@ -79,15 +87,36 @@ export function getSlackSearchUserTokenFromEnv(): string | null {
   return token || null;
 }
 
-export function getSlackSearchOAuthRedirectUri(): string {
+/** Normalize OAuth redirect URIs (no trailing slash, no query/hash). */
+export function normalizeSlackOAuthRedirectUri(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
   try {
-    const explicit = getEnv().SLACK_SEARCH_OAUTH_REDIRECT_URI?.trim() ?? "";
-    if (explicit) return explicit;
+    const url = new URL(trimmed);
+    const path = url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${path}`;
   } catch {
-    const explicit = (process.env.SLACK_SEARCH_OAUTH_REDIRECT_URI ?? "").trim();
-    if (explicit) return explicit;
+    return trimmed.replace(/\/+$/, "");
   }
-  return `${getPublicAppBaseUrl()}/api/slack/search/oauth/callback`;
+}
+
+/**
+ * Single source of truth for Slack Search user OAuth redirect_uri.
+ * Prefer SLACK_SEARCH_OAUTH_REDIRECT_URI; otherwise APP_BASE_URL + callback path.
+ */
+export function getSlackSearchOAuthRedirectUri(): string {
+  let explicit = "";
+  try {
+    explicit = getEnv().SLACK_SEARCH_OAUTH_REDIRECT_URI?.trim() ?? "";
+  } catch {
+    explicit = (process.env.SLACK_SEARCH_OAUTH_REDIRECT_URI ?? "").trim();
+  }
+  if (explicit) {
+    return normalizeSlackOAuthRedirectUri(explicit);
+  }
+  return normalizeSlackOAuthRedirectUri(
+    `${getPublicAppBaseUrl()}${SLACK_SEARCH_OAUTH_CALLBACK_PATH}`,
+  );
 }
 
 export function getSlackSearchRuntimeConfig(): SlackSearchRuntimeConfig {
@@ -112,6 +141,9 @@ export function getSlackSearchRuntimeConfig(): SlackSearchRuntimeConfig {
   const encryptionConfigured = isTokenEncryptionConfigured();
   const userTokenEnvPresent = Boolean(getSlackSearchUserTokenFromEnv());
   const oauthRedirectUri = getSlackSearchOAuthRedirectUri();
+  const oauthRedirectUriConfigured = Boolean(
+    oauthRedirectUri && oauthRedirectUri.includes(SLACK_SEARCH_OAUTH_CALLBACK_PATH),
+  );
   const missingForUserOauth: string[] = [];
   if (!clientId) missingForUserOauth.push("SLACK_CLIENT_ID");
   if (!clientSecret) missingForUserOauth.push("SLACK_CLIENT_SECRET");
@@ -126,6 +158,7 @@ export function getSlackSearchRuntimeConfig(): SlackSearchRuntimeConfig {
     readyForUserOauth && clientId
       ? `https://slack.com/oauth/v2/authorize?${new URLSearchParams({
           client_id: clientId,
+          scope: "",
           user_scope: SLACK_SEARCH_USER_SCOPES.join(","),
           redirect_uri: oauthRedirectUri,
         }).toString()}`
@@ -140,6 +173,7 @@ export function getSlackSearchRuntimeConfig(): SlackSearchRuntimeConfig {
     encryptionConfigured,
     userTokenEnvPresent,
     oauthRedirectUri,
+    oauthRedirectUriConfigured,
     oauthAuthorizeUrl,
     missingForUserOauth,
     readyForUserOauth,

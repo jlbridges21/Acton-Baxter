@@ -148,6 +148,22 @@ OAuth redirect URL (add in Slack app → OAuth & Permissions → Redirect URLs):
 
 `https://acton-baxter.vercel.app/api/slack/search/oauth/callback`
 
+For local development (optional):
+
+`http://localhost:3000/api/slack/search/oauth/callback`
+
+**Manual step (required when Slack shows `redirect_uri did not match any configured URIs`):**
+
+1. Open [api.slack.com/apps](https://api.slack.com/apps) → Baxter app.
+2. **OAuth & Permissions** → **Redirect URLs**.
+3. Add exactly: `https://acton-baxter.vercel.app/api/slack/search/oauth/callback`
+4. Click **Save URLs**.
+5. If you also changed **User Token Scopes**, click **Reinstall to Workspace** (required for scope changes; Save URLs alone is enough for redirect-only fixes).
+6. In Baxter, open `/settings/integrations` → **Connect Slack Search** and complete the authorize flow.
+7. Confirm `/admin/slack` shows the same OAuth callback URI under Slack Search diagnostics.
+
+Baxter builds `redirect_uri` from `SLACK_SEARCH_OAUTH_REDIRECT_URI` when set, otherwise `${APP_BASE_URL}/api/slack/search/oauth/callback`. Production should resolve to the Vercel callback above.
+
 Enable search with `ENABLE_SLACK_SEARCH=true`. Apply Supabase migration **029**. See `docs/slack-search.md` for architecture.
 
 **Important:** Baxter does **not** copy Slack messages into Supabase. Search is live. Slack remains the source of truth.
@@ -158,14 +174,12 @@ Baxter adds 👀 **immediately after** accepting a Q&A event (post-dedupe), then
 
 **Still needs a Slack app update + reinstall if eyes do not appear:** `reactions:write` (required for the 👀 processing indicator). After changing OAuth scopes, **reinstall/re-authorize** the app to the Acton workspace.
 
-**Do NOT add** (secure pilot default):
+**Bot scopes to avoid for the conversational Q&A bot (not Search):** do not grant the bot blanket private-history scopes just for `@Baxter` chat. Live Slack Search uses a **separate** model:
 
-| Scope              | Why omitted                                       |
-| ------------------ | ------------------------------------------------- |
-| `channels:history` | Would read all channel messages without `@Baxter` |
-| `groups:history`   | Same for private channels                         |
-| `users:read.email` | Not required — names do not need email            |
-| `mpim:history`     | Not needed                                        |
+- **Bot token:** public Real-time Search + public `channels:history` for thread context (see Bot Token Scopes table above and the manifest).
+- **User token (per-employee OAuth):** private/DM/MPIM search + matching history scopes — listed in the User token scopes table. Those are intentional and required for `/recall` of private content.
+
+Do **not** confuse “omit from bot” with “omit from user OAuth.”
 
 ### Optional: private channel names
 
@@ -278,12 +292,22 @@ Report ownership: set `SLACK_REPORT_USER_ID` to an existing employee profile UUI
 1. Enable **Interactivity** with request URL:
    `https://acton-baxter.vercel.app/api/slack/interactions`
 2. `/pem` opens a Slack modal (`views.open`) within ~3 seconds of the slash command.
-3. Creator must have a **linked Baxter account** via Settings → Integrations → Slack Search.
-4. Salesperson options come from Baxter Sales department eligibility (`listSalespeople`).
-5. Transcript max in the modal: **3000 characters** (Slack limit). Longer transcripts: use `https://acton-baxter.vercel.app/pem-neats/new`.
-6. Submission creates the PEM via existing store + `startPemNeatGeneration` (no duplicate pipeline).
+3. Creator must map to an existing Baxter profile (Slack user ID → email / `slack_user_mappings`). **Slack Search OAuth is not required for `/pem`.**
+4. If Slack cannot be matched to a Baxter user, Baxter asks an admin to link the Acton email — it does **not** tell the employee to Connect Slack Search.
+5. Salesperson options come from Baxter Sales department eligibility (`listSalespeople`).
+6. Transcript max in the modal: **3000 characters** (Slack limit). Longer transcripts: use `https://acton-baxter.vercel.app/pem-neats/new`.
+7. Submission creates the PEM via existing store + `startPemNeatGeneration` (no duplicate pipeline).
 
 No additional bot OAuth scopes are required beyond existing `commands` + Interactivity enabled.
+
+### Verify slash auth matrix
+
+| Command   | Slack Search OAuth | Needs Baxter user match |
+| --------- | ------------------ | ----------------------- |
+| `/help`   | No                 | No                      |
+| `/clear`  | No                 | No                      |
+| `/pem`    | No                 | Yes                     |
+| `/recall` | For private/DM     | No (uses Slack user id) |
 
 ---
 

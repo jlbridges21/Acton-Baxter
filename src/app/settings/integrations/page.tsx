@@ -36,6 +36,7 @@ export default async function IntegrationsSettingsPage({
           searchEnabled={config.searchEnabled}
           connected={Boolean(linked?.linked)}
           slackUserName={linked?.slackUserName ?? null}
+          workspaceLabel="Acton ADU"
           status={linked?.status ?? null}
           capabilities={{
             publicChannels: caps.publicChannels,

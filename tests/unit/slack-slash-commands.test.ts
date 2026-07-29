@@ -185,20 +185,10 @@ describe("handlePemModalSubmission auth", () => {
   });
 
   it("rejects unauthorized Slack users", async () => {
-    vi.doMock("@/lib/supabase/admin", () => ({
-      createServiceClient: () => ({
-        from: () => ({
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({ data: null }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      }),
+    vi.doMock("@/lib/slack/identity", () => ({
+      resolveBaxterUserForSlackIdentity: async () => null,
+      PEM_UNMAPPED_SLACK_USER_MESSAGE: "Baxter couldn’t match your Slack account to a Baxter user.",
+      upsertSlackUserMapping: async () => undefined,
     }));
 
     const { handlePemModalSubmission } = await import("@/lib/slack/slash-commands");
@@ -222,7 +212,7 @@ describe("handlePemModalSubmission auth", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect("message" in result ? result.message : "").toMatch(/not authorized|identity/i);
+      expect("message" in result ? result.message : "").toMatch(/not authorized|identity|match/i);
     }
   });
 });
