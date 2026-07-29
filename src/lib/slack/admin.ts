@@ -13,6 +13,7 @@ import {
 import { claimNextJob } from "@/lib/jobs/queue";
 import { processJob } from "@/lib/jobs/process";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { getSlackSearchDiagnosticsSnapshot } from "@/lib/baxter-data/slack/diagnostics";
 import { getEnv } from "@/lib/env";
 import { backfillSlackDisplayNames, getSlackIdentityCacheStats } from "@/lib/slack/profiles";
 import {
@@ -33,10 +34,11 @@ import { parseSlackExternalThreadId } from "@/lib/slack/display-names";
 
 export { getSlackActivityOverview, getSlackUserActivityDetail, getSlackChannelActivityDetail };
 export type { SlackActivityFilters };
-export async function getAdminSlackSnapshot() {
+export async function getAdminSlackSnapshot(options?: { adminUserId?: string }) {
   const config = getSlackRuntimeConfig();
   const stats = await getSlackReceiptStats();
   const identity = await getSlackIdentityCacheStats();
+  const search = await getSlackSearchDiagnosticsSnapshot(options?.adminUserId);
   const health = await evaluateSlackHealth({
     recentErrors: stats.failedJobs > 0 || stats.recentErrorCodes.length > 0,
     recentReactionScopeError: stats.recentErrorCodes.some((code) =>
@@ -89,6 +91,7 @@ export async function getAdminSlackSnapshot() {
     },
     stats,
     identity,
+    search,
     activity,
   };
 }

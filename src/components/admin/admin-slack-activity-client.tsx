@@ -81,6 +81,29 @@ type SnapshotExtras = {
     channelsTotal: number;
     lastMetadataRefresh: string | null;
   };
+  search?: {
+    status: "ready" | "needs_setup" | "disabled";
+    workspaceLabel: string;
+    searchEnabled: boolean;
+    readyForUserOauth: boolean;
+    missingForUserOauth: string[];
+    oauthRedirectUri: string;
+    userLevelAuthorization: "configured" | "not_configured" | "partial";
+    capabilities: {
+      publicChannels: boolean;
+      privateChannels: boolean;
+      dms: boolean;
+      groupDms: boolean;
+      threadContext: boolean;
+      permalinks: boolean;
+    };
+    connection: {
+      linked: boolean;
+      slackUserName: string | null;
+      slackUserId: string | null;
+      status: string | null;
+    } | null;
+  } | null;
 };
 
 function YesNo({ value }: { value: boolean }) {
@@ -491,7 +514,7 @@ export function AdminSlackActivityClient({
               </li>
             </ul>
             <div className="mt-4">
-              <AdminSlackDiagnosticsClient />
+              <AdminSlackDiagnosticsClient search={extras.search ?? null} />
             </div>
           </details>
         </div>

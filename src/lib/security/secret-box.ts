@@ -7,10 +7,11 @@ const ALGO = "aes-256-gcm";
 function getKey(): Buffer {
   const ghlKey = (process.env.GHL_TOKEN_ENCRYPTION_KEY ?? "").trim();
   const googleKey = (process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim();
-  const raw = ghlKey || googleKey;
+  const slackKey = (process.env.SLACK_TOKEN_ENCRYPTION_KEY ?? "").trim();
+  const raw = ghlKey || googleKey || slackKey;
   if (!raw) {
     throw new Error(
-      "Token encryption key is not configured (GHL_TOKEN_ENCRYPTION_KEY or GOOGLE_TOKEN_ENCRYPTION_KEY)",
+      "Token encryption key is not configured (GHL_TOKEN_ENCRYPTION_KEY, GOOGLE_TOKEN_ENCRYPTION_KEY, or SLACK_TOKEN_ENCRYPTION_KEY)",
     );
   }
   // Accept 32-byte base64 or derive from passphrase via SHA-256.
@@ -30,7 +31,8 @@ export function isGoogleTokenEncryptionConfigured(): boolean {
 export function isTokenEncryptionConfigured(): boolean {
   return Boolean(
     (process.env.GHL_TOKEN_ENCRYPTION_KEY ?? "").trim() ||
-    (process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim(),
+    (process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "").trim() ||
+    (process.env.SLACK_TOKEN_ENCRYPTION_KEY ?? "").trim(),
   );
 }
 

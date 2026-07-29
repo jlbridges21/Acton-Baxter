@@ -15,6 +15,8 @@ features:
       usage_hint: "[address]"
       should_escape: false
 oauth_config:
+  redirect_urls:
+    - https://acton-baxter.vercel.app/api/slack/search/oauth/callback
   scopes:
     bot:
       # Required — conversational Baxter
@@ -30,6 +32,27 @@ oauth_config:
       - channels:read
       # Processing indicator — add/remove 👀 on the user’s triggering message
       - reactions:write
+      # Slack Search (Prompt 1) — public Real-time Search + thread context
+      - search:read.public
+      - search:read.users
+      - search:read.files
+      - channels:history
+    user:
+      # Per-user Slack Search — visibility matches the authorizing employee
+      - search:read.public
+      - search:read.private
+      - search:read.im
+      - search:read.mpim
+      - search:read.users
+      - search:read.files
+      - users:read
+      - users:read.email
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - channels:read
+      - groups:read
 settings:
   event_subscriptions:
     request_url: https://acton-baxter.vercel.app/api/slack/events

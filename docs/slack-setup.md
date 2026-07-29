@@ -106,16 +106,43 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 
 **Required scopes** (must match `docs/slack-app-manifest.yaml`):
 
-| Scope                | Why                                                              |
-| -------------------- | ---------------------------------------------------------------- |
-| `app_mentions:read`  | Receive `@Baxter` mentions in channels                           |
-| `chat:write`         | Post replies in DMs and threads                                  |
-| `im:history`         | Receive direct messages to Baxter                                |
-| `commands`           | Handle the `/property` slash command                             |
-| `users:read`         | Resolve employee display names for `/admin/slack` Activity       |
-| `users.profile:read` | Prefer `profile.display_name` when resolving Slack user identity |
-| `channels:read`      | Resolve **public** channel names for admin Activity              |
-| `reactions:write`    | Add/remove Baxter’s 👀 processing reaction on the user message   |
+| Scope                | Why                                                                             |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `app_mentions:read`  | Receive `@Baxter` mentions in channels                                          |
+| `chat:write`         | Post replies in DMs and threads                                                 |
+| `im:history`         | Receive direct messages to Baxter                                               |
+| `commands`           | Handle the `/property` slash command                                            |
+| `users:read`         | Resolve employee display names for `/admin/slack` Activity                      |
+| `users.profile:read` | Prefer `profile.display_name` when resolving Slack user identity                |
+| `channels:read`      | Resolve **public** channel names for admin Activity                             |
+| `reactions:write`    | Add/remove Baxter’s 👀 processing reaction on the user message                  |
+| `search:read.public` | Live Real-time Search of **public** channels (bot + action_token or user token) |
+| `search:read.users`  | Include workspace users in Real-time Search results                             |
+| `search:read.files`  | Include files in Real-time Search (optional but recommended)                    |
+| `channels:history`   | Bounded thread / nearby context for public channels                             |
+
+### User token scopes (Slack Search — per-employee OAuth)
+
+These are **user scopes** (not bot scopes). Each employee who links Slack Search authorizes Baxter to search **only what that employee can see** in Slack:
+
+| Scope                                                                 | Why                                  |
+| --------------------------------------------------------------------- | ------------------------------------ |
+| `search:read.public`                                                  | Public channel search                |
+| `search:read.private`                                                 | Private channels the user belongs to |
+| `search:read.im`                                                      | DMs the user can access              |
+| `search:read.mpim`                                                    | Group DMs the user can access        |
+| `search:read.users` / `search:read.files`                             | Users/files in search                |
+| `users:read` / `users:read.email`                                     | Stable Baxter↔Slack identity mapping |
+| `channels:history` / `groups:history` / `im:history` / `mpim:history` | Bounded thread context               |
+| `channels:read` / `groups:read`                                       | Channel resolution                   |
+
+OAuth redirect URL (add in Slack app → OAuth & Permissions → Redirect URLs):
+
+`https://acton-baxter.vercel.app/api/slack/search/oauth/callback`
+
+Enable search with `ENABLE_SLACK_SEARCH=true`. Apply Supabase migration **029**. See `docs/slack-search.md` for architecture.
+
+**Important:** Baxter does **not** copy Slack messages into Supabase. Search is live. Slack remains the source of truth.
 
 Baxter adds 👀 **immediately after** accepting a Q&A event (post-dedupe), then removes it in a `finally` after the reply posts (or on terminal job failure). Reaction failures never block answers.
 

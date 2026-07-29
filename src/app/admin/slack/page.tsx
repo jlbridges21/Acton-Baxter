@@ -28,7 +28,7 @@ export default async function AdminSlackPage({
   };
 
   const [snapshot, overview] = await Promise.all([
-    getAdminSlackSnapshot(),
+    getAdminSlackSnapshot({ adminUserId: user.profile.id }),
     getSlackActivityOverview(filters),
   ]);
 
@@ -44,6 +44,7 @@ export default async function AdminSlackPage({
             config: snapshot.config,
             stats: snapshot.stats,
             identity: snapshot.identity,
+            search: snapshot.search,
           }}
         />
       </Suspense>

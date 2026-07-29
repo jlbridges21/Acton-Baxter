@@ -10,11 +10,12 @@ import {
   runSlackTestPost,
   verifyEventsConfigValues,
 } from "@/lib/slack/admin";
+import { runSlackSearchAdminTest } from "@/lib/baxter-data/slack/diagnostics";
 
 export async function GET() {
   try {
-    await requireAdmin();
-    const snapshot = await getAdminSlackSnapshot();
+    const admin = await requireAdmin();
+    const snapshot = await getAdminSlackSnapshot({ adminUserId: admin.profile.id });
     return jsonOk(snapshot);
   } catch (error) {
     return jsonError(error, "GET /api/admin/slack");
@@ -23,7 +24,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    await requireAdmin();
+    const admin = await requireAdmin();
     const body = await request.json();
     const parsed = z
       .object({
@@ -34,10 +35,17 @@ export async function POST(request: Request) {
           "process_one_job",
           "pipeline_dry_run",
           "refresh_names",
+          "test_public_search",
+          "test_user_resolution",
+          "test_channel_resolution",
+          "test_thread_retrieval",
+          "sandbox_search",
         ]),
         channelOrUserId: z.string().optional(),
         text: z.string().optional(),
         question: z.string().optional(),
+        query: z.string().optional(),
+        teamId: z.string().optional(),
       })
       .parse(body);
 
@@ -66,6 +74,25 @@ export async function POST(request: Request) {
     }
     if (parsed.action === "process_one_job") {
       return jsonOk({ result: await processOnePendingSlackJob() });
+    }
+    if (
+      parsed.action === "test_public_search" ||
+      parsed.action === "test_user_resolution" ||
+      parsed.action === "test_channel_resolution" ||
+      parsed.action === "test_thread_retrieval" ||
+      parsed.action === "sandbox_search"
+    ) {
+      return jsonOk({
+        result: await runSlackSearchAdminTest({
+          action: parsed.action,
+          query: parsed.query ?? parsed.question,
+          teamId: parsed.teamId,
+          requester: {
+            baxterUserId: admin.profile.id,
+            allowPublicOnlyFallback: true,
+          },
+        }),
+      });
     }
     return jsonOk({
       result: await runSlackPipelineDryRun(parsed.question ?? "Who is Baxter?"),

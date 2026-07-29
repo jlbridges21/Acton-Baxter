@@ -5,13 +5,46 @@ import { Button } from "@/components/ui/button";
 
 type ActionResult = unknown;
 
-export function AdminSlackDiagnosticsClient() {
+type SearchSnapshot = {
+  status: "ready" | "needs_setup" | "disabled";
+  workspaceLabel: string;
+  searchEnabled: boolean;
+  readyForUserOauth: boolean;
+  missingForUserOauth: string[];
+  oauthRedirectUri: string;
+  userLevelAuthorization: "configured" | "not_configured" | "partial";
+  capabilities: {
+    publicChannels: boolean;
+    privateChannels: boolean;
+    dms: boolean;
+    groupDms: boolean;
+    threadContext: boolean;
+    permalinks: boolean;
+  };
+  connection: {
+    linked: boolean;
+    slackUserName: string | null;
+    slackUserId: string | null;
+    status: string | null;
+  } | null;
+} | null;
+
+function YesNo({ value }: { value: boolean }) {
+  return (
+    <span className={value ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>
+      {value ? "Yes" : "No"}
+    </span>
+  );
+}
+
+export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapshot }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ActionResult>(null);
   const [error, setError] = useState<string | null>(null);
   const [destination, setDestination] = useState("");
   const [testText, setTestText] = useState("");
   const [dryRunQuestion, setDryRunQuestion] = useState("Who is Baxter?");
+  const [sandboxQuery, setSandboxQuery] = useState("RACI matrix");
 
   async function run(action: string, body: Record<string, unknown> = {}) {
     setBusy(action);
@@ -37,6 +70,152 @@ export function AdminSlackDiagnosticsClient() {
 
   return (
     <div className="space-y-4">
+      {search ? (
+        <div className="space-y-3 rounded-lg border border-[var(--acton-border)] p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-sm font-semibold text-[var(--acton-navy)]">Slack Search</p>
+            <p className="text-sm text-[var(--acton-muted)]">
+              {search.status === "ready"
+                ? "Ready"
+                : search.status === "disabled"
+                  ? "Disabled"
+                  : "Needs setup"}
+            </p>
+          </div>
+          <dl className="grid gap-2 text-sm text-[var(--acton-navy)] md:grid-cols-2">
+            <div>
+              Workspace: <span className="font-medium">{search.workspaceLabel}</span>
+            </div>
+            <div>
+              User-level authorization:{" "}
+              <span className="font-medium">
+                {search.userLevelAuthorization === "configured"
+                  ? "Configured"
+                  : search.userLevelAuthorization === "partial"
+                    ? "Partial (public fallback)"
+                    : "Not configured"}
+              </span>
+            </div>
+            <div>
+              Public channels: <YesNo value={search.capabilities.publicChannels} />
+            </div>
+            <div>
+              Private channels: <YesNo value={search.capabilities.privateChannels} />
+            </div>
+            <div>
+              DMs: <YesNo value={search.capabilities.dms} />
+            </div>
+            <div>
+              Group DMs: <YesNo value={search.capabilities.groupDms} />
+            </div>
+            <div>
+              Thread context: <YesNo value={search.capabilities.threadContext} />
+            </div>
+            <div>
+              Permalinks: <YesNo value={search.capabilities.permalinks} />
+            </div>
+          </dl>
+          {search.connection?.linked ? (
+            <p className="text-sm text-[var(--acton-muted)]">
+              Linked as {search.connection.slackUserName ?? "Slack user"}
+            </p>
+          ) : (
+            <p className="text-sm text-[var(--acton-muted)]">
+              Link your Slack account to search with your own visibility (required for private
+              channels and DMs).
+            </p>
+          )}
+          {search.missingForUserOauth.length ? (
+            <p className="text-sm text-amber-800">
+              Missing for user OAuth: {search.missingForUserOauth.join(", ")}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <a href="/api/slack/search/oauth/start">
+              <Button type="button">
+                {search.connection?.linked ? "Reconnect Slack Search" : "Link Slack Search"}
+              </Button>
+            </a>
+            <Button
+              type="button"
+              disabled={Boolean(busy)}
+              onClick={() => run("test_user_resolution", { query: "Jackson Bridges" })}
+            >
+              {busy === "test_user_resolution" ? "Testing…" : "Test user resolution"}
+            </Button>
+            <Button
+              type="button"
+              disabled={Boolean(busy)}
+              onClick={() => run("test_channel_resolution", { query: "project-management" })}
+            >
+              {busy === "test_channel_resolution" ? "Testing…" : "Test channel resolution"}
+            </Button>
+            <Button
+              type="button"
+              disabled={Boolean(busy)}
+              onClick={() => run("test_public_search", { query: "RACI matrix" })}
+            >
+              {busy === "test_public_search" ? "Testing…" : "Test public search"}
+            </Button>
+            <Button
+              type="button"
+              disabled={Boolean(busy)}
+              onClick={() => run("test_thread_retrieval", { query: "RACI matrix" })}
+            >
+              {busy === "test_thread_retrieval" ? "Testing…" : "Test thread retrieval"}
+            </Button>
+          </div>
+
+          <div className="space-y-2 border-t border-[var(--acton-border)] pt-3">
+            <p className="text-sm font-semibold text-[var(--acton-navy)]">Test Slack Search</p>
+            <input
+              className="w-full rounded border border-[var(--acton-border)] px-3 py-2 text-sm"
+              value={sandboxQuery}
+              onChange={(event) => setSandboxQuery(event.target.value)}
+              placeholder="e.g. RACI matrix"
+            />
+            <Button
+              type="button"
+              disabled={Boolean(busy) || !sandboxQuery.trim()}
+              onClick={() => run("sandbox_search", { query: sandboxQuery })}
+            >
+              {busy === "sandbox_search" ? "Searching…" : "Run search"}
+            </Button>
+            {result &&
+            typeof result === "object" &&
+            result !== null &&
+            "results" in (result as object) ? (
+              <ul className="mt-2 space-y-2 text-sm text-[var(--acton-navy)]">
+                {((result as { results?: Array<Record<string, string | null>> }).results ?? []).map(
+                  (row, index) => (
+                    <li
+                      key={`${row.timestamp}-${index}`}
+                      className="rounded border border-[var(--acton-border)] p-2"
+                    >
+                      <p className="font-medium">
+                        {row.author} · {row.channel}
+                      </p>
+                      <p className="text-[var(--acton-muted)]">{row.timestamp}</p>
+                      <p>{row.excerpt}</p>
+                      {row.permalink ? (
+                        <a
+                          className="text-[var(--acton-blue)] underline"
+                          href={row.permalink}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open in Slack
+                        </a>
+                      ) : null}
+                    </li>
+                  ),
+                )}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={Boolean(busy)} onClick={() => run("test_auth")}>
           {busy === "test_auth" ? "Testing…" : "Test Slack authentication"}

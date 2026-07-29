@@ -205,7 +205,10 @@ describe("Prompt 5C Slack docs and manifest alignment", () => {
     expect(manifest).toContain("commands");
     expect(manifest).toContain("app_mention");
     expect(manifest).toContain("message.im");
-    expect(manifest).not.toContain("channels:history");
+    // Slack Search (Prompt 1): bounded thread context + public Real-time Search
+    expect(manifest).toContain("search:read.public");
+    expect(manifest).toContain("channels:history");
+    expect(manifest).toContain("/api/slack/search/oauth/callback");
   });
 });
 
