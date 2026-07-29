@@ -94,12 +94,12 @@ export function getBaxterProviderDiagnostics(): {
     reasoningModel:
       reasoningProvider === "anthropic"
         ? env.BAXTER_ANTHROPIC_MODEL || env.ANTHROPIC_MODEL
-        : env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL,
+        : env.BAXTER_CHAT_MODEL || env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL,
     fallbackProvider,
     fallbackModel: fallbackProvider
       ? fallbackProvider === "anthropic"
         ? env.BAXTER_ANTHROPIC_MODEL || env.ANTHROPIC_MODEL
-        : env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL
+        : env.BAXTER_CHAT_MODEL || env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL
       : null,
     embeddingProvider: env.BAXTER_EMBEDDING_PROVIDER || "openai",
     embeddingModel: env.BAXTER_EMBEDDING_MODEL || "text-embedding-3-small",

@@ -32,7 +32,13 @@ function jitteredBackoff(attempt: number, retryAfterSeconds: number | null): num
 
 function resolvePrimaryModel(): string {
   const env = getEnv();
-  return (env.BAXTER_OPENAI_MODEL || env.OPENAI_MODEL || "gpt-4o-mini").trim();
+  // BAXTER_CHAT_MODEL is dedicated to Baxter Q&A (not PEM generation).
+  return (
+    env.BAXTER_CHAT_MODEL ||
+    env.BAXTER_OPENAI_MODEL ||
+    env.OPENAI_MODEL ||
+    "gpt-4o-mini"
+  ).trim();
 }
 
 function resolveFallbackModel(): string | null {

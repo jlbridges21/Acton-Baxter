@@ -30,6 +30,10 @@ Examples Baxter should claim accurately:
 - **Google**: only Knowledge Center–connected sources, not every Drive file
 - **GHL writes**: confirmation required; role may be read-only
 
-## Web + Slack
+## Chat model
 
-Capability and PEM answers go through `answerBaxterQuestion()` — the same pipeline for web chat and Slack.
+Set `BAXTER_CHAT_MODEL` for web/Slack Baxter Q&A (recommended: `gpt-5.6-terra`).
+
+Fallback order when unset: `BAXTER_OPENAI_MODEL` → `OPENAI_MODEL` → `gpt-4o-mini`.
+
+Do **not** reuse `PEM_NEAT_OPENAI_MODEL` for chat — PEM generation stays on its own model.

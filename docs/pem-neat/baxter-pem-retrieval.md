@@ -1,62 +1,55 @@
 # Baxter PEM NEAT retrieval
 
-Completed PEM NEATs are a **first-class Baxter evidence source**. They are not dumped into Knowledge Base Markdown.
+Completed PEM NEATs are a **first-class Baxter evidence source**. Structured field questions are answered **deterministically** from the correct NEAT field — the LLM does not choose Type 1 vs Type 2.
 
 ## Pipeline
 
 ```
 User question
-  → PEM intent (help/definition vs record lookup)
-  → prospect entity resolution (name / partial / conversation inherit)
-  → authorize (user | admin | super_admin; Slack allowlist; never new_user)
-  → load latest completed current generation (skip failed/generating/deleted)
-  → field-aware structured excerpt
-  → merge with KB / GHL / Rulebook evidence
-  → reason + cite
+  → PEM intent (help/definition vs record lookup vs selection reply)
+  → pending clarification resolution ("Test 8") when active
+  → prospect + discriminator parsing (case-insensitive)
+  → authorize
+  → load completed NEAT
+  → getPemField(structured_result, requestedField)
+  → deterministic answer + cite
 ```
 
 Shared entry point: `answerBaxterQuestion()` (web + Slack).
 
-## Code
+## Root failure modes this architecture prevents
 
-| Module   | Path                                                               |
-| -------- | ------------------------------------------------------------------ |
-| Intent   | `src/lib/baxter-data/pem-neats/intent.ts`                          |
-| Evidence | `src/lib/baxter-data/pem-neats/evidence.ts`                        |
-| Store    | `src/lib/pem-neat/store.ts` (relational `pem_neats` / generations) |
+1. **Vague LLM paraphrase** — single-field questions return `formatDeterministicPemAnswer` from `getPemField`, never a broad NEAT dump for the model to misread.
+2. **Lost PEM selection** — clarification stores `metadata.pemContext.pending`; "Test 8" resolves the **original** question.
+3. **Failed name parse** — `parsePemEntityQuery` handles `robert vertin test 8` and ignores question words like "What is".
 
-## Intent split
+## Conversation state (`baxter_conversations.metadata.pemContext`)
 
-- **Help / definition**: “What is a PEM?”, “What is a PEM NEAT?”, “How do I generate one?” → capability/docs answers (`pemHelpDefinitionAnswer` + capability registry). No prospect lookup.
-- **Record lookup**: “What was Robert’s Type 1 pain?” → structured NEAT fields for that prospect.
+No migration required — uses existing JSON metadata.
 
-## Entity resolution
+```ts
+pending: { type: "pem_selection", originalQuestion, requestedFields, candidatePemIds, ... }
+active:  { type: "pem_active", activePemId, activeProspectName, lastRequestedFields, ... }
+```
 
-- Match prospect name (case-insensitive, partial, surname)
-- Inherit from conversation history for “his budget” follow-ups
-- Ambiguous people → clarify (do not merge)
-- Multiple PEMs for one prospect → prefer latest completed; allow “first” / date hints
-- Stale / needs regeneration → warn; deleted → excluded
+`/clear` starts a new conversation → state cleared.
 
-## Field-aware retrieval
+Explicit current-message entities (e.g. "Robert Vertin Test 8") override inherited active PEM.
 
-Only requested areas are loaded into context (Type 1, budget, assessment, BuilderTrend handoff, etc.). Full transcript is **not** the default source.
+## Field routing
+
+`src/lib/baxter-data/pem-neats/fields.ts`
+
+- Type 1 ≠ Type 2 (never substituted)
+- Aliases: why build → Type 1; why Acton / contractor concerns → Type 2
+- Null Type 1 → "does not contain a determinable Type 1 Pain" (not Type 2)
+
+## Chat model
+
+Baxter Q&A uses `BAXTER_CHAT_MODEL` (fallback: `BAXTER_OPENAI_MODEL` → `OPENAI_MODEL`).  
+PEM generation continues to use `PEM_NEAT_OPENAI_MODEL` separately.
 
 ## Citations
 
-- Source kind: `pem_neat`
-- Label: `{Prospect} — PEM NEAT — {Meeting date}`
-- URL: `/pem-neats/{id}` (absolute via `APP_BASE_URL` / `NEXT_PUBLIC_APP_URL` for Slack)
-
-## Authority
-
-| Question                                    | Authority                              |
-| ------------------------------------------- | -------------------------------------- |
-| Type 1 / budget / assessment from a meeting | Completed PEM NEAT                     |
-| Current CRM stage                           | Live GoHighLevel                       |
-| What is Type 1 Pain?                        | Acton PEM docs / capability help       |
-| What can Baxter do?                         | Capability registry + connector health |
-
-## Privacy
-
-Authorization runs **before** evidence reaches the model. Q&A never mutates the saved NEAT.
+Label: `{Prospect including Test N} — PEM NEAT`  
+URL: `/pem-neats/{id}` (absolute via `APP_BASE_URL` for Slack)

@@ -7,6 +7,7 @@ import {
   getRecentConversationHistory,
   resetBaxterConversation,
   toPublicAnswer,
+  updateBaxterConversationMetadata,
 } from "./conversations";
 import { retrieveBaxterEvidence } from "./context";
 import {
@@ -51,7 +52,7 @@ import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./conversation-context";
 import { answerCapabilityHelp, buildCapabilityPromptBlock } from "@/lib/baxter/capability-help";
 import { retrievePemEvidence } from "@/lib/baxter-data/pem-neats";
-import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
+import { writePemConversationState } from "@/lib/baxter-data/pem-neats/conversation-state";
 import type { BaxterSourceReference } from "./types";
 
 /**
@@ -411,7 +412,52 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     history: historyEarly,
     role: profile?.role ?? null,
     channel: input.channel,
-  }).catch(() => ({ items: [], clarification: null as string | null, staleWarning: null }));
+    conversationMetadata: conversation.metadata ?? {},
+  }).catch(() => ({
+    items: [] as Awaited<ReturnType<typeof retrievePemEvidence>>["items"],
+    clarification: null as string | null,
+    staleWarning: null as string | null,
+    deterministicAnswer: null as string | null,
+    answerMode: "none" as const,
+    diagnostics: {
+      detectedProspect: null,
+      candidateCount: 0,
+      resolvedPemId: null,
+      resolvedPemTitle: null,
+      requestedFields: [],
+      inheritedFromConversation: false,
+      explicitOverride: false,
+      answerMode: "none" as const,
+    },
+    nextConversationState: null,
+  }));
+
+  if (pemEvidence.nextConversationState) {
+    const nextMeta = writePemConversationState(
+      conversation.metadata ?? {},
+      pemEvidence.nextConversationState,
+    );
+    conversation.metadata = nextMeta;
+    await updateBaxterConversationMetadata(conversation.id, nextMeta).catch(() => undefined);
+  }
+
+  if (pemEvidence.diagnostics.answerMode !== "none") {
+    logBaxterDiagnostic("pemEvidence", {
+      code: "PEM_RESOLUTION",
+      route: "answerBaxterQuestion",
+      conversationId: conversation.id,
+      safeMessage: JSON.stringify({
+        detectedProspect: pemEvidence.diagnostics.detectedProspect,
+        candidateCount: pemEvidence.diagnostics.candidateCount,
+        resolvedPemId: pemEvidence.diagnostics.resolvedPemId,
+        resolvedPemTitle: pemEvidence.diagnostics.resolvedPemTitle,
+        requestedFields: pemEvidence.diagnostics.requestedFields,
+        inheritedFromConversation: pemEvidence.diagnostics.inheritedFromConversation,
+        explicitOverride: pemEvidence.diagnostics.explicitOverride,
+        answerMode: pemEvidence.diagnostics.answerMode,
+      }),
+    });
+  }
 
   if (pemEvidence.clarification) {
     const message = await appendAssistantMessage({
@@ -435,36 +481,17 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
-  if (pemEvidence.items.length > 0) {
-    const renumbered = pemEvidence.items.map((item, index) => ({
-      ...item,
-      number: index + 1,
-    }));
-    const offset = renumbered.length;
-    const rest = contextItems.map((item, index) => ({
-      ...item,
-      number: offset + index + 1,
-    }));
-    contextItems = [...renumbered, ...rest].slice(0, 8);
-  }
-
-  // Degraded mode: answer PEM lookups from structured evidence when OpenAI is unavailable.
-  const openaiConfiguredEarly = Boolean((getEnv().OPENAI_API_KEY ?? "").trim());
-  if (
-    !openaiConfiguredEarly &&
-    pemEvidence.items.length > 0 &&
-    detectPemIntent(question).intent === "record_lookup"
-  ) {
-    const item = contextItems[0]!;
+  // Prefer deterministic structured PEM answers (no LLM field guessing).
+  if (pemEvidence.deterministicAnswer && pemEvidence.items.length > 0) {
+    const item = { ...pemEvidence.items[0]!, number: 1 };
     const sources = [contextItemToSourceReference(item)];
-    const answer = [item.contentExcerpt, "", `(Source: ${item.citationLabel})`].join("\n");
     const message = await appendAssistantMessage({
       conversationId: conversation.id,
-      content: answer,
+      content: pemEvidence.deterministicAnswer,
       insufficientKnowledge: false,
-      confidence: "high",
+      confidence: pemEvidence.answerMode === "not_determinable" ? "medium" : "high",
       modelProvider: "pem-neats",
-      modelName: "structured-evidence",
+      modelName: "deterministic-structured",
       sources,
       sourceEntryIds: [
         {
@@ -477,12 +504,25 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     return toPublicAnswer({
       conversationId: conversation.id,
       messageId: message.id,
-      answer,
+      answer: pemEvidence.deterministicAnswer,
       sources,
-      confidence: "high",
+      confidence: pemEvidence.answerMode === "not_determinable" ? "medium" : "high",
       insufficientKnowledge: false,
       answerMode: "grounded",
     });
+  }
+
+  if (pemEvidence.items.length > 0) {
+    const renumbered = pemEvidence.items.map((item, index) => ({
+      ...item,
+      number: index + 1,
+    }));
+    const offset = renumbered.length;
+    const rest = contextItems.map((item, index) => ({
+      ...item,
+      number: offset + index + 1,
+    }));
+    contextItems = [...renumbered, ...rest].slice(0, 8);
   }
 
   // Deterministic structured answer when we have a direct field value

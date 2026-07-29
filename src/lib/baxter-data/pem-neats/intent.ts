@@ -1,9 +1,13 @@
 /**
- * PEM NEAT question intent — distinguish help/definitions from record lookup.
+ * PEM NEAT question intent — help/definitions vs record lookup.
+ * Entity parsing is case-insensitive and supports "Robert Vertin Test 8".
  */
+import { detectRequestedPemFields, type PemFieldKey } from "./fields";
 
-export type PemQuestionIntent = "none" | "help_definition" | "record_lookup";
+export type PemQuestionIntent =
+  "none" | "help_definition" | "record_lookup" | "pem_selection_reply";
 
+/** @deprecated Prefer PemFieldKey from fields.ts */
 export type PemFieldFocus =
   | "summary"
   | "type1_pain"
@@ -27,17 +31,32 @@ export type PemFieldFocus =
   | "salesperson"
   | "identity";
 
+export type PemEntityParse = {
+  /** Full query text used for matching (may include Test N). */
+  nameQuery: string | null;
+  /** Base person name without discriminator when separable. */
+  baseName: string | null;
+  /** Discriminator like "Test 8", "Test 2". */
+  discriminator: string | null;
+};
+
 export type PemIntentResult = {
   intent: PemQuestionIntent;
-  fields: PemFieldFocus[];
+  fields: PemFieldKey[];
   nameQuery: string | null;
+  baseName: string | null;
+  discriminator: string | null;
   wantsLatest: boolean;
   wantsFirst: boolean;
   dateHint: string | null;
+  switchPemHint: string | null;
 };
 
 const HELP_DEFINITION =
-  /\b(what (is|are) (a |an )?(pem|neat|palo|type\s*[12]\s*pain)|define (pem|neat|palo)|explain (pem|neat)|what does neat stand for|how (do i|to) (generate|create|make|start) (a )?(pem )?neat|where (do i|to) (paste|add).*(transcript|pem))\b/i;
+  /\b(what (is|are) (a |an )?(pem|neat|palo)|define (pem|neat|palo)|explain (pem|neat)|what does neat stand for|how (do i|to) (generate|create|make|start) (a )?(pem )?neat|where (do i|to) (paste|add).*(transcript|pem))\b/i;
+
+const HELP_TYPE_CONCEPT =
+  /\b(what (is|are) (a |an )?(type\s*[12]|type one|type two)\s*pain|define type\s*[12]|explain type\s*[12])\b/i;
 
 const RECORD_SIGNAL =
   /\b(pem|neat|type\s*[12]|palo|budget|decision|schedule|outcome|qualification|coaching|assessment|handoff|buildertrend|follow[- ]?up email|customer story|customer pain|next steps?|salesperson|advisor)\b/i;
@@ -45,66 +64,124 @@ const RECORD_SIGNAL =
 const LOOKUP_SIGNAL =
   /\b(tell me about|what (was|were|is|are)|who (conducted|ran|did)|how did .+ (do|perform)|what did .+ (commit|promise|miss)|handoff notes?|buildertrend (fields?|notes?)|type\s*[12]\s*pain)\b/i;
 
-const FIELD_PATTERNS: Array<{ field: PemFieldFocus; re: RegExp }> = [
-  { field: "type1_pain", re: /\btype\s*1\b|\btype one\b/i },
-  { field: "type2_pain", re: /\btype\s*2\b|\btype two\b/i },
-  { field: "customer_story", re: /\bcustomer story\b/i },
-  { field: "customer_pain", re: /\bcustomer pain\b(?!.*type)/i },
-  { field: "budget", re: /\bbudget\b|\bfunding\b|\bcash available\b|\bceiling\b/i },
-  { field: "decision", re: /\bdecision\b|\bwho decides\b|\bdecision[- ]making\b|\bgating\b/i },
-  { field: "schedule", re: /\bschedule\b|\btiming\b|\burgency\b/i },
-  { field: "alternatives", re: /\balternatives?\b|\bcompetition\b|\bother options?\b/i },
-  { field: "recommendation", re: /\brecommendation\b|\bacton (fit|recommendation)\b/i },
-  { field: "next_steps", re: /\bnext steps?\b|\bwhat did .+ commit\b/i },
-  { field: "outcome", re: /\boutcome\b|\bmeeting outcome\b/i },
-  { field: "qualification", re: /\bqualif/i },
-  {
-    field: "coaching",
-    re: /\bcoaching\b|\bone thing\b|\bwhat did .+ miss\b|\bimprovements?\b|\bhow did .+ do\b|\bsalesperson do\b|\badvisor do\b/i,
-  },
-  { field: "assessment", re: /\bassessment\b|\bgrading\b|\bsales execution\b|\bpalo\b/i },
-  {
-    field: "buildertrend",
-    re: /\bbuildertrend\b|\bbt fields?\b|\bcustom fields?\b|\bhandoff notes?\b/i,
-  },
-  { field: "handoff", re: /\bhandoff\b|\bproject intelligence\b|\bproduction notes?\b/i },
-  { field: "project", re: /\bproject (facts?|intelligence|notes?)\b/i },
-  { field: "salesperson", re: /\bwho (conducted|ran|led)\b|\bsalesperson\b/i },
-];
-
 function isStopName(name: string): boolean {
-  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|BuilderTrend|GoHighLevel|Process|Rulebook)$/i.test(
+  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Their|What|Who|When|Where|How|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An)$/i.test(
     name.trim(),
   );
 }
 
-export function extractNameQuery(question: string): string | null {
-  const possessive = question.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})(?:'s|’s)\b/);
-  if (possessive?.[1] && !isStopName(possessive[1])) return possessive[1];
+const QUESTION_LEAD =
+  /^(?:what|who|when|where|how|tell(?:\s+me)?|give(?:\s+me)?|show(?:\s+me)?|use|try|pick|choose|actually|that|this|is|are|was|were|about|for|with|regarding|do|does|did|the|a|an)\b/i;
 
-  const about = question.match(
-    /\b(?:about|for|with|regarding)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b/,
-  );
-  if (about?.[1] && !isStopName(about[1])) return about[1];
-
-  const full = question.match(/\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b/);
-  if (full?.[1] && !isStopName(full[1])) return full[1];
-
-  const surname = question.match(/\bthe\s+([A-Z][a-z]+)\s+(?:pem|neat|meeting)\b/i);
-  if (surname?.[1] && !isStopName(surname[1])) return surname[1];
-
-  return null;
+function stripQuestionLead(value: string): string {
+  let v = value.trim();
+  for (let i = 0; i < 6; i++) {
+    if (!QUESTION_LEAD.test(v)) break;
+    v = v.replace(QUESTION_LEAD, "").trim();
+  }
+  return v;
 }
 
-function detectFields(question: string): PemFieldFocus[] {
-  const hits: PemFieldFocus[] = [];
-  for (const { field, re } of FIELD_PATTERNS) {
-    if (re.test(question) && !hits.includes(field)) hits.push(field);
+function looksLikePersonName(value: string): boolean {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 1 || parts.length > 4) return false;
+  if (parts.some((p) => isStopName(p))) return false;
+  return parts.every((p) => /^[A-Za-z][A-Za-z'-]*$/.test(p));
+}
+
+function titleCaseWords(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+/**
+ * Parse prospect + optional PEM discriminator from a question (case-insensitive).
+ */
+export function parsePemEntityQuery(question: string): PemEntityParse {
+  const q = question.trim();
+  if (!q) return { nameQuery: null, baseName: null, discriminator: null };
+
+  // Find "... Name Name Test N ..." by anchoring on the Test discriminator.
+  const testMatch = q.match(/\b(test\s*[\w.-]+)\b/i);
+  if (testMatch?.index != null && testMatch[1]) {
+    const disc = titleCaseWords(testMatch[1]);
+    const before = stripQuestionLead(
+      q
+        .slice(0, testMatch.index)
+        .replace(/['’]s\s*$/i, "")
+        .trim(),
+    );
+    const words = before.split(/\s+/).filter(Boolean);
+    // Take trailing 1–3 name tokens
+    for (let n = Math.min(3, words.length); n >= 1; n--) {
+      const candidate = words.slice(-n).join(" ");
+      if (looksLikePersonName(candidate)) {
+        const base = titleCaseWords(candidate);
+        return { nameQuery: `${base} ${disc}`, baseName: base, discriminator: disc };
+      }
+    }
+    // Discriminator alone (selection reply)
+    if (
+      /^\s*(?:use|try|pick|choose|go with|go back to|actually use)?\s*test\s*[\w.-]+\s*$/i.test(q)
+    ) {
+      return { nameQuery: null, baseName: null, discriminator: disc };
+    }
   }
-  if (/\bfull (summary|neat|pem)\b|\beverything about\b/i.test(question)) {
-    return ["summary", "type1_pain", "type2_pain", "budget", "decision", "outcome", "next_steps"];
+
+  // Possessive: Robert Vertin's / Robert's
+  const possessive = q.match(/\b([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})(?:'s|’s)\b/);
+  if (possessive?.[1] && looksLikePersonName(possessive[1])) {
+    const base = titleCaseWords(possessive[1]);
+    return { nameQuery: base, baseName: base, discriminator: null };
   }
-  return hits;
+
+  // about/for/with Name
+  const about = q.match(
+    /\b(?:about|for|with|regarding)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\b/i,
+  );
+  if (about?.[1]) {
+    const cleaned = stripQuestionLead(about[1]);
+    if (looksLikePersonName(cleaned)) {
+      const base = titleCaseWords(cleaned);
+      return { nameQuery: base, baseName: base, discriminator: null };
+    }
+  }
+
+  // First Last somewhere after stripping leads
+  const remainder = stripQuestionLead(q.replace(/[?’']/g, " "));
+  const full = remainder.match(/\b([A-Za-z][A-Za-z'-]+)\s+([A-Za-z][A-Za-z'-]+)\b/);
+  if (full?.[1] && full[2] && looksLikePersonName(`${full[1]} ${full[2]}`)) {
+    const base = titleCaseWords(`${full[1]} ${full[2]}`);
+    return { nameQuery: base, baseName: base, discriminator: null };
+  }
+
+  // "the Vertin meeting/pem/neat"
+  const surname = q.match(/\bthe\s+([A-Za-z][A-Za-z'-]+)\s+(?:pem|neat|meeting)\b/i);
+  if (surname?.[1] && looksLikePersonName(surname[1])) {
+    const base = titleCaseWords(surname[1]);
+    return { nameQuery: base, baseName: base, discriminator: null };
+  }
+
+  // Bare discriminator
+  const bareDisc = q.match(
+    /^\s*(?:use|try|pick|choose|go with|go back to|actually use)?\s*(test\s*[\w.-]+)\s*$/i,
+  );
+  if (bareDisc?.[1]) {
+    return {
+      nameQuery: null,
+      baseName: null,
+      discriminator: titleCaseWords(bareDisc[1]),
+    };
+  }
+
+  return { nameQuery: null, baseName: null, discriminator: null };
+}
+
+export function extractNameQuery(question: string): string | null {
+  return parsePemEntityQuery(question).nameQuery;
 }
 
 function extractDateHint(question: string): string | null {
@@ -114,50 +191,108 @@ function extractDateHint(question: string): string | null {
   return m?.[0] ?? null;
 }
 
+function extractSwitchPemHint(question: string): string | null {
+  const m = question.match(
+    /\b(?:use|try|pick|choose|go with|go back to|actually use|switch to)\s+((?:test\s*)?[\w.-]+)/i,
+  );
+  return m?.[1] ? m[1].trim() : null;
+}
+
 export function detectPemIntent(question: string): PemIntentResult {
   const q = question.trim();
   const empty: PemIntentResult = {
     intent: "none",
     fields: [],
     nameQuery: null,
+    baseName: null,
+    discriminator: null,
     wantsLatest: true,
     wantsFirst: false,
     dateHint: null,
+    switchPemHint: null,
   };
   if (!q) return empty;
 
-  // Pure help / definitions — not prospect lookup
-  if (HELP_DEFINITION.test(q) && !extractNameQuery(q)) {
+  const entity = parsePemEntityQuery(q);
+
+  // Pure concept help — not a prospect lookup
+  if (HELP_DEFINITION.test(q) && !entity.nameQuery) {
+    return { ...empty, intent: "help_definition" };
+  }
+  if (
+    HELP_TYPE_CONCEPT.test(q) &&
+    !entity.nameQuery &&
+    !/\b(his|her|their|robert|alex)\b/i.test(q)
+  ) {
     return { ...empty, intent: "help_definition" };
   }
 
-  const nameQuery = extractNameQuery(q);
-  // Capability/help "can you update BuilderTrend?" is not a prospect lookup.
+  // Bare / short discriminator replies are handled with pending state.
+  if (!entity.nameQuery && entity.discriminator && /^(test\s*[\w.-]+)$/i.test(q.trim())) {
+    return {
+      ...empty,
+      intent: "pem_selection_reply",
+      discriminator: entity.discriminator,
+      fields: detectRequestedPemFields(q),
+    };
+  }
+
+  if (
+    /^(use|try|pick|choose|go with|go back to|actually use)\b/i.test(q) &&
+    !RECORD_SIGNAL.test(q)
+  ) {
+    return {
+      ...empty,
+      intent: "pem_selection_reply",
+      discriminator: entity.discriminator ?? extractSwitchPemHint(q),
+      fields: detectRequestedPemFields(q),
+      switchPemHint: extractSwitchPemHint(q),
+    };
+  }
+
   const capabilityShape =
     /\b(can you|are you able to|do you (support|have)|how do i|where (do i|can i))\b/i.test(q) &&
-    !nameQuery;
+    !entity.nameQuery;
 
   const looksLikeRecord =
     !capabilityShape &&
     ((RECORD_SIGNAL.test(q) && LOOKUP_SIGNAL.test(q)) ||
-      (RECORD_SIGNAL.test(q) && Boolean(nameQuery)) ||
+      (RECORD_SIGNAL.test(q) && Boolean(entity.nameQuery)) ||
       /\b(pem|neat)\b.*\b(for|about|with)\b/i.test(q) ||
       /\b(tell me about|what about)\b.+\b(pem|meeting|neat)\b/i.test(q) ||
       (/\btell me about\b/i.test(q) &&
-        Boolean(nameQuery) &&
+        Boolean(entity.nameQuery) &&
         !/\b(acton|google|baxter|policy|procedure|rulebook|knowledge)\b/i.test(q)) ||
-      (/\b(type\s*[12]\s*pain|handoff notes?|buildertrend)\b/i.test(q) && Boolean(nameQuery)));
+      (/\b(type\s*[12]\s*pain|handoff notes?|buildertrend)\b/i.test(q) &&
+        (Boolean(entity.nameQuery) || /\b(his|her|their)\b/i.test(q))));
 
-  if (!looksLikeRecord) return empty;
+  if (!looksLikeRecord) {
+    // Still allow discriminator + active context to be handled upstream
+    if (entity.discriminator && /\b(type\s*[12]|budget|decision|pain)\b/i.test(q)) {
+      return {
+        ...empty,
+        intent: "record_lookup",
+        fields: detectRequestedPemFields(q),
+        nameQuery: entity.nameQuery,
+        baseName: entity.baseName,
+        discriminator: entity.discriminator,
+        switchPemHint: extractSwitchPemHint(q),
+      };
+    }
+    return empty;
+  }
 
   const wantsFirst = /\b(first|earlier|initial|older)\b/i.test(q);
   return {
     intent: "record_lookup",
-    fields: detectFields(q).length ? detectFields(q) : ["summary"],
-    nameQuery,
+    fields: detectRequestedPemFields(q),
+    nameQuery: entity.nameQuery,
+    baseName: entity.baseName,
+    discriminator: entity.discriminator,
     wantsLatest: !wantsFirst,
     wantsFirst,
     dateHint: extractDateHint(q),
+    switchPemHint: extractSwitchPemHint(q),
   };
 }
 
@@ -214,14 +349,22 @@ export function pemHelpDefinitionAnswer(question: string): string | null {
       "The advisor should clearly set why you're meeting, what you'll cover, meeting logistics/time, and the possible meeting outcomes before deep discovery.",
     ].join("\n");
   }
-  if (/\bwhat is type\s*1\b|\bdefine type\s*1\b/i.test(q)) {
+  if (
+    (/\bwhat is type\s*1\b|\bdefine type\s*1\b|\bwhat is type one\b/i.test(q) ||
+      /\bwhat is (a |an )?type\s*1\s*pain\b/i.test(q)) &&
+    !/\b(his|her|their|[A-Za-z]+(?:'s|’s))\b/i.test(question)
+  ) {
     return [
       "**Type 1 Pain** is why the homeowner is considering an ADU — the functional need and deeper consequence (for example: independent nearby housing for a family member).",
       "",
       "It's distinct from Type 2 Pain, which is why choosing the right building partner matters.",
     ].join("\n");
   }
-  if (/\bwhat is type\s*2\b|\bdefine type\s*2\b/i.test(q)) {
+  if (
+    (/\bwhat is type\s*2\b|\bdefine type\s*2\b|\bwhat is type two\b/i.test(q) ||
+      /\bwhat is (a |an )?type\s*2\s*pain\b/i.test(q)) &&
+    !/\b(his|her|their|[A-Za-z]+(?:'s|’s))\b/i.test(question)
+  ) {
     return [
       "**Type 2 Pain** is why the right construction partner matters — concerns like communication, surprise costs, project management, transparency, or coordination across trades.",
       "",

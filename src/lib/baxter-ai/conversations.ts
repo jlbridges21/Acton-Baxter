@@ -322,6 +322,14 @@ async function patchConversationMetadata(
   }
 }
 
+/** Public helper for PEM/GHL conversation context persistence. */
+export async function updateBaxterConversationMetadata(
+  conversationId: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  await patchConversationMetadata(conversationId, metadata);
+}
+
 export async function getConversationForUser(
   conversationId: string,
   userId: string,
