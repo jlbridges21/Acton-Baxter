@@ -121,6 +121,13 @@ export function BaxterEvaluationsClient({
           <Button variant="secondary" disabled={busy} onClick={() => void runAction("run_golden")}>
             Run golden suite
           </Button>
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void runAction("run_slack_recall")}
+          >
+            Run Slack Recall
+          </Button>
           <Button variant="secondary" disabled={busy} onClick={() => void loadCases()}>
             Refresh cases
           </Button>

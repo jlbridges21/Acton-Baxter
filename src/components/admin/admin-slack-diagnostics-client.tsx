@@ -185,9 +185,52 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
             typeof result === "object" &&
             result !== null &&
             "results" in (result as object) ? (
-              <ul className="mt-2 space-y-2 text-sm text-[var(--acton-navy)]">
-                {((result as { results?: Array<Record<string, string | null>> }).results ?? []).map(
-                  (row, index) => (
+              <div className="mt-2 space-y-3 text-sm text-[var(--acton-navy)]">
+                {"plan" in (result as object) &&
+                (result as { plan?: Record<string, unknown> }).plan ? (
+                  <div className="rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-2 text-xs">
+                    <p className="font-semibold">Plan</p>
+                    <p>
+                      Intent: {String((result as { plan: { intent?: string } }).plan.intent ?? "—")}
+                    </p>
+                    <p>
+                      People:{" "}
+                      {((result as { plan: { people?: string[] } }).plan.people ?? []).join(", ") ||
+                        "—"}
+                    </p>
+                    <p>
+                      Channels:{" "}
+                      {((result as { plan: { channels?: string[] } }).plan.channels ?? []).join(
+                        ", ",
+                      ) || "—"}
+                    </p>
+                    <p>
+                      Time:{" "}
+                      {String(
+                        (result as { plan: { timeRange?: string | null } }).plan.timeRange ?? "—",
+                      )}
+                    </p>
+                    {"diagnostics" in (result as object) ? (
+                      <p>
+                        Results:{" "}
+                        {String(
+                          (result as { diagnostics?: { resultCount?: number } }).diagnostics
+                            ?.resultCount ?? "—",
+                        )}{" "}
+                        · Duration:{" "}
+                        {String(
+                          (result as { diagnostics?: { latencyMs?: number } }).diagnostics
+                            ?.latencyMs ?? "—",
+                        )}
+                        ms
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <ul className="space-y-2">
+                  {(
+                    (result as { results?: Array<Record<string, string | null>> }).results ?? []
+                  ).map((row, index) => (
                     <li
                       key={`${row.timestamp}-${index}`}
                       className="rounded border border-[var(--acton-border)] p-2"
@@ -208,9 +251,15 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                         </a>
                       ) : null}
                     </li>
-                  ),
-                )}
-              </ul>
+                  ))}
+                </ul>
+                <details className="text-xs text-[var(--acton-muted)]">
+                  <summary>Technical details</summary>
+                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap">
+                    {JSON.stringify(result, null, 2)}
+                  </pre>
+                </details>
+              </div>
             ) : null}
           </div>
         </div>

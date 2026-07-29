@@ -67,9 +67,9 @@ export function SlackIntegrationsClient(props: {
       </dl>
 
       <p className="text-sm text-[var(--acton-muted)]">
-        Baxter searches Slack live when you ask about conversations, updates, or decisions. It does
-        not copy your Slack history into Baxter, and it cannot see private content you have not
-        authorized.
+        Baxter searches Slack live when you ask a question. It does not copy your Slack history into
+        Baxter&apos;s Knowledge Base. It only searches content your Slack permissions allow —
+        private channels and DMs require connecting your own Slack account.
       </p>
 
       {props.missing.length ? (

@@ -69,14 +69,23 @@ function sourceTypeLabel(source: BaxterSourceReference): string {
 }
 
 export function formatSlackSourceLine(source: BaxterSourceReference): string {
-  const title = escapeSlackMrkdwn(source.title || source.citationLabel);
-  const type = sourceTypeLabel(source);
   const absolute = sanitizeSourceUrl(source.sourceUrl);
+  const when = source.lastUpdated
+    ? new Date(source.lastUpdated).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      })
+    : null;
+  const label = escapeSlackMrkdwn(
+    [source.title || source.citationLabel, when].filter(Boolean).join(" · "),
+  );
 
   if (source.sourceKind === "slack" && absolute && source.availability === "available") {
-    return `• <${absolute}|View in Slack> — ${title}`;
+    return `• <${absolute}|${label}>`;
   }
 
+  const title = escapeSlackMrkdwn(source.title || source.citationLabel);
+  const type = sourceTypeLabel(source);
   if (absolute && source.availability === "available") {
     return `• <${absolute}|${title}> — ${type}`;
   }

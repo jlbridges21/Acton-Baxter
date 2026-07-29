@@ -100,6 +100,14 @@ export function parseSlackTimeRange(
     return toSlackRange(from, endOfUtcDay(now), "since Monday");
   }
 
+  // "since the PEM" without a resolved date → soft recent window; use
+  // parseSlackTimeRangeAfterDate when PEM date is known from another source.
+  if (/\bsince the (pem|partnership evaluation meeting)\b/.test(q)) {
+    const from = new Date(now);
+    from.setUTCDate(from.getUTCDate() - 45);
+    return toSlackRange(from, endOfUtcDay(now), "since the PEM (approx 45 days)");
+  }
+
   const beforeMatch = q.match(
     /\bbefore\s+(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/,
   );
@@ -167,6 +175,15 @@ export function parseSlackTimeRange(
   }
 
   return null;
+}
+
+/** When a related source (e.g. PEM meeting date) is known, tighten "since …" windows. */
+export function parseSlackTimeRangeAfterDate(
+  after: Date,
+  label: string,
+  now: Date = new Date(),
+): SlackTimeRange {
+  return toSlackRange(startOfUtcDay(after), endOfUtcDay(now), label);
 }
 
 /** Format YYYY-MM-DD for Slack query modifiers. */

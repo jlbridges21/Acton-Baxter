@@ -14,6 +14,7 @@ import {
   INSUFFICIENT_KNOWLEDGE_ANSWER,
   GENERAL_KNOWLEDGE_NOTE,
   mapUsedSourceNumbers,
+  dedupeSourceReferences,
   contextItemToSourceReference,
 } from "./citations";
 import { getBaxterLlmProvider } from "./openai-provider";
@@ -553,9 +554,45 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     conversationMetadata: conversation.metadata ?? {},
     hasOtherStrongEvidence: contextItems.length > 0,
     roleOverride: slackRoleEarly === "skip" ? "skip" : undefined,
-  }).catch(() => null);
+  }).catch((error) => {
+    logBaxterDiagnostic("slackEvidence", {
+      code: "SLACK_RETRIEVAL_FAILED",
+      route: "answerBaxterQuestion",
+      conversationId: conversation.id,
+      safeMessage: error instanceof Error ? error.message.slice(0, 160) : "Slack retrieval failed",
+    });
+    return {
+      items: [],
+      selected: [],
+      plan: null,
+      nextConversationState: null,
+      authNote: null,
+      noResultsNote: null,
+      incompleteNote:
+        slackRoleEarly === "primary"
+          ? "Slack search is temporarily unavailable, so I couldn't check Slack for this question."
+          : "I couldn't check Slack for additional context right now.",
+      diagnostics: {
+        role: slackRoleEarly,
+        ran: true,
+        intent: null,
+        resultCount: 0,
+        selectedCount: 0,
+        searchCount: 0,
+        threadsExpanded: 0,
+        incomplete: true,
+        incompleteCode: "SLACK_RETRIEVAL_FAILED",
+        authorization: "unavailable" as const,
+        rateLimited: false,
+        durationMs: 0,
+        followUpReset: false,
+        notes: ["retrieveSlackForAnswer threw"],
+      },
+    };
+  });
 
-  if (slackRuntime?.nextConversationState) {
+  // Persist follow-up state, including explicit clears after topic reset.
+  if (slackRuntime && (slackRuntime.nextConversationState || slackRuntime.diagnostics.followUpReset)) {
     const nextMeta = writeSlackConversationState(
       conversation.metadata ?? {},
       slackRuntime.nextConversationState,
@@ -575,11 +612,13 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         resultCount: slackRuntime.diagnostics.resultCount,
         selectedCount: slackRuntime.diagnostics.selectedCount,
         searchCount: slackRuntime.diagnostics.searchCount,
+        threadsExpanded: slackRuntime.diagnostics.threadsExpanded,
         incomplete: slackRuntime.diagnostics.incomplete,
         incompleteCode: slackRuntime.diagnostics.incompleteCode,
         authorization: slackRuntime.diagnostics.authorization,
         rateLimited: slackRuntime.diagnostics.rateLimited,
         durationMs: slackRuntime.diagnostics.durationMs,
+        followUpReset: slackRuntime.diagnostics.followUpReset,
       }),
     });
   }
@@ -835,7 +874,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       history,
     });
 
-    let sources = mapUsedSourceNumbers(llm.usedSourceNumbers, contextItems);
+    let sources = dedupeSourceReferences(mapUsedSourceNumbers(llm.usedSourceNumbers, contextItems));
     // Never invent sources; only keep mapped ones.
     let answerMode: BaxterAnswerMode = llm.answerMode;
     let insufficientKnowledge = false;
@@ -896,14 +935,25 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
           : INSUFFICIENT_KNOWLEDGE_ANSWER;
     }
 
-    const sourceEntryIds = sources.map((source, index) => {
-      const item = contextItems.find((ctx) => ctx.citationLabel === source.citationLabel);
-      return {
-        id: item!.id,
-        relevanceScore: item?.relevanceScore ?? null,
-        order: index + 1,
-      };
-    });
+    // Relational baxter_message_sources expects Knowledge UUIDs — Slack refs live in metadata.sources only.
+    const sourceEntryIds = sources
+      .map((source, index) => {
+        const item = contextItems.find((ctx) => ctx.citationLabel === source.citationLabel);
+        return {
+          id: item?.id ?? source.knowledgeEntryId ?? "",
+          relevanceScore: item?.relevanceScore ?? null,
+          order: index + 1,
+          sourceKind: source.sourceKind,
+        };
+      })
+      .filter(
+        (row) =>
+          row.sourceKind !== "slack" &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+            row.id,
+          ),
+      )
+      .map(({ id, relevanceScore, order }) => ({ id, relevanceScore, order }));
 
     const message = await appendAssistantMessage({
       conversationId: conversation.id,

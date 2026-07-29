@@ -11,6 +11,14 @@ const EXPANSIONS: Array<{ pattern: RegExp; terms: string[] }> = [
   { pattern: /\braci\b/i, terms: ["RACI", "responsibility matrix"] },
   { pattern: /\bbr\b|\bbuild ready\b/i, terms: ["Build Ready", "BR"] },
   { pattern: /\bpm\b|\bproject[- ]management\b/i, terms: ["project-management", "PM"] },
+  {
+    pattern: /\bda\b|\bdesign agreement\b/i,
+    terms: ["Design Agreement", "DA"],
+  },
+  {
+    pattern: /\bpa\b|\bproject agreement\b/i,
+    terms: ["Project Agreement", "PA"],
+  },
 ];
 
 /**

@@ -10,6 +10,7 @@ import {
 } from "./conversation-state";
 import { retrieveSlackEvidence } from "./evidence";
 import { SLACK_SEARCH_ERROR_CODES } from "./errors";
+import { resolveSlackFollowUpQuestion } from "./follow-up";
 import { planSlackSearch } from "./query-plan";
 import { selectSlackEvidenceForModel } from "./select";
 import { buildExpandedKeywordVariants } from "./synonyms";
@@ -35,11 +36,13 @@ export type SlackRuntimeDiagnostics = {
   resultCount: number;
   selectedCount: number;
   searchCount: number;
+  threadsExpanded: number;
   incomplete: boolean;
   incompleteCode: string | null;
   authorization: "user" | "bot_with_action_token" | "none" | "unavailable";
   rateLimited: boolean;
   durationMs: number;
+  followUpReset: boolean;
   notes: string[];
 };
 
@@ -81,11 +84,13 @@ export async function retrieveSlackForAnswer(input: {
   deps?: SlackSearchDeps;
 }): Promise<SlackRuntimeResult> {
   const start = Date.now();
-  const prior = readSlackConversationState(input.conversationMetadata);
+  const priorRaw = readSlackConversationState(input.conversationMetadata);
+  const follow = resolveSlackFollowUpQuestion(input.question, priorRaw);
+  const prior = follow.prior;
   const role =
     input.roleOverride ??
     detectSlackSearchRole({
-      question: input.question,
+      question: follow.question,
       hasOtherStrongEvidence: input.hasOtherStrongEvidence,
       followUpSlackContext: Boolean(prior?.refs.length || prior?.topic),
     });
@@ -105,11 +110,13 @@ export async function retrieveSlackForAnswer(input: {
       resultCount: 0,
       selectedCount: 0,
       searchCount: 0,
+      threadsExpanded: 0,
       incomplete: false,
       incompleteCode: null,
       authorization: "none",
       rateLimited: false,
       durationMs: Date.now() - start,
+      followUpReset: follow.reset,
       notes: [],
       ...partial,
     },
@@ -123,7 +130,7 @@ export async function retrieveSlackForAnswer(input: {
     });
   }
 
-  const expandedQuestion = expandQuestionWithSlackContext(input.question, prior);
+  const expandedQuestion = expandQuestionWithSlackContext(follow.question, prior);
 
   let searchCount = 0;
   let merged: SlackMessageEvidence[] = [];
@@ -211,8 +218,9 @@ export async function retrieveSlackForAnswer(input: {
     }
   }
 
-  const selected = plan ? selectSlackEvidenceForModel(merged, plan, 10) : merged.slice(0, 10);
+  const selected = plan ? selectSlackEvidenceForModel(merged, plan) : merged.slice(0, 8);
   const items = slackEvidenceToContextItems(selected, plan, 1);
+  const threadsExpanded = selected.filter((s) => s.threadTs && s.contextMessages.length > 0).length;
 
   const nextConversationState =
     selected.length > 0
@@ -240,13 +248,15 @@ export async function retrieveSlackForAnswer(input: {
             channelId: s.channelId,
           })),
         })
-      : null;
+      : follow.reset
+        ? null
+        : prior;
 
   const incomplete = Boolean(lastResult?.incomplete || lastResult?.diagnostics.rateLimited);
   let incompleteNote: string | null = null;
   if (incomplete && selected.length > 0) {
     incompleteNote =
-      "Slack search may be incomplete (rate limit or result cap), so this is not an exhaustive workspace scan.";
+      "From the Slack conversations I could access (search may be incomplete due to rate limits or result caps):";
   } else if (incomplete && selected.length === 0 && lastResult?.incomplete) {
     incompleteNote = lastResult.incomplete.message;
   }
@@ -271,6 +281,7 @@ export async function retrieveSlackForAnswer(input: {
       resultCount: merged.length,
       selectedCount: selected.length,
       searchCount,
+      threadsExpanded,
       incomplete,
       incompleteCode: lastResult?.incomplete?.code ?? null,
       authorization:
@@ -280,7 +291,11 @@ export async function retrieveSlackForAnswer(input: {
           : "none",
       rateLimited: Boolean(lastResult?.diagnostics.rateLimited),
       durationMs: Date.now() - start,
-      notes: lastResult?.diagnostics.notes ?? [],
+      followUpReset: follow.reset,
+      notes: [
+        ...(follow.reset ? ["Follow-up context reset (new topic)"] : []),
+        ...(lastResult?.diagnostics.notes ?? []),
+      ],
     },
   };
 }

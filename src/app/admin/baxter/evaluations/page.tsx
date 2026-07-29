@@ -10,7 +10,8 @@ export default async function BaxterEvaluationsPage() {
       <div>
         <h1 className="text-2xl font-semibold text-[var(--acton-navy)]">Baxter Evaluations</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Deterministic regression checks for structured, semantic, and multimodal retrieval.
+          Deterministic regression checks for structured, semantic, multimodal, and Slack
+          organizational recall.
         </p>
       </div>
       <BaxterEvaluationsClient

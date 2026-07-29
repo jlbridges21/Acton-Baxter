@@ -5,7 +5,7 @@ import {
   needsEntityClarification,
 } from "@/lib/baxter-ai/conversation-context";
 import { buildRetrievalQuery, retrievalQueryFromHistory } from "@/lib/baxter-ai/memory";
-import { parseChatCommand } from "@/lib/baxter-ai/commands";
+import { parseChatCommand, baxterHelpText } from "@/lib/baxter-ai/commands";
 import { parseTimeRangeFromQuestion } from "@/lib/knowledge-index/temporal";
 import { salesPerformanceReportFixture } from "../fixtures/sales-performance-report";
 import { expectedSoldAgreementForYear } from "@/lib/knowledge-index/sales-expectations";
@@ -52,6 +52,11 @@ describe("Prompt 3 — chat commands", () => {
     expect(parseChatCommand("/clear").type).toBe("clear");
     expect(parseChatCommand("/help").type).toBe("help");
     expect(parseChatCommand("How much sold?").type).toBe("none");
+  });
+
+  it("includes Slack Search guidance in /help", () => {
+    expect(baxterHelpText("web")).toMatch(/Slack Search/i);
+    expect(baxterHelpText("slack")).toMatch(/RACI/i);
   });
 });
 

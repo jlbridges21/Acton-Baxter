@@ -4,6 +4,7 @@ import { GOOGLE_DOC_MIME, GOOGLE_SHEET_MIME } from "@/lib/connectors/google/type
 /**
  * Map model-cited temporary source numbers to real retrieved Knowledge Base records.
  * Never trust model-invented titles or URLs.
+ * Deduplicates Slack sources by permalink (or channel+ts) so one thread isn't five cards.
  */
 export function mapUsedSourceNumbers(
   usedSourceNumbers: number[],
@@ -15,12 +16,30 @@ export function mapUsedSourceNumbers(
 
   for (const number of usedSourceNumbers) {
     const item = byNumber.get(number);
-    if (!item || seen.has(item.id)) continue;
-    seen.add(item.id);
+    if (!item) continue;
+    const dedupeKey = item.sourceType === "slack" ? item.sourceUrl || item.id : item.id;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
     sources.push(contextItemToSourceReference(item));
   }
 
   return sources;
+}
+
+/** Deduplicate already-built source references (e.g. after merge). */
+export function dedupeSourceReferences(sources: BaxterSourceReference[]): BaxterSourceReference[] {
+  const seen = new Set<string>();
+  const out: BaxterSourceReference[] = [];
+  for (const source of sources) {
+    const key =
+      source.sourceKind === "slack"
+        ? source.sourceUrl || source.knowledgeEntryId || source.citationLabel
+        : source.knowledgeEntryId || source.citationLabel;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(source);
+  }
+  return out;
 }
 
 export function resolveSourceKind(input: {

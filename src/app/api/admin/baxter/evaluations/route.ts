@@ -7,6 +7,7 @@ import {
   runEvalCase,
   runEvalCategory,
   runGoldenEvalSuite,
+  runSlackRecallEvalSuite,
   categoryAccuracyLabels,
   type EvalCategory,
 } from "@/lib/baxter-ai/evaluations";
@@ -50,6 +51,10 @@ export async function POST(request: Request) {
         ...summary,
         accuracy: categoryAccuracyLabels(summary.byCategory),
       });
+    }
+    if (body.action === "run_slack_recall") {
+      const summary = await runSlackRecallEvalSuite();
+      return NextResponse.json(summary);
     }
     if (body.action === "run_category" && body.category) {
       const summary = await runEvalCategory(body.category as EvalCategory, {

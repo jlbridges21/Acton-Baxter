@@ -80,12 +80,22 @@ export function slackEvidenceToContextItems(
 }
 
 export function formatSlackNoResultsNote(question: string): string {
-  return `I couldn't find a relevant Slack discussion for “${question.trim()}” in the Slack content available to me.`;
+  return `I couldn't find a relevant Slack discussion for “${question.trim()}” in the conversations I can access. This isn't an exhaustive claim that nobody mentioned it.`;
 }
 
 export function formatSlackAuthRequiredNote(connectUrl: string): string {
   return [
-    "I can answer from Baxter's saved sources, but Slack search isn't connected for your account.",
-    `Connect Slack Search: ${connectUrl}`,
+    "Slack Search isn't connected for your Baxter account yet.",
+    "To search private channels and DMs your Slack permissions allow, connect your Slack account.",
+    "Baxter searches Slack live when you ask — it does not copy your Slack history into Knowledge.",
+    `Connect Slack: ${connectUrl}`,
+  ].join("\n");
+}
+
+export function formatSlackPrivateAuthNote(connectUrl: string): string {
+  return [
+    "To search your private Slack channels and DMs, connect your Slack account to Baxter.",
+    "Baxter only searches content your Slack permissions allow.",
+    `Connect Slack: ${connectUrl}`,
   ].join("\n");
 }

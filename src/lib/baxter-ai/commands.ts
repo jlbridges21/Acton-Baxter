@@ -36,6 +36,15 @@ export function baxterHelpText(channel: "web" | "slack"): string {
     "• Ask about saved PEMs (for example: “What was Alex’s Type 1 pain?”)",
     clearLine,
     "• Official Acton answers cite Sources when they use approved knowledge or PEM NEATs",
+    "",
+    "Slack Search (live — only conversations your Slack account can access):",
+    "• What did Kevin say about Gwen?",
+    "• What is the latest on the RACI matrix?",
+    "• What happened in #sales yesterday?",
+    "• When did we decide to change the PEM process?",
+    channel === "web"
+      ? "• Connect under Settings → Integrations if private channels/DMs are needed"
+      : "• Connect Slack Search in Baxter Settings → Integrations for private channels/DMs",
   ];
 
   if (isGhlConfigured()) {

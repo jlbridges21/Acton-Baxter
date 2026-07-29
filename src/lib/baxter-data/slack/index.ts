@@ -39,6 +39,14 @@ export { retrieveSlackEvidence, planAndDescribeSlackSearch } from "./evidence";
 export { retrieveSlackForAnswer } from "./orchestrate";
 export { detectSlackSearchRole, isStrongSlackQuestion } from "./when";
 export { classifySlackStatementStrength, selectSlackEvidenceForModel } from "./select";
+export { classifyDecisionRole, buildDecisionCandidate, rankDecisionEvidence } from "./decisions";
+export { filterSlackEvidenceNoise, evidenceBudgetForIntent } from "./filter";
+export {
+  shouldResetSlackFollowUpContext,
+  expandRelativeTimeFollowUp,
+  resolveSlackFollowUpQuestion,
+} from "./follow-up";
+export { runAllSlackRecallEvals, summarizeSlackRecallEvals } from "./eval-suite";
 export { formatSlackEvidenceExcerpt, formatSlackEvidenceForAdmin } from "./format";
 export {
   getSlackSearchDiagnosticsSnapshot,

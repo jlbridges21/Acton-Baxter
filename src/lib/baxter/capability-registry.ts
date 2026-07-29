@@ -144,7 +144,7 @@ export function buildBaxterCapabilityCatalog(
       shortDescription:
         "Search live Slack conversations your account is authorized to access — what someone said, recent updates, decisions, and channel discussions.",
       detailedDescription:
-        "Baxter searches Slack live at query time using Slack Real-time Search. It can find what someone said, the latest update on a topic, who mentioned something, decisions, and time-window summaries, then link you back to the messages. It only searches Slack content your Slack authorization allows. Slack is conversational context, not automatic approved policy. Messages are not mirrored into Baxter's database.",
+        "Baxter can search Slack conversations your account has access to and use them to answer questions about recent discussions, updates, decisions, and messages. Examples: what someone said, latest update on a topic, who mentioned something, channel/time-window summaries, and thread context. It only searches content your Slack permissions allow. Slack is conversational context, not automatic approved policy. Baxter does not copy Slack history into Knowledge.",
       category: "slack",
       audience: ["employee", "admin"],
       rolesAllowed: ["*", "user", "admin", "super_admin"],
@@ -168,6 +168,7 @@ export function buildBaxterCapabilityCatalog(
       ],
       helpTopics: [
         "search slack",
+        "what can you search in slack",
         "what did someone say",
         "latest on",
         "who mentioned",

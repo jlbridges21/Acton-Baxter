@@ -1,17 +1,18 @@
+import { buildDecisionCandidate, rankDecisionEvidence } from "./decisions";
+import { evidenceBudgetForIntent, filterSlackEvidenceNoise } from "./filter";
 import type { SlackMessageEvidence, SlackQueryPlan, SlackSearchIntent } from "./types";
 
 const DECISION_MARKERS =
-  /\b(agreed|let'?s |we'?ll |we will|decided|approved|final|moving forward|confirmed|locked in|updated the calendar|going with)\b/i;
+  /\b(agreed|let'?s |we'?ll |we will|decided|approved|final|moving forward|confirmed|locked in|remove the wait|going with)\b/i;
 const SUGGESTION_MARKERS =
   /\b(maybe|might|could|should we|what if|consider|thinking about|suggest)\b/i;
 
 export type SlackEvidenceStrength = "decision" | "implementation" | "suggestion" | "statement";
 
 export function classifySlackStatementStrength(text: string): SlackEvidenceStrength {
-  if (/\b(updated the calendar|changed to|moved to|set to)\b/i.test(text)) {
+  if (/\b(updated the calendar|changed to|moved to|set to|i updated it)\b/i.test(text)) {
     return "implementation";
   }
-  if (DECISION_MARKERS.test(text) && !SUGGESTION_MARKERS.test(text)) return "decision";
   if (SUGGESTION_MARKERS.test(text)) return "suggestion";
   if (DECISION_MARKERS.test(text)) return "decision";
   return "statement";
@@ -53,17 +54,42 @@ function scoreEvidence(item: SlackMessageEvidence, plan: SlackQueryPlan): number
 
 /**
  * Rank and bound Slack evidence before it reaches the model.
+ * Uses intent-specific budgets, noise filtering, and decision ranking.
  */
 export function selectSlackEvidenceForModel(
   results: SlackMessageEvidence[],
   plan: SlackQueryPlan,
-  maxItems = 10,
+  maxItems?: number,
 ): SlackMessageEvidence[] {
   const intent: SlackSearchIntent = plan.intent;
-  let working = [...results];
+  const budget = maxItems ?? evidenceBudgetForIntent(intent);
+  let working = filterSlackEvidenceNoise(results, { intent });
 
   if (intent === "latest_message") {
+    // Chronological exactness — newest first by timestamp, not semantic score
+    working.sort((a, b) => {
+      const ta = Date.parse(a.timestamp ?? "") || 0;
+      const tb = Date.parse(b.timestamp ?? "") || 0;
+      if (tb !== ta) return tb - ta;
+      return String(b.messageTs).localeCompare(String(a.messageTs));
+    });
     return working.slice(0, 1);
+  }
+
+  if (intent === "decision_search") {
+    const candidate = buildDecisionCandidate(plan.keywords.join(" ") || "decision", working);
+    const ranked = rankDecisionEvidence(working);
+    // Prefer decision/current state first, then remaining ranked
+    const preferred = [
+      candidate.decisionMessage,
+      candidate.reversedBy,
+      candidate.implementationMessage,
+      candidate.agreementMessage,
+      candidate.proposalMessage,
+    ].filter(Boolean) as SlackMessageEvidence[];
+    const seen = new Set(preferred.map((m) => `${m.channelId}:${m.messageTs}`));
+    working = [...preferred, ...ranked.filter((m) => !seen.has(`${m.channelId}:${m.messageTs}`))];
+    return working.slice(0, budget);
   }
 
   if (intent === "mention_search") {
@@ -87,5 +113,5 @@ export function selectSlackEvidenceForModel(
     });
   }
 
-  return working.slice(0, maxItems);
+  return working.slice(0, budget);
 }

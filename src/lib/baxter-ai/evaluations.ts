@@ -20,7 +20,11 @@ export type EvalCategory =
   | "knowledge_gap"
   | "conversation_continuity"
   | "context_reset"
-  | "citation";
+  | "citation"
+  | "slack_recall"
+  | "slack_authorization"
+  | "slack_follow_up"
+  | "slack_conflict";
 
 export type EvalTurn = {
   question: string;
@@ -832,6 +836,36 @@ export async function runEvalCategory(
     results.push(await runEvalCase(evalCase, options));
   }
   return summarizeResults(results);
+}
+
+/**
+ * Deterministic Slack organizational-recall suite (mocked fixtures — no live Slack).
+ */
+export async function runSlackRecallEvalSuite() {
+  const { summarizeSlackRecallEvals } = await import("@/lib/baxter-data/slack/eval-suite");
+  const summary = summarizeSlackRecallEvals();
+  return {
+    total: summary.total,
+    passed: summary.passed,
+    failed: summary.failed,
+    byCategory: Object.fromEntries(
+      Object.entries(summary.byCategory).map(([k, v]) => [`slack_${k}`, v]),
+    ),
+    results: summary.results.map((r) => ({
+      caseId: r.id,
+      question: r.question,
+      category: `slack_${r.category}`,
+      passed: r.passed,
+      actualAnswer: r.checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.id}: ${c.detail}`).join("\n"),
+      expectedAnswer: "Deterministic Slack recall checks",
+      retrievalMode: "slack_recall_fixture",
+      sources: [],
+      signals: {
+        factsFound: r.checks.filter((c) => c.ok).map((c) => c.id),
+        factsMissing: r.checks.filter((c) => !c.ok).map((c) => c.id),
+      },
+    })),
+  };
 }
 
 export function categoryAccuracyLabels(

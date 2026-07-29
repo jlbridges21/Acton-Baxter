@@ -59,6 +59,91 @@ export async function POST(request: Request) {
         !evidence.contextDecision.inheritPriorEntities &&
         evidence.contextDecision.reason !== "no_history",
       );
+
+      let slackPlan: Record<string, unknown> | null = null;
+      try {
+        const { isSlackSearchEnabled } = await import("@/lib/baxter-data/slack/config");
+        const { detectSlackSearchRole } = await import("@/lib/baxter-data/slack/when");
+        const { classifySourceAuthority } = await import("@/lib/baxter-ai/source-authority");
+        const { previewSlackSearchPlan } = await import("@/lib/baxter-data/slack/diagnostics");
+        const role = detectSlackSearchRole({ question });
+        const authority = classifySourceAuthority(question);
+        if (isSlackSearchEnabled() && role !== "skip") {
+          const preview = await previewSlackSearchPlan(question, "");
+          const plan = preview.plan;
+          slackPlan = {
+            role,
+            intent: plan.intent,
+            people: plan.people.map((p) => p.displayName),
+            channels: plan.channels.map((c) => c.displayLabel),
+            keywords: plan.keywords,
+            timeRange: plan.timeRange?.label ?? null,
+            sort: plan.sort,
+            ambiguities: {
+              people: preview.ambiguities.people.map((a) => a.query),
+              channels: preview.ambiguities.channels.map((a) => a.query),
+            },
+          };
+        } else {
+          slackPlan = { role, skipped: true };
+        }
+        return jsonOk({
+          result: {
+            question,
+            sourceAuthority: authority,
+            intent: evidence.intent,
+            queryMode: evidence.queryMode,
+            contextDecision: evidence.contextDecision,
+            inheritEntities: evidence.inheritEntities,
+            entitiesReset,
+            timeRange: evidence.plan.timeRange ?? null,
+            retrievalQuery: evidence.retrievalQuery,
+            plan: {
+              entities: evidence.plan.entities,
+              requestedFields: evidence.plan.requestedFields,
+              aggregation: evidence.plan.aggregation,
+              timeRange: evidence.plan.timeRange ?? null,
+            },
+            slack: slackPlan,
+            structured: {
+              matchedSource:
+                hit?.entryTitle ?? evidence.structured?.aggregates[0]?.entryTitle ?? null,
+              matchedSheet: hit?.sheetName ?? null,
+              matchedEntity: hit?.entityLabel ?? null,
+              requestedField: hit?.requestedField ?? null,
+              value: hit?.directValue ?? evidence.structured?.aggregates[0]?.displayValue ?? null,
+              confidence: hit ? "high" : evidence.structured?.aggregates.length ? "high" : "none",
+              lookupCount: evidence.structured?.lookups.length ?? 0,
+              aggregateCount: evidence.structured?.aggregates.length ?? 0,
+              ambiguous: evidence.structured?.ambiguous ?? false,
+            },
+            lexical: evidence.lexicalHits.slice(0, 5).map((h) => ({
+              title: h.unit.title,
+              unitType: h.unit.unit_type,
+              score: h.score,
+              reason: h.reason,
+            })),
+            semantic: evidence.semanticHits.slice(0, 5).map((h) => ({
+              title: h.unit.title,
+              unitType: h.unit.unit_type,
+              score: Number(h.score.toFixed(4)),
+              reason: h.reason,
+            })),
+            finalEvidence: evidence.ranked.slice(0, 8).map((r) => ({
+              source: r.title,
+              unitType: r.unitType ?? null,
+              score: Number(r.score.toFixed(3)),
+              reason: r.reason,
+              channel: r.channel,
+            })),
+            conflicts: evidence.conflicts,
+            evidencePackage: evidence.evidencePackage,
+          },
+        });
+      } catch {
+        // fall through without slack if preview fails
+      }
+
       return jsonOk({
         result: {
           question,
@@ -75,6 +160,7 @@ export async function POST(request: Request) {
             aggregation: evidence.plan.aggregation,
             timeRange: evidence.plan.timeRange ?? null,
           },
+          slack: slackPlan,
           structured: {
             matchedSource:
               hit?.entryTitle ?? evidence.structured?.aggregates[0]?.entryTitle ?? null,

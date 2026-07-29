@@ -52,6 +52,23 @@ In a thread, send `/clear` (with `@Baxter` if required by channel rules) to rese
 
 **Important:** In channels, Baxter only sees messages that **@mention** it. For follow-ups, **`@Baxter` again** in the thread.
 
+### Slack Search (organizational recall)
+
+Baxter can search Slack **live** when you ask — it does not copy Slack into Knowledge. It only searches conversations your Slack account is allowed to access.
+
+**Connect once:** Settings → **Integrations** → Connect Slack Search (needed for private channels and DMs).
+
+**Try asking:**
+
+- “What did Kevin say about Gwen?”
+- “What is the latest on the RACI matrix?”
+- “What happened in #sales yesterday?”
+- “When did we decide to change the PEM process?”
+- “Who mentioned BuilderTrend this week?”
+- “What was Maxx’s last message in #project-management?”
+
+Then follow up naturally: “Did Kevin respond?” / “What did he say?”
+
 ### Property research
 
 ```
@@ -64,11 +81,11 @@ Baxter researches the address and sends a link to the full PEM report. Sign in o
 
 ## Sources vs general guidance
 
-| Label                | Meaning                                                                                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Sources**          | Answer grounded in **approved** Acton knowledge (Google Docs/Sheets synced into Baxter, or admin-approved Knowledge Base entries). Links go to real documents. |
-| **General guidance** | Useful context from Baxter’s AI — **not** official Acton policy.                                                                                               |
-| **Mixed**            | Official answer not found; Baxter provides labeled general help.                                                                                               |
+| Label                | Meaning                                                                                                                                                                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sources**          | Answer grounded in **approved** Acton knowledge (Google Docs/Sheets synced into Baxter, or admin-approved Knowledge Base entries), plus live sources such as **GoHighLevel** or **Slack** when cited. Slack links open the original message. |
+| **General guidance** | Useful context from Baxter’s AI — **not** official Acton policy.                                                                                                                                                                             |
+| **Mixed**            | Official answer not found; Baxter provides labeled general help.                                                                                                                                                                             |
 
 If Baxter says it could not find an approved Acton source for a company-specific question, do **not** treat any general guidance as company policy. Ask your manager or check the official source. For general questions (for example “What is an ADU?”), Baxter may answer from general knowledge and will say so when appropriate.
 
