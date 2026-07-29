@@ -17,8 +17,12 @@ type ContactRow = {
   name: string;
   email?: string | null;
   phone?: string | null;
+  address1?: string | null;
   city?: string | null;
   state?: string | null;
+  postalCode?: string | null;
+  country?: string | null;
+  addressFormatted?: string | null;
   ownerName?: string | null;
   tags?: string[];
   updatedLabel?: string | null;
@@ -966,7 +970,9 @@ export function GhlConnectorClient({
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       placeholder={
-                        activeTab === "contacts" ? "Name, email, phone…" : "Contact or preview…"
+                        activeTab === "contacts"
+                          ? "Name, email, phone, address, city, ZIP…"
+                          : "Contact or preview…"
                       }
                       className="h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm text-[var(--acton-fg)] outline-none focus:ring-2 focus:ring-[var(--acton-navy)]"
                     />
@@ -985,13 +991,13 @@ export function GhlConnectorClient({
                   ) : (
                     <div className="space-y-3">
                       <div className="hidden overflow-x-auto md:block">
-                        <table className="w-full min-w-[720px] text-left text-sm">
+                        <table className="w-full min-w-[880px] text-left text-sm">
                           <thead className="border-b border-[var(--acton-border)] text-xs text-[var(--acton-muted)]">
                             <tr>
                               <th className="py-2 pr-3 font-medium">Name</th>
                               <th className="py-2 pr-3 font-medium">Email</th>
                               <th className="py-2 pr-3 font-medium">Phone</th>
-                              <th className="py-2 pr-3 font-medium">Location</th>
+                              <th className="py-2 pr-3 font-medium">Address</th>
                               <th className="py-2 pr-3 font-medium">Owner</th>
                               <th className="py-2 pr-3 font-medium">Updated</th>
                               <th className="py-2 font-medium" />
@@ -1014,8 +1020,10 @@ export function GhlConnectorClient({
                                 <td className="py-3 pr-3 text-[var(--acton-muted)]">
                                   {row.phone || "—"}
                                 </td>
-                                <td className="py-3 pr-3 text-[var(--acton-muted)]">
-                                  {[row.city, row.state].filter(Boolean).join(", ") || "—"}
+                                <td className="max-w-[240px] py-3 pr-3 text-[var(--acton-muted)]">
+                                  {row.addressFormatted ||
+                                    [row.city, row.state].filter(Boolean).join(", ") ||
+                                    "—"}
                                 </td>
                                 <td className="py-3 pr-3 text-[var(--acton-muted)]">
                                   {row.ownerName || "—"}
@@ -1050,6 +1058,11 @@ export function GhlConnectorClient({
                                 <p className="mt-1 text-xs text-[var(--acton-muted)]">
                                   {row.email || row.phone || "No contact info"}
                                 </p>
+                                {row.addressFormatted ? (
+                                  <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                                    {row.addressFormatted}
+                                  </p>
+                                ) : null}
                               </div>
                               <Link
                                 href={`/admin/connectors/ghl/contacts/${row.id}`}

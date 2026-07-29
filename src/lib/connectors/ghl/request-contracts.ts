@@ -138,6 +138,8 @@ export const contactSearchBodySchema = z
     phone: z.string().trim().optional(),
     page: z.number().int().positive().optional(),
     pageLimit: z.number().int().positive().max(100).optional(),
+    /** Advanced GHL filters (e.g. address1/city/state/postalCode contains). */
+    filters: z.array(z.record(z.string(), z.unknown())).optional(),
   })
   .strict();
 
@@ -161,6 +163,7 @@ export function buildContactSearchBody(input: {
   phone?: string;
   page?: number;
   limit?: number;
+  filters?: Array<Record<string, unknown>>;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { locationId: input.locationId };
   if (input.query?.trim()) body.query = input.query.trim();
@@ -170,6 +173,7 @@ export function buildContactSearchBody(input: {
   // HighLevel POST /contacts/search uses pageLimit — never "limit"
   const pageLimit = input.limit && input.limit > 0 ? Math.min(input.limit, 100) : undefined;
   if (pageLimit) body.pageLimit = pageLimit;
+  if (input.filters && input.filters.length > 0) body.filters = input.filters;
   assertNoDeprecatedContactSearchBody(body);
   return contactSearchBodySchema.parse(body);
 }

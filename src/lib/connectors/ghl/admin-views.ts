@@ -31,8 +31,13 @@ export type HydratedContactRow = {
   name: string;
   email: string | null;
   phone: string | null;
+  address1: string | null;
   city: string | null;
   state: string | null;
+  postalCode: string | null;
+  country: string | null;
+  /** Inline formatted address for list column, e.g. "123 Main St, San Jose, CA 95125". */
+  addressFormatted: string | null;
   ownerName: string | null;
   ownerId: string | null;
   tags: string[];
@@ -78,19 +83,51 @@ export type HydratedCustomField = {
 
 export async function hydrateContactRows(contacts: GhlContact[]): Promise<HydratedContactRow[]> {
   const refs = await getGhlReferenceData();
-  return contacts.map((c) => ({
-    id: c.id,
-    name: displayContactName(c),
-    email: c.email,
-    phone: formatPhoneDisplay(c.phone),
-    city: c.city,
-    state: c.state,
-    ownerId: c.assignedTo,
-    ownerName: resolveUserDisplayName(refs, c.assignedTo) ?? (c.assignedTo ? "Unknown" : null),
-    tags: (c.tags ?? []).map((t) => resolveTagDisplayName(refs, t)),
-    updatedAt: c.dateUpdated,
-    updatedLabel: formatGhlDateRelative(c.dateUpdated),
-  }));
+  const { contactAddressFromGhl } = await import("./address");
+
+  // Search payloads are often thin (city without address1). Batch-fetch full contacts
+  // only when street is missing from the search row — concurrency capped in getContactsByIds.
+  const needsFull = contacts.filter((c) => c.id && !c.address1).map((c) => c.id);
+  const fullById =
+    needsFull.length > 0 ? await getContactsByIds(needsFull) : new Map<string, GhlContact>();
+
+  return contacts.map((c) => {
+    const full = fullById.get(c.id);
+    const merged: GhlContact = full
+      ? {
+          ...c,
+          ...full,
+          address1: full.address1 ?? c.address1,
+          city: full.city ?? c.city,
+          state: full.state ?? c.state,
+          postalCode: full.postalCode ?? c.postalCode,
+          country: full.country ?? c.country,
+          email: full.email ?? c.email,
+          phone: full.phone ?? c.phone,
+          tags: full.tags?.length ? full.tags : c.tags,
+          assignedTo: full.assignedTo ?? c.assignedTo,
+        }
+      : c;
+    const address = contactAddressFromGhl(merged);
+    return {
+      id: merged.id,
+      name: displayContactName(merged),
+      email: merged.email,
+      phone: formatPhoneDisplay(merged.phone),
+      address1: merged.address1,
+      city: merged.city,
+      state: merged.state,
+      postalCode: merged.postalCode,
+      country: merged.country,
+      addressFormatted: address.formatted,
+      ownerId: merged.assignedTo,
+      ownerName:
+        resolveUserDisplayName(refs, merged.assignedTo) ?? (merged.assignedTo ? "Unknown" : null),
+      tags: (merged.tags ?? []).map((t) => resolveTagDisplayName(refs, t)),
+      updatedAt: merged.dateUpdated,
+      updatedLabel: formatGhlDateRelative(merged.dateUpdated),
+    };
+  });
 }
 
 export async function hydrateOpportunityRows(

@@ -13,7 +13,10 @@ import {
 import { invalidateCachedReference, invalidateAllGhlCache } from "@/lib/connectors/ghl/cache";
 import { getGhlRuntimeConfig } from "@/lib/connectors/ghl/config";
 import { resolveGhlCredentialProvider } from "@/lib/connectors/ghl/auth";
-import { searchContacts, getContactById } from "@/lib/connectors/ghl/resources/contacts";
+import {
+  searchContactsForAdminBrowse,
+  getContactById,
+} from "@/lib/connectors/ghl/resources/contacts";
 import {
   searchOpportunities,
   getOpportunityById,
@@ -200,7 +203,7 @@ export async function POST(request: Request) {
 
         switch (parsed.tab) {
           case "contacts": {
-            const contacts = await searchContacts({
+            const contacts = await searchContactsForAdminBrowse({
               query: parsed.query,
               email: parsed.email,
               phone: parsed.phone,

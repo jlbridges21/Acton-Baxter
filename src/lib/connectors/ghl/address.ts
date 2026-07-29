@@ -79,6 +79,69 @@ export function formatGhlAddressMultiline(address: GhlContactAddress): string | 
 export type GhlSnapshotFocus =
   "address" | "owner" | "tags" | "custom_fields" | "opportunity" | "conversation" | "general";
 
+/** Detect whether a free-text query is likely targeting address fields. */
+export function isLikelyAddressSearchQuery(query: string): boolean {
+  const q = query.trim();
+  if (!q) return false;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q)) return false;
+  // ZIP / ZIP+4
+  if (/^\d{3,10}(-\d{4})?$/.test(q)) return true;
+  // Street-like: leading house number
+  if (/^\d+\s+\S+/.test(q)) return true;
+  // Partial street / city / state tokens (admin list search)
+  if (
+    /\b(st|street|ave|avenue|rd|road|blvd|dr|drive|ln|lane|way|ct|court|hwy|highway)\b/i.test(q)
+  ) {
+    return true;
+  }
+  // City / state / partial formatted address (letters with optional spaces/commas)
+  if (/^[a-zA-Z][a-zA-Z\s.',-]{1,80}$/.test(q)) return true;
+  return false;
+}
+
+/**
+ * GHL POST /contacts/search filter group for address fields.
+ * Field names match HighLevel contact schema: address1, city, state, postalCode, country.
+ */
+export function buildGhlAddressSearchFilters(query: string): Array<Record<string, unknown>> {
+  const value = query.trim();
+  if (!value) return [];
+  return [
+    {
+      group: "OR",
+      filters: [
+        { field: "address1", operator: "contains", value },
+        { field: "city", operator: "contains", value },
+        { field: "state", operator: "contains", value },
+        { field: "postalCode", operator: "contains", value },
+        { field: "country", operator: "contains", value },
+      ],
+    },
+  ];
+}
+
+/** Local match helper after hydration (partial formatted address, street, city, state, ZIP). */
+export function contactMatchesAddressQuery(
+  contact: Pick<GhlContact, "address1" | "city" | "state" | "postalCode" | "country">,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const address = contactAddressFromGhl(contact);
+  const haystacks = [
+    address.line1,
+    address.city,
+    address.state,
+    address.postalCode,
+    address.country,
+    address.formatted,
+    formatGhlAddressMultiline(address)?.replace(/\n/g, ", ") ?? null,
+  ]
+    .filter(Boolean)
+    .map((s) => String(s).toLowerCase());
+  return haystacks.some((h) => h.includes(q));
+}
+
 /** Detect which CRM facets the employee question emphasizes. */
 export function detectGhlSnapshotFocus(question: string): GhlSnapshotFocus[] {
   const q = question.toLowerCase();
