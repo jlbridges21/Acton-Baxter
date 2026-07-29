@@ -109,6 +109,7 @@ export async function fetchPermalink(input: {
 /**
  * Exact newest message for person+channel when possible via conversations.history.
  * Returns metadata about whether newest is guaranteed.
+ * For public channels, may attempt conversations.join once if bot is not a member.
  */
 export async function fetchLatestMessageInChannel(input: {
   credential: SlackCredentialResolution;
@@ -118,16 +119,30 @@ export async function fetchLatestMessageInChannel(input: {
   message: SlackMessageEvidence | null;
   exactNewestGuaranteed: boolean;
   pagesFetched: number;
+  notes: string[];
 }> {
   const channel = input.plan.channels[0];
   const person = input.plan.people[0];
+  const notes: string[] = [];
   if (!channel) {
-    return { message: null, exactNewestGuaranteed: false, pagesFetched: 0 };
+    return { message: null, exactNewestGuaranteed: false, pagesFetched: 0, notes };
+  }
+
+  // Private channels require user-level credentials — never join private.
+  if (channel.isPrivate || channel.kind === "private_channel") {
+    if (
+      input.credential.tokenKind === "bot_public" ||
+      input.credential.tokenKind === "bot_with_action_token"
+    ) {
+      notes.push("Skipped bot history for private channel — user OAuth required.");
+      return { message: null, exactNewestGuaranteed: false, pagesFetched: 0, notes };
+    }
   }
 
   let cursor: string | undefined;
   let pages = 0;
-  const maxPages = 5;
+  const maxPages = 8;
+  let attemptedJoin = false;
 
   while (pages < maxPages) {
     pages += 1;
@@ -143,7 +158,30 @@ export async function fetchLatestMessageInChannel(input: {
 
     const result = await apiCall(input.deps, "conversations.history", input.credential.token, body);
     if (!result.ok) {
-      return { message: null, exactNewestGuaranteed: false, pagesFetched: pages };
+      if (
+        !attemptedJoin &&
+        !channel.isPrivate &&
+        channel.kind !== "private_channel" &&
+        (result.error === "not_in_channel" || result.error === "channel_not_found") &&
+        (input.credential.tokenKind === "bot_public" ||
+          input.credential.tokenKind === "bot_with_action_token")
+      ) {
+        attemptedJoin = true;
+        const join = await apiCall(input.deps, "conversations.join", input.credential.token, {
+          channel: channel.id,
+        });
+        notes.push(
+          join.ok
+            ? "Joined public channel for history retrieval."
+            : `conversations.join failed: ${join.error ?? "unknown"}`,
+        );
+        if (join.ok) {
+          pages -= 1;
+          continue;
+        }
+      }
+      notes.push(`conversations.history failed: ${result.error ?? "unknown"}`);
+      return { message: null, exactNewestGuaranteed: false, pagesFetched: pages, notes };
     }
 
     const messages = (result.data.messages as Array<Record<string, unknown>> | undefined) ?? [];
@@ -171,6 +209,7 @@ export async function fetchLatestMessageInChannel(input: {
         },
         exactNewestGuaranteed: true,
         pagesFetched: pages,
+        notes,
       };
     }
 
@@ -180,5 +219,10 @@ export async function fetchLatestMessageInChannel(input: {
     cursor = next;
   }
 
-  return { message: null, exactNewestGuaranteed: true, pagesFetched: pages };
+  notes.push(
+    person
+      ? `No message from ${person.displayName} in the scanned history window.`
+      : "No messages found in the scanned history window.",
+  );
+  return { message: null, exactNewestGuaranteed: true, pagesFetched: pages, notes };
 }

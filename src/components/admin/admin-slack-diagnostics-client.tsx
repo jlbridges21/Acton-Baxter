@@ -9,7 +9,9 @@ type SearchSnapshot = {
   status: "ready" | "needs_setup" | "disabled";
   workspaceLabel: string;
   searchEnabled: boolean;
+  searchEnabledLabel?: string;
   readyForUserOauth: boolean;
+  readyForPublicBotSearch?: boolean;
   missingForUserOauth: string[];
   oauthRedirectUri: string;
   userLevelAuthorization: "configured" | "not_configured" | "partial";
@@ -20,6 +22,25 @@ type SearchSnapshot = {
     groupDms: boolean;
     threadContext: boolean;
     permalinks: boolean;
+    publicChannelHistory?: boolean;
+    workspaceSearch?: boolean;
+    privateSearch?: boolean;
+    dmSearch?: boolean;
+    userResolution?: boolean;
+    channelResolution?: boolean;
+    permalinkGeneration?: boolean;
+  };
+  capabilityHealth?: {
+    slackEvents: boolean;
+    slackPosting: boolean;
+    slackReactions: boolean;
+    slackPublicChannelHistory: boolean;
+    slackWorkspaceSearch: boolean;
+    slackPrivateSearch: boolean;
+    slackDmSearch: boolean;
+    slackUserResolution: boolean;
+    slackChannelResolution: boolean;
+    slackPermalinkGeneration: boolean;
   };
   connection: {
     linked: boolean;
@@ -87,14 +108,23 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
               Workspace: <span className="font-medium">{search.workspaceLabel}</span>
             </div>
             <div>
+              Slack Search:{" "}
+              <span className="font-medium">
+                {search.searchEnabledLabel ?? (search.searchEnabled ? "Enabled" : "Disabled")}
+              </span>
+            </div>
+            <div>
               User-level authorization:{" "}
               <span className="font-medium">
                 {search.userLevelAuthorization === "configured"
                   ? "Configured"
                   : search.userLevelAuthorization === "partial"
-                    ? "Partial (public fallback)"
+                    ? "Partial (public bot / env)"
                     : "Not configured"}
               </span>
+            </div>
+            <div>
+              Public bot history: <YesNo value={Boolean(search.readyForPublicBotSearch)} />
             </div>
             <div>
               Public channels: <YesNo value={search.capabilities.publicChannels} />
@@ -115,6 +145,42 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
               Permalinks: <YesNo value={search.capabilities.permalinks} />
             </div>
           </dl>
+          {search.capabilityHealth ? (
+            <dl className="grid gap-2 border-t border-[var(--acton-border)] pt-3 text-sm text-[var(--acton-navy)] md:grid-cols-2">
+              <div>
+                Events: <YesNo value={search.capabilityHealth.slackEvents} />
+              </div>
+              <div>
+                Posting: <YesNo value={search.capabilityHealth.slackPosting} />
+              </div>
+              <div>
+                Reactions: <YesNo value={search.capabilityHealth.slackReactions} />
+              </div>
+              <div>
+                Public channel history:{" "}
+                <YesNo value={search.capabilityHealth.slackPublicChannelHistory} />
+              </div>
+              <div>
+                Workspace search: <YesNo value={search.capabilityHealth.slackWorkspaceSearch} />
+              </div>
+              <div>
+                Private search: <YesNo value={search.capabilityHealth.slackPrivateSearch} />
+              </div>
+              <div>
+                DM search: <YesNo value={search.capabilityHealth.slackDmSearch} />
+              </div>
+              <div>
+                User resolution: <YesNo value={search.capabilityHealth.slackUserResolution} />
+              </div>
+              <div>
+                Channel resolution: <YesNo value={search.capabilityHealth.slackChannelResolution} />
+              </div>
+              <div>
+                Permalink generation:{" "}
+                <YesNo value={search.capabilityHealth.slackPermalinkGeneration} />
+              </div>
+            </dl>
+          ) : null}
           {search.connection?.linked ? (
             <p className="text-sm text-[var(--acton-muted)]">
               Linked as {search.connection.slackUserName ?? "Slack user"}
@@ -153,6 +219,17 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
             <Button
               type="button"
               disabled={Boolean(busy)}
+              onClick={() =>
+                run("test_latest_message", {
+                  query: "What did Jess say last in #project-management?",
+                })
+              }
+            >
+              {busy === "test_latest_message" ? "Testing…" : "Test latest message"}
+            </Button>
+            <Button
+              type="button"
+              disabled={Boolean(busy)}
               onClick={() => run("test_public_search", { query: "RACI matrix" })}
             >
               {busy === "test_public_search" ? "Testing…" : "Test public search"}
@@ -167,12 +244,17 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
           </div>
 
           <div className="space-y-2 border-t border-[var(--acton-border)] pt-3">
-            <p className="text-sm font-semibold text-[var(--acton-navy)]">Test Slack Search</p>
+            <p className="text-sm font-semibold text-[var(--acton-navy)]">Search Diagnostics</p>
+            <p className="text-xs text-[var(--acton-muted)]">
+              Prefer “Test latest message” for person + channel history. Sandbox below runs a live
+              question through the same retrieval path (no private message bodies unless you are
+              authorized).
+            </p>
             <input
               className="w-full rounded border border-[var(--acton-border)] px-3 py-2 text-sm"
               value={sandboxQuery}
               onChange={(event) => setSandboxQuery(event.target.value)}
-              placeholder="e.g. RACI matrix"
+              placeholder="e.g. What did Jess say last in #project-management?"
             />
             <Button
               type="button"
@@ -184,10 +266,35 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
             {result &&
             typeof result === "object" &&
             result !== null &&
-            "results" in (result as object) ? (
+            ("results" in (result as object) || "credentialPath" in (result as object)) ? (
               <div className="mt-2 space-y-3 text-sm text-[var(--acton-navy)]">
+                {"credentialPath" in (result as object) ? (
+                  <div className="rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-2 text-xs">
+                    <p className="font-semibold">Retrieval diagnostics</p>
+                    <p>
+                      Credential:{" "}
+                      {String((result as { credentialPath?: string }).credentialPath ?? "—")}
+                    </p>
+                    <p>
+                      Method:{" "}
+                      {String((result as { retrievalMethod?: string }).retrievalMethod ?? "—")}
+                    </p>
+                    <p>
+                      Matching results:{" "}
+                      {String((result as { matchingResults?: number }).matchingResults ?? "—")}
+                    </p>
+                    <p>
+                      Permalink:{" "}
+                      {String(
+                        (result as { permalinkGenerated?: boolean }).permalinkGenerated
+                          ? "yes"
+                          : "no",
+                      )}
+                    </p>
+                  </div>
+                ) : null}
                 {"plan" in (result as object) &&
-                (result as { plan?: Record<string, unknown> }).plan ? (
+                (result as { plan?: Record<string, unknown> | null }).plan ? (
                   <div className="rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-2 text-xs">
                     <p className="font-semibold">Plan</p>
                     <p>
@@ -195,14 +302,35 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                     </p>
                     <p>
                       People:{" "}
-                      {((result as { plan: { people?: string[] } }).plan.people ?? []).join(", ") ||
-                        "—"}
+                      {Array.isArray((result as { plan: { people?: unknown } }).plan.people)
+                        ? (
+                            (
+                              result as {
+                                plan: { people: Array<string | { displayName?: string }> };
+                              }
+                            ).plan.people ?? []
+                          )
+                            .map((p) => (typeof p === "string" ? p : (p.displayName ?? "")))
+                            .filter(Boolean)
+                            .join(", ") || "—"
+                        : "—"}
                     </p>
                     <p>
                       Channels:{" "}
-                      {((result as { plan: { channels?: string[] } }).plan.channels ?? []).join(
-                        ", ",
-                      ) || "—"}
+                      {Array.isArray((result as { plan: { channels?: unknown } }).plan.channels)
+                        ? (
+                            (
+                              result as {
+                                plan: {
+                                  channels: Array<string | { displayLabel?: string }>;
+                                };
+                              }
+                            ).plan.channels ?? []
+                          )
+                            .map((c) => (typeof c === "string" ? c : (c.displayLabel ?? "")))
+                            .filter(Boolean)
+                            .join(", ") || "—"
+                        : "—"}
                     </p>
                     <p>
                       Time:{" "}

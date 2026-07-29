@@ -54,9 +54,17 @@ function parseBool(raw: string | boolean | undefined, defaultValue: boolean): bo
 
 export function isSlackSearchEnabled(): boolean {
   try {
-    return Boolean(getEnv().ENABLE_SLACK_SEARCH);
+    const env = getEnv();
+    // Explicit ENABLE_SLACK_SEARCH wins; otherwise inherit Slack integration on.
+    if (process.env.ENABLE_SLACK_SEARCH !== undefined && process.env.ENABLE_SLACK_SEARCH !== "") {
+      return Boolean(env.ENABLE_SLACK_SEARCH);
+    }
+    return Boolean(env.ENABLE_SLACK_INTEGRATION);
   } catch {
-    return parseBool(process.env.ENABLE_SLACK_SEARCH, false);
+    if (process.env.ENABLE_SLACK_SEARCH !== undefined && process.env.ENABLE_SLACK_SEARCH !== "") {
+      return parseBool(process.env.ENABLE_SLACK_SEARCH, false);
+    }
+    return parseBool(process.env.ENABLE_SLACK_INTEGRATION, false);
   }
 }
 

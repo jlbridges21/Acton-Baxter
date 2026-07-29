@@ -34,7 +34,8 @@ describe("Slack search decision (Prompt 2)", () => {
     expect(detectSlackSearchRole({ question: "What is an ADU?" })).toBe("skip");
   });
 
-  it("uses Slack as primary for when-will-ready status when other evidence missing", () => {
+  it("uses Slack as primary for when-will when Knowledge lacks a timeline (source sufficiency)", () => {
+    // Answer pipeline sets hasOtherStrongEvidence=false when Knowledge doesn't answer WHEN.
     expect(
       detectSlackSearchRole({
         question: "When will the RACI matrix be ready?",

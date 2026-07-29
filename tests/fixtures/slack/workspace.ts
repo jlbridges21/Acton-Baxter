@@ -7,6 +7,13 @@ export const FIXTURE_TEAM_ID = "T_ACTON_TEST";
 
 export const fixtureUsers = [
   {
+    id: "U_JAMES",
+    displayName: "James",
+    realName: "James Wilson",
+    username: "james",
+    teamId: FIXTURE_TEAM_ID,
+  },
+  {
     id: "U_JESS",
     displayName: "Jess",
     realName: "Jessica Chen",
@@ -59,6 +66,14 @@ export const fixtureUsers = [
 
 export const fixtureChannels = [
   {
+    id: "C_BAXTER",
+    name: "baxter",
+    displayLabel: "#baxter",
+    teamId: FIXTURE_TEAM_ID,
+    kind: "public_channel" as const,
+    isPrivate: false,
+  },
+  {
     id: "C_SALES",
     name: "sales",
     displayLabel: "#sales",
@@ -102,6 +117,40 @@ export const fixtureChannels = [
 
 /** Synthetic messages — not real Acton content. */
 export const fixtureMessages = {
+  jamesBaxterOldest: {
+    user: "U_JAMES",
+    ts: "1719000000.000100",
+    text: "Testing the new Slack search integration.",
+  },
+  jacksonBaxter: {
+    user: "U_JACKSON",
+    ts: "1719001800.000100",
+    text: "Looks good.",
+  },
+  jamesBaxterNewest: {
+    user: "U_JAMES",
+    ts: "1719003600.000100",
+    text: "I updated the OAuth scopes and reinstalled Baxter.",
+  },
+  jessPmOldest: {
+    user: "U_JESS",
+    ts: "1718800000.000200",
+    text: "Earlier note in project-management.",
+  },
+  jessPmNewest: {
+    user: "U_JESS",
+    ts: "1719400000.000100",
+    text: "Design presentation moved to Thursday while we finish revised elevations.",
+  },
+  milanRaciFriday: {
+    author_user_id: "U_MILAN",
+    author_name: "Milan",
+    channel_id: "C_PM",
+    channel_name: "project-management",
+    message_ts: "1719350000.000100",
+    content: "Let's have the RACI draft ready for review Friday.",
+    permalink: "https://actonadu.slack.com/archives/C_PM/p1719350000000100",
+  },
   jessDesignPresentation: {
     author_user_id: "U_JESS",
     author_name: "Jess",

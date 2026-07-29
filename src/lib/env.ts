@@ -151,7 +151,9 @@ function readServerRaw() {
     GOOGLE_SYNC_ENABLED: process.env.GOOGLE_SYNC_ENABLED ?? "true",
     GOOGLE_SYNC_INTERVAL_MINUTES: process.env.GOOGLE_SYNC_INTERVAL_MINUTES ?? "180",
     ENABLE_SLACK_INTEGRATION: process.env.ENABLE_SLACK_INTEGRATION ?? "false",
-    ENABLE_SLACK_SEARCH: process.env.ENABLE_SLACK_SEARCH ?? "false",
+    ENABLE_SLACK_SEARCH:
+      process.env.ENABLE_SLACK_SEARCH ??
+      (process.env.ENABLE_SLACK_INTEGRATION === "true" ? "true" : "false"),
     SLACK_SIGNING_SECRET: process.env.SLACK_SIGNING_SECRET ?? "",
     SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN ?? "",
     SLACK_APP_TOKEN: process.env.SLACK_APP_TOKEN ?? "",

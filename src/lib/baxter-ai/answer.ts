@@ -59,6 +59,11 @@ import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversatio
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
 import { readSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
 import {
+  nonSlackEvidenceSatisfiesQuestion,
+  shouldForceSlackDespiteOtherEvidence,
+} from "@/lib/baxter-data/slack/source-sufficiency";
+import { formatSlackRetrievalStatusForModel } from "@/lib/baxter-data/slack/retrieval-status";
+import {
   buildSourceAuthorityPromptBlock,
   classifySourceAuthority,
 } from "@/lib/baxter-ai/source-authority";
@@ -535,12 +540,22 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   }
 
   // Live Slack conversational evidence (authorized before model; not Knowledge).
+  // Presence of Knowledge ≠ answering the requested dimension (e.g. WHEN / what did X say).
   const priorSlack = readSlackConversationState(conversation.metadata ?? {});
+  const knowledgeExcerpts = contextItems.map(
+    (item) => `${item.title ?? ""}\n${item.summary ?? ""}\n${item.contentExcerpt ?? ""}`,
+  );
+  const otherEvidenceSatisfies = nonSlackEvidenceSatisfiesQuestion(question, knowledgeExcerpts);
+  const forceSlack = shouldForceSlackDespiteOtherEvidence(question);
+  const hasOtherStrongEvidence = otherEvidenceSatisfies && !forceSlack && contextItems.length > 0;
   const slackRoleEarly = detectSlackSearchRole({
     question,
-    hasOtherStrongEvidence: contextItems.length > 0,
+    hasOtherStrongEvidence,
     followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
   });
+  // Slack-origin requests can use bot public-channel history without a separate web OAuth link.
+  const allowPublicOnlyFallback =
+    input.channel === "slack" || Boolean(input.externalUserId) || forceSlack;
 
   const slackRuntime = await retrieveSlackForAnswer({
     question,
@@ -549,11 +564,18 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       slackUserId: input.externalUserId,
       slackTeamId: input.slackTeamId ?? null,
       actionToken: input.slackActionToken ?? null,
-      allowPublicOnlyFallback: false,
+      allowPublicOnlyFallback,
     },
     conversationMetadata: conversation.metadata ?? {},
-    hasOtherStrongEvidence: contextItems.length > 0,
-    roleOverride: slackRoleEarly === "skip" ? "skip" : undefined,
+    hasOtherStrongEvidence,
+    roleOverride:
+      forceSlack && slackRoleEarly === "skip"
+        ? "primary"
+        : !otherEvidenceSatisfies && slackRoleEarly === "fallback"
+          ? "primary"
+          : slackRoleEarly === "skip"
+            ? "skip"
+            : undefined,
   }).catch((error) => {
     logBaxterDiagnostic("slackEvidence", {
       code: "SLACK_RETRIEVAL_FAILED",
@@ -561,6 +583,17 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       conversationId: conversation.id,
       safeMessage: error instanceof Error ? error.message.slice(0, 160) : "Slack retrieval failed",
     });
+    const retrievalStatus = {
+      status: "error" as const,
+      intent: null,
+      channel: null,
+      person: null,
+      resultCount: 0,
+      credentialPath: null,
+      retrievalMethod: null,
+      employeeNote:
+        "Slack search is temporarily unavailable, so I couldn't check Slack for this question.",
+    };
     return {
       items: [],
       selected: [],
@@ -568,12 +601,11 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       nextConversationState: null,
       authNote: null,
       noResultsNote: null,
-      incompleteNote:
-        slackRoleEarly === "primary"
-          ? "Slack search is temporarily unavailable, so I couldn't check Slack for this question."
-          : "I couldn't check Slack for additional context right now.",
+      incompleteNote: retrievalStatus.employeeNote,
+      retrievalStatus,
+      retrievalStatusPrompt: formatSlackRetrievalStatusForModel(retrievalStatus),
       diagnostics: {
-        role: slackRoleEarly,
+        role: slackRoleEarly === "skip" && forceSlack ? "primary" : slackRoleEarly,
         ran: true,
         intent: null,
         resultCount: 0,
@@ -586,6 +618,8 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         rateLimited: false,
         durationMs: 0,
         followUpReset: false,
+        retrievalStatus: "error" as const,
+        retrievalMethod: null,
         notes: ["retrieveSlackForAnswer threw"],
       },
     };
@@ -622,6 +656,10 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         rateLimited: slackRuntime.diagnostics.rateLimited,
         durationMs: slackRuntime.diagnostics.durationMs,
         followUpReset: slackRuntime.diagnostics.followUpReset,
+        retrievalStatus: slackRuntime.diagnostics.retrievalStatus,
+        retrievalMethod: slackRuntime.diagnostics.retrievalMethod,
+        otherEvidenceSatisfies,
+        forceSlack,
       }),
     });
   }
@@ -838,15 +876,19 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   try {
     const provider = getBaxterLlmProvider();
     const authority = classifySourceAuthority(question);
-    const slackNotes = [
-      slackRuntime?.authNote,
-      slackRuntime?.incompleteNote,
-      slackRuntime?.noResultsNote && slackRuntime.selected.length === 0
-        ? slackRuntime.noResultsNote
-        : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const slackStatusBlock =
+      slackRuntime?.retrievalStatusPrompt ??
+      (slackRuntime
+        ? [
+            slackRuntime.authNote,
+            slackRuntime.incompleteNote,
+            slackRuntime.noResultsNote && slackRuntime.selected.length === 0
+              ? slackRuntime.noResultsNote
+              : null,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : null);
     const identityContext =
       questionClass === "baxter_identity"
         ? [
@@ -855,7 +897,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
             buildCapabilityPromptBlock(profile?.role ?? null),
             "",
             buildSourceAuthorityPromptBlock(authority),
-            slackNotes ? `\nSlack retrieval note:\n${slackNotes}` : null,
+            slackStatusBlock ? `\n${slackStatusBlock}` : null,
           ]
             .filter(Boolean)
             .join("\n")
@@ -863,7 +905,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
             buildBaxterIdentityContext(),
             "",
             buildSourceAuthorityPromptBlock(authority),
-            slackNotes ? `\nSlack retrieval note:\n${slackNotes}` : null,
+            slackStatusBlock ? `\n${slackStatusBlock}` : null,
           ]
             .filter(Boolean)
             .join("\n");

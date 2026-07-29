@@ -20,7 +20,7 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string) {
 
   const status = !config.searchEnabled
     ? "disabled"
-    : connection?.linked || (config.readyForPublicBotSearch && config.userTokenEnvPresent)
+    : connection?.linked || config.readyForPublicBotSearch
       ? "ready"
       : config.readyForUserOauth
         ? "needs_setup"
@@ -30,12 +30,14 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string) {
     status: status as "ready" | "needs_setup" | "disabled",
     workspaceLabel: "Acton ADU",
     searchEnabled: config.searchEnabled,
+    searchEnabledLabel: config.searchEnabled ? "Enabled" : "Disabled",
     readyForUserOauth: config.readyForUserOauth,
+    readyForPublicBotSearch: config.readyForPublicBotSearch,
     missingForUserOauth: config.missingForUserOauth,
     oauthRedirectUri: config.oauthRedirectUri,
     userLevelAuthorization: connection?.linked
       ? ("configured" as const)
-      : envPublicOnly
+      : envPublicOnly || config.readyForPublicBotSearch
         ? ("partial" as const)
         : ("not_configured" as const),
     capabilities: {
@@ -45,6 +47,25 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string) {
       groupDms: linkedCaps.groupDms,
       threadContext: linkedCaps.threadContext || config.botTokenPresent,
       permalinks: true,
+      publicChannelHistory: config.botTokenPresent || linkedCaps.threadContext,
+      workspaceSearch: Boolean(connection?.linked || envPublicOnly),
+      privateSearch: linkedCaps.privateChannels,
+      dmSearch: linkedCaps.dms,
+      userResolution: true,
+      channelResolution: true,
+      permalinkGeneration: true,
+    },
+    capabilityHealth: {
+      slackEvents: config.integrationEnabled,
+      slackPosting: config.botTokenPresent,
+      slackReactions: config.botTokenPresent,
+      slackPublicChannelHistory: config.searchEnabled && config.botTokenPresent,
+      slackWorkspaceSearch: config.searchEnabled && Boolean(connection?.linked || envPublicOnly),
+      slackPrivateSearch: config.searchEnabled && linkedCaps.privateChannels,
+      slackDmSearch: config.searchEnabled && linkedCaps.dms,
+      slackUserResolution: config.integrationEnabled,
+      slackChannelResolution: config.integrationEnabled,
+      slackPermalinkGeneration: config.botTokenPresent,
     },
     connection: connection
       ? {
@@ -64,6 +85,7 @@ export async function runSlackSearchAdminTest(input: {
     | "test_user_resolution"
     | "test_channel_resolution"
     | "test_thread_retrieval"
+    | "test_latest_message"
     | "sandbox_search";
   query?: string;
   teamId?: string;
@@ -130,13 +152,21 @@ export async function runSlackSearchAdminTest(input: {
   if (
     input.action === "test_thread_retrieval" ||
     input.action === "test_public_search" ||
+    input.action === "test_latest_message" ||
     input.action === "sandbox_search"
   ) {
-    const q = query || (input.action === "test_thread_retrieval" ? "RACI matrix" : "RACI matrix");
+    const q =
+      query ||
+      (input.action === "test_latest_message"
+        ? "What did Jess say last in #project-management?"
+        : input.action === "test_thread_retrieval"
+          ? "RACI matrix"
+          : "RACI matrix");
     const evidence = await retrieveSlackEvidence({
       requester: {
         ...input.requester,
         allowPublicOnlyFallback: true,
+        slackUserId: input.requester.slackUserId ?? "admin-diagnostic",
       },
       question: q,
     });
@@ -144,18 +174,41 @@ export async function runSlackSearchAdminTest(input: {
       ok: !evidence.incomplete || evidence.results.length > 0,
       action: input.action,
       query: q,
+      requesterResolved: Boolean(input.requester.baxterUserId || input.requester.slackUserId),
+      personResolved: (evidence.plan?.people.length ?? 0) > 0,
+      channelResolved: (evidence.plan?.channels.length ?? 0) > 0,
+      credentialPath: evidence.access.tokenKind,
+      retrievalMethod: evidence.diagnostics.endpoint,
+      apiSuccess: !evidence.incomplete || evidence.results.length > 0,
+      messagesInspected: evidence.diagnostics.resultCount,
+      matchingResults: evidence.results.length,
+      permalinkGenerated: evidence.results.some((r) => Boolean(r.permalink)),
       plan: evidence.plan
         ? {
             intent: evidence.plan.intent,
             keywords: evidence.plan.keywords,
             sort: evidence.plan.sort,
             limit: evidence.plan.limit,
-            people: evidence.plan.people.map((p) => p.displayName),
-            channels: evidence.plan.channels.map((c) => c.displayLabel),
+            people: evidence.plan.people.map((p) => ({
+              id: p.id,
+              displayName: p.displayName,
+            })),
+            channels: evidence.plan.channels.map((c) => ({
+              id: c.id,
+              displayLabel: c.displayLabel,
+              kind: c.kind,
+            })),
             timeRange: evidence.plan.timeRange?.label ?? null,
           }
         : null,
-      access: evidence.access,
+      access: {
+        tokenKind: evidence.access.tokenKind,
+        userLevelAuthorization: evidence.access.userLevelAuthorization,
+        allowedChannelTypes: evidence.access.allowedChannelTypes,
+        publicChannels: evidence.access.publicChannels,
+        privateChannels: evidence.access.privateChannels,
+        dms: evidence.access.dms,
+      },
       incomplete: evidence.incomplete,
       diagnostics: {
         endpoint: evidence.diagnostics.endpoint,
@@ -163,9 +216,19 @@ export async function runSlackSearchAdminTest(input: {
         resultCount: evidence.diagnostics.resultCount,
         paginationCount: evidence.diagnostics.paginationCount,
         rateLimited: evidence.diagnostics.rateLimited,
+        exactNewestGuaranteed: evidence.diagnostics.exactNewestGuaranteed,
         notes: evidence.diagnostics.notes,
       },
-      results: formatSlackEvidenceForAdmin(evidence.results.slice(0, 10)),
+      results:
+        input.action === "sandbox_search"
+          ? formatSlackEvidenceForAdmin(evidence.results.slice(0, 10))
+          : formatSlackEvidenceForAdmin(evidence.results.slice(0, 5)).map((r) => ({
+              author: r.author,
+              channel: r.channel,
+              timestamp: r.timestamp,
+              permalink: r.permalink,
+              excerpt: r.excerpt?.slice(0, 80) ?? null,
+            })),
       threadContextSample:
         input.action === "test_thread_retrieval"
           ? (evidence.results[0]?.contextMessages?.slice(0, 5).map((m) => ({

@@ -27,6 +27,14 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
   if (/\blast message\b|\blast thing\b|\bmost recent message\b/.test(q)) {
     return "latest_message";
   }
+  // "What did Jess say last in #project-management?" / "what did James say last in the baxter channel"
+  if (
+    /\bwhat did .+ say last\b|\bsay last in\b|\bsaid last in\b|\blast in (the )?#[\w-]+|\blast in (the )?[\w-]+ channel\b/.test(
+      q,
+    )
+  ) {
+    return "latest_message";
+  }
   if (/\bwho (mentioned|said|talked about|discussed)\b|\bwho mentioned\b/.test(q)) {
     return "mention_search";
   }

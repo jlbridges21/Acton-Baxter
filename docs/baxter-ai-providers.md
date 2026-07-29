@@ -23,10 +23,10 @@
 
 Shared capability layer: `src/lib/openai/capabilities.ts` + `src/lib/openai/json-request.ts`.
 
-| Model family | Endpoint | Token param | Temperature |
-| --- | --- | --- | --- |
-| GPT-5.x / o-series | `POST /v1/responses` | `max_output_tokens` | omitted |
-| GPT-4o / classic | `POST /v1/chat/completions` | `max_tokens` | allowed |
+| Model family       | Endpoint                    | Token param         | Temperature |
+| ------------------ | --------------------------- | ------------------- | ----------- |
+| GPT-5.x / o-series | `POST /v1/responses`        | `max_output_tokens` | omitted     |
+| GPT-4o / classic   | `POST /v1/chat/completions` | `max_tokens`        | allowed     |
 
 Do **not** send Chat Completions `max_tokens` to GPT-5.x — OpenAI returns HTTP 400 `unsupported_parameter` → `BAXTER_OPENAI_BAD_REQUEST`.
 

@@ -6,6 +6,12 @@ const ALIASES: Record<string, string[]> = {
   maxx: ["max", "maxx"],
   max: ["maxx", "max"],
   jackson: ["jackson bridges", "jackson"],
+  james: ["james"],
+  milan: ["milan"],
+  kevin: ["kevin"],
+  jesse: ["jesse"],
+  zach: ["zach", "zachary"],
+  zachary: ["zach", "zachary"],
 };
 
 function normalizeName(value: string): string {

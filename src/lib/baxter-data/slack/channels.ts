@@ -11,6 +11,7 @@ const CHANNEL_ALIASES: Record<string, string[]> = {
   sales: ["sales", "the sales channel"],
   design: ["design", "the design channel"],
   general: ["general", "the general channel"],
+  baxter: ["baxter", "the baxter channel", "baxter channel"],
 };
 
 function normalizeChannel(value: string): string {

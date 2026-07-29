@@ -41,18 +41,18 @@ export function capabilitiesFromScopes(
   if (base.dms) allowed.push("im");
   if (base.groupDms) allowed.push("mpim");
 
-  // Bot path is public-only regardless of accidental private scopes.
-  if (tokenKind === "bot_with_action_token") {
+  // Bot paths are public-only regardless of accidental private scopes.
+  if (tokenKind === "bot_with_action_token" || tokenKind === "bot_public") {
     return {
-      publicChannels: base.publicChannels,
+      publicChannels: true,
       privateChannels: false,
       dms: false,
       groupDms: false,
-      threadContext: base.threadContext,
+      threadContext: true,
       permalinks: true,
       userLevelAuthorization: userLevel,
       tokenKind,
-      allowedChannelTypes: base.publicChannels ? ["public_channel"] : [],
+      allowedChannelTypes: ["public_channel"],
     };
   }
 
@@ -120,10 +120,22 @@ export function assertNoForeignDmLeak(params: {
   return { ok: true };
 }
 
+async function loadBotToken(): Promise<string> {
+  try {
+    const { getEnv } = await import("@/lib/env");
+    return getEnv().SLACK_BOT_TOKEN?.trim() ?? "";
+  } catch {
+    return (process.env.SLACK_BOT_TOKEN ?? "").trim();
+  }
+}
+
 /**
  * Resolve which Slack credential to use for search.
  * Prefer the requesting employee's user token. Never use another user's
- * private/DM scopes. Bot + action_token is public-only.
+ * private/DM scopes. Bot paths are public-only.
+ *
+ * For Slack-origin requests, bot_public (conversations.history) works WITHOUT
+ * action_token. RTS (assistant.search.context) still needs action_token or user OAuth.
  */
 export async function resolveSearchCredential(
   requester: SlackRequester,
@@ -162,17 +174,21 @@ export async function resolveSearchCredential(
     return { ok: true, credential: linked };
   }
 
-  // 2) Slack-originated public search via bot + action_token
-  if (requester.actionToken && config.botTokenPresent) {
-    let botToken = "";
-    try {
-      const { getEnv } = await import("@/lib/env");
-      botToken = getEnv().SLACK_BOT_TOKEN?.trim() ?? "";
-    } catch {
-      botToken = (process.env.SLACK_BOT_TOKEN ?? "").trim();
-    }
-    if (botToken) {
-      const scopes = ["search:read.public", "search:read.users", "channels:history"];
+  const botToken = config.botTokenPresent ? await loadBotToken() : "";
+  const canUseBotPublic =
+    Boolean(botToken) &&
+    Boolean(requester.actionToken || requester.slackUserId || requester.allowPublicOnlyFallback);
+
+  // 2) Slack-origin / public bot path
+  if (canUseBotPublic && botToken) {
+    const scopes = [
+      "search:read.public",
+      "search:read.users",
+      "channels:history",
+      "channels:read",
+      "channels:join",
+    ];
+    if (requester.actionToken) {
       return {
         ok: true,
         credential: {
@@ -186,10 +202,22 @@ export async function resolveSearchCredential(
         },
       };
     }
+    // Public channel history / channel-scoped recall without RTS action_token
+    return {
+      ok: true,
+      credential: {
+        token: botToken,
+        tokenKind: "bot_public",
+        slackUserId: requester.slackUserId ?? null,
+        slackTeamId: requester.slackTeamId ?? null,
+        scopes,
+        actionToken: null,
+        capabilities: capabilitiesFromScopes(scopes, "bot_public", "partial"),
+      },
+    };
   }
 
-  // 3) Admin public-only env user token — ONLY when explicitly allowed and
-  //    restricted to public channels in capabilities.
+  // 3) Admin public-only env user token — ONLY when explicitly allowed
   if (requester.allowPublicOnlyFallback) {
     const envToken = getSlackSearchUserTokenFromEnv();
     if (envToken) {
@@ -231,7 +259,7 @@ export async function resolveSearchCredential(
 }
 
 function employeeAuthMessage() {
-  return "Slack search is unavailable until your Slack account is linked.";
+  return "To search private Slack channels and DMs, connect your Slack account in Baxter Integrations.";
 }
 
 export function defaultEmptyAccess(): SlackAccessCapabilities {

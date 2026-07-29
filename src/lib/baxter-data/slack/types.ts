@@ -115,7 +115,7 @@ export type SlackAccessCapabilities = {
   threadContext: boolean;
   permalinks: boolean;
   userLevelAuthorization: "configured" | "not_configured" | "partial";
-  tokenKind: "user" | "bot_with_action_token" | "none";
+  tokenKind: "user" | "bot_with_action_token" | "bot_public" | "none";
   allowedChannelTypes: SlackChannelKind[];
 };
 
@@ -196,7 +196,8 @@ export type SlackSearchDeps = {
 
 export type SlackCredentialResolution = {
   token: string;
-  tokenKind: "user" | "bot_with_action_token";
+  /** user OAuth, bot+action_token for RTS, or bot_public for conversations.history on public channels */
+  tokenKind: "user" | "bot_with_action_token" | "bot_public";
   slackUserId: string | null;
   slackTeamId: string | null;
   scopes: string[];

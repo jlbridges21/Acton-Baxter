@@ -164,7 +164,8 @@ export function buildBaxterCapabilityCatalog(
       limitations: [
         "Only searches Slack content your Slack authorization allows",
         "Does not invent organizational memory or mirror Slack into Knowledge",
-        "Web users must connect Slack Search under Settings → Integrations",
+        "Private channels and DMs require connecting Slack Search under Settings → Integrations",
+        "Public channel history can use Baxter’s bot access when you message from Slack",
       ],
       helpTopics: [
         "search slack",

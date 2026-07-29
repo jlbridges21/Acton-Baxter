@@ -123,6 +123,7 @@ export function buildSourceAuthorityPromptBlock(hint: SourceAuthorityHint): stri
     "- Do not invent deadlines from vague language ('soon').",
     "- Prefer paraphrasing Slack; short quotes only when the user asks what someone exactly said.",
     "- If Slack search failed or was incomplete, say so — do not invent Slack content from other sources.",
+    "- Never say “If Slack Search is enabled…” or “I can look it up” — retrieval already ran or was blocked; use SLACK_RETRIEVAL_STATUS.",
     ...hint.notes.map((n) => `- Note: ${n}`),
   ]
     .filter(Boolean)

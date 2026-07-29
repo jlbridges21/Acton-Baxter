@@ -66,8 +66,11 @@ When Slack conflicts with approved Knowledge, explain both — do not silently o
 | Mode                                    | Access                                      |
 | --------------------------------------- | ------------------------------------------- |
 | User OAuth (`slack_search_connections`) | Content Slack says that user can access     |
-| Bot + `action_token`                    | Public context only                         |
-| Not connected (web)                     | Connect Slack CTA — no admin-token fallback |
+| Bot + `action_token`                    | Public Real-time Search                     |
+| Bot public (`bot_public`)               | Public channel `conversations.history` only |
+| Not connected (web, private/DM needed)  | Connect Slack CTA — no cross-user tokens    |
+
+For Slack-origin public channel questions (e.g. “What did Jess say last in #project-management?”), Baxter uses bot history without requiring a separate `/settings/integrations` OAuth link.
 
 Private / DM / MPIM never enter the model without the requester’s authorized token.
 
