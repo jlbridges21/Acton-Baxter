@@ -30,7 +30,17 @@ Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins
 
 ### GoHighLevel (when connected)
 
-Baxter can look up live contacts and opportunities. CRM answers cite **GoHighLevel** as a source (not Knowledge Base). Authorized users can ask Baxter to prepare CRM updates; Baxter never writes until you reply **confirm** (or cancel). Reply **cancel** to discard a pending update. Confirmations expire in about 10 minutes.
+Baxter can look up **live** contacts and opportunities. CRM answers cite **GoHighLevel** as a source and use answer type **Live Acton data** (not Knowledge Base / Approved Acton knowledge).
+
+Examples Baxter can answer when the record exists in GHL:
+
+- Contact address, phone, email, city
+- Owner / assignee (resolved to employee name)
+- Tags and custom fields (human-readable names)
+- Opportunity pipeline, stage, and value
+- Recent conversation / last message timing (bounded live retrieval)
+
+Authorized users can ask Baxter to prepare CRM updates; Baxter never writes until you reply **confirm** (or cancel). Reply **cancel** to discard a pending update. Confirmations expire in about 10 minutes.
 
 Admins can also browse Acton CRM at **Integrations → GoHighLevel** (`/admin/connectors/ghl`): Contacts, Opportunities, Conversations, and Actions. Edits there use the same confirmation flow as Baxter chat.
 
@@ -84,6 +94,7 @@ Baxter researches the address and sends a link to the full PEM report. Sign in o
 | Label                | Meaning                                                                                                                                                                                                                                      |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Sources**          | Answer grounded in **approved** Acton knowledge (Google Docs/Sheets synced into Baxter, or admin-approved Knowledge Base entries), plus live sources such as **GoHighLevel** or **Slack** when cited. Slack links open the original message. |
+| **Answer type**      | Code-owned label from actual sources: **Approved Acton knowledge**, **Live Acton data** (GHL), **Slack conversational update**, **PEM sales intelligence**, **General knowledge**, or a combined/mixed label when multiple apply.            |
 | **General guidance** | Useful context from Baxter’s AI — **not** official Acton policy.                                                                                                                                                                             |
 | **Mixed**            | Official answer not found; Baxter provides labeled general help.                                                                                                                                                                             |
 

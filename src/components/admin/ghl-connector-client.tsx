@@ -363,6 +363,8 @@ export function GhlConnectorClient({
     { label: "Opportunities", ok: checkOk(health.checks, "opportunities") },
     { label: "Conversations", ok: checkOk(health.checks, "conversations") },
     { label: "Pipelines", ok: checkOk(health.checks, "pipelines") },
+    { label: "Location", ok: checkOk(health.checks, "location") },
+    { label: "Calendars", ok: checkOk(health.checks, "calendars") },
   ];
   const statusLabel = connectionStatusLabel(
     health.overall,

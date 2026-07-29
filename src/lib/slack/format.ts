@@ -1,5 +1,5 @@
-import type { BaxterAnswer, BaxterAnswerMode, BaxterSourceReference } from "@/lib/baxter-ai/types";
-import { answerModeLabel } from "@/lib/baxter-ai/classify";
+import type { BaxterAnswer, BaxterSourceReference } from "@/lib/baxter-ai/types";
+import { deriveAnswerTypeLabel } from "@/lib/baxter-ai/classify";
 import { getPublicAppBaseUrl } from "./config";
 
 /** Slack chat.postMessage practical limit with headroom for mrkdwn. */
@@ -92,8 +92,11 @@ export function formatSlackSourceLine(source: BaxterSourceReference): string {
   return `• ${title} — ${type}`;
 }
 
-function answerTypeLine(mode: BaxterAnswerMode | null | undefined): string | null {
-  const label = answerModeLabel(mode);
+function answerTypeLine(answer: BaxterAnswer): string | null {
+  const label = deriveAnswerTypeLabel({
+    answerMode: answer.answerMode,
+    sources: answer.sources,
+  });
   if (!label) return null;
   return `_Answer type: ${escapeSlackMrkdwn(label)}_`;
 }
@@ -111,7 +114,7 @@ export function buildBaxterSlackText(answer: BaxterAnswer): string {
     }
   }
 
-  const typeLine = answerTypeLine(answer.answerMode);
+  const typeLine = answerTypeLine(answer);
   if (typeLine) {
     parts.push("", typeLine);
   }
@@ -138,7 +141,7 @@ export function buildBaxterSlackBlocks(answer: BaxterAnswer): unknown[] {
     });
   }
 
-  const typeLine = answerTypeLine(answer.answerMode);
+  const typeLine = answerTypeLine(answer);
   if (typeLine) {
     blocks.push({
       type: "context",

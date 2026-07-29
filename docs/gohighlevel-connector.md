@@ -225,7 +225,7 @@ If you see `BAXTER_GHL_SCOPE_MISSING` or `BAXTER_GHL_LOCATION_ACCESS_DENIED`:
 4. Save — the existing token will gain the new permissions
 5. Test connection in Admin → Connectors → GoHighLevel
 
-**Note:** `locations.readonly` is optional for PIT mode. Baxter can access contacts, opportunities, and pipelines without it. Location name enrichment will be skipped.
+**Note:** `locations.readonly` is now included in Acton's recommended scope set. When present, location health should pass and location metadata (name/timezone) can enrich admin diagnostics. Core CRM (contacts/opportunities/pipelines) still works if location checks fail.
 
 ### Diagnostics
 
@@ -315,6 +315,24 @@ Prompt 2 keeps GHL **out of** permanent Knowledge Base embeddings. Live CRM answ
 | Capability matrix | Core CRM success → Connected; optional missing scopes → Connected with limited capabilities                        |
 
 **Do not sync** customer messages / contact / opportunity state into `knowledge_units`.
+
+### Contact address + hydration
+
+Contact **search/list** payloads are often thin (name + city). Baxter always hydrates the **full contact by ID** before answering CRM questions so street address and other detail fields are available when GHL has them.
+
+Normalized address shape (derived in code):
+
+- `line1` ← GHL `address1` (also accepts `address` / `addressLine1` aliases)
+- `city`, `state`, `postalCode`, `country`
+- `formatted` — built only from present components (never invented)
+
+Address questions trigger query-aware snapshot focus so the model gets street/city/status wording such as:
+
+- street present → formatted address + `loaded_present`
+- city only → city/region + explicit `loaded_missing_street`
+- nothing → `loaded_missing` (full record checked; nothing saved)
+
+GHL answers use answer type **Live Acton data**, not Approved Acton knowledge.
 
 ---
 

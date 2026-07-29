@@ -2,7 +2,7 @@
 
 import { BaxterSourceList } from "./baxter-source-list";
 import type { BaxterAnswerMode, BaxterSourceReference } from "@/lib/baxter-ai/types";
-import { answerModeLabel } from "@/lib/baxter-ai/classify";
+import { deriveAnswerTypeLabel } from "@/lib/baxter-ai/classify";
 import { cn } from "@/lib/utils";
 import { BaxterMessageFeedback } from "./baxter-message-feedback";
 
@@ -19,7 +19,12 @@ export type ChatUiMessage = {
 
 export function BaxterChatMessage({ message }: { message: ChatUiMessage }) {
   const isUser = message.role === "user";
-  const modeLabel = !isUser ? answerModeLabel(message.answerMode) : null;
+  const modeLabel = !isUser
+    ? deriveAnswerTypeLabel({
+        answerMode: message.answerMode,
+        sources: message.sources,
+      })
+    : null;
 
   return (
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>

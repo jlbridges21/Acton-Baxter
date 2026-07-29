@@ -17,6 +17,7 @@ import { searchConversations, getConversationMessages } from "./resources/conver
 import { resolveContact } from "@/lib/baxter-data/ghl/resolve";
 import { rankOpportunitiesForContact, opportunitiesNeedClarification } from "./opportunity-ranking";
 import type { GhlReferenceData } from "./reference-data";
+import { contactAddressFromGhl, detectGhlSnapshotFocus, type GhlSnapshotFocus } from "./address";
 
 export type GhlEntityGraph = {
   retrievedAt: string;
@@ -36,6 +37,8 @@ export type GhlEntityGraph = {
   recentConversation: GhlConversation | null;
   recentMessages: GhlMessage[];
   customFieldLabels: Record<string, string>;
+  /** Resolved contact owner display name (users.readonly), when available. */
+  contactOwnerName?: string | null;
 };
 
 function looksLikeEmail(q: string): boolean {
@@ -113,6 +116,35 @@ export async function resolveGhlEntityGraph(
   return enrichGraph(query, retrievedAt, search.contacts[0]!, undefined, options);
 }
 
+/**
+ * Search/list payloads are often thin. Prefer full GET /contacts/:id when an id is known.
+ * Failure keeps the thin contact so secondary enrichment never blanks the answer.
+ */
+async function hydrateFullContact(contact: GhlContact): Promise<GhlContact> {
+  if (!contact.id) return contact;
+  const full = await getContactById(contact.id).catch(() => null);
+  if (!full) return contact;
+  return {
+    ...contact,
+    ...full,
+    address1: full.address1 ?? contact.address1,
+    city: full.city ?? contact.city,
+    state: full.state ?? contact.state,
+    postalCode: full.postalCode ?? contact.postalCode,
+    country: full.country ?? contact.country,
+    email: full.email ?? contact.email,
+    phone: full.phone ?? contact.phone,
+    tags: full.tags?.length ? full.tags : contact.tags,
+    customFields:
+      Object.keys(full.customFields || {}).length > 0 ? full.customFields : contact.customFields,
+    assignedTo: full.assignedTo ?? contact.assignedTo,
+    source: full.source ?? contact.source,
+    companyName: full.companyName ?? contact.companyName,
+    dateAdded: full.dateAdded ?? contact.dateAdded,
+    dateUpdated: full.dateUpdated ?? contact.dateUpdated,
+  };
+}
+
 async function enrichGraph(
   query: string,
   retrievedAt: string,
@@ -137,11 +169,16 @@ async function enrichGraph(
       recentConversation: null,
       recentMessages: [],
       customFieldLabels: {},
+      contactOwnerName: null,
     };
   }
 
+  const hydratedContact = await hydrateFullContact(contact);
+
   const [opps, pipelines, users, fields] = await Promise.all([
-    seedOpps ? Promise.resolve(seedOpps) : listOpportunitiesByContact(contact.id, { limit: 20 }),
+    seedOpps
+      ? Promise.resolve(seedOpps)
+      : listOpportunitiesByContact(hydratedContact.id, { limit: 20 }),
     listPipelines({ useCache: true }).catch(() => []),
     listUsers({ useCache: true }).catch(() => []),
     listCustomFields({ useCache: true }).catch(() => []),
@@ -177,7 +214,7 @@ async function enrichGraph(
 
   let nextAppointment: GhlCalendarEvent | null = null;
   if (options.includeAppointments !== false) {
-    const events = await listEventsForContact(contact.id).catch(() => []);
+    const events = await listEventsForContact(hydratedContact.id).catch(() => []);
     const now = Date.now();
     const upcoming = events
       .filter((e) => new Date(e.startTime).getTime() >= now)
@@ -188,7 +225,10 @@ async function enrichGraph(
   let recentConversation: GhlConversation | null = null;
   let recentMessages: GhlMessage[] = [];
   if (options.includeConversations !== false) {
-    const convResult = await searchConversations({ contactId: contact.id, limit: 5 }).catch(() => ({
+    const convResult = await searchConversations({
+      contactId: hydratedContact.id,
+      limit: 5,
+    }).catch(() => ({
       conversations: [] as GhlConversation[],
       total: null as number | null,
     }));
@@ -214,23 +254,33 @@ async function enrichGraph(
     clarificationMessage = `This contact has multiple relevant opportunities:\n${labels}\nWhich pipeline/stage should I use?`;
   }
 
+  const ownerUser = hydratedContact.assignedTo ? userById.get(hydratedContact.assignedTo) : null;
+
   return {
     retrievedAt,
     query,
     ambiguous: false,
     clarificationMessage,
     opportunityAmbiguous,
-    contact,
+    contact: hydratedContact,
     opportunities,
     nextAppointment,
     recentConversation,
     recentMessages,
     customFieldLabels,
+    contactOwnerName: ownerUser?.name ?? ownerUser?.email ?? null,
   };
 }
 
+function wantsFocus(focuses: GhlSnapshotFocus[], focus: GhlSnapshotFocus): boolean {
+  return focuses.includes("general") || focuses.includes(focus);
+}
+
 /** Concise live customer snapshot for Baxter answers (omit empty fields). */
-export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
+export function formatCustomerSnapshot(
+  graph: GhlEntityGraph,
+  options?: { question?: string | null },
+): string {
   if (graph.ambiguous && graph.clarificationMessage) {
     return graph.clarificationMessage;
   }
@@ -238,7 +288,9 @@ export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
     return "I couldn't find a matching GoHighLevel contact.";
   }
 
+  const focuses = detectGhlSnapshotFocus(options?.question || graph.query || "");
   const c = graph.contact;
+  const address = contactAddressFromGhl(c);
   const lines: string[] = [];
   const name = c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "Contact";
   lines.push(name);
@@ -246,10 +298,57 @@ export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
   lines.push("Contact");
   if (c.phone) lines.push(`Phone: ${c.phone}`);
   if (c.email) lines.push(`Email: ${c.email}`);
-  if (c.city) lines.push(`City: ${c.city}`);
-  if (c.tags?.length) lines.push(`Tags: ${c.tags.join(", ")}`);
+  if (c.companyName) lines.push(`Company: ${c.companyName}`);
 
-  if (graph.opportunities.length) {
+  if (wantsFocus(focuses, "address") || wantsFocus(focuses, "general")) {
+    if (address.hasStreet && address.formatted) {
+      lines.push(`Address: ${address.formatted}`);
+      lines.push("Address status: loaded_present (street address saved in GHL)");
+    } else if (address.present) {
+      lines.push(`Address: ${address.formatted}`);
+      lines.push(
+        "Address status: loaded_missing_street (full contact loaded; city/region present but no street address saved in GHL)",
+      );
+    } else {
+      lines.push("Address: (none saved in GoHighLevel)");
+      lines.push(
+        "Address status: loaded_missing (full contact loaded; no address fields saved in GHL)",
+      );
+    }
+  }
+
+  if (graph.contactOwnerName || c.assignedTo) {
+    if (wantsFocus(focuses, "owner") || wantsFocus(focuses, "general")) {
+      lines.push(`Owner: ${graph.contactOwnerName || c.assignedTo}`);
+    }
+  }
+  if (c.source && (wantsFocus(focuses, "general") || /\bsource\b/i.test(options?.question || ""))) {
+    lines.push(`Lead source: ${c.source}`);
+  }
+  if (c.tags?.length && (wantsFocus(focuses, "tags") || wantsFocus(focuses, "general"))) {
+    lines.push(`Tags: ${c.tags.join(", ")}`);
+  }
+  if (c.dateAdded) lines.push(`Created: ${c.dateAdded}`);
+  if (c.dateUpdated) lines.push(`Updated: ${c.dateUpdated}`);
+
+  const customEntries = Object.entries(c.customFields || {}).slice(0, 12);
+  if (
+    customEntries.length &&
+    (wantsFocus(focuses, "custom_fields") || wantsFocus(focuses, "general"))
+  ) {
+    lines.push("");
+    lines.push("Custom fields");
+    for (const [id, value] of customEntries) {
+      if (value == null || value === "") continue;
+      const label = graph.customFieldLabels[id] || id;
+      lines.push(`${label}: ${String(value)}`);
+    }
+  }
+
+  if (
+    graph.opportunities.length &&
+    (wantsFocus(focuses, "opportunity") || wantsFocus(focuses, "general"))
+  ) {
     lines.push("");
     if (graph.opportunityAmbiguous && graph.clarificationMessage) {
       lines.push(graph.clarificationMessage);
@@ -270,7 +369,7 @@ export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
     }
   }
 
-  if (graph.nextAppointment) {
+  if (graph.nextAppointment && wantsFocus(focuses, "general")) {
     const ev = graph.nextAppointment;
     lines.push("Next Appointment");
     lines.push(
@@ -283,16 +382,29 @@ export function formatCustomerSnapshot(graph: GhlEntityGraph): string {
     lines.push("");
   }
 
-  if (graph.recentMessages.length) {
+  if (
+    graph.recentMessages.length &&
+    (wantsFocus(focuses, "conversation") || wantsFocus(focuses, "general"))
+  ) {
     const last = [...graph.recentMessages].sort((a, b) => {
       const ta = a.dateAdded ? new Date(a.dateAdded).getTime() : 0;
       const tb = b.dateAdded ? new Date(b.dateAdded).getTime() : 0;
       return tb - ta;
     })[0];
-    if (last?.body) {
+    if (last) {
       lines.push("Recent communication");
+      if (last.dateAdded) {
+        lines.push(
+          `Last activity: ${new Date(last.dateAdded).toLocaleString(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}`,
+        );
+      }
+      if (last.type) lines.push(`Channel/type: ${last.type}`);
       const who = last.direction === "inbound" ? "Last inbound" : "Last outbound";
-      lines.push(`${who}: ${last.body.slice(0, 200)}`);
+      if (last.body) lines.push(`${who}: ${last.body.slice(0, 200)}`);
+      if (last.status) lines.push(`Status: ${last.status}`);
     }
   }
 

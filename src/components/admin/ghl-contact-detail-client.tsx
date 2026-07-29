@@ -16,8 +16,16 @@ type DetailResponse = {
         name: string;
         email: string | null;
         phone: string | null;
+        address1?: string | null;
         city: string | null;
         state: string | null;
+        postalCode?: string | null;
+        country?: string | null;
+        addressFormatted?: string | null;
+        addressMultiline?: string | null;
+        addressStatus?: string | null;
+        source?: string | null;
+        dateAddedLabel?: string | null;
         ownerName: string | null;
         tags: string[];
         updatedLabel: string | null;
@@ -228,13 +236,24 @@ export function GhlContactDetailClient({ canWrite }: { canWrite: boolean }) {
           <CardTitle>Contact</CardTitle>
           {c.email ? <Field label="Email" value={c.email} /> : null}
           {c.phone ? <Field label="Phone" value={c.phone} /> : null}
-          {(c.city || c.state) && (
-            <Field label="Location" value={[c.city, c.state].filter(Boolean).join(", ")} />
-          )}
-          <Field label="Owner" value={c.ownerName || "Unassigned"} />
-          {c.tags.length ? <Field label="Tags" value={c.tags.join(", ")} /> : null}
+          <AddressBlock
+            multiline={c.addressMultiline ?? null}
+            formatted={c.addressFormatted ?? null}
+            status={c.addressStatus ?? null}
+          />
         </Card>
 
+        <Card className="space-y-2 p-4">
+          <CardTitle>CRM</CardTitle>
+          <Field label="Owner" value={c.ownerName || "Unassigned"} />
+          <Field label="Source" value={c.source || "—"} />
+          {c.tags.length ? <Field label="Tags" value={c.tags.join(", ")} /> : null}
+          <Field label="Created" value={c.dateAddedLabel || "—"} />
+          <Field label="Updated" value={c.updatedLabel || "—"} />
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
         <Card className="space-y-3 p-4">
           <CardTitle>Edit</CardTitle>
           {canWrite ? (
@@ -348,6 +367,54 @@ export function GhlContactDetailClient({ canWrite }: { canWrite: boolean }) {
           </ul>
         )}
       </Card>
+    </div>
+  );
+}
+
+function AddressBlock({
+  multiline,
+  formatted,
+  status,
+}: {
+  multiline: string | null;
+  formatted: string | null;
+  status: string | null;
+}) {
+  const text = multiline || formatted;
+  const copyValue = formatted || multiline?.replace(/\n/g, ", ") || "";
+
+  if (!text) {
+    return (
+      <div className="text-sm">
+        <div className="text-[var(--acton-muted)]">Address</div>
+        <div className="text-[var(--acton-fg)]">No address saved in GoHighLevel.</div>
+        {status ? (
+          <div className="mt-0.5 text-xs text-[var(--acton-muted)]">Status: {status}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-[var(--acton-muted)]">Address</div>
+        <button
+          type="button"
+          className="text-xs text-[var(--acton-navy)] hover:underline"
+          onClick={() => {
+            void navigator.clipboard.writeText(copyValue);
+          }}
+        >
+          Copy
+        </button>
+      </div>
+      <div className="whitespace-pre-line text-[var(--acton-fg)]">{text}</div>
+      {status === "loaded_missing_street" ? (
+        <div className="mt-0.5 text-xs text-[var(--acton-muted)]">
+          City/region present; no street address saved.
+        </div>
+      ) : null}
     </div>
   );
 }

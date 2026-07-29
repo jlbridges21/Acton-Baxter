@@ -189,15 +189,30 @@ export async function buildContactDetailView(contactId: string) {
   }));
   const conversations = await hydrateConversationRows(convResult.conversations);
 
+  const { contactAddressFromGhl, formatGhlAddressMultiline } = await import("./address");
+  const address = contactAddressFromGhl(contact);
+  const addressMultiline = formatGhlAddressMultiline(address);
+
   return {
     contact: {
       id: contact.id,
       name: displayContactName(contact),
       email: contact.email,
       phone: formatPhoneDisplay(contact.phone),
+      address1: contact.address1,
       city: contact.city,
       state: contact.state,
       postalCode: contact.postalCode,
+      country: contact.country,
+      addressFormatted: address.formatted,
+      addressMultiline,
+      addressStatus: address.hasStreet
+        ? "loaded_present"
+        : address.present
+          ? "loaded_missing_street"
+          : "loaded_missing",
+      source: contact.source,
+      dateAddedLabel: formatGhlDateRelative(contact.dateAdded),
       ownerId: contact.assignedTo,
       ownerName: resolveUserDisplayName(refs, contact.assignedTo),
       tags: (contact.tags ?? []).map((t) => resolveTagDisplayName(refs, t)),

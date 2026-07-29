@@ -470,3 +470,47 @@ export function getCapabilityGuidance(capability: GhlCapabilityName): string {
   const scope = scopeMap[capability];
   return `Add the '${scope}' scope to your Private Integration in GHL → Settings → Integrations → Private Integrations.`;
 }
+
+/** Human-readable capability groups for admin UI (not raw endpoint names). */
+export const GHL_CAPABILITY_GROUPS: Array<{
+  label: string;
+  capabilities: GhlCapabilityName[];
+}> = [
+  { label: "Contacts", capabilities: ["contacts.read", "contacts.write"] },
+  {
+    label: "Opportunities",
+    capabilities: ["opportunities.read", "opportunities.write", "pipelines.read"],
+  },
+  {
+    label: "Conversations",
+    capabilities: ["conversations.read", "messages.read"],
+  },
+  {
+    label: "Custom Fields",
+    capabilities: ["customFields.read", "customFields.write"],
+  },
+  { label: "Tags", capabilities: ["tags.read"] },
+  { label: "Users", capabilities: ["users.read"] },
+  { label: "Location", capabilities: ["location.read"] },
+  { label: "Documents", capabilities: ["documents.read"] },
+  {
+    label: "Voice AI",
+    capabilities: ["voiceAi.dashboard.read", "voiceAi.agents.read"],
+  },
+  { label: "GHL Knowledge", capabilities: ["knowledgeBases.read"] },
+];
+
+export function summarizeCapabilityGroups(
+  matrix: Pick<GhlCapabilityMatrix, "capabilities">,
+): Array<{ label: string; status: "available" | "partial" | "unavailable" }> {
+  return GHL_CAPABILITY_GROUPS.map((group) => {
+    const statuses = group.capabilities.map((name) => {
+      const hit = matrix.capabilities.find((c) => c.capability === name);
+      return hit?.status ?? "not_tested";
+    });
+    const available = statuses.filter((s) => s === "available").length;
+    if (available === statuses.length) return { label: group.label, status: "available" as const };
+    if (available === 0) return { label: group.label, status: "unavailable" as const };
+    return { label: group.label, status: "partial" as const };
+  });
+}

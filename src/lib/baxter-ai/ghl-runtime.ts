@@ -570,7 +570,7 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
       };
     }
     if (graph?.contact) {
-      const snapshot = formatCustomerSnapshot(graph);
+      const snapshot = formatCustomerSnapshot(graph, { question });
       const ambiguityWarning =
         graph.opportunityAmbiguous && graph.clarificationMessage
           ? graph.clarificationMessage
@@ -582,7 +582,7 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
             id: graph.contact.id,
             title: `GoHighLevel — ${graph.contact.name || name}`,
             summary: null,
-            contentExcerpt: snapshot.slice(0, 900),
+            contentExcerpt: snapshot.slice(0, 1600),
             category: "GoHighLevel",
             tags: ["gohighlevel", "contact"],
             sourceName: "GoHighLevel",

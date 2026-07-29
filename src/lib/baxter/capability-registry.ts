@@ -305,7 +305,7 @@ export function buildBaxterCapabilityCatalog(
         ? "Look up live GHL contacts and opportunities; approved updates require confirmation."
         : "GoHighLevel integration exists but is not currently connected.",
       detailedDescription: health.ghlConfigured
-        ? "Baxter can read supported live GoHighLevel CRM information (contacts, opportunities, pipelines, conversations) and propose supported updates that require confirmation before anything changes."
+        ? "Baxter can read live GoHighLevel CRM data when connected: contacts (including address, owner, tags, custom fields), opportunities (pipeline/stage/value), and recent conversations/messages. Supported CRM updates require confirmation before anything changes."
         : "GoHighLevel can be connected by admins under Integrations. Until connected, Baxter cannot look up live CRM records.",
       category: "crm",
       audience: ["employee", "admin"],

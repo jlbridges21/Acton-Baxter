@@ -18,7 +18,7 @@ export const BAXTER_IDENTITY = {
     "Synchronized Google Workspace documents (when the Google connector is configured and healthy)",
     "Structured spreadsheet knowledge units",
     "Completed PEM NEAT structured sales intelligence (when authorized)",
-    "Live GoHighLevel CRM evidence (when connected)",
+    "Live GoHighLevel CRM evidence when connected (contacts, addresses, owners, tags, custom fields, opportunities, conversations — not Knowledge Base policy)",
     "Process Rulebook evidence (when an active rulebook is loaded)",
     "Built-in Baxter capability registry for explaining Baxter itself",
   ],

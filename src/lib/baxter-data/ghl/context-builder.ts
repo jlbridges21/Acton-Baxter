@@ -26,6 +26,7 @@ import {
 } from "./evidence";
 import { detectGhlIntent, type GhlIntentDetection } from "@/lib/baxter-ai/ghl-intent";
 import { resolveContact, resolveOpportunity } from "./resolve";
+import { contactAddressFromGhl } from "@/lib/connectors/ghl/address";
 
 export type GhlContextResult = {
   hasData: boolean;
@@ -483,12 +484,8 @@ function formatContactContext(contact: GhlContact): string {
   if (contact.email) parts.push(`Email: ${contact.email}`);
   if (contact.phone) parts.push(`Phone: ${contact.phone}`);
   if (contact.companyName) parts.push(`Company: ${contact.companyName}`);
-  if (contact.address1 || contact.city || contact.state) {
-    const address = [contact.address1, contact.city, contact.state, contact.postalCode]
-      .filter(Boolean)
-      .join(", ");
-    if (address) parts.push(`Address: ${address}`);
-  }
+  const address = contactAddressFromGhl(contact);
+  if (address.formatted) parts.push(`Address: ${address.formatted}`);
   if (contact.source) parts.push(`Source: ${contact.source}`);
   if (contact.tags && contact.tags.length > 0) {
     parts.push(`Tags: ${contact.tags.join(", ")}`);

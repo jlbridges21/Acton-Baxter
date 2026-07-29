@@ -97,10 +97,15 @@ export function normalizeContact(raw: RawContact, locationId?: string): GhlConta
     email: asString(raw.email),
     phone: asString(raw.phone),
     companyName: asString(raw.companyName),
-    address1: asString(raw.address1),
+    // GHL commonly uses address1; some payloads use address / addressLine1.
+    address1:
+      asString(raw.address1) ??
+      asString(raw.address) ??
+      asString(raw.addressLine1) ??
+      asString(raw.address_line_1),
     city: asString(raw.city),
     state: asString(raw.state),
-    postalCode: asString(raw.postalCode),
+    postalCode: asString(raw.postalCode) ?? asString(raw.zip) ?? asString(raw.zipCode),
     country: asString(raw.country),
     source: asString(raw.source),
     tags: asStringArray(raw.tags),
