@@ -571,8 +571,13 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     }
     if (graph?.contact) {
       const snapshot = formatCustomerSnapshot(graph, { question });
+      const { isContactLevelGhlQuestion } = await import("@/lib/connectors/ghl/address");
+      // Contact-level asks (address, phone, email, tags, …) must not be blocked by
+      // opportunity disambiguation — the admin UI already shows full contact details.
       const ambiguityWarning =
-        graph.opportunityAmbiguous && graph.clarificationMessage
+        graph.opportunityAmbiguous &&
+        graph.clarificationMessage &&
+        !isContactLevelGhlQuestion(question)
           ? graph.clarificationMessage
           : undefined;
       return {
@@ -591,7 +596,7 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
             mimeType: null,
             updatedAt: graph.retrievedAt,
             citationLabel: `GoHighLevel — ${graph.contact.name || name}${
-              graph.opportunities[0]?.opportunity.name
+              !isContactLevelGhlQuestion(question) && graph.opportunities[0]?.opportunity.name
                 ? ` — ${graph.opportunities[0].opportunity.name}`
                 : ""
             }`,

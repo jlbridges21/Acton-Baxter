@@ -14,6 +14,7 @@ export type SlackCommandPayload = {
   text?: string;
   command?: string;
   response_url?: string;
+  trigger_id?: string;
 };
 
 export type SlackCommandAck = {
@@ -168,5 +169,6 @@ export function parseSlackCommandBody(rawBody: string): SlackCommandPayload {
     text: params.get("text") ?? undefined,
     command: params.get("command") ?? undefined,
     response_url: params.get("response_url") ?? undefined,
+    trigger_id: params.get("trigger_id") ?? undefined,
   };
 }

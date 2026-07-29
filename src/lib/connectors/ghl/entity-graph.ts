@@ -317,12 +317,25 @@ export function formatCustomerSnapshot(
     }
   }
 
+  // Phone/email always included above when present; reinforce for field-specific asks.
+  if (wantsFocus(focuses, "phone") && c.phone) {
+    lines.push(`Phone (requested): ${c.phone}`);
+  }
+  if (wantsFocus(focuses, "email") && c.email) {
+    lines.push(`Email (requested): ${c.email}`);
+  }
+
   if (graph.contactOwnerName || c.assignedTo) {
     if (wantsFocus(focuses, "owner") || wantsFocus(focuses, "general")) {
       lines.push(`Owner: ${graph.contactOwnerName || c.assignedTo}`);
     }
   }
-  if (c.source && (wantsFocus(focuses, "general") || /\bsource\b/i.test(options?.question || ""))) {
+  if (
+    c.source &&
+    (wantsFocus(focuses, "source") ||
+      wantsFocus(focuses, "general") ||
+      /\bsource\b/i.test(options?.question || ""))
+  ) {
     lines.push(`Lead source: ${c.source}`);
   }
   if (c.tags?.length && (wantsFocus(focuses, "tags") || wantsFocus(focuses, "general"))) {

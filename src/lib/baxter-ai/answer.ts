@@ -546,13 +546,16 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     (item) => `${item.title ?? ""}\n${item.summary ?? ""}\n${item.contentExcerpt ?? ""}`,
   );
   const otherEvidenceSatisfies = nonSlackEvidenceSatisfiesQuestion(question, knowledgeExcerpts);
-  const forceSlack = shouldForceSlackDespiteOtherEvidence(question);
+  const forceSlack =
+    Boolean(input.slackRecallForced) || shouldForceSlackDespiteOtherEvidence(question);
   const hasOtherStrongEvidence = otherEvidenceSatisfies && !forceSlack && contextItems.length > 0;
-  const slackRoleEarly = detectSlackSearchRole({
-    question,
-    hasOtherStrongEvidence,
-    followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
-  });
+  const slackRoleEarly = input.slackRecallForced
+    ? "primary"
+    : detectSlackSearchRole({
+        question,
+        hasOtherStrongEvidence,
+        followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
+      });
   // Slack-origin requests can use bot public-channel history without a separate web OAuth link.
   const allowPublicOnlyFallback =
     input.channel === "slack" || Boolean(input.externalUserId) || forceSlack;

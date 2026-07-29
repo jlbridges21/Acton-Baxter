@@ -77,7 +77,45 @@ export function formatGhlAddressMultiline(address: GhlContactAddress): string | 
 }
 
 export type GhlSnapshotFocus =
-  "address" | "owner" | "tags" | "custom_fields" | "opportunity" | "conversation" | "general";
+  | "address"
+  | "phone"
+  | "email"
+  | "owner"
+  | "tags"
+  | "source"
+  | "custom_fields"
+  | "opportunity"
+  | "conversation"
+  | "general";
+
+/** Contact-level facets that must not be blocked by opportunity ambiguity. */
+const HARD_CONTACT_FOCUSES: ReadonlySet<GhlSnapshotFocus> = new Set([
+  "address",
+  "phone",
+  "email",
+  "tags",
+  "source",
+  "custom_fields",
+]);
+
+const CONTACT_LEVEL_FOCUSES: ReadonlySet<GhlSnapshotFocus> = new Set([
+  ...HARD_CONTACT_FOCUSES,
+  "owner",
+  "conversation",
+]);
+
+/**
+ * True when the question targets contact (or conversation) data, not opportunity stage/value.
+ * When both contact and opportunity terms appear (e.g. "Feasibility Pipeline, but what's their address?"),
+ * hard contact fields win so opportunity clarification does not block the answer.
+ */
+export function isContactLevelGhlQuestion(question: string): boolean {
+  const focuses = detectGhlSnapshotFocus(question);
+  if (focuses.some((f) => HARD_CONTACT_FOCUSES.has(f))) return true;
+  const hasContact = focuses.some((f) => CONTACT_LEVEL_FOCUSES.has(f));
+  const hasOpportunity = focuses.includes("opportunity");
+  return hasContact && !hasOpportunity;
+}
 
 /** Detect whether a free-text query is likely targeting address fields. */
 export function isLikelyAddressSearchQuery(query: string): boolean {
@@ -146,19 +184,31 @@ export function contactMatchesAddressQuery(
 export function detectGhlSnapshotFocus(question: string): GhlSnapshotFocus[] {
   const q = question.toLowerCase();
   const focuses: GhlSnapshotFocus[] = [];
-  if (/\b(address|street|mailing|live|lives|located|location|zip|postal)\b/.test(q)) {
+  if (/\b(address|street|mailing|full address|lives?|located|zip|postal)\b/.test(q)) {
     focuses.push("address");
   }
-  if (/\b(owner|assigned|who owns|who is assigned)\b/.test(q)) {
+  if (/\b(phone|mobile|cell|telephone)\b/.test(q)) {
+    focuses.push("phone");
+  }
+  if (/\b(e-?mail)\b/.test(q) && !/\b(last email|email we sent)\b/.test(q)) {
+    focuses.push("email");
+  }
+  if (/\b(owner|assigned|who owns|who is assigned)\b/.test(q) && !/\bopportunity owner\b/.test(q)) {
     focuses.push("owner");
   }
   if (/\b(tags?|tagged)\b/.test(q)) {
     focuses.push("tags");
   }
+  if (
+    /\b(lead source|where did .+ come from|contact source)\b/.test(q) ||
+    (/\bsource\b/.test(q) && !/\bsource field\b/.test(q) && !/\bopportunit/.test(q))
+  ) {
+    focuses.push("source");
+  }
   if (/\b(custom field|lead city|utm|source field)\b/.test(q)) {
     focuses.push("custom_fields");
   }
-  if (/\b(opportunit|pipeline|stage|deal|value)\b/.test(q)) {
+  if (/\b(opportunit|pipeline|stage|deal|monetary|value of)\b/.test(q)) {
     focuses.push("opportunity");
   }
   if (

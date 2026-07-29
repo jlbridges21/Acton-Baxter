@@ -12,12 +12,15 @@ Production URL: **`https://acton-baxter.vercel.app`**
 
 Baxter is Acton ADU’s internal AI assistant. In Slack it:
 
-| Feature               | How employees use it                                                                                        |
-| --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Q&A (DMs)**         | Message Baxter directly — no `@Baxter` required in DMs                                                      |
-| **Q&A (channels)**    | `@Baxter <question>` in an allowed channel; replies appear **in a thread**                                  |
-| **Clear context**     | Send `/clear` in a DM or thread — starts a fresh conversation (plain text; no slash-command config needed)  |
-| **Property Research** | `/property [address]` — same PEM research as the web tool; returns a login-protected link (no PDF in Slack) |
+| Feature               | How employees use it                                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Q&A (DMs)**         | Message Baxter directly — no `@Baxter` required in DMs                                                     |
+| **Q&A (channels)**    | `@Baxter <question>` in an allowed channel; replies appear **in a thread**                                 |
+| **Clear context**     | Send `/clear` in a DM or thread — starts a fresh conversation (plain text; no slash-command config needed) |
+| **Property Research** | `/property [address]` — same research as the web tool; returns a login-protected link (no PDF in Slack)    |
+| **Clear / Help**      | `/clear`, `/help` — also available as plain-text commands in DMs                                           |
+| **Slack recall**      | `/recall [query]` — explicit live Slack search (same pipeline as conversational recall)                    |
+| **PEM NEAT**          | `/pem` — Slack modal to create a Partnership Evaluation Meeting NEAT                                       |
 
 Baxter reuses the same `answerBaxterQuestion()` backend as web chat. Answers may include **Sources** (approved Knowledge Base / Google-synced docs) or clearly labeled **general guidance**. Baxter never invents official Acton policy or fake URLs.
 
@@ -60,12 +63,17 @@ The canonical manifest lives at `docs/slack-app-manifest.yaml`. After creating t
 | Setting                 | Value                                                         |
 | ----------------------- | ------------------------------------------------------------- |
 | App name                | Baxter                                                        |
-| Slash command           | `/property`                                                   |
+| Slash commands          | `/property`, `/clear`, `/help`, `/recall`, `/pem`             |
 | Events request URL      | `https://acton-baxter.vercel.app/api/slack/events`            |
 | `/property` request URL | `https://acton-baxter.vercel.app/api/slack/commands/property` |
+| `/clear` request URL    | `https://acton-baxter.vercel.app/api/slack/commands/clear`    |
+| `/help` request URL     | `https://acton-baxter.vercel.app/api/slack/commands/help`     |
+| `/recall` request URL   | `https://acton-baxter.vercel.app/api/slack/commands/recall`   |
+| `/pem` request URL      | `https://acton-baxter.vercel.app/api/slack/commands/pem`      |
+| Interactivity URL       | `https://acton-baxter.vercel.app/api/slack/interactions`      |
 | Bot events              | `app_mention`, `message.im`                                   |
 | Socket Mode             | **Disabled**                                                  |
-| Interactivity           | **Disabled**                                                  |
+| Interactivity           | **Enabled** (required for `/pem` modal)                       |
 
 If you change scopes or events later, update the manifest file, re-import it, and **reinstall** the app (section 10).
 
@@ -239,22 +247,43 @@ Slack retries failed deliveries. Baxter deduplicates via `slack_event_receipts` 
 
 ---
 
-## 9. Slash command `/property`
+## 9. Slash commands
 
-Configured in the manifest:
+Configured in the manifest (`docs/slack-app-manifest.yaml`):
 
-| Field       | Value                                                         |
-| ----------- | ------------------------------------------------------------- |
-| Command     | `/property`                                                   |
-| Request URL | `https://acton-baxter.vercel.app/api/slack/commands/property` |
-| Usage hint  | `[address]`                                                   |
-| Description | Research a property address with Baxter Property Research     |
+| Command     | Request URL                                                   | Usage hint  | Description               |
+| ----------- | ------------------------------------------------------------- | ----------- | ------------------------- |
+| `/property` | `https://acton-baxter.vercel.app/api/slack/commands/property` | `[address]` | Property Research         |
+| `/clear`    | `https://acton-baxter.vercel.app/api/slack/commands/clear`    | _(none)_    | Reset Baxter conversation |
+| `/help`     | `https://acton-baxter.vercel.app/api/slack/commands/help`     | _(none)_    | Capabilities and examples |
+| `/recall`   | `https://acton-baxter.vercel.app/api/slack/commands/recall`   | `[query]`   | Live Slack history search |
+| `/pem`      | `https://acton-baxter.vercel.app/api/slack/commands/pem`      | _(none)_    | PEM NEAT creation modal   |
+
+### `/property`
 
 Example: `/property 655 13th St, San Jose, CA`
 
 Baxter acknowledges immediately, runs Property Research asynchronously, and posts a login-protected report link when complete. Slack never receives a PDF attachment.
 
 Report ownership: set `SLACK_REPORT_USER_ID` to an existing employee profile UUID, **or** leave unset and Baxter uses the **first admin profile**. No fake Supabase user is needed for Q&A.
+
+### `/clear` / `/help` / `/recall`
+
+- `/clear` — same reset as plain-text `/clear` in a DM.
+- `/help` — static capability text (no OpenAI).
+- `/recall <query>` — routes through the shared live Slack retrieval pipeline with recall forced as primary intent. Empty query returns usage examples.
+
+### `/pem` + Interactivity
+
+1. Enable **Interactivity** with request URL:
+   `https://acton-baxter.vercel.app/api/slack/interactions`
+2. `/pem` opens a Slack modal (`views.open`) within ~3 seconds of the slash command.
+3. Creator must have a **linked Baxter account** via Settings → Integrations → Slack Search.
+4. Salesperson options come from Baxter Sales department eligibility (`listSalespeople`).
+5. Transcript max in the modal: **3000 characters** (Slack limit). Longer transcripts: use `https://acton-baxter.vercel.app/pem-neats/new`.
+6. Submission creates the PEM via existing store + `startPemNeatGeneration` (no duplicate pipeline).
+
+No additional bot OAuth scopes are required beyond existing `commands` + Interactivity enabled.
 
 ---
 

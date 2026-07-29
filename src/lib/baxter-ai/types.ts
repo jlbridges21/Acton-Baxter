@@ -50,6 +50,11 @@ export type BaxterQuestionInput = {
    * Required for bot-token public search; never log or expose to the model.
    */
   slackActionToken?: string | null;
+  /**
+   * When true (e.g. Slack `/recall`), treat live Slack retrieval as primary intent
+   * even if the question wording is ambiguous.
+   */
+  slackRecallForced?: boolean;
 };
 
 export type BaxterAnswer = {

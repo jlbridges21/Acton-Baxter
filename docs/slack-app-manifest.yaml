@@ -14,6 +14,26 @@ features:
       description: Research a property address with Baxter Property Research
       usage_hint: "[address]"
       should_escape: false
+    - command: /clear
+      url: https://acton-baxter.vercel.app/api/slack/commands/clear
+      description: Clear / reset your Baxter conversation
+      usage_hint: ""
+      should_escape: false
+    - command: /help
+      url: https://acton-baxter.vercel.app/api/slack/commands/help
+      description: Show Baxter capabilities and examples
+      usage_hint: ""
+      should_escape: false
+    - command: /recall
+      url: https://acton-baxter.vercel.app/api/slack/commands/recall
+      description: Search Slack history with Baxter
+      usage_hint: "[query]"
+      should_escape: false
+    - command: /pem
+      url: https://acton-baxter.vercel.app/api/slack/commands/pem
+      description: Start a Partnership Evaluation Meeting NEAT
+      usage_hint: ""
+      should_escape: false
 oauth_config:
   redirect_urls:
     - https://acton-baxter.vercel.app/api/slack/search/oauth/callback
@@ -23,7 +43,7 @@ oauth_config:
       - app_mentions:read
       - chat:write
       - im:history
-      # Required — /property slash command
+      # Required — slash commands
       - commands
       # Admin UX — resolve human-readable user names (users.info)
       - users:read
@@ -60,7 +80,8 @@ settings:
       - app_mention
       - message.im
   interactivity:
-    is_enabled: false
+    is_enabled: true
+    request_url: https://acton-baxter.vercel.app/api/slack/interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

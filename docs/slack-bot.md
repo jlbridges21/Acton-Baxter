@@ -177,15 +177,19 @@ Secrets are never displayed — only present/absent indicators.
 
 ## Supported interactions
 
-| Interaction                  | Supported                             |
-| ---------------------------- | ------------------------------------- |
-| Direct messages              | Yes — free-form conversation          |
-| `@Baxter` in allowed channel | Yes — replies in thread               |
-| Thread follow-up in DM       | Yes — no re-mention needed            |
-| Thread follow-up in channel  | Requires `@Baxter` again (default)    |
-| `/property` slash command    | Yes — separate Property Research flow |
-| Bot-to-bot messages          | Ignored                               |
-| Duplicate Slack retries      | Deduped safely                        |
+| Interaction                  | Supported                            |
+| ---------------------------- | ------------------------------------ |
+| Direct messages              | Yes — free-form conversation         |
+| `@Baxter` in allowed channel | Yes — replies in thread              |
+| Thread follow-up in DM       | Yes — no re-mention needed           |
+| Thread follow-up in channel  | Requires `@Baxter` again (default)   |
+| `/property` slash command    | Yes — Property Research flow         |
+| `/clear` slash command       | Yes — reset Baxter conversation      |
+| `/help` slash command        | Yes — capabilities and examples      |
+| `/recall` slash command      | Yes — live Slack history search      |
+| `/pem` slash command         | Yes — PEM NEAT modal (interactivity) |
+| Bot-to-bot messages          | Ignored                              |
+| Duplicate Slack retries      | Deduped safely                       |
 
 ---
 
@@ -217,5 +221,25 @@ Full code list: `docs/slack-setup.md` section K.
 | ------------------------------ | ------ | -------------------------- |
 | `/api/slack/events`            | POST   | Events API (DMs, mentions) |
 | `/api/slack/commands/property` | POST   | `/property` slash command  |
+| `/api/slack/commands/clear`    | POST   | `/clear` slash command     |
+| `/api/slack/commands/help`     | POST   | `/help` slash command      |
+| `/api/slack/commands/recall`   | POST   | `/recall` slash command    |
+| `/api/slack/commands/pem`      | POST   | `/pem` slash command       |
+| `/api/slack/interactions`      | POST   | Modal submissions (`/pem`) |
 
 Manifest: `docs/slack-app-manifest.yaml`
+
+---
+
+## Slash commands (quick reference)
+
+| Route                          | Purpose                            | Slash Command     |
+| ------------------------------ | ---------------------------------- | ----------------- |
+| `/api/slack/commands/property` | Start Property Research workflow   | `/property`       |
+| `/api/slack/commands/clear`    | Clear Baxter conversation context  | `/clear`          |
+| `/api/slack/commands/help`     | Show Baxter help and capabilities  | `/help`           |
+| `/api/slack/commands/pem`      | Open PEM NEAT creation modal       | `/pem`            |
+| `/api/slack/commands/recall`   | Explicitly search Slack history    | `/recall`         |
+| `/api/slack/interactions`      | Handle PEM modal `view_submission` | _(interactivity)_ |
+
+Plain-text `/clear` and `/help` in DMs still work via the Events API. Slash commands are shortcuts that use the same underlying Baxter logic. `/recall` forces live Slack retrieval as primary intent. `/pem` requires Interactivity enabled and a linked Baxter account (Settings → Integrations → Slack Search).
