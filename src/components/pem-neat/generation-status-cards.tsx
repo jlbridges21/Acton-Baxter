@@ -166,7 +166,11 @@ export function GenerationFailedCard({
         onClick={onRetry}
         disabled={retrying}
       >
-        {retrying ? "Retrying…" : "Retry Analysis"}
+        {retrying
+          ? "Retrying…"
+          : adminDetails?.failedStage === "assessment"
+            ? "Retry Assessment"
+            : "Retry Analysis"}
       </Button>
     </Card>
   );

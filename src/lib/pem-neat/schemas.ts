@@ -72,9 +72,25 @@ export const nullableNumberSchema = z.preprocess((value) => {
 
 const nullableScoreSchema = z.preprocess((value) => {
   if (value == null || value === "") return null;
-  const n = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(Math.min(10, Math.max(1, n)));
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    return Math.round(Math.min(10, Math.max(1, value)));
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return null;
+    if (/not[\s_-]*determinable|n\/?a|unknown|insufficient/i.test(t)) return null;
+    const slash = t.match(/^(\d{1,2})\s*\/\s*10$/i);
+    if (slash) {
+      const n = Number(slash[1]);
+      return Number.isFinite(n) ? Math.round(Math.min(10, Math.max(1, n))) : null;
+    }
+    const cleaned = t.replace(/[^0-9.-]/g, "");
+    if (!cleaned) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? Math.round(Math.min(10, Math.max(1, n))) : null;
+  }
+  return null;
 }, z.number().int().min(1).max(10).nullable());
 
 /** Provenance-aware value used where reliability matters. Coerces plain strings from models. */

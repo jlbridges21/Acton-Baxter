@@ -234,35 +234,61 @@ If the transcript ends mid-meeting, set transcriptIncomplete=true and do not inv
 }
 
 export function buildAssessmentStagePrompt(): string {
+  const categoryLines = Object.entries(ASSESSMENT_CATEGORY_LABELS)
+    .map(([key, label]) => `- ${key}: ${label}`)
+    .join("\n");
+
   return `${buildPemNeatSystemPrompt()}
 
 STAGE C — SALES ASSESSMENT ONLY.
-Using the Fact Ledger + transcript evidence, grade salesperson execution.
+Evaluate the SALESPERSON against the Acton PEM grading standard.
+Do NOT grade the customer. Do NOT award points merely because a topic came up.
 
-Return JSON:
-assessment {
-  categories: all 12 keys with score (1-10 or null), status, evidence, whatWorked, coachingOpportunity,
-  topStrengths (≤3), topImprovements (≤3), oneThing
-},
-meetingOutcome { classification, explanation },
-qualification { classification, reasoning, risks }.
+You MUST return one JSON object matching the structured schema exactly (no assessment wrapper).
+Code owns the 12 category keys — fill every key under categories:
 
-Poor execution = LOW SCORE. NOT_DETERMINABLE only when transcript evidence for that section is absent.
-For a complete PEM, most categories should be scoreable.
-Include palo sub-object on palo_upfront_contract.
+${categoryLines}
 
-If the transcript appears truncated / mid-sentence at the end:
-- Still score Story, Pain, Budget, Decision, Schedule, Fulfillment, etc. from available evidence.
-- Prefer NOT_DETERMINABLE for outcome_close and post_sell when the meeting ending was not observed.
-- Do NOT invent a close or invent DECISION_DATE_NOT_SECURED solely from an incomplete ending.`;
+Each category:
+{
+  score: number 1–10 OR null,
+  status: COMPLETED | PARTIAL | MISSED | N_A | NOT_DETERMINABLE,
+  explanation: string,
+  evidence: string[],
+  whatWorked: string[],
+  coachingOpportunities: string[]
+}
+
+Also return palo { purpose, agenda, logistics, outcome } with the same score/status/explanation/evidence shape.
+Also return topStrengths (≤3), topImprovements (≤3), oneThing (highest-leverage coaching).
+Optionally meetingOutcome + qualification if clearer after assessment.
+
+SCORING RULES:
+- score must be a NUMBER (8) never "8/10" or "Strong".
+- NOT_DETERMINABLE means insufficient OBSERVABLE transcript to evaluate — score MUST be null.
+- NOT_DETERMINABLE does NOT mean poor performance. Poor/shallow/skipped execution with enough context = LOW SCORE (MISSED/PARTIAL).
+- Incomplete/truncated meeting ending: outcome_close and post_sell may be NOT_DETERMINABLE; earlier categories should still be scored from evidence.
+- Evaluate advisor questions, follow-ups, summaries, positioning, and close behavior — not just that customer facts exist.
+- topStrengths / topImprovements / oneThing must be specific and behavioral.`;
+}
+
+export function buildAssessmentCorrectionPrompt(): string {
+  return `${buildPemNeatSystemPrompt()}
+
+STAGE C CORRECTION — STRUCTURE ONLY.
+You previously returned Assessment JSON that failed schema validation.
+Correct the STRUCTURE to match the required schema exactly (keyed categories object, numeric scores, status enums, string arrays).
+Preserve scores, reasoning, evidence, and coaching as much as possible.
+Do not regrade the meeting unless required for structural compliance.
+Return one corrected JSON object (no wrapper).`;
 }
 
 export function buildEmailStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
 STAGE D — CUSTOMER FOLLOW-UP EMAIL ONLY.
-Using validated Sales Intelligence (customer-safe facts), return JSON:
-{ "followUpEmail": { "subject", "body" } }
+Return JSON matching the schema:
+{ "subject": string|null, "body": string }
 
 Customer-specific thank-you reflecting their goals/concerns, project direction, agreed next steps.
 Never use: Type 1/2 labels, scores, qualification, coaching, internal strategy.
@@ -273,14 +299,17 @@ export function buildHandoffStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
 STAGE E — PROJECT INTELLIGENCE + BUILDERTREND HANDOFF ONLY.
-Using Fact Ledger + Sales Intelligence, return JSON:
+Return JSON matching the schema exactly.
+Code owns all BuilderTrend field KEYS — fill VALUES (null when unknown).
+
 {
-  "projectIntelligence": { "facts": [{ "topic", "value", "status", "evidence?" }], "summary?" },
-  "buildertrendFields": { /* only supported keys; null when unknown */ },
-  "internalOpportunityNotes": "max 2500 chars",
-  "productionNotes": []
+  projectIntelligence: { facts: [{ topic, value, status, evidence }], summary },
+  buildertrendFields: { /* all required keys; null when unknown */ },
+  internalOpportunityNotes: string,
+  productionNotes: string[]
 }
 
+Enums only for: customerPriorities, preferredContactMethod, bedBathCount, projectType.
 UNKNOWN is valid → null. No sales coaching in BuilderTrend fields. No invention.`;
 }
 
@@ -288,16 +317,11 @@ export function buildQualityReviewStagePrompt(): string {
   return `${buildPemNeatSystemPrompt()}
 
 STAGE F — QUALITY REVIEWER (not the author).
-Compare Fact Ledger vs the generated NEAT. Return JSON:
+Return JSON matching the schema:
 {
-  "pass": boolean,
-  "severity": "none" | "low" | "medium" | "high",
-  "issues": [{
-    "section": string,
-    "type": "contradiction" | "unsupported" | "omission" | "attribution" | "assessment" | "email" | "other",
-    "explanation": string,
-    "suggestedCorrection": string | null
-  }]
+  pass: boolean,
+  severity: "none" | "low" | "medium" | "high",
+  issues: [{ section, type, explanation, suggestedCorrection }]
 }
 
 Flag: unsupported numeric claims, Type 2 reverse-engineered from pitch, collapsed budget meanings,

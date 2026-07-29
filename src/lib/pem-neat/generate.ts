@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { ZodError, z } from "zod";
+import { ZodError } from "zod";
 import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import type { OpenAiReasoningEffort } from "@/lib/openai/capabilities";
@@ -33,6 +33,7 @@ import {
   resolvePemNeatModelName,
 } from "./openai-client";
 import {
+  buildAssessmentCorrectionPrompt,
   buildAssessmentStagePrompt,
   buildCorrectionStagePrompt,
   buildEmailStagePrompt,
@@ -45,11 +46,24 @@ import {
   buildSalesIntelligenceStagePrompt,
 } from "./prompts";
 import {
+  ASSESSMENT_JSON_SCHEMA,
+  mapAssessmentStageToCanonical,
+  parseAssessmentStage,
+  PEM_NEAT_ASSESSMENT_SCHEMA_VERSION,
+  type AssessmentStageOutput,
+} from "./assessment-stage";
+import {
+  applyHandoffStageToShell,
+  EMAIL_JSON_SCHEMA,
+  HANDOFF_JSON_SCHEMA,
+  parseEmailStage,
+  parseHandoffStage,
+  parseQualityReviewStage,
+  QUALITY_REVIEW_JSON_SCHEMA,
+} from "./downstream-stages";
+import {
   parsePemNeatStructuredResult,
   assessmentSchema,
-  followUpEmailSchema,
-  buildertrendFieldsSchema,
-  projectIntelligenceSchema,
   type PemNeatStructuredResult,
 } from "./schemas";
 import {
@@ -95,11 +109,15 @@ export type PemStageOutputs = {
   schemaVersion?: number;
   /** Fact Ledger evidence contract version. */
   factLedgerSchemaVersion?: number;
+  /** Assessment stage contract version. */
+  assessmentSchemaVersion?: number;
   factLedger?: FactLedger | null;
   /** Simple stage B output (preferred for resume). */
   salesIntelligenceStage?: SalesIntelligenceStageOutput | null;
   /** Canonical NEAT salesIntelligence after mapping. */
   salesIntelligence?: Record<string, unknown> | null;
+  /** Simple stage C output (preferred for resume). */
+  assessmentStage?: AssessmentStageOutput | null;
   assessment?: Record<string, unknown> | null;
   followUpEmail?: Record<string, unknown> | null;
   handoff?: Record<string, unknown> | null;
@@ -108,6 +126,7 @@ export type PemStageOutputs = {
     stage?: string;
     issues?: string[];
     shape?: string[];
+    correctionAttempted?: boolean;
   } | null;
 };
 
@@ -286,21 +305,6 @@ async function callStageJson(input: {
   };
 }
 
-const qualityReviewSchema = z.object({
-  pass: z.boolean(),
-  severity: z.enum(["none", "low", "medium", "high"]).catch("medium"),
-  issues: z
-    .array(
-      z.object({
-        section: z.string(),
-        type: z.string(),
-        explanation: z.string(),
-        suggestedCorrection: z.string().nullable().optional(),
-      }),
-    )
-    .default([]),
-});
-
 function ledgerIsEmpty(ledger: FactLedger): boolean {
   return countFactLedgerItems(ledger) < 3;
 }
@@ -349,6 +353,55 @@ function canResumeFactLedger(outputs: PemStageOutputs): boolean {
   if (!ledger || ledgerIsEmpty(ledger)) return false;
   const flVersion = outputs.factLedgerSchemaVersion ?? 1;
   return flVersion >= PEM_NEAT_FACT_LEDGER_SCHEMA_VERSION;
+}
+
+function applyAssessmentFromStage(shell: PemNeatStructuredResult, stage: AssessmentStageOutput) {
+  const mapped = mapAssessmentStageToCanonical(stage);
+  shell.assessment = mapped.assessment;
+  if (mapped.meetingOutcome) {
+    shell.salesIntelligence.meetingOutcome = mapped.meetingOutcome;
+  }
+  if (mapped.qualification) {
+    shell.salesIntelligence.qualification = mapped.qualification;
+  }
+}
+
+function tryResumeAssessment(shell: PemNeatStructuredResult, outputs: PemStageOutputs): boolean {
+  if (outputs.assessmentStage) {
+    const parsed = parseAssessmentStage(outputs.assessmentStage);
+    if (parsed.ok) {
+      applyAssessmentFromStage(shell, parsed.data);
+      return true;
+    }
+  }
+  const persisted = outputs.assessment as
+    | {
+        assessment?: PemNeatStructuredResult["assessment"];
+        categories?: PemNeatStructuredResult["assessment"]["categories"];
+        topStrengths?: string[];
+        topImprovements?: string[];
+        oneThing?: string;
+        meetingOutcome?: PemNeatStructuredResult["salesIntelligence"]["meetingOutcome"];
+        qualification?: PemNeatStructuredResult["salesIntelligence"]["qualification"];
+      }
+    | null
+    | undefined;
+  if (!persisted || typeof persisted !== "object") return false;
+  const nested = persisted.assessment ?? persisted;
+  if (!Array.isArray(nested.categories) || nested.categories.length === 0) return false;
+  shell.assessment = {
+    categories: mergeAssessmentCategories(nested.categories),
+    topStrengths: nested.topStrengths ?? [],
+    topImprovements: nested.topImprovements ?? [],
+    oneThing: nested.oneThing?.trim() || shell.assessment.oneThing,
+  };
+  if (persisted.meetingOutcome) {
+    shell.salesIntelligence.meetingOutcome = persisted.meetingOutcome;
+  }
+  if (persisted.qualification) {
+    shell.salesIntelligence.qualification = persisted.qualification;
+  }
+  return true;
 }
 
 function applyIncompleteEndingAssessmentGuard(shell: PemNeatStructuredResult, incomplete: boolean) {
@@ -855,7 +908,8 @@ ${res.content.slice(0, 60_000)}`,
     }
 
     // -------- Stage C: Assessment --------
-    if (!stageOutputs.assessment) {
+    const resumedAssessment = tryResumeAssessment(shell, stageOutputs);
+    if (!resumedAssessment) {
       const stage = startStage(trace, "assessment", { model: modelName, provider: "openai" });
       diagnostics.stages.push("assessment");
       try {
@@ -863,83 +917,99 @@ ${res.content.slice(0, 60_000)}`,
           system: buildAssessmentStagePrompt(),
           user: `Prospect: ${input.prospectName}
 Advisor: ${input.advisorName}
+TranscriptIncompleteHint: ${siIncomplete}
 
-Fact Ledger:
+Fact Ledger (context):
 ${JSON.stringify(ledger).slice(0, 80_000)}
 
-Sales intelligence:
+Validated Sales Intelligence (context — do not grade the customer from this alone):
 ${JSON.stringify(shell.salesIntelligence).slice(0, 40_000)}
 
-Transcript evidence for scoring salesperson behavior:
-${input.transcript.slice(0, 80_000)}`,
+FULL TRANSCRIPT — grade SALESPERSON behavior from observable questions, follow-ups, summaries, positioning, and close:
+${input.transcript.slice(0, FULL_TRANSCRIPT_CHAR_LIMIT)}`,
           maxTokens: STAGE_BUDGETS.assessment.tokens,
           reasoningEffort: STAGE_BUDGETS.assessment.effort,
+          jsonSchema: {
+            name: "pem_assessment",
+            schema: ASSESSMENT_JSON_SCHEMA as unknown as Record<string, unknown>,
+            strict: true,
+          },
         });
         modelName = res.model;
         inputTokens += res.inputTokens ?? 0;
         outputTokens += res.outputTokens ?? 0;
         diagnostics.finishReasons.push(res.finishReason ?? "unknown");
-        const raw = parseJsonStrict(res.content, "PEM_ASSESSMENT_SCHEMA_INVALID");
-        const parsed = z
-          .object({
-            assessment: assessmentSchema.partial().optional(),
-            meetingOutcome: z
-              .object({ classification: z.string(), explanation: z.string().optional() })
-              .optional(),
-            qualification: z
-              .object({
-                classification: z.string(),
-                reasoning: z.string().optional(),
-                risks: z.array(z.string()).optional(),
-              })
-              .optional(),
-          })
-          .safeParse(raw);
-        if (!parsed.success) {
+
+        let raw: unknown;
+        try {
+          raw = parseJsonStrict(res.content, "PEM_ASSESSMENT_SCHEMA_INVALID");
+        } catch {
           throw pemError("PEM_ASSESSMENT_SCHEMA_INVALID");
         }
-        if (parsed.data.assessment) {
-          shell.assessment = {
-            categories: mergeAssessmentCategories(
-              (parsed.data.assessment
-                .categories as PemNeatStructuredResult["assessment"]["categories"]) ?? [],
-            ),
-            topStrengths: parsed.data.assessment.topStrengths ?? [],
-            topImprovements: parsed.data.assessment.topImprovements ?? [],
-            oneThing:
-              parsed.data.assessment.oneThing?.trim() ||
-              "Tighten discovery and next-step clarity on the next PEM.",
+
+        let parsed = parseAssessmentStage(raw);
+        if (!parsed.ok) {
+          stageOutputs.validationDiagnostics = {
+            stage: "assessment",
+            issues: parsed.issues,
+            shape: parsed.shape,
+            correctionAttempted: true,
           };
+          diagnostics.validationIssues.push(...parsed.issues.map((i) => `assessment: ${i}`));
+
+          const corrRes = await callStageJson({
+            system: buildAssessmentCorrectionPrompt(),
+            user: `Validation issues (paths/types only):
+${parsed.issues.join("\n")}
+
+Invalid JSON to correct (preserve meaning):
+${res.content.slice(0, 60_000)}`,
+            maxTokens: STAGE_BUDGETS.assessment.tokens,
+            reasoningEffort: "medium",
+            jsonSchema: {
+              name: "pem_assessment",
+              schema: ASSESSMENT_JSON_SCHEMA as unknown as Record<string, unknown>,
+              strict: true,
+            },
+          });
+          modelName = corrRes.model;
+          inputTokens += corrRes.inputTokens ?? 0;
+          outputTokens += corrRes.outputTokens ?? 0;
+          diagnostics.stages.push("assessment_correction");
+
+          const corrRaw = parseJsonStrict(corrRes.content, "PEM_ASSESSMENT_SCHEMA_INVALID");
+          parsed = parseAssessmentStage(corrRaw);
+          if (!parsed.ok) {
+            stageOutputs.validationDiagnostics = {
+              stage: "assessment",
+              issues: parsed.issues,
+              shape: parsed.shape,
+              correctionAttempted: true,
+            };
+            completeStage(stage, {
+              status: "failed",
+              validationStatus: "failed",
+              validationIssues: parsed.issues,
+              errorCode: "PEM_ASSESSMENT_SCHEMA_INVALID",
+              outputCharacters: corrRes.content.length,
+              finishReason: corrRes.finishReason,
+              model: corrRes.model,
+              api: corrRes.api ?? null,
+            });
+            throw pemError("PEM_ASSESSMENT_SCHEMA_INVALID");
+          }
         }
-        if (parsed.data.meetingOutcome) {
-          shell.salesIntelligence.meetingOutcome = {
-            classification: parsed.data.meetingOutcome
-              .classification as PemNeatStructuredResult["salesIntelligence"]["meetingOutcome"]["classification"],
-            explanation:
-              parsed.data.meetingOutcome.explanation?.trim() ||
-              "Outcome based on closing evidence in the transcript.",
-          };
-        }
-        if (parsed.data.qualification) {
-          shell.salesIntelligence.qualification = {
-            classification: parsed.data.qualification
-              .classification as PemNeatStructuredResult["salesIntelligence"]["qualification"]["classification"],
-            reasoning:
-              parsed.data.qualification.reasoning?.trim() ||
-              "Qualification based on Pain, Budget, Decision, Schedule, and Fit.",
-            risks: parsed.data.qualification.risks ?? [],
-          };
-        }
+
+        applyAssessmentFromStage(shell, parsed.data);
+        applyIncompleteEndingAssessmentGuard(shell, siIncomplete);
+        stageOutputs.assessmentStage = parsed.data;
+        stageOutputs.assessmentSchemaVersion = PEM_NEAT_ASSESSMENT_SCHEMA_VERSION;
         stageOutputs.assessment = {
           assessment: shell.assessment,
           meetingOutcome: shell.salesIntelligence.meetingOutcome,
           qualification: shell.salesIntelligence.qualification,
         };
-        applyIncompleteEndingAssessmentGuard(shell, siIncomplete);
-        stageOutputs.assessment = {
-          ...stageOutputs.assessment,
-          assessment: shell.assessment,
-        };
+        stageOutputs.validationDiagnostics = null;
         completeStage(stage, {
           status: "completed",
           validationStatus: "ok",
@@ -956,24 +1026,14 @@ ${input.transcript.slice(0, 80_000)}`,
       } catch (error) {
         completeStage(stage, {
           status: "failed",
-          errorCode: error instanceof AppError ? error.code : "PEM_ASSESSMENT_FAILED",
+          errorCode: error instanceof AppError ? error.code : "PEM_ASSESSMENT_SCHEMA_INVALID",
         });
-        throw error instanceof AppError ? error : pemError("PEM_ASSESSMENT_FAILED");
+        throw error instanceof AppError ? error : pemError("PEM_ASSESSMENT_SCHEMA_INVALID");
       }
-    } else if (stageOutputs.assessment) {
-      const persisted = stageOutputs.assessment as {
-        assessment?: PemNeatStructuredResult["assessment"];
-        meetingOutcome?: PemNeatStructuredResult["salesIntelligence"]["meetingOutcome"];
-        qualification?: PemNeatStructuredResult["salesIntelligence"]["qualification"];
-      };
-      if (persisted.assessment) shell.assessment = persisted.assessment;
-      if (persisted.meetingOutcome) {
-        shell.salesIntelligence.meetingOutcome = persisted.meetingOutcome;
-      }
-      if (persisted.qualification) {
-        shell.salesIntelligence.qualification = persisted.qualification;
-      }
+    } else {
       applyIncompleteEndingAssessmentGuard(shell, siIncomplete);
+      stageOutputs.assessmentSchemaVersion =
+        stageOutputs.assessmentSchemaVersion ?? PEM_NEAT_ASSESSMENT_SCHEMA_VERSION;
     }
 
     // -------- Stage D: Email --------
@@ -998,19 +1058,29 @@ ${JSON.stringify({
 }).slice(0, 40_000)}`,
           maxTokens: STAGE_BUDGETS.email.tokens,
           reasoningEffort: STAGE_BUDGETS.email.effort,
+          jsonSchema: {
+            name: "pem_follow_up_email",
+            schema: EMAIL_JSON_SCHEMA as unknown as Record<string, unknown>,
+            strict: true,
+          },
         });
         modelName = res.model;
         inputTokens += res.inputTokens ?? 0;
         outputTokens += res.outputTokens ?? 0;
         diagnostics.finishReasons.push(res.finishReason ?? "unknown");
         const raw = parseJsonStrict(res.content, "PEM_EMAIL_SCHEMA_INVALID");
-        const parsed = z.object({ followUpEmail: followUpEmailSchema.partial() }).safeParse(raw);
-        if (!parsed.success || !parsed.data.followUpEmail?.body) {
+        const parsed = parseEmailStage(raw);
+        if (!parsed.ok) {
+          stageOutputs.validationDiagnostics = {
+            stage: "email",
+            issues: parsed.issues,
+            shape: [],
+          };
           throw pemError("PEM_EMAIL_SCHEMA_INVALID");
         }
         shell.followUpEmail = {
-          subject: parsed.data.followUpEmail.subject ?? null,
-          body: parsed.data.followUpEmail.body,
+          subject: parsed.data.subject,
+          body: parsed.data.body,
         };
         stageOutputs.followUpEmail = shell.followUpEmail;
         completeStage(stage, {
@@ -1053,40 +1123,27 @@ Sales intelligence:
 ${JSON.stringify(shell.salesIntelligence).slice(0, 40_000)}`,
           maxTokens: STAGE_BUDGETS.handoff.tokens,
           reasoningEffort: STAGE_BUDGETS.handoff.effort,
+          jsonSchema: {
+            name: "pem_handoff",
+            schema: HANDOFF_JSON_SCHEMA as unknown as Record<string, unknown>,
+            strict: true,
+          },
         });
         modelName = res.model;
         inputTokens += res.inputTokens ?? 0;
         outputTokens += res.outputTokens ?? 0;
         diagnostics.finishReasons.push(res.finishReason ?? "unknown");
-        const raw = parseJsonStrict(res.content, "PEM_HANDOFF_SCHEMA_INVALID") as Record<
-          string,
-          unknown
-        >;
-        if (raw.projectIntelligence) {
-          const p = projectIntelligenceSchema.safeParse(raw.projectIntelligence);
-          if (p.success) {
-            shell.projectIntelligence = {
-              ...shell.projectIntelligence,
-              ...p.data,
-              facts: p.data.facts?.length ? p.data.facts : shell.projectIntelligence.facts,
-            };
-          } else {
-            diagnostics.validationIssues.push(`project: ${zodIssueSummary(p.error)}`);
-          }
+        const raw = parseJsonStrict(res.content, "PEM_HANDOFF_SCHEMA_INVALID");
+        const parsed = parseHandoffStage(raw);
+        if (!parsed.ok) {
+          stageOutputs.validationDiagnostics = {
+            stage: "handoff",
+            issues: parsed.issues,
+            shape: [],
+          };
+          throw pemError("PEM_HANDOFF_SCHEMA_INVALID");
         }
-        if (raw.buildertrendFields) {
-          shell.buildertrendFields = mergeBuildertrendFields(
-            raw.buildertrendFields as Record<string, unknown>,
-          );
-        }
-        if (raw.internalOpportunityNotes != null) {
-          shell.internalOpportunityNotes = clampInternalNotes(String(raw.internalOpportunityNotes));
-        }
-        if (Array.isArray(raw.productionNotes)) {
-          shell.productionNotes = raw.productionNotes.map(String);
-        }
-        // Require at least BT object parseable
-        buildertrendFieldsSchema.parse(shell.buildertrendFields);
+        applyHandoffStageToShell(shell, parsed.data);
         stageOutputs.handoff = {
           projectIntelligence: shell.projectIntelligence,
           buildertrendFields: shell.buildertrendFields,
@@ -1104,10 +1161,25 @@ ${JSON.stringify(shell.salesIntelligence).slice(0, 40_000)}`,
       } catch (error) {
         completeStage(stage, {
           status: "failed",
-          errorCode: error instanceof AppError ? error.code : "PEM_HANDOFF_FAILED",
+          errorCode: error instanceof AppError ? error.code : "PEM_HANDOFF_SCHEMA_INVALID",
         });
-        throw error instanceof AppError ? error : pemError("PEM_HANDOFF_FAILED");
+        throw error instanceof AppError ? error : pemError("PEM_HANDOFF_SCHEMA_INVALID");
       }
+    } else if (stageOutputs.handoff) {
+      const h = stageOutputs.handoff as {
+        projectIntelligence?: PemNeatStructuredResult["projectIntelligence"];
+        buildertrendFields?: PemNeatStructuredResult["buildertrendFields"];
+        internalOpportunityNotes?: string;
+        productionNotes?: string[];
+      };
+      if (h.projectIntelligence) shell.projectIntelligence = h.projectIntelligence;
+      if (h.buildertrendFields) {
+        shell.buildertrendFields = mergeBuildertrendFields(h.buildertrendFields);
+      }
+      if (h.internalOpportunityNotes != null) {
+        shell.internalOpportunityNotes = clampInternalNotes(h.internalOpportunityNotes);
+      }
+      if (Array.isArray(h.productionNotes)) shell.productionNotes = h.productionNotes;
     }
 
     // -------- Final assemble (code owns scaffolding) --------
@@ -1138,9 +1210,10 @@ ${JSON.stringify(shell.salesIntelligence).slice(0, 40_000)}`,
       provider: "openai",
     });
     diagnostics.stages.push("quality_review");
-    let review = stageOutputs.qualityReview
-      ? qualityReviewSchema.safeParse(stageOutputs.qualityReview).data
+    const priorReview = stageOutputs.qualityReview
+      ? parseQualityReviewStage(stageOutputs.qualityReview)
       : null;
+    let review = priorReview?.ok ? priorReview.data : null;
     if (!review) {
       try {
         const res = await callStageJson({
@@ -1166,37 +1239,35 @@ ${JSON.stringify({
 }).slice(0, 80_000)}`,
           maxTokens: STAGE_BUDGETS.quality_review.tokens,
           reasoningEffort: STAGE_BUDGETS.quality_review.effort,
+          jsonSchema: {
+            name: "pem_quality_review",
+            schema: QUALITY_REVIEW_JSON_SCHEMA as unknown as Record<string, unknown>,
+            strict: true,
+          },
         });
         modelName = res.model;
         inputTokens += res.inputTokens ?? 0;
         outputTokens += res.outputTokens ?? 0;
         diagnostics.finishReasons.push(res.finishReason ?? "unknown");
-        const raw = parseJsonStrict(res.content, "PEM_QUALITY_GATE_FAILED");
-        const parsed = qualityReviewSchema.safeParse(raw);
-        if (!parsed.success) {
-          // Soft: treat as pass with note — don't fail entire PEM on review parse alone
-          review = { pass: true, severity: "low", issues: [] };
-          diagnostics.validationIssues.push(`quality_review: ${zodIssueSummary(parsed.error)}`);
-          completeStage(reviewStage, {
-            status: "completed",
-            validationStatus: "soft_issues",
-            finishReason: res.finishReason,
-          });
-        } else {
-          review = parsed.data;
-          stageOutputs.qualityReview = review;
-          completeStage(reviewStage, {
-            status: "completed",
-            validationStatus: review.pass ? "ok" : "soft_issues",
-            finishReason: res.finishReason,
-            extractedItemCounts: { issues: review.issues.length },
-            model: res.model,
-            api: res.api ?? null,
-          });
+        let raw: unknown = {};
+        try {
+          raw = parseJsonStrict(res.content, "PEM_QUALITY_REVIEW_SCHEMA_INVALID");
+        } catch {
+          raw = {};
         }
+        const parsed = parseQualityReviewStage(raw);
+        review = parsed.ok ? parsed.data : { pass: true, severity: "low" as const, issues: [] };
+        stageOutputs.qualityReview = review;
+        completeStage(reviewStage, {
+          status: "completed",
+          validationStatus: review.pass ? "ok" : "soft_issues",
+          finishReason: res.finishReason,
+          extractedItemCounts: { issues: review.issues.length },
+          model: res.model,
+          api: res.api ?? null,
+        });
       } catch (error) {
         if (isFatalPemProviderError(error) && error instanceof AppError) {
-          // Provider hard fail on review — don't lose the NEAT if content is good
           if (
             error.code === "PEM_NEAT_TIMEOUT" ||
             error.code === "PEM_NEAT_RATE_LIMITED" ||
@@ -1209,8 +1280,13 @@ ${JSON.stringify({
               validationIssues: [`quality_review skipped after ${error.code}`],
             });
           } else {
-            completeStage(reviewStage, { status: "failed", errorCode: error.code });
-            throw error;
+            // Soft: do not fail entire NEAT on review infrastructure
+            review = { pass: true, severity: "low", issues: [] };
+            completeStage(reviewStage, {
+              status: "completed",
+              validationStatus: "soft_issues",
+              validationIssues: [`quality_review soft-pass after ${error.code}`],
+            });
           }
         } else {
           review = { pass: true, severity: "low", issues: [] };
