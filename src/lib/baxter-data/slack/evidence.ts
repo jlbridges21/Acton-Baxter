@@ -1,7 +1,13 @@
 import "server-only";
 
 import { employeeFacingSlackSearchError, SLACK_SEARCH_ERROR_CODES } from "./errors";
-import { listCachedSlackChannels, listCachedSlackUsers } from "./directory";
+import {
+  listCachedSlackChannels,
+  listCachedSlackUsers,
+  refreshAndListDirectory,
+} from "./directory";
+import { extractChannelMentions, extractPersonQueries } from "./intent";
+import { filterEvidenceByPlanIntegrity, isChannelScopedIntent } from "./integrity";
 import {
   assertNoForeignDmLeak,
   defaultEmptyAccess,
@@ -14,6 +20,7 @@ import type {
   RetrieveSlackEvidenceInput,
   SlackEvidenceResult,
   SlackSearchDiagnostics,
+  SlackSearchDeps,
 } from "./types";
 
 function emptyDiagnostics(access = defaultEmptyAccess()): SlackSearchDiagnostics {
@@ -29,6 +36,14 @@ function emptyDiagnostics(access = defaultEmptyAccess()): SlackSearchDiagnostics
   };
 }
 
+function channelWasExplicitlyRequested(question: string): boolean {
+  return extractChannelMentions(question).length > 0;
+}
+
+function personWasExplicitlyRequested(question: string): boolean {
+  return extractPersonQueries(question).length > 0;
+}
+
 /**
  * Prompt 2 entry point: plan + authorize + live-search Slack evidence.
  * Authorization is enforced before results are returned (and thus before any LLM).
@@ -37,7 +52,7 @@ export async function retrieveSlackEvidence(
   input: RetrieveSlackEvidenceInput,
 ): Promise<SlackEvidenceResult> {
   const teamId = input.requester.slackTeamId ?? "";
-  const deps = {
+  let deps: SlackSearchDeps = {
     listCachedUsers: input.deps?.listCachedUsers ?? listCachedSlackUsers,
     listCachedChannels: input.deps?.listCachedChannels ?? listCachedSlackChannels,
     callSlackApi: input.deps?.callSlackApi,
@@ -63,23 +78,86 @@ export async function retrieveSlackEvidence(
   }
 
   const access = cred.credential.capabilities;
-  const planned =
+  const resolvedTeamId = teamId || cred.credential.slackTeamId || "";
+  const notes: string[] = [];
+
+  let planned =
     input.plan != null
       ? {
           plan: input.plan,
           ambiguities: { people: [], channels: [] },
-          notFound: { people: [], channels: [] },
+          notFound: { people: [] as string[], channels: [] as string[] },
         }
       : await planSlackSearch({
           question: input.question,
-          teamId: teamId || cred.credential.slackTeamId || "",
+          teamId: resolvedTeamId,
           deps,
         });
+
+  // Refresh-on-miss: one directory sync then re-plan when entity missing from cache.
+  // Skip when tests inject a static directory (listCached* provided).
+  if (
+    !input.plan &&
+    (planned.notFound.channels.length > 0 || planned.notFound.people.length > 0) &&
+    input.deps?.listCachedUsers == null &&
+    input.deps?.listCachedChannels == null
+  ) {
+    notes.push("Directory miss — refreshing Slack users/channels once");
+    const refreshed = await refreshAndListDirectory(resolvedTeamId, {
+      ...deps,
+      callSlackApi: deps.callSlackApi,
+    });
+    notes.push(
+      `Directory refresh: users=${refreshed.refresh.usersUpserted} channels=${refreshed.refresh.channelsUpserted} complete=${refreshed.refresh.paginationComplete}`,
+    );
+    deps = {
+      ...deps,
+      listCachedUsers: async () => refreshed.users,
+      listCachedChannels: async () => refreshed.channels,
+    };
+    planned = await planSlackSearch({
+      question: input.question,
+      teamId: resolvedTeamId,
+      deps,
+    });
+  }
 
   if (planned.ambiguities.people.length || planned.ambiguities.channels.length) {
     const code = planned.ambiguities.people.length
       ? SLACK_SEARCH_ERROR_CODES.PERSON_AMBIGUOUS
       : SLACK_SEARCH_ERROR_CODES.CHANNEL_AMBIGUOUS;
+    const message =
+      code === SLACK_SEARCH_ERROR_CODES.PERSON_AMBIGUOUS
+        ? `That name matches more than one Slack user: ${planned.ambiguities.people[0]!.candidates.map(
+            (c) => c.displayName,
+          ).join(", ")}. Which one do you mean?`
+        : `That channel name matches more than one Slack channel: ${planned.ambiguities.channels[0]!.candidates.map(
+            (c) => c.displayLabel,
+          ).join(", ")}. Which one do you mean?`;
+    return {
+      plan: planned.plan,
+      results: [],
+      clusters: [],
+      ambiguities: planned.ambiguities,
+      access,
+      incomplete: { code, message, retryable: false },
+      diagnostics: {
+        ...emptyDiagnostics(access),
+        notes: [...notes, "Resolution ambiguous"],
+      },
+    };
+  }
+
+  const explicitChannel = channelWasExplicitlyRequested(input.question);
+  const explicitPerson = personWasExplicitlyRequested(input.question);
+
+  // Explicit channel requested but unresolved → fail closed (never broaden to workspace)
+  if (
+    explicitChannel &&
+    planned.plan.channels.length === 0 &&
+    planned.notFound.channels.length > 0
+  ) {
+    const channelLabel = planned.notFound.channels[0]!;
     return {
       plan: planned.plan,
       results: [],
@@ -87,22 +165,22 @@ export async function retrieveSlackEvidence(
       ambiguities: planned.ambiguities,
       access,
       incomplete: {
-        code,
-        message: employeeFacingSlackSearchError(code),
+        code: SLACK_SEARCH_ERROR_CODES.CHANNEL_NOT_FOUND,
+        message: `I couldn't find a Slack channel matching “#${channelLabel.replace(/^#/, "")}”.`,
         retryable: false,
       },
       diagnostics: {
         ...emptyDiagnostics(access),
-        notes: ["Resolution ambiguous — Prompt 2 should ask the employee to clarify."],
+        notes: [...notes, "Explicit channel unresolved — blocked broad search"],
       },
     };
   }
 
-  // Channel required for latest_message exactness
+  // Channel-scoped intents without a resolved channel (extraction may have failed) — still fail if mention present
   if (
-    planned.plan.intent === "latest_message" &&
-    planned.plan.channels.length === 0 &&
-    planned.notFound.channels.length
+    isChannelScopedIntent(planned.plan.intent) &&
+    explicitChannel &&
+    planned.plan.channels.length === 0
   ) {
     return {
       plan: planned.plan,
@@ -115,7 +193,36 @@ export async function retrieveSlackEvidence(
         message: employeeFacingSlackSearchError(SLACK_SEARCH_ERROR_CODES.CHANNEL_NOT_FOUND),
         retryable: false,
       },
-      diagnostics: emptyDiagnostics(access),
+      diagnostics: {
+        ...emptyDiagnostics(access),
+        notes: [...notes, "Channel-scoped intent without resolved channel"],
+      },
+    };
+  }
+
+  // Explicit person for latest_message / person_statement — fail if unresolved
+  if (
+    explicitPerson &&
+    planned.plan.people.length === 0 &&
+    planned.notFound.people.length > 0 &&
+    (planned.plan.intent === "latest_message" || planned.plan.intent === "person_statement")
+  ) {
+    const personLabel = planned.notFound.people[0]!;
+    return {
+      plan: planned.plan,
+      results: [],
+      clusters: [],
+      ambiguities: planned.ambiguities,
+      access,
+      incomplete: {
+        code: SLACK_SEARCH_ERROR_CODES.PERSON_NOT_FOUND,
+        message: `I couldn't find an active Slack user matching “${personLabel}”.`,
+        retryable: false,
+      },
+      diagnostics: {
+        ...emptyDiagnostics(access),
+        notes: [...notes, "Explicit person unresolved"],
+      },
     };
   }
 
@@ -126,6 +233,10 @@ export async function retrieveSlackEvidence(
   });
 
   let results = filterEvidenceByAccess(executed.results, access);
+
+  const integrity = filterEvidenceByPlanIntegrity(results, planned.plan);
+  results = integrity.kept;
+  if (integrity.reasons.length) notes.push(...integrity.reasons);
 
   const dmCheck = assertNoForeignDmLeak({
     evidenceChannelIds: results.map((r) => r.channelId),
@@ -153,7 +264,7 @@ export async function retrieveSlackEvidence(
       rateLimited: executed.diagnostics.rateLimited,
       capabilities: access,
       exactNewestGuaranteed: executed.diagnostics.exactNewestGuaranteed,
-      notes: executed.diagnostics.notes,
+      notes: [...notes, ...executed.diagnostics.notes],
     },
   };
 }

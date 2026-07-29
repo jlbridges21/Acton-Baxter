@@ -38,7 +38,8 @@ export async function getAdminSlackSnapshot(options?: { adminUserId?: string }) 
   const config = getSlackRuntimeConfig();
   const stats = await getSlackReceiptStats();
   const identity = await getSlackIdentityCacheStats();
-  const search = await getSlackSearchDiagnosticsSnapshot(options?.adminUserId);
+  const teamId = config.allowedTeamIds[0] ?? "";
+  const search = await getSlackSearchDiagnosticsSnapshot(options?.adminUserId, teamId);
   const health = await evaluateSlackHealth({
     recentErrors: stats.failedJobs > 0 || stats.recentErrorCodes.length > 0,
     recentReactionScopeError: stats.recentErrorCodes.some((code) =>

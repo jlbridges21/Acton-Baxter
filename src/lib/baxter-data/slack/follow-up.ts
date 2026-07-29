@@ -17,7 +17,6 @@ export function shouldResetSlackFollowUpContext(
   if (!prior) return false;
   const q = question.trim();
 
-  // Explicit new person + new topic signals
   const people = extractPersonQueries(q);
   const channels = extractChannelMentions(q);
   const intent = detectSlackSearchIntent(q);
@@ -25,9 +24,13 @@ export function shouldResetSlackFollowUpContext(
   const priorPeople = new Set(prior.people.map((p) => p.toLowerCase()));
   const newPerson = people.some((p) => !priorPeople.has(p.toLowerCase()));
 
-  // New channel that differs from prior
   const priorChannels = new Set(prior.channels.map((c) => c.replace(/^#/, "").toLowerCase()));
   const newChannel = channels.some((c) => !priorChannels.has(c.replace(/^#/, "").toLowerCase()));
+
+  // Explicit channel switch always resets inherited Slack context
+  if (newChannel && channels.length > 0) {
+    return true;
+  }
 
   // Short pronoun / response follow-ups keep context
   if (
@@ -47,7 +50,7 @@ export function shouldResetSlackFollowUpContext(
     const about = aboutMatch[1].toLowerCase();
     const priorTopic = (prior.topic ?? "").toLowerCase();
     const priorBlob = `${priorTopic} ${prior.people.join(" ").toLowerCase()}`;
-    if (!priorBlob.includes(about) && about.length > 2) {
+    if (!priorBlob.includes(about) && about.length > 2 && !/\bchannel\b/i.test(q)) {
       return true;
     }
   }

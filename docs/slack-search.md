@@ -72,6 +72,8 @@ When Slack conflicts with approved Knowledge, explain both — do not silently o
 
 For Slack-origin public channel questions (e.g. “What did Jess say last in #project-management?”), Baxter uses bot history without requiring a separate `/settings/integrations` OAuth link.
 
+**Channel / user directory:** Baxter refreshes identity metadata via paginated `users.list` + `conversations.list` into `slack_*_profiles` (no messages). On resolution miss, it refreshes once then retries. Explicit channel requests never broaden to workspace search. Evidence is hard-filtered to requested channel IDs before the model.
+
 Private / DM / MPIM never enter the model without the requester’s authorized token.
 
 ## Follow-ups

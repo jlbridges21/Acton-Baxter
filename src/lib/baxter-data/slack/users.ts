@@ -6,10 +6,6 @@ const ALIASES: Record<string, string[]> = {
   maxx: ["max", "maxx"],
   max: ["maxx", "max"],
   jackson: ["jackson bridges", "jackson"],
-  james: ["james"],
-  milan: ["milan"],
-  kevin: ["kevin"],
-  jesse: ["jesse"],
   zach: ["zach", "zachary"],
   zachary: ["zach", "zachary"],
 };
@@ -29,27 +25,8 @@ function aliasSet(query: string): Set<string> {
   return set;
 }
 
-function personMatches(person: ResolvedSlackPerson, query: string): boolean {
-  const aliases = aliasSet(query);
-  const candidates = [
-    person.displayName,
-    person.realName ?? "",
-    person.username ?? "",
-    (person.realName ?? "").split(/\s+/)[0] ?? "",
-    (person.displayName ?? "").split(/\s+/)[0] ?? "",
-  ]
-    .map(normalizeName)
-    .filter(Boolean);
-
-  for (const c of candidates) {
-    if (aliases.has(c)) return true;
-    for (const a of aliases) {
-      if (c === a || c.startsWith(`${a} `) || c.endsWith(` ${a}`) || c.includes(` ${a} `)) {
-        return true;
-      }
-    }
-  }
-  return false;
+function firstName(value: string | null | undefined): string {
+  return normalizeName((value ?? "").split(/\s+/)[0] ?? "");
 }
 
 export type PersonResolution =
@@ -57,6 +34,11 @@ export type PersonResolution =
   | { status: "ambiguous"; ambiguity: SlackPersonAmbiguity }
   | { status: "not_found"; query: string };
 
+/**
+ * Resolve a person against the directory.
+ * Order: exact display → exact real → exact username → unique first-name → alias → ambiguity.
+ * Bots should already be excluded from the directory list.
+ */
 export function resolvePersonFromDirectory(
   query: string,
   directory: ResolvedSlackPerson[],
@@ -64,27 +46,43 @@ export function resolvePersonFromDirectory(
   const q = query.trim();
   if (!q) return { status: "not_found", query: q };
 
-  // Exact ID pass-through for internal use (never shown to employees).
   if (/^U[A-Z0-9]+$/i.test(q)) {
     const byId = directory.find((p) => p.id === q);
     if (byId) return { status: "resolved", person: byId };
     return { status: "not_found", query: q };
   }
 
-  const matches = directory.filter((p) => personMatches(p, q));
-  if (matches.length === 1) return { status: "resolved", person: matches[0]! };
-  if (matches.length > 1) {
-    // Prefer exact first-name uniqueness among display/real names
-    const exactFirst = matches.filter((p) => {
-      const first = normalizeName((p.realName || p.displayName).split(/\s+/)[0] ?? "");
-      return aliasSet(q).has(first);
-    });
-    if (exactFirst.length === 1) return { status: "resolved", person: exactFirst[0]! };
+  const nq = normalizeName(q);
+  const aliases = aliasSet(q);
+
+  const exactDisplay = directory.filter((p) => normalizeName(p.displayName) === nq);
+  if (exactDisplay.length === 1) return { status: "resolved", person: exactDisplay[0]! };
+  if (exactDisplay.length > 1) {
+    return { status: "ambiguous", ambiguity: { query: q, candidates: exactDisplay.slice(0, 8) } };
+  }
+
+  const exactReal = directory.filter((p) => p.realName && normalizeName(p.realName) === nq);
+  if (exactReal.length === 1) return { status: "resolved", person: exactReal[0]! };
+  if (exactReal.length > 1) {
+    return { status: "ambiguous", ambiguity: { query: q, candidates: exactReal.slice(0, 8) } };
+  }
+
+  const exactUser = directory.filter((p) => p.username && normalizeName(p.username) === nq);
+  if (exactUser.length === 1) return { status: "resolved", person: exactUser[0]! };
+
+  // Unique first-name match (active humans only in directory)
+  const firstMatches = directory.filter((p) => {
+    const firsts = [firstName(p.realName), firstName(p.displayName)].filter(Boolean);
+    return firsts.some((f) => aliases.has(f) || f === nq);
+  });
+  if (firstMatches.length === 1) return { status: "resolved", person: firstMatches[0]! };
+  if (firstMatches.length > 1) {
     return {
       status: "ambiguous",
-      ambiguity: { query: q, candidates: matches.slice(0, 8) },
+      ambiguity: { query: q, candidates: firstMatches.slice(0, 8) },
     };
   }
+
   return { status: "not_found", query: q };
 }
 

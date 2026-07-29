@@ -68,7 +68,27 @@ export async function planSlackSearch(input: {
     keywords = keywords.filter((k) => !["last", "message"].includes(k));
   }
 
-  const timeRange = parseSlackTimeRange(input.question, now);
+  const timeRangeRaw = parseSlackTimeRange(input.question, now);
+  // Exact latest-message intent must not inherit a default recency window from the word "last"
+  let timeRange =
+    intent === "latest_message" && timeRangeRaw?.label === "last 30 days (default)"
+      ? null
+      : timeRangeRaw;
+
+  // Broad channel summaries without an explicit window → last 14 days
+  if (!timeRange && (intent === "channel_search" || intent === "time_window_summary")) {
+    const from = new Date(now);
+    from.setUTCDate(from.getUTCDate() - 14);
+    timeRange = {
+      from,
+      to: now,
+      fromUnix: Math.floor(from.getTime() / 1000),
+      toUnix: Math.floor(now.getTime() / 1000),
+      fromIso: from.toISOString(),
+      toIso: now.toISOString(),
+      label: "last 14 days (channel summary default)",
+    };
+  }
   const sort = defaultSortForIntent(intent);
   const limit = defaultLimitForIntent(intent);
 

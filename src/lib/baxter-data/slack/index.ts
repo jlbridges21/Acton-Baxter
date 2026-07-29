@@ -53,6 +53,15 @@ export {
   runSlackSearchAdminTest,
   previewSlackSearchPlan,
 } from "./diagnostics";
+export { refreshSlackWorkspaceDirectory } from "./directory-sync";
+export {
+  listCachedSlackUsers,
+  listCachedSlackChannels,
+  getSlackDirectoryHealth,
+  refreshAndListDirectory,
+} from "./directory";
+export { filterEvidenceByPlanIntegrity } from "./integrity";
+export { normalizeChannelQuery } from "./channels";
 export {
   resolveSearchCredential,
   filterEvidenceByAccess,

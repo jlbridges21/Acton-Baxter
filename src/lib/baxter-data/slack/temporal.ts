@@ -167,8 +167,18 @@ export function parseSlackTimeRange(
   const shared = parseTimeRangeFromQuestion(question, now, "timestamp");
   if (shared) return fromKnowledgeRange(shared);
 
+  // "What did X say last" / "last message" means newest message — NOT a 30-day window.
+  if (
+    /\bsay last\b|\bsaid last\b|\blast message\b|\blast thing\b|\bmost recent message\b/.test(q)
+  ) {
+    return null;
+  }
+
   // Default bounded window for open-ended Slack recall (do not search all history).
-  if (/\blast\b|\blatest\b|\bupdate\b|\bhappened\b|\bdiscussed\b|\bmentioned\b/.test(q)) {
+  // Do not treat bare "last" from "say last" as a time window (handled above).
+  if (
+    /\blatest\b|\bupdate\b|\bhappened\b|\bdiscussed\b|\bmentioned\b|\blast week\b|\blast \d/.test(q)
+  ) {
     const from = new Date(now);
     from.setUTCDate(from.getUTCDate() - 30);
     return toSlackRange(from, now, "last 30 days (default)");

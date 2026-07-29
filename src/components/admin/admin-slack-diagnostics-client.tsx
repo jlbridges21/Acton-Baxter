@@ -15,6 +15,16 @@ type SearchSnapshot = {
   missingForUserOauth: string[];
   oauthRedirectUri: string;
   userLevelAuthorization: "configured" | "not_configured" | "partial";
+  directory?: {
+    usersCached: number;
+    channelsCached: number;
+    publicChannels: number;
+    privateChannels: number;
+    activeHumans: number;
+    lastUserResolvedAt: string | null;
+    lastChannelResolvedAt: string | null;
+    staleHint: string | null;
+  };
   capabilities: {
     publicChannels: boolean;
     privateChannels: boolean;
@@ -65,7 +75,11 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
   const [destination, setDestination] = useState("");
   const [testText, setTestText] = useState("");
   const [dryRunQuestion, setDryRunQuestion] = useState("Who is Baxter?");
-  const [sandboxQuery, setSandboxQuery] = useState("RACI matrix");
+  const [directoryQuery, setDirectoryQuery] = useState("baxter");
+  const [personQuery, setPersonQuery] = useState("James");
+  const [sandboxQuery, setSandboxQuery] = useState(
+    "What did Jess say last in #project-management?",
+  );
 
   async function run(action: string, body: Record<string, unknown> = {}) {
     setBusy(action);
@@ -181,14 +195,87 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
               </div>
             </dl>
           ) : null}
+          {search.directory ? (
+            <div className="space-y-2 border-t border-[var(--acton-border)] pt-3">
+              <p className="text-sm font-semibold text-[var(--acton-navy)]">Slack Directory</p>
+              <dl className="grid gap-2 text-sm text-[var(--acton-navy)] md:grid-cols-2">
+                <div>
+                  Users cached: <span className="font-medium">{search.directory.usersCached}</span>
+                </div>
+                <div>
+                  Active humans:{" "}
+                  <span className="font-medium">{search.directory.activeHumans}</span>
+                </div>
+                <div>
+                  Channels cached:{" "}
+                  <span className="font-medium">{search.directory.channelsCached}</span>
+                </div>
+                <div>
+                  Public / private:{" "}
+                  <span className="font-medium">
+                    {search.directory.publicChannels} / {search.directory.privateChannels}
+                  </span>
+                </div>
+                <div>
+                  Users refreshed:{" "}
+                  <span className="font-medium">
+                    {search.directory.lastUserResolvedAt ?? "never"}
+                  </span>
+                </div>
+                <div>
+                  Channels refreshed:{" "}
+                  <span className="font-medium">
+                    {search.directory.lastChannelResolvedAt ?? "never"}
+                  </span>
+                </div>
+              </dl>
+              {search.directory.staleHint ? (
+                <p className="text-sm text-amber-800">{search.directory.staleHint}</p>
+              ) : null}
+              <Button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() => run("refresh_directory")}
+              >
+                {busy === "refresh_directory" ? "Refreshing…" : "Refresh Slack Directory"}
+              </Button>
+              <div className="flex flex-wrap gap-2 pt-2">
+                <input
+                  className="min-w-[10rem] flex-1 rounded border border-[var(--acton-border)] px-3 py-2 text-sm"
+                  value={directoryQuery}
+                  onChange={(event) => setDirectoryQuery(event.target.value)}
+                  placeholder="Channel: baxter"
+                />
+                <Button
+                  type="button"
+                  disabled={Boolean(busy) || !directoryQuery.trim()}
+                  onClick={() => run("test_channel_resolution", { query: directoryQuery })}
+                >
+                  Resolve channel
+                </Button>
+                <input
+                  className="min-w-[10rem] flex-1 rounded border border-[var(--acton-border)] px-3 py-2 text-sm"
+                  value={personQuery}
+                  onChange={(event) => setPersonQuery(event.target.value)}
+                  placeholder="Person: James"
+                />
+                <Button
+                  type="button"
+                  disabled={Boolean(busy) || !personQuery.trim()}
+                  onClick={() => run("test_user_resolution", { query: personQuery })}
+                >
+                  Resolve person
+                </Button>
+              </div>
+            </div>
+          ) : null}
           {search.connection?.linked ? (
             <p className="text-sm text-[var(--acton-muted)]">
               Linked as {search.connection.slackUserName ?? "Slack user"}
             </p>
           ) : (
             <p className="text-sm text-[var(--acton-muted)]">
-              Link your Slack account to search with your own visibility (required for private
-              channels and DMs).
+              Link your Slack account to search private channels and DMs with your visibility.
             </p>
           )}
           {search.missingForUserOauth.length ? (

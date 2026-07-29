@@ -41,8 +41,15 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
   if (/\bwhen did we (decide|agree|approve|choose)\b|\bwhen (was|did).*(decid|agre)\b/.test(q)) {
     return "decision_search";
   }
-  if (/\bwhat did .+ say\b|\bwhat has .+ said\b|\bwhat .+ said about\b/.test(q)) {
-    return "person_statement";
+  if (
+    /\bwhat did [a-z][a-z'-]+(?:\s+[a-z][a-z'-]+)? say\b/i.test(q) ||
+    /\bwhat has [a-z][a-z'-]+(?:\s+[a-z][a-z'-]+)? said\b/i.test(q) ||
+    /\bwhat [a-z][a-z'-]+(?:\s+[a-z][a-z'-]+)? said about\b/i.test(q)
+  ) {
+    // Require a person-like token — not "what has been said"
+    if (!/\bwhat has been said\b|\bwhat'?s been said\b|\bwhat has been discussed\b/i.test(q)) {
+      return "person_statement";
+    }
   }
   if (/\bwhat (is|was) the latest\b|\blatest on\b|\blatest update\b/.test(q)) {
     return "latest_update";
@@ -54,6 +61,15 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
     )
   ) {
     return "latest_update";
+  }
+  // Channel summary / "what's been said in #X" / "tell me anything about the X channel"
+  if (
+    /\b(summarize|summary of|what('?s| is) going on in|what has been said|what'?s been said|tell me anything|catch me up|what happened in)\b/.test(
+      q,
+    ) &&
+    (/\b#[\w-]+\b/.test(q) || /\bchannel\b/.test(q) || /\bin (the )?[\w-]+/.test(q))
+  ) {
+    return "channel_search";
   }
   if (/\bwhat happened\b|\bwhat (conversations|discussions) have there been\b/.test(q)) {
     return "time_window_summary";
@@ -78,12 +94,12 @@ export function defaultSortForIntent(intent: SlackSearchIntent): SlackSearchSort
     case "latest_message":
     case "latest_update":
     case "time_window_summary":
+    case "channel_search":
       return "newest";
     case "decision_search":
     case "person_statement":
     case "mention_search":
     case "topic_search":
-    case "channel_search":
     case "conversation_recall":
     case "thread_context":
       return "relevance";
@@ -195,6 +211,11 @@ const STOP = new Set([
   "and",
   "or",
   "new",
+  "anything",
+  "going",
+  "on",
+  "summarize",
+  "summary",
 ]);
 
 export function extractKeywords(question: string, extraDrop: string[] = []): string[] {
@@ -223,11 +244,43 @@ export function extractChannelMentions(question: string): string[] {
   for (const m of hash) {
     if (m[1]) names.push(m[1]);
   }
-  const named = question.match(/\bin (?:the )?([\w-]+(?:\s+[\w-]+){0,3}) channel\b/i);
-  if (named?.[1]) names.push(named[1].replace(/\s+/g, "-").toLowerCase());
+
+  // "in the baxter channel" / "about the project-management channel" / "from the sales channel"
+  const namedPatterns = [
+    /\b(?:in|about|from|regarding|for)\s+(?:the\s+)?([\w-]+(?:\s+[\w-]+){0,3})\s+channel\b/gi,
+    /\b(?:the\s+)?([\w-]+(?:\s+[\w-]+){0,2})\s+channel\b/gi,
+  ];
+  for (const re of namedPatterns) {
+    for (const m of question.matchAll(re)) {
+      if (m[1]) names.push(m[1].replace(/\s+/g, "-").toLowerCase());
+    }
+  }
+
   const pm = question.match(/\b(?:the )?pm channel\b/i);
   if (pm) names.push("project-management");
-  return [...new Set(names.map((n) => n.replace(/^#/, "").toLowerCase()))];
+
+  // "in #foo" already covered by hash; also "in baxter" without "channel" when clear
+  const inBare = question.match(
+    /\bin\s+(?:the\s+)?(baxter|sales|design|general|project-management|project management)\b/i,
+  );
+  if (inBare?.[1]) names.push(inBare[1].replace(/\s+/g, "-").toLowerCase());
+
+  return [
+    ...new Set(
+      names
+        .map((n) =>
+          n
+            .replace(/^#/, "")
+            .toLowerCase()
+            .replace(/\bchannels?\b/g, "")
+            .replace(/^(the|a|an)-?/, "")
+            .replace(/\s+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-|-$/g, ""),
+        )
+        .filter((n) => n.length >= 2),
+    ),
+  ];
 }
 
 /**
@@ -255,7 +308,7 @@ export function extractPersonQueries(question: string): string[] {
 
   // Lowercase first-name patterns common in the prompt examples
   const lowerNames = q.match(
-    /\b(?:what did|what has|from|after)\s+(jess|jessica|maxx|max|kevin|jackson|milan|jesse|james|gwen)\b/i,
+    /\b(?:what did|what has|from|after|about)\s+(jess|jessica|maxx|max|kevin|jackson|milan|jesse|james|gwen)\b/i,
   );
   if (lowerNames?.[1]) out.push(lowerNames[1]);
 
@@ -263,6 +316,10 @@ export function extractPersonQueries(question: string): string[] {
     /\b(jess|jessica|maxx|max|kevin|jackson|milan|jesse|james|gwen)(?:'s)? last message\b/i,
   );
   if (lastLower?.[1]) out.push(lastLower[1]);
+
+  // "what has James said in #baxter"
+  const hasSaid = q.match(/\bwhat has ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?) said\b/i);
+  if (hasSaid?.[1]) out.push(hasSaid[1]);
 
   return [...new Set(out.map((n) => n.trim()).filter(Boolean))];
 }

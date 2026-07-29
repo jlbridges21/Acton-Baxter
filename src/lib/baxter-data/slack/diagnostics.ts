@@ -5,14 +5,20 @@ import { getSlackSearchConnectionMetadata } from "./connections";
 import { retrieveSlackEvidence } from "./evidence";
 import { formatSlackEvidenceForAdmin } from "./format";
 import { planSlackSearch } from "./query-plan";
-import { listCachedSlackChannels, listCachedSlackUsers } from "./directory";
+import {
+  getSlackDirectoryHealth,
+  listCachedSlackChannels,
+  listCachedSlackUsers,
+  refreshAndListDirectory,
+} from "./directory";
 import { resolvePersonFromDirectory } from "./users";
 import { resolveChannelFromDirectory } from "./channels";
 import type { SlackRequester } from "./types";
 
-export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string) {
+export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string, teamId?: string) {
   const config = getSlackSearchRuntimeConfig();
   const connection = adminUserId ? await getSlackSearchConnectionMetadata(adminUserId) : null;
+  const directory = await getSlackDirectoryHealth(teamId ?? "");
 
   const linkedScopes = connection?.scopes ?? [];
   const linkedCaps = scopesToCapabilities(linkedScopes);
@@ -40,6 +46,19 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string) {
       : envPublicOnly || config.readyForPublicBotSearch
         ? ("partial" as const)
         : ("not_configured" as const),
+    directory: {
+      usersCached: directory.usersCached,
+      channelsCached: directory.channelsCached,
+      publicChannels: directory.publicChannels,
+      privateChannels: directory.privateChannels,
+      activeHumans: directory.activeHumans,
+      lastUserResolvedAt: directory.lastUserResolvedAt,
+      lastChannelResolvedAt: directory.lastChannelResolvedAt,
+      staleHint:
+        directory.channelsCached < 5
+          ? "Channel cache looks thin — run Refresh Slack Directory"
+          : null,
+    },
     capabilities: {
       publicChannels: linkedCaps.publicChannels || envPublicOnly || config.readyForPublicBotSearch,
       privateChannels: linkedCaps.privateChannels,
@@ -73,7 +92,6 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string) {
           slackUserName: connection.slackUserName,
           slackUserId: connection.slackUserId,
           status: connection.status,
-          // Never expose tokens
         }
       : null,
   };
@@ -86,13 +104,42 @@ export async function runSlackSearchAdminTest(input: {
     | "test_channel_resolution"
     | "test_thread_retrieval"
     | "test_latest_message"
-    | "sandbox_search";
+    | "sandbox_search"
+    | "refresh_directory"
+    | "test_channel_summary";
   query?: string;
   teamId?: string;
   requester: SlackRequester;
 }) {
   const teamId = input.teamId || input.requester.slackTeamId || "";
   const query = (input.query ?? "").trim();
+
+  if (input.action === "refresh_directory") {
+    if (!teamId) {
+      return {
+        ok: false,
+        action: input.action,
+        error: "teamId required (set SLACK_ALLOWED_TEAM_IDS / pass teamId)",
+      };
+    }
+    const refreshed = await refreshAndListDirectory(teamId);
+    return {
+      ok: refreshed.refresh.errors.length === 0,
+      action: input.action,
+      usersDiscovered: refreshed.refresh.usersUpserted,
+      publicChannelsDiscovered: refreshed.refresh.publicChannels,
+      privateChannelsVisible: refreshed.refresh.privateChannels,
+      activeHumans: refreshed.refresh.activeHumans,
+      paginationComplete: refreshed.refresh.paginationComplete,
+      pagesFetched: refreshed.refresh.pagesFetched,
+      errors: refreshed.refresh.errors,
+      updated: refreshed.refresh.refreshedAt,
+      cachedAfter: {
+        users: refreshed.users.length,
+        channels: refreshed.channels.length,
+      },
+    };
+  }
 
   if (input.action === "test_user_resolution") {
     const users = await listCachedSlackUsers(teamId);
@@ -102,6 +149,7 @@ export async function runSlackSearchAdminTest(input: {
       ok: result.status === "resolved",
       action: input.action,
       query: q,
+      usersCached: users.length,
       result:
         result.status === "resolved"
           ? {
@@ -129,6 +177,7 @@ export async function runSlackSearchAdminTest(input: {
       ok: result.status === "resolved",
       action: input.action,
       query: q,
+      channelsCached: channels.length,
       result:
         result.status === "resolved"
           ? {
@@ -136,6 +185,7 @@ export async function runSlackSearchAdminTest(input: {
               name: result.channel.name,
               displayLabel: result.channel.displayLabel,
               kind: result.channel.kind,
+              isPrivate: result.channel.isPrivate,
             }
           : result.status === "ambiguous"
             ? {
@@ -153,20 +203,22 @@ export async function runSlackSearchAdminTest(input: {
     input.action === "test_thread_retrieval" ||
     input.action === "test_public_search" ||
     input.action === "test_latest_message" ||
+    input.action === "test_channel_summary" ||
     input.action === "sandbox_search"
   ) {
     const q =
       query ||
       (input.action === "test_latest_message"
         ? "What did Jess say last in #project-management?"
-        : input.action === "test_thread_retrieval"
-          ? "RACI matrix"
+        : input.action === "test_channel_summary"
+          ? "Tell me anything you can about what has been said in the baxter channel."
           : "RACI matrix");
     const evidence = await retrieveSlackEvidence({
       requester: {
         ...input.requester,
         allowPublicOnlyFallback: true,
         slackUserId: input.requester.slackUserId ?? "admin-diagnostic",
+        slackTeamId: teamId || input.requester.slackTeamId,
       },
       question: q,
     });

@@ -84,6 +84,7 @@ export function buildSlackConversationContext(input: {
 
 /**
  * Expand a short follow-up using prior Slack context (deterministic).
+ * Explicit entities in the current question always beat inherited context.
  */
 export function expandQuestionWithSlackContext(
   question: string,
@@ -95,10 +96,24 @@ export function expandQuestionWithSlackContext(
     return question;
   }
 
+  // Lazy import avoided — use simple heuristics to detect explicit channel in current turn
+  const hasExplicitChannel =
+    /#[\w-]+/.test(q) ||
+    /\b(?:in|about|from)\s+(?:the\s+)?[\w-]+(?:\s+[\w-]+)?\s+channel\b/i.test(q);
+  const hasExplicitPerson =
+    /\bwhat (did|has|about)\s+[A-Za-z]/i.test(q) && !/\b(he|she|they)\b/i.test(q);
+
   const parts = [q];
-  if (ctx.people.length) parts.push(`(regarding ${ctx.people.join(", ")})`);
-  if (ctx.topic) parts.push(`(topic: ${ctx.topic})`);
-  if (ctx.channels.length) parts.push(`(channels: ${ctx.channels.join(", ")})`);
+  if (ctx.people.length && !hasExplicitPerson) {
+    parts.push(`(regarding ${ctx.people.join(", ")})`);
+  }
+  if (ctx.topic && !hasExplicitChannel) {
+    parts.push(`(topic: ${ctx.topic})`);
+  }
+  // Never append prior channels when the current turn already names a channel
+  if (ctx.channels.length && !hasExplicitChannel) {
+    parts.push(`(channels: ${ctx.channels.join(", ")})`);
+  }
   if (ctx.timeRangeLabel) parts.push(`(${ctx.timeRangeLabel})`);
   return parts.join(" ");
 }

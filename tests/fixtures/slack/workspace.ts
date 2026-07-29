@@ -8,8 +8,8 @@ export const FIXTURE_TEAM_ID = "T_ACTON_TEST";
 export const fixtureUsers = [
   {
     id: "U_JAMES",
-    displayName: "James",
-    realName: "James Wilson",
+    displayName: "James Parks",
+    realName: "James Parks",
     username: "james",
     teamId: FIXTURE_TEAM_ID,
   },

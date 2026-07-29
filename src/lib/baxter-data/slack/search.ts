@@ -127,6 +127,8 @@ export async function executeSlackSearchPlan(input: {
     input.credential.capabilities.threadContext &&
     (input.plan.intent === "latest_message" ||
       input.plan.intent === "channel_search" ||
+      input.plan.intent === "time_window_summary" ||
+      input.plan.intent === "conversation_recall" ||
       input.credential.tokenKind === "bot_public") &&
     input.plan.channels.length === 1;
 
@@ -159,6 +161,49 @@ export async function executeSlackSearchPlan(input: {
     notes.push(
       "conversations.history did not return a matching newest message; falling back if RTS available.",
     );
+  }
+
+  // Channel summary / topic-in-channel: prefer bounded history for the resolved channel
+  if (
+    canUseHistory &&
+    (input.plan.intent === "channel_search" ||
+      input.plan.intent === "time_window_summary" ||
+      input.plan.intent === "conversation_recall")
+  ) {
+    const hist = await fetchChannelHistoryWindow({
+      credential: input.credential,
+      channelId: input.plan.channels[0]!.id,
+      channelName: input.plan.channels[0]!.name,
+      channelKind: input.plan.channels[0]!.kind,
+      limit: Math.min(Math.max(input.plan.limit, 10), 40),
+      timeRange: input.plan.timeRange,
+      deps: input.deps,
+    });
+    notes.push(...hist.notes);
+    let messages = hist.messages;
+    if (input.plan.people.length) {
+      const allowed = new Set(input.plan.people.map((p) => p.id));
+      messages = messages.filter((m) => m.authorId && allowed.has(m.authorId));
+    }
+    if (input.plan.keywords.length) {
+      const kwHits = filterMessagesByKeywords(messages, input.plan.keywords);
+      // Prefer keyword hits when present; otherwise keep recent channel activity
+      if (kwHits.length) messages = kwHits;
+    }
+    messages.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+    return {
+      results: messages.slice(0, input.plan.limit),
+      incomplete: null,
+      diagnostics: {
+        endpoint: "conversations.history",
+        latencyMs: Date.now() - start,
+        resultCount: messages.length,
+        paginationCount: hist.pagesFetched,
+        rateLimited: false,
+        exactNewestGuaranteed: null,
+        notes: [...notes, "Channel-scoped history retrieval (not workspace RTS)."],
+      },
+    };
   }
 
   // bot_public cannot call assistant.search.context without action_token

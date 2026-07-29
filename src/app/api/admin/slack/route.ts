@@ -40,6 +40,8 @@ export async function POST(request: Request) {
           "test_channel_resolution",
           "test_thread_retrieval",
           "test_latest_message",
+          "test_channel_summary",
+          "refresh_directory",
           "sandbox_search",
         ]),
         channelOrUserId: z.string().optional(),
@@ -82,15 +84,22 @@ export async function POST(request: Request) {
       parsed.action === "test_channel_resolution" ||
       parsed.action === "test_thread_retrieval" ||
       parsed.action === "test_latest_message" ||
+      parsed.action === "test_channel_summary" ||
+      parsed.action === "refresh_directory" ||
       parsed.action === "sandbox_search"
     ) {
+      const teamId =
+        parsed.teamId ||
+        (process.env.SLACK_ALLOWED_TEAM_IDS ?? "").split(",")[0]?.trim() ||
+        undefined;
       return jsonOk({
         result: await runSlackSearchAdminTest({
           action: parsed.action,
           query: parsed.query ?? parsed.question,
-          teamId: parsed.teamId,
+          teamId,
           requester: {
             baxterUserId: admin.profile.id,
+            slackTeamId: teamId ?? null,
             allowPublicOnlyFallback: true,
           },
         }),

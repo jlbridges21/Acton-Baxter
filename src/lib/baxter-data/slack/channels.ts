@@ -6,49 +6,87 @@ import type {
 } from "./types";
 
 const CHANNEL_ALIASES: Record<string, string[]> = {
-  "project-management": ["project management", "pm", "pm channel", "project-management"],
-  "project management": ["project-management", "pm"],
+  "project-management": [
+    "project management",
+    "pm",
+    "pm channel",
+    "project-management",
+    "project mgmt",
+    "project managment",
+  ],
   sales: ["sales", "the sales channel"],
   design: ["design", "the design channel"],
   general: ["general", "the general channel"],
   baxter: ["baxter", "the baxter channel", "baxter channel"],
 };
 
-function normalizeChannel(value: string): string {
-  return value
+/** Canonical channel query form: no #, no trailing "channel", hyphenated. */
+export function normalizeChannelQuery(value: string): string {
+  let n = value
     .toLowerCase()
     .replace(/^#/, "")
     .replace(/[^a-z0-9\s-]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  n = n.replace(/^(the|a|an)\s+/, "");
+  n = n
+    .replace(/\bchannels?\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  n = n.replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return n;
 }
 
-function aliasSet(query: string): Set<string> {
-  const n = normalizeChannel(query);
-  const set = new Set<string>([n, n.replace(/\s+/g, "-")]);
-  for (const [key, aliases] of Object.entries(CHANNEL_ALIASES)) {
-    const keyN = normalizeChannel(key);
-    if (set.has(keyN) || aliases.some((a) => normalizeChannel(a) === n)) {
-      set.add(keyN);
-      set.add(keyN.replace(/\s+/g, "-"));
-      for (const a of aliases) {
-        set.add(normalizeChannel(a));
-        set.add(normalizeChannel(a).replace(/\s+/g, "-"));
-      }
+function aliasTargets(query: string): Set<string> {
+  const n = normalizeChannelQuery(query);
+  const set = new Set<string>([n, n.replace(/-/g, " ")]);
+  for (const [canonical, aliases] of Object.entries(CHANNEL_ALIASES)) {
+    const canon = normalizeChannelQuery(canonical);
+    const all = [canon, ...aliases.map(normalizeChannelQuery)];
+    if (all.includes(n) || all.some((a) => a === n)) {
+      set.add(canon);
+      for (const a of all) set.add(a);
     }
   }
   return set;
 }
 
-function channelMatches(channel: ResolvedSlackChannel, query: string): boolean {
-  const aliases = aliasSet(query);
-  const name = normalizeChannel(channel.name);
-  const label = normalizeChannel(channel.displayLabel);
-  if (aliases.has(name) || aliases.has(label)) return true;
-  for (const a of aliases) {
-    if (name === a || name.includes(a) || a.includes(name)) return true;
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 0; i < a.length; i += 1) {
+    let prev = i;
+    for (let j = 0; j < b.length; j += 1) {
+      const cur = row[j + 1]!;
+      const cost = a[i] === b[j] ? 0 : 1;
+      row[j + 1] = Math.min(row[j + 1]! + 1, row[j]! + 1, prev + cost);
+      prev = cur;
+    }
   }
-  return false;
+  return row[b.length]!;
+}
+
+function channelMatches(channel: ResolvedSlackChannel, query: string): "exact" | "fuzzy" | null {
+  const targets = aliasTargets(query);
+  const name = normalizeChannelQuery(channel.name);
+  const label = normalizeChannelQuery(channel.displayLabel);
+  if (targets.has(name) || targets.has(label)) return "exact";
+
+  // Constrained fuzzy: query vs channel name only (never match short unrelated names)
+  const q = normalizeChannelQuery(query);
+  if (q.length < 3) return null;
+  if (name === q || label === q) return "exact";
+  if (name.startsWith(q) || q.startsWith(name)) {
+    if (Math.abs(name.length - q.length) <= 4) return "fuzzy";
+  }
+  const distance = levenshtein(q, name);
+  const threshold = q.length <= 5 ? 1 : 2;
+  if (distance <= threshold && distance / Math.max(q.length, name.length) <= 0.34) {
+    return "fuzzy";
+  }
+  return null;
 }
 
 export type ChannelResolution =
@@ -69,17 +107,26 @@ export function resolveChannelFromDirectory(
     return { status: "not_found", query: q };
   }
 
-  const matches = directory.filter((c) => channelMatches(c, q));
-  if (matches.length === 1) return { status: "resolved", channel: matches[0]! };
-  if (matches.length > 1) {
-    const exact = matches.filter((c) => {
-      const n = normalizeChannel(c.name);
-      return aliasSet(q).has(n);
-    });
-    if (exact.length === 1) return { status: "resolved", channel: exact[0]! };
+  const exact: ResolvedSlackChannel[] = [];
+  const fuzzy: ResolvedSlackChannel[] = [];
+  for (const channel of directory) {
+    const kind = channelMatches(channel, q);
+    if (kind === "exact") exact.push(channel);
+    else if (kind === "fuzzy") fuzzy.push(channel);
+  }
+
+  if (exact.length === 1) return { status: "resolved", channel: exact[0]! };
+  if (exact.length > 1) {
     return {
       status: "ambiguous",
-      ambiguity: { query: q, candidates: matches.slice(0, 8) },
+      ambiguity: { query: q, candidates: exact.slice(0, 8) },
+    };
+  }
+  if (fuzzy.length === 1) return { status: "resolved", channel: fuzzy[0]! };
+  if (fuzzy.length > 1) {
+    return {
+      status: "ambiguous",
+      ambiguity: { query: q, candidates: fuzzy.slice(0, 8) },
     };
   }
   return { status: "not_found", query: q };
@@ -125,7 +172,6 @@ export function inferChannelKind(input: {
   const id = input.id ?? "";
   if (id.startsWith("D")) return "im";
   if (id.startsWith("G") && (input.channelType === "mpim" || input.isPrivate)) {
-    // G can be private channel or mpim — prefer explicit type
     if (input.channelType === "mpim") return "mpim";
   }
   if (input.channelType === "im") return "im";

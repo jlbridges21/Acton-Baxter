@@ -64,8 +64,9 @@ export function employeeFacingSlackSearchError(code: string): string {
     case SLACK_SEARCH_ERROR_CODES.CHANNEL_AMBIGUOUS:
       return "That channel name matches more than one Slack channel. Please clarify which channel you mean.";
     case SLACK_SEARCH_ERROR_CODES.CHANNEL_NOT_FOUND:
+      return "I couldn't find that Slack channel.";
     case SLACK_SEARCH_ERROR_CODES.PERSON_NOT_FOUND:
-      return "Baxter couldn’t find that Slack person or channel.";
+      return "I couldn't find an active Slack user matching that name.";
     case SLACK_SEARCH_ERROR_CODES.RATE_LIMITED:
       return "Slack search is temporarily rate-limited. Please try again in a minute.";
     case SLACK_SEARCH_ERROR_CODES.PERMISSION_DENIED:
