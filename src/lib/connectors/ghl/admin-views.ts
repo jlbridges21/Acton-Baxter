@@ -25,6 +25,7 @@ import { listOpportunitiesByContact } from "./resources/opportunities";
 import { listEventsForContact } from "./resources/calendars";
 import { searchConversations, getConversationMessages } from "./resources/conversations";
 import { rankOpportunitiesForContact } from "./opportunity-ranking";
+import { sortMessagesNewestFirst } from "@/lib/connectors/ghl/conversation-sort";
 
 export type HydratedContactRow = {
   id: string;
@@ -194,7 +195,7 @@ export async function hydrateConversationRows(
       direction: "unknown" as const,
       preview: sanitizeMessagePreview(c.lastMessageBody),
       unreadCount: c.unreadCount ?? 0,
-      lastActivityAt: c.lastMessageAt || c.dateUpdated,
+      lastActivityAt: c.lastMessageAt || c.dateUpdated || c.dateAdded,
       lastActivityLabel: formatGhlDateRelative(c.lastMessageAt || c.dateUpdated),
     };
   });
@@ -371,47 +372,43 @@ export async function buildConversationDetailView(
       })
     : messagesResult.messages;
   const deduped = dedupeConversationMessages(hydrated);
+  const ordered = sortMessagesNewestFirst(deduped);
 
-  const messages = deduped
-    .slice()
-    .sort((a, b) => {
-      const ta = a.dateAdded ? new Date(a.dateAdded).getTime() : 0;
-      const tb = b.dateAdded ? new Date(b.dateAdded).getTime() : 0;
-      return ta - tb;
-    })
-    .map((m: GhlMessage) => {
-      const typeUpper = (m.type || "").toUpperCase();
-      let channel = labelMessageType(m.type);
-      if (typeUpper.includes("EMAIL")) channel = "Email";
-      else if (typeUpper.includes("SMS")) channel = "SMS";
-      else if (typeUpper.includes("VOICEMAIL")) channel = "Voicemail";
-      else if (typeUpper.includes("CALL")) channel = "Call";
-      const body = stripHtmlToText(m.textBody ?? m.body ?? "")
-        .replace(/\s+\n/g, "\n")
-        .trim();
-      return {
-        id: m.id,
-        direction: m.direction,
-        actorLabel:
-          m.direction === "inbound"
-            ? m.fromAddress || contactName
-            : m.direction === "outbound"
-              ? m.fromAddress || "Acton"
-              : m.fromAddress || "Unknown",
-        fromAddress: m.fromAddress,
-        channel,
-        subject: m.subject,
-        body,
-        bodyPreview: body.slice(0, 400),
-        hasFullBody: body.length > 400,
-        at: formatGhlDateTime(m.dateAdded),
-        status: m.status,
-        attachments: m.attachments?.length ?? 0,
-        contentSource: m.contentSource ?? null,
-      };
-    });
+  const messages = ordered.map((m: GhlMessage) => {
+    const typeUpper = (m.type || "").toUpperCase();
+    let channel = labelMessageType(m.type);
+    if (typeUpper.includes("EMAIL")) channel = "Email";
+    else if (typeUpper.includes("SMS")) channel = "SMS";
+    else if (typeUpper.includes("VOICEMAIL")) channel = "Voicemail";
+    else if (typeUpper.includes("CALL")) channel = "Call";
+    const body = stripHtmlToText(m.textBody ?? m.body ?? "")
+      .replace(/\s+\n/g, "\n")
+      .trim();
+    return {
+      id: m.id,
+      direction: m.direction,
+      actorLabel:
+        m.direction === "inbound"
+          ? m.fromAddress || contactName
+          : m.direction === "outbound"
+            ? m.fromAddress || "Acton"
+            : m.fromAddress || "Unknown",
+      fromAddress: m.fromAddress,
+      channel,
+      subject: m.subject,
+      body,
+      bodyPreview: body.slice(0, 400),
+      hasFullBody: body.length > 400,
+      at: formatGhlDateTime(m.dateAdded),
+      dateAdded: m.dateAdded,
+      status: m.status,
+      attachments: m.attachments?.length ?? 0,
+      contentSource: m.contentSource ?? null,
+    };
+  });
 
-  const latest = messages.length ? messages[messages.length - 1] : null;
+  // Newest-first: latest activity is the first message.
+  const latest = messages.length ? messages[0] : null;
 
   return {
     conversationId,

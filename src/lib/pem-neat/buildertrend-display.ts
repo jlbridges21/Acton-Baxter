@@ -4,7 +4,10 @@ export type BuildertrendFieldKey = keyof BuildertrendFields;
 
 export type BuildertrendFieldDef = {
   key: BuildertrendFieldKey;
+  /** Exact BuilderTrend field name used for copy/paste headers. */
   label: string;
+  /** Optional Acton terminology clarification shown under the BT label. */
+  hint?: string;
   /** When true, value is rendered as bullet list and copied with newline bullets. */
   isBulletList?: boolean;
   /** When true, display uses currency formatting and copy omits $. */
@@ -16,8 +19,16 @@ export const BUILDERTREND_FIELD_DEFS: BuildertrendFieldDef[] = [
   { key: "squareFeet", label: "Square Feet" },
   { key: "customerBudget", label: "Customer Budget", isBudget: true },
   { key: "customerStory", label: "Customer Story" },
-  { key: "customerPain1", label: "Customer Pain 1" },
-  { key: "customerPain", label: "Customer Pain" },
+  {
+    key: "customerPain1",
+    label: "Customer Pain 1",
+    hint: "Type 1 Pain — Why Build an ADU?",
+  },
+  {
+    key: "customerPain",
+    label: "Customer Pain",
+    hint: "Type 2 Pain — Why Acton / the Right Partner? (Customer Pain 2)",
+  },
   { key: "customerPriorities", label: "Customer Priorities", isBulletList: true },
   { key: "designHandoff", label: "Design Handoff" },
   { key: "decisionMakingProcess", label: "Decision Making Process" },

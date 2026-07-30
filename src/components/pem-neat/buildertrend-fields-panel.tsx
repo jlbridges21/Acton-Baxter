@@ -14,11 +14,13 @@ import { cn } from "@/lib/utils";
 
 function FieldRow({
   label,
+  hint,
   displayValue,
   copyableValue,
   isBulletList,
 }: {
   label: string;
+  hint?: string;
   displayValue: string;
   copyableValue: string;
   isBulletList?: boolean;
@@ -34,8 +36,15 @@ function FieldRow({
   return (
     <div className="rounded-md border border-[var(--acton-border)] p-3">
       <div className="flex items-start justify-between gap-3">
-        <dt className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
-          {label}
+        <dt>
+          <span className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+            {label}
+          </span>
+          {hint ? (
+            <p className="mt-0.5 text-xs font-medium text-[var(--acton-navy)] normal-case">
+              {hint}
+            </p>
+          ) : null}
         </dt>
         <CopyButton
           getText={() => copyableValue}
@@ -89,6 +98,7 @@ export function BuildertrendFieldsPanel({ fields }: { fields: BuildertrendFields
           <FieldRow
             key={def.key}
             label={def.label}
+            hint={def.hint}
             displayValue={getDisplayValue(fields, def)}
             copyableValue={getCopyableValue(fields, def)}
             isBulletList={def.isBulletList}

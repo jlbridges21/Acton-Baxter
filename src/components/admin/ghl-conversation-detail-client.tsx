@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { mergeConversationTimelineNewestFirst } from "@/lib/connectors/ghl/conversation-sort";
 
 type Message = {
   id: string;
@@ -17,6 +18,7 @@ type Message = {
   bodyPreview?: string;
   hasFullBody?: boolean;
   at: string | null;
+  dateAdded?: string | null;
   status?: string | null;
   attachments?: number;
   contentSource?: string | null;
@@ -67,7 +69,11 @@ export function GhlConversationDetailClient() {
         setChannel(data.channel || null);
         setLatestActivity(data.latestActivityLabel || null);
         setHasMore(Boolean(data.hasMore));
-        setMessages((prev) => (opts?.append ? [...data.messages, ...prev] : data.messages));
+        setMessages((prev) =>
+          opts?.append
+            ? mergeConversationTimelineNewestFirst(prev, data.messages as Message[])
+            : mergeConversationTimelineNewestFirst([], data.messages as Message[]),
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Couldn't load conversation.");
       } finally {
@@ -117,6 +123,9 @@ export function GhlConversationDetailClient() {
       ? messages
       : messages.filter((m) => m.channel === channelFilter || m.channel?.includes(channelFilter));
 
+  // Newest-first: oldest message is at the bottom — use it as pagination cursor.
+  const oldestLoadedId = messages.length ? messages[messages.length - 1]?.id : undefined;
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
       <div>
@@ -163,21 +172,6 @@ export function GhlConversationDetailClient() {
           </button>
         ))}
       </div>
-
-      {hasMore ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() =>
-            void load({
-              append: true,
-              lastMessageId: messages[0]?.id,
-            })
-          }
-        >
-          Load earlier messages
-        </Button>
-      ) : null}
 
       <Card className="divide-y divide-[var(--acton-border)] p-0">
         {visible.length === 0 ? (
@@ -244,8 +238,24 @@ export function GhlConversationDetailClient() {
         )}
       </Card>
 
+      {hasMore ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() =>
+            void load({
+              append: true,
+              lastMessageId: oldestLoadedId,
+            })
+          }
+        >
+          Load earlier messages
+        </Button>
+      ) : null}
+
       <p className="text-xs text-[var(--acton-muted)]">
-        Messaging is read-only. Sending email/SMS through Baxter is not enabled.
+        Messaging is read-only. Sending email/SMS through Baxter is not enabled. Newest messages
+        appear at the top.
       </p>
     </div>
   );

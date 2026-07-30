@@ -84,8 +84,8 @@ export type AssessmentCategoryKey = (typeof ASSESSMENT_CATEGORY_KEYS)[number];
 export const ASSESSMENT_CATEGORY_LABELS: Record<AssessmentCategoryKey, string> = {
   bonding_rapport: "Bonding & Rapport",
   palo_upfront_contract: "PALO / Up-Front Contract",
-  type1_pain: "Type 1 Pain",
-  type2_pain: "Type 2 Pain",
+  type1_pain: "Type 1 Pain — Why Build an ADU?",
+  type2_pain: "Type 2 Pain — Why Acton / the Right Partner?",
   budget: "Budget",
   decision_making_process: "Decision-Making Process",
   schedule: "Schedule",

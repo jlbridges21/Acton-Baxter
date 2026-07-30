@@ -455,7 +455,7 @@ export function pemHelpDefinitionAnswer(question: string): string | null {
     !/\b(his|her|their|[A-Za-z]+(?:'s|’s))\b/i.test(question)
   ) {
     return [
-      "**Type 2 Pain** is why the right construction partner matters — concerns like communication, surprise costs, project management, transparency, or coordination across trades.",
+      "**Type 2 Pain** is why the right construction partner matters — especially Acton-fit: prior contractor/construction experiences, trust, communication, transparency, quality, turnkey delivery, coordination, risk management, and avoiding surprises.",
       "",
       "It's distinct from Type 1 Pain (why build an ADU at all).",
     ].join("\n");

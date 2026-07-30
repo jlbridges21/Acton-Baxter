@@ -138,7 +138,7 @@ function BudgetSection({
   if (!summary && rows.length === 0) {
     return (
       <div>
-        <SubSectionHeading>5. Budget</SubSectionHeading>
+        <SubSectionHeading>4. Budget</SubSectionHeading>
         <ProseBlock className="mt-2" emptyLabel="Not established">
           {null}
         </ProseBlock>
@@ -148,7 +148,7 @@ function BudgetSection({
 
   return (
     <div>
-      <SubSectionHeading>5. Budget</SubSectionHeading>
+      <SubSectionHeading>4. Budget</SubSectionHeading>
       <div className="mt-2 space-y-3">
         {summary ? <ProseBlock>{summary}</ProseBlock> : null}
         {rows.map((row) => (
@@ -208,18 +208,13 @@ export function NeatSalesIntelligencePanel({
           <ProseBlock className="mt-2">{sales.customerStory}</ProseBlock>
         </div>
 
-        <div>
-          <SubSectionHeading>2. Customer Pain</SubSectionHeading>
-          <ProseBlock className="mt-2">{sales.customerPain}</ProseBlock>
-        </div>
-
-        <PainList items={sales.type1Pain} title="3. Type 1 Pain — Why Build an ADU" />
-        <PainList items={sales.type2Pain} title="4. Type 2 Pain — Why Choose Acton" />
+        <PainList items={sales.type1Pain} title="2. Type 1 Pain — Why Build an ADU?" />
+        <PainList items={sales.type2Pain} title="3. Type 2 Pain — Why Acton / the Right Partner?" />
 
         <BudgetSection budget={sales.budget} />
 
         <div>
-          <SubSectionHeading>6. Decision-Making Process</SubSectionHeading>
+          <SubSectionHeading>5. Decision-Making Process</SubSectionHeading>
           <div className="mt-2 space-y-2">
             <ProseBlock emptyLabel="Not established">
               {sales.decisionProcess.summary ?? sales.decisionProcess.process}
@@ -284,7 +279,7 @@ export function NeatSalesIntelligencePanel({
         ) : null}
 
         <div>
-          <SubSectionHeading>7. Acton Recommendation</SubSectionHeading>
+          <SubSectionHeading>6. Acton Recommendation</SubSectionHeading>
           <div className="mt-2 space-y-1">
             {sales.actonRecommendation.fit ? (
               <p className="text-sm font-medium text-[var(--acton-navy)]">
@@ -296,7 +291,7 @@ export function NeatSalesIntelligencePanel({
         </div>
 
         <div>
-          <SubSectionHeading>8. Next Steps</SubSectionHeading>
+          <SubSectionHeading>7. Next Steps</SubSectionHeading>
           <div className="mt-2 grid gap-4 sm:grid-cols-2">
             <div>
               <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
@@ -340,7 +335,7 @@ export function NeatSalesIntelligencePanel({
           outcomeTone === "gray" && "border-[var(--acton-border)]",
         )}
       >
-        <SectionHeading>9. Meeting Outcome</SectionHeading>
+        <SectionHeading>8. Meeting Outcome</SectionHeading>
         <p className="mt-3 text-lg font-bold text-[var(--acton-navy)]">
           {formatMeetingOutcomeLabel(sales.meetingOutcome.classification)}
         </p>

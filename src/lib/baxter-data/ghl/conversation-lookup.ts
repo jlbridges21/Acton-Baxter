@@ -21,8 +21,19 @@ import type { GhlContact, GhlConversation, GhlMessage } from "@/lib/connectors/g
 import { createConversationEvidenceSource, createContactEvidenceSource } from "./evidence";
 import type { GhlEvidenceSource } from "./types";
 import type { GhlMessageChannelFilter, GhlMessageDirectionFilter } from "./conversation-intent";
+import {
+  messageTimestampMs,
+  sortMessagesNewestFirst,
+  sortConversationsNewestFirst,
+} from "@/lib/connectors/ghl/conversation-sort";
 
 export type { GhlMessageChannelFilter, GhlMessageDirectionFilter };
+export {
+  messageTimestampMs,
+  sortMessagesNewestFirst,
+  sortConversationsNewestFirst,
+  conversationActivityTimestampMs,
+} from "@/lib/connectors/ghl/conversation-sort";
 export {
   extractConversationContactQuery,
   inferConversationLookupFilters,
@@ -109,21 +120,6 @@ export function messageMatchesDirection(
   if (direction === "any") return true;
   if (message.direction === "unknown") return false;
   return message.direction === direction;
-}
-
-export function messageTimestampMs(message: Pick<GhlMessage, "dateAdded">): number {
-  if (!message.dateAdded) return 0;
-  const raw = message.dateAdded;
-  if (/^\d+$/.test(raw.trim())) {
-    const n = Number(raw);
-    return n < 1e12 ? n * 1000 : n;
-  }
-  const t = Date.parse(raw);
-  return Number.isFinite(t) ? t : 0;
-}
-
-export function sortMessagesNewestFirst(messages: GhlMessage[]): GhlMessage[] {
-  return [...messages].sort((a, b) => messageTimestampMs(b) - messageTimestampMs(a));
 }
 
 /**
@@ -622,11 +618,7 @@ export async function searchConversationsForAdmin(input: {
 
   if (input.contactId) {
     const conversations = await listConversationsForContact(input.contactId, { limit });
-    const sorted = [...conversations].sort((a, b) => {
-      const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
-      const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
-      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-    });
+    const sorted = sortConversationsNewestFirst(conversations);
     return {
       conversations: sorted,
       contactsMatched: 1,
@@ -648,7 +640,7 @@ export async function searchConversationsForAdmin(input: {
       const hit = recent.conversations.filter((c) => c.id === query);
       if (hit.length) {
         return {
-          conversations: hit,
+          conversations: sortConversationsNewestFirst(hit),
           contactsMatched: 0,
           total: 1,
           searchMode: "contact_query",
@@ -681,12 +673,13 @@ export async function searchConversationsForAdmin(input: {
         const hay = `${c.lastMessageBody ?? ""} ${c.contactId} ${c.id}`.toLowerCase();
         return hay.includes(needle);
       });
+      const sorted = sortConversationsNewestFirst(filtered).slice(0, limit);
       return {
-        conversations: filtered.slice(0, limit),
+        conversations: sorted,
         contactsMatched: 0,
         total: filtered.length,
         searchMode: "keyword_in_contact",
-        statusMessage: filtered.length
+        statusMessage: sorted.length
           ? `No contact named “${query}”; found ${filtered.length} recent conversation(s) whose preview matched.`
           : `No GHL contacts matched “${query}”, and no recent conversation previews contained that text. Try a contact name, email, or phone.`,
       };
@@ -712,11 +705,7 @@ export async function searchConversationsForAdmin(input: {
       if (byPreview.length) narrowed = byPreview;
     }
 
-    narrowed.sort((a, b) => {
-      const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
-      const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
-      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-    });
+    narrowed = sortConversationsNewestFirst(narrowed);
 
     return {
       conversations: narrowed.slice(0, limit),
@@ -728,11 +717,7 @@ export async function searchConversationsForAdmin(input: {
   }
 
   const recent = await searchConversations({ limit });
-  const sorted = [...recent.conversations].sort((a, b) => {
-    const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
-    const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
-    return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-  });
+  const sorted = sortConversationsNewestFirst(recent.conversations);
   return {
     conversations: sorted,
     contactsMatched: 0,

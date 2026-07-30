@@ -198,9 +198,9 @@ export function getPemField(
 ): PemFieldValue {
   const labelFor: Record<PemFieldKey, string> = {
     customer_story: "Customer Story",
-    customer_pain: "Customer Pain",
-    type_1_pain: "Type 1 Pain",
-    type_2_pain: "Type 2 Pain",
+    customer_pain: "Customer Pain (synthesis)",
+    type_1_pain: "Type 1 Pain — Why Build an ADU?",
+    type_2_pain: "Type 2 Pain — Why Acton / the Right Partner?",
     budget: "Budget",
     decision_process: "Decision Process",
     schedule: "Schedule",
