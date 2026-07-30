@@ -39,6 +39,7 @@ export default async function IntegrationsSettingsPage({
           workspaceLabel="Acton ADU"
           status={linked?.status ?? null}
           botPublicRecallAvailable={config.readyForPublicBotSearch}
+          oauthRedirectUri={config.oauthRedirectUri}
           capabilities={{
             publicChannels: caps.publicChannels,
             privateChannels: caps.privateChannels,

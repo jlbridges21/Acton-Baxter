@@ -40,6 +40,7 @@ export async function POST(request: Request) {
           "test_public_search",
           "test_user_resolution",
           "test_channel_resolution",
+          "test_channel_history",
           "test_thread_retrieval",
           "test_latest_message",
           "test_channel_summary",
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
       parsed.action === "test_public_search" ||
       parsed.action === "test_user_resolution" ||
       parsed.action === "test_channel_resolution" ||
+      parsed.action === "test_channel_history" ||
       parsed.action === "test_thread_retrieval" ||
       parsed.action === "test_latest_message" ||
       parsed.action === "test_channel_summary" ||

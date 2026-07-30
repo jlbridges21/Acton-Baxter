@@ -33,6 +33,9 @@ export const SLACK_SEARCH_BOT_SCOPES = [
   "search:read.users",
   "search:read.files",
   "channels:history",
+  // Private channels where Baxter is a member (conversations.history / directory)
+  "groups:history",
+  "groups:read",
 ] as const;
 
 export type SlackSearchRuntimeConfig = {

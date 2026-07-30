@@ -128,6 +128,8 @@ export async function fetchLatestMessageInChannel(input: {
   pagesFetched: number;
   notes: string[];
   accessDenied?: boolean;
+  /** Why history was denied — drives AUTH_REQUIRED vs SCOPE_MISSING messaging. */
+  accessDenialReason?: "user_oauth" | "missing_scope" | "not_member" | "other";
 }> {
   const channel = input.plan.channels[0];
   const person = input.plan.people[0];
@@ -161,6 +163,7 @@ export async function fetchLatestMessageInChannel(input: {
       pagesFetched: 0,
       notes,
       accessDenied: true,
+      accessDenialReason: access.requiresUserOauth ? "user_oauth" : "other",
     };
   }
 
@@ -214,12 +217,19 @@ export async function fetchLatestMessageInChannel(input: {
           result.error === "missing_scope")
       ) {
         notes.push(`Private history denied: ${result.error}`);
+        const accessDenialReason =
+          result.error === "missing_scope"
+            ? "missing_scope"
+            : result.error === "not_in_channel"
+              ? "not_member"
+              : "other";
         return {
           message: null,
           exactNewestGuaranteed: false,
           pagesFetched: pages,
           notes,
           accessDenied: true,
+          accessDenialReason,
         };
       }
       notes.push(`conversations.history failed: ${result.error ?? "unknown"}`);

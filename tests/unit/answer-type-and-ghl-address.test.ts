@@ -69,6 +69,24 @@ describe("deriveAnswerTypeLabel", () => {
     expect(deriveAnswerTypeLabel({ answerMode: "general", sources: [] })).toBe("General knowledge");
   });
 
+  it("maps Slack recall no-result clarification — not General knowledge", () => {
+    expect(deriveAnswerTypeLabel({ answerMode: "clarification", sources: [] })).toBe(
+      "Clarification",
+    );
+    expect(deriveAnswerTypeLabel({ answerMode: "clarification", sources: [] })).not.toBe(
+      "General knowledge",
+    );
+  });
+
+  it("maps successful Slack recall cite to Slack conversational update", () => {
+    expect(
+      deriveAnswerTypeLabel({
+        answerMode: "grounded",
+        sources: [source("slack", "Milan in #baxter")],
+      }),
+    ).toBe("Slack conversational update");
+  });
+
   it("joins two kinds with +", () => {
     expect(
       deriveAnswerTypeLabel({

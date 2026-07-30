@@ -229,6 +229,80 @@ describe("private bot-member history", () => {
     expect(result.message).toBeNull();
     expect(callSlackApi.mock.calls.some((c) => c[0] === "conversations.join")).toBe(false);
   });
+
+  it("maps private missing_scope to SCOPE_MISSING, not Connect Slack OAuth", async () => {
+    const plan: SlackQueryPlan = {
+      intent: "latest_message",
+      people: [
+        {
+          id: "U_JAMES",
+          displayName: "James Parks",
+          realName: "James Parks",
+          username: "james",
+          teamId: FIXTURE_TEAM_ID,
+        },
+      ],
+      channels: [
+        {
+          id: "C0BDX025ALW",
+          name: "baxter",
+          displayLabel: "#baxter",
+          teamId: FIXTURE_TEAM_ID,
+          kind: "private_channel",
+          isPrivate: true,
+          isArchived: false,
+          isMember: true,
+        },
+      ],
+      keywords: [],
+      phrases: [],
+      decisionLanguage: [],
+      timeRange: null,
+      sort: "newest",
+      limit: 5,
+      includeThreads: false,
+      includeNearbyContext: false,
+      naturalQuery: "what did James say last in #baxter?",
+    };
+
+    const callSlackApi = vi.fn(async (method: string) => {
+      if (method === "conversations.info") {
+        return {
+          ok: true,
+          data: {
+            channel: {
+              id: "C0BDX025ALW",
+              name: "baxter",
+              is_private: true,
+              is_archived: false,
+              is_member: true,
+            },
+          },
+        };
+      }
+      if (method === "conversations.history") {
+        return { ok: false, error: "missing_scope", data: {} };
+      }
+      return { ok: false, error: "unexpected", data: {} };
+    });
+
+    const latest = await fetchLatestMessageInChannel({
+      credential: botCred("bot_public"),
+      plan,
+      deps: { callSlackApi },
+    });
+    expect(latest.accessDenied).toBe(true);
+    expect(latest.accessDenialReason).toBe("missing_scope");
+
+    const result = await executeSlackSearchPlan({
+      plan,
+      credential: botCred("bot_public"),
+      deps: { callSlackApi },
+    });
+    expect(result.incomplete?.code).toBe("BAXTER_SLACK_SEARCH_SCOPE_MISSING");
+    expect(result.incomplete?.message).toMatch(/groups:history/i);
+    expect(result.incomplete?.message).not.toMatch(/Link Slack Search/i);
+  });
 });
 
 describe("archived channel exclusion", () => {
@@ -277,7 +351,7 @@ describe("archived channel exclusion", () => {
     expect(result.results).toEqual([]);
     expect(
       result.diagnostics.notes.some((n) =>
-        /bounded public-channel scan|no public channel/i.test(n),
+        /bounded bot-accessible scan|no bot-accessible channel/i.test(n),
       ),
     ).toBe(true);
     expect(callSlackApi).not.toHaveBeenCalled();
@@ -345,6 +419,254 @@ describe("archived channel exclusion", () => {
     expect(result.results.length).toBeGreaterThan(0);
     expect(result.results[0]?.text).toMatch(/RACI/i);
     expect(result.incomplete?.code).not.toBe("BAXTER_SLACK_SEARCH_AUTH_REQUIRED");
+  });
+
+  it("scans private bot-member #baxter for RACI without user OAuth and includes Milan reply", async () => {
+    const callSlackApi = vi.fn(
+      async (method: string, options?: { body?: Record<string, unknown> }) => {
+        if (method === "conversations.history") {
+          expect(options?.body?.channel).toBe("C0BDX025ALW");
+          return {
+            ok: true,
+            data: {
+              messages: [
+                {
+                  user: "U_MILAN",
+                  text: "Not yet. Maxx is out and I need some time to go through it still",
+                  ts: "1753632002.000200",
+                },
+                {
+                  user: "U_JACKSON",
+                  text: "Do we have a RACI matrix for me to work off of for Baxter development?",
+                  ts: "1753632001.000100",
+                },
+              ],
+            },
+          };
+        }
+        return { ok: false, error: "unexpected", data: {} };
+      },
+    );
+
+    const result = await executeSlackSearchPlan({
+      plan: {
+        intent: "latest_update",
+        people: [],
+        channels: [],
+        keywords: ["raci", "matrix"],
+        phrases: ["RACI matrix"],
+        decisionLanguage: [],
+        timeRange: null,
+        sort: "newest",
+        limit: 10,
+        includeThreads: true,
+        includeNearbyContext: true,
+        naturalQuery: "What is the latest update on the RACI matrix?",
+      },
+      credential: {
+        ...botCred("bot_public"),
+        slackTeamId: FIXTURE_TEAM_ID,
+      },
+      deps: {
+        callSlackApi,
+        listCachedChannels: async () => [
+          {
+            id: "C0BDX025ALW",
+            name: "baxter",
+            displayLabel: "#baxter",
+            teamId: FIXTURE_TEAM_ID,
+            kind: "private_channel",
+            isPrivate: true,
+            isArchived: false,
+            isMember: true,
+          },
+          {
+            id: "C_OTHER_PRIVATE",
+            name: "secret-exec",
+            displayLabel: "#secret-exec",
+            teamId: FIXTURE_TEAM_ID,
+            kind: "private_channel",
+            isPrivate: true,
+            isArchived: false,
+            isMember: false,
+          },
+        ],
+        listCachedUsers: async () => [
+          {
+            id: "U_MILAN",
+            displayName: "Milan",
+            realName: "Milan",
+            username: "milan",
+            teamId: FIXTURE_TEAM_ID,
+          },
+          {
+            id: "U_JACKSON",
+            displayName: "Jackson Bridges",
+            realName: "Jackson Bridges",
+            username: "jackson",
+            teamId: FIXTURE_TEAM_ID,
+          },
+        ],
+      },
+    });
+
+    expect(result.incomplete).toBeNull();
+    expect(result.incomplete?.code).not.toBe("BAXTER_SLACK_SEARCH_AUTH_REQUIRED");
+    expect(callSlackApi.mock.calls.every((c) => c[1]?.body?.channel !== "C_OTHER_PRIVATE")).toBe(
+      true,
+    );
+    expect(result.diagnostics.notes.some((n) => /private bot-member/i.test(n))).toBe(true);
+
+    const milan = result.results.find((m) => /Not yet/i.test(m.text));
+    const jackson = result.results.find((m) => /RACI matrix/i.test(m.text));
+    expect(milan).toBeTruthy();
+    expect(jackson).toBeTruthy();
+    expect(milan?.authorName).toBe("Milan");
+    expect(milan?.channelName).toBe("baxter");
+    // Newest-first: Milan's update should be preferred for latest_update selection.
+    const { selectSlackEvidenceForModel } = await import("@/lib/baxter-data/slack/select");
+    const selected = selectSlackEvidenceForModel(result.results, {
+      intent: "latest_update",
+      people: [],
+      channels: [],
+      keywords: ["raci", "matrix"],
+      phrases: ["RACI matrix"],
+      decisionLanguage: [],
+      timeRange: null,
+      sort: "newest",
+      limit: 10,
+      includeThreads: true,
+      includeNearbyContext: true,
+      naturalQuery: "What is the latest update on the RACI matrix?",
+    });
+    expect(selected[0]?.text).toMatch(/Not yet/i);
+    expect(selected[0]?.authorName).toBe("Milan");
+  });
+
+  it("does not scan private channels where the bot is not a member", async () => {
+    const callSlackApi = vi.fn(async () => {
+      throw new Error("must not call Slack for non-member private topic scan");
+    });
+
+    const result = await executeSlackSearchPlan({
+      plan: {
+        intent: "topic_search",
+        people: [],
+        channels: [],
+        keywords: ["secret"],
+        phrases: [],
+        decisionLanguage: [],
+        timeRange: null,
+        sort: "newest",
+        limit: 10,
+        includeThreads: false,
+        includeNearbyContext: false,
+        naturalQuery: "secret topic",
+      },
+      credential: {
+        ...botCred("bot_public"),
+        slackTeamId: FIXTURE_TEAM_ID,
+      },
+      deps: {
+        callSlackApi,
+        listCachedChannels: async () => [
+          {
+            id: "C_SECRET",
+            name: "secret-exec",
+            displayLabel: "#secret-exec",
+            teamId: FIXTURE_TEAM_ID,
+            kind: "private_channel",
+            isPrivate: true,
+            isArchived: false,
+            isMember: false,
+          },
+        ],
+      },
+    });
+
+    expect(result.results).toEqual([]);
+    expect(callSlackApi).not.toHaveBeenCalled();
+  });
+});
+
+describe("adjacent non-thread context", () => {
+  it("expands keyword hits with neighboring channel messages", async () => {
+    const { expandHitsWithAdjacentMessages } = await import("@/lib/baxter-data/slack/search");
+    const channelMessages = [
+      {
+        sourceType: "slack" as const,
+        messageTs: "1.1",
+        threadTs: null,
+        channelId: "C0BDX025ALW",
+        channelName: "baxter",
+        channelKind: "private_channel" as const,
+        authorId: "U_J",
+        authorName: "Jackson Bridges",
+        timestamp: "2026-07-27T12:00:01.000Z",
+        text: "Do we have a RACI matrix for me to work off of for Baxter development?",
+        permalink: null,
+        isThreadReply: false,
+        relevance: null,
+        contextMessages: [],
+        clusterKey: "C0BDX025ALW:1.1",
+      },
+      {
+        sourceType: "slack" as const,
+        messageTs: "1.2",
+        threadTs: null,
+        channelId: "C0BDX025ALW",
+        channelName: "baxter",
+        channelKind: "private_channel" as const,
+        authorId: "U_M",
+        authorName: "Milan",
+        timestamp: "2026-07-27T12:00:02.000Z",
+        text: "Not yet. Maxx is out and I need some time to go through it still",
+        permalink: null,
+        isThreadReply: false,
+        relevance: null,
+        contextMessages: [],
+        clusterKey: "C0BDX025ALW:1.2",
+      },
+    ];
+    const hits = [channelMessages[0]!];
+    const expanded = expandHitsWithAdjacentMessages(hits, channelMessages, 1, 1);
+    expect(expanded.length).toBe(2);
+    expect(expanded.some((m) => /Not yet/i.test(m.text))).toBe(true);
+    const withJackson = expanded.find((m) => /RACI matrix/i.test(m.text));
+    expect(withJackson?.contextMessages.some((m) => /Not yet/i.test(m.text))).toBe(true);
+  });
+});
+
+describe("bot-accessible channel predicate", () => {
+  it("allows private member and public; rejects private non-member", async () => {
+    const { isBotAccessibleDirectoryChannel } = await import("@/lib/baxter-data/slack/search");
+    expect(
+      isBotAccessibleDirectoryChannel({
+        id: "C0BDX025ALW",
+        kind: "private_channel",
+        isPrivate: true,
+        isArchived: false,
+        isMember: true,
+      }),
+    ).toBe(true);
+    expect(
+      isBotAccessibleDirectoryChannel({
+        id: "C_SECRET",
+        kind: "private_channel",
+        isPrivate: true,
+        isArchived: false,
+        isMember: false,
+      }),
+    ).toBe(false);
+    expect(
+      isBotAccessibleDirectoryChannel({
+        id: "C_PM",
+        kind: "public_channel",
+        isPrivate: false,
+        isArchived: false,
+        isMember: true,
+      }),
+    ).toBe(true);
   });
 });
 

@@ -69,6 +69,7 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string, te
       channelsCached: directory.channelsCached,
       publicChannels: directory.publicChannels,
       privateChannels: directory.privateChannels,
+      privateBotMemberChannels: directory.privateBotMemberChannels,
       archivedChannels: directory.archivedChannels,
       activeHumans: directory.activeHumans,
       lastUserResolvedAt: directory.lastUserResolvedAt,
@@ -76,6 +77,16 @@ export async function getSlackSearchDiagnosticsSnapshot(adminUserId?: string, te
       staleHint: directoryStaleHint,
       health: directoryThin ? ("needs_attention" as const) : ("ready" as const),
     },
+    botPrivateAccess: {
+      privateChannelsCached: directory.privateChannels,
+      privateChannelsBotMember: directory.privateBotMemberChannels,
+      /** Bot can attempt history on private channels where is_member=true (groups:history). */
+      privateChannelsBotCanRead: directory.privateBotMemberChannels,
+    },
+    oauthRedirectSetupHint:
+      "If Slack shows redirect_uri did not match, add this exact URL in Slack API → OAuth & Permissions → Redirect URLs (no trailing slash), then Save URLs:\n" +
+      (config.oauthRedirectUri ||
+        "https://acton-baxter.vercel.app/api/slack/search/oauth/callback"),
     capabilities: {
       publicChannels: linkedCaps.publicChannels || envPublicOnly || config.readyForPublicBotSearch,
       privateChannels: linkedCaps.privateChannels,
@@ -126,7 +137,8 @@ export async function runSlackSearchAdminTest(input: {
     | "sandbox_search"
     | "refresh_directory"
     | "test_channel_summary"
-    | "test_slack_recall";
+    | "test_slack_recall"
+    | "test_channel_history";
   query?: string;
   person?: string;
   channel?: string;
@@ -327,6 +339,18 @@ export async function runSlackSearchAdminTest(input: {
               isArchived: access.isArchived,
               botMember: access.isMember,
               botHistory,
+              groupsHistoryPath:
+                access.isPrivate && access.canReadHistory
+                  ? "available"
+                  : access.isPrivate
+                    ? "unavailable"
+                    : "n/a_public",
+              credentialPath:
+                access.isPrivate && access.isMember === true
+                  ? "bot_private"
+                  : access.isPrivate
+                    ? "user_oauth_required"
+                    : "bot_public",
               accessNotes,
             },
           };
@@ -366,6 +390,112 @@ export async function runSlackSearchAdminTest(input: {
               })),
             }
           : { notFound: true },
+    };
+  }
+
+  if (input.action === "test_channel_history") {
+    const channels = await listCachedSlackChannels(teamId);
+    const q = (input.channel || query || "baxter").trim();
+    const result = resolveChannelFromDirectory(q, channels);
+    if (result.status !== "resolved") {
+      return {
+        ok: false,
+        action: input.action,
+        query: q,
+        channelsCached: channels.length,
+        result:
+          result.status === "ambiguous"
+            ? {
+                ambiguous: true,
+                candidates: result.ambiguity.candidates.map((c) => ({
+                  name: c.name,
+                  displayLabel: c.displayLabel,
+                })),
+              }
+            : { notFound: true },
+      };
+    }
+
+    const { resolveChannelAccess } = await import("./access");
+    const { resolveSearchCredential } = await import("./permissions");
+    const { callSlackApi } = await import("./api");
+    const cred = await resolveSearchCredential({
+      ...input.requester,
+      allowPublicOnlyFallback: true,
+      slackUserId: input.requester.slackUserId ?? "admin-diagnostic",
+    });
+    if (!cred.ok) {
+      return {
+        ok: false,
+        action: input.action,
+        query: q,
+        result: { error: cred.code, channel: result.channel.displayLabel },
+      };
+    }
+
+    const access = await resolveChannelAccess({
+      channel: result.channel,
+      credential: cred.credential,
+    });
+    const credentialPath =
+      access.isPrivate && access.isMember === true
+        ? "bot_private"
+        : access.isPrivate
+          ? access.requiresUserOauth
+            ? "user_oauth_required"
+            : "bot_private_unknown_membership"
+          : "bot_public";
+
+    let messagesInspected = 0;
+    let latestTimestamp: string | null = null;
+    let historyOk = false;
+    let historyError: string | null = null;
+    if (access.canReadHistory) {
+      const hist = await callSlackApi("conversations.history", {
+        token: cred.credential.token,
+        body: { channel: access.channel.id, limit: 5 },
+        timeoutMs: 12_000,
+      });
+      historyOk = hist.ok;
+      historyError = hist.ok ? null : (hist.error ?? "history_failed");
+      if (hist.ok) {
+        const messages = (hist.data.messages as Array<Record<string, unknown>> | undefined) ?? [];
+        messagesInspected = messages.length;
+        const firstTs = messages[0]?.ts;
+        latestTimestamp = typeof firstTs === "string" ? firstTs : null;
+      }
+    }
+
+    return {
+      ok: historyOk || (access.canReadHistory && messagesInspected >= 0),
+      action: input.action,
+      query: q,
+      result: {
+        channel: access.channel.displayLabel,
+        channelId: access.channel.id,
+        channelType: access.isPrivate ? "private_channel" : "public_channel",
+        resolved: true,
+        private: access.isPrivate,
+        botMembership: access.isMember,
+        botMember: access.isMember,
+        groupsHistoryPath:
+          access.canReadHistory && access.isPrivate
+            ? "available"
+            : access.canReadHistory
+              ? "n/a_public"
+              : "unavailable",
+        historyAccess: access.canReadHistory,
+        credentialPath,
+        retrievalMethod: access.canReadHistory ? "conversations.history" : null,
+        messagesInspected,
+        messagesMatched: null,
+        latestTimestamp,
+        permalinkAvailable: Boolean(cred.credential.capabilities.permalinks),
+        requiresUserOauth: access.requiresUserOauth,
+        historyError,
+        accessNotes: access.notes,
+        note: "Message bodies omitted from admin diagnostics by default.",
+      },
     };
   }
 

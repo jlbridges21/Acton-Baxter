@@ -63,7 +63,7 @@ export function employeeFacingSlackSearchError(code: string): string {
     case SLACK_SEARCH_ERROR_CODES.USER_NOT_LINKED:
       return "Slack search is unavailable until your Slack account is linked.";
     case SLACK_SEARCH_ERROR_CODES.SCOPE_MISSING:
-      return "Baxter needs additional Slack permissions to search. Ask an admin to reconnect Slack search.";
+      return "Baxter's Slack bot is missing a required permission (for private channels: groups:history / groups:read). Ask an admin to add those Bot Token Scopes and reinstall the Slack app — connecting Personal Slack Search is not the fix for that.";
     case SLACK_SEARCH_ERROR_CODES.PERSON_AMBIGUOUS:
       return "That name matches more than one Slack user. Please clarify which person you mean.";
     case SLACK_SEARCH_ERROR_CODES.CHANNEL_AMBIGUOUS:

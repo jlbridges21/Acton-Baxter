@@ -27,7 +27,7 @@ function flashMessage(flash: string | null): { tone: "ok" | "err"; text: string 
   if (flash === "misconfigured" || flash === "redirect_uri") {
     return {
       tone: "err",
-      text: "Slack authorization is not configured correctly. Contact a Baxter admin (Redirect URL may be missing in Slack).",
+      text: "Slack OAuth redirect is not registered. Add this exact URL in Slack API → OAuth & Permissions → Redirect URLs: https://acton-baxter.vercel.app/api/slack/search/oauth/callback",
     };
   }
   if (flash === "oauth_cancelled") {
@@ -47,6 +47,7 @@ export function SlackIntegrationsClient(props: {
   status: string | null;
   /** Baxter bot can recall public channel history without personal OAuth. */
   botPublicRecallAvailable: boolean;
+  oauthRedirectUri: string;
   capabilities: {
     publicChannels: boolean;
     privateChannels: boolean;
@@ -94,12 +95,21 @@ export function SlackIntegrationsClient(props: {
             <StatusLabel value={props.botPublicRecallAvailable} no="Unavailable" />
           </div>
           <div>
+            Private channels Baxter is in:{" "}
+            <StatusLabel
+              value={props.botPublicRecallAvailable}
+              yes="Bot membership + groups:history"
+              no="Unavailable"
+            />
+          </div>
+          <div>
             Workspace: <span className="font-medium">{props.workspaceLabel}</span>
           </div>
         </dl>
         <p className="text-xs text-[var(--acton-muted)]">
-          Public `/recall` and `@Baxter` questions can use Baxter&apos;s bot token without personal
-          OAuth when the bot can access the channel.
+          Public `/recall` and private channels where Baxter is already a member use the bot token
+          (`groups:history`) — personal OAuth is not required for those. Personal Slack Search is
+          only needed for private channels/DMs Baxter cannot access.
         </p>
       </div>
 
@@ -158,6 +168,13 @@ export function SlackIntegrationsClient(props: {
 
       {props.missing.length ? (
         <p className="text-sm text-amber-800">Setup incomplete: {props.missing.join(", ")}</p>
+      ) : null}
+
+      {!props.connected && props.oauthReady ? (
+        <p className="text-xs text-[var(--acton-muted)]">
+          Slack OAuth redirect must be registered exactly as:{" "}
+          <code className="break-all">{props.oauthRedirectUri}</code>
+        </p>
       ) : null}
 
       <a href="/api/slack/search/oauth/start?return=/settings/integrations">

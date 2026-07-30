@@ -4,6 +4,7 @@ import {
   getSlackSearchRuntimeConfig,
   getSlackSearchUserTokenFromEnv,
   scopesToCapabilities,
+  SLACK_SEARCH_BOT_SCOPES,
   SLACK_SEARCH_USER_SCOPES,
 } from "./config";
 import { SLACK_SEARCH_ERROR_CODES } from "./errors";
@@ -154,7 +155,8 @@ async function loadBotToken(): Promise<string> {
 /**
  * Resolve which Slack credential to use for search.
  * Prefer the requesting employee's user token. Never use another user's
- * private/DM scopes. Bot paths are public-only.
+ * private/DM scopes. Bot paths cover public channels and private channels
+ * where the bot is a member (groups:history).
  *
  * For Slack-origin requests, bot_public (conversations.history) works WITHOUT
  * action_token. RTS (assistant.search.context) still needs action_token or user OAuth.
@@ -201,18 +203,9 @@ export async function resolveSearchCredential(
     Boolean(botToken) &&
     Boolean(requester.actionToken || requester.slackUserId || requester.allowPublicOnlyFallback);
 
-  // 2) Slack-origin / public bot path
+  // 2) Slack-origin / bot path (public + private bot-member history)
   if (canUseBotPublic && botToken) {
-    const scopes = [
-      "search:read.public",
-      "search:read.private",
-      "search:read.users",
-      "channels:history",
-      "channels:read",
-      "channels:join",
-      "groups:history",
-      "groups:read",
-    ];
+    const scopes = [...SLACK_SEARCH_BOT_SCOPES, "channels:read", "channels:join"];
     if (requester.actionToken) {
       return {
         ok: true,
@@ -227,7 +220,7 @@ export async function resolveSearchCredential(
         },
       };
     }
-    // Public channel history / channel-scoped recall without RTS action_token
+    // Channel history / channel-scoped recall without RTS action_token
     return {
       ok: true,
       credential: {

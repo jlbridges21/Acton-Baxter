@@ -63,12 +63,12 @@ When Slack conflicts with approved Knowledge, explain both — do not silently o
 
 ## Authorization
 
-| Mode                                    | Access                                      |
-| --------------------------------------- | ------------------------------------------- |
-| User OAuth (`slack_search_connections`) | Content Slack says that user can access     |
-| Bot + `action_token`                    | Public Real-time Search                     |
-| Bot public (`bot_public`)               | Public channel `conversations.history` only |
-| Not connected (web, private/DM needed)  | Connect Slack CTA — no cross-user tokens    |
+| Mode                                    | Access                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| User OAuth (`slack_search_connections`) | Content Slack says that user can access                                                     |
+| Bot + `action_token`                    | Public Real-time Search                                                                     |
+| Bot public (`bot_public`)               | Public + private-bot-member `conversations.history` (`channels:history` / `groups:history`) |
+| Not connected (web, private/DM needed)  | Connect Slack CTA — no cross-user tokens                                                    |
 
 For Slack-origin public channel questions (e.g. “What did Jess say last in #project-management?”), Baxter uses bot history without requiring a separate `/settings/integrations` OAuth link.
 

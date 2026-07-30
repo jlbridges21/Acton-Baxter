@@ -128,6 +128,8 @@ In Slack app settings → **Basic Information** → **Display Information** → 
 | `search:read.users`  | Include workspace users in Real-time Search results                             |
 | `search:read.files`  | Include files in Real-time Search (optional but recommended)                    |
 | `channels:history`   | Bounded thread / nearby context for public channels                             |
+| `groups:history`     | History for **private** channels where Baxter is a member                       |
+| `groups:read`        | Resolve/list private channel metadata (directory + membership)                  |
 
 ### User token scopes (Slack Search — per-employee OAuth)
 
@@ -197,9 +199,9 @@ Do **not** confuse “omit from bot” with “omit from user OAuth.”
 | ------------- | --------------------------------------- |
 | `groups:read` | Resolve private channel names via Slack |
 
-Do **not** add `groups:read` silently. Only add it when private-channel Activity naming is required, then reinstall the app.
+Bot Token Scopes should include `groups:read` and `groups:history` for private channels Baxter is invited to. After adding scopes, **reinstall** the Slack app.
 
-**Tradeoff:** Without `channels:history`, Baxter **cannot** see unmentioned thread replies in channels. Employees must `@Baxter` again for each channel follow-up. DMs work as normal free-form conversation.
+**Tradeoff:** Without `channels:history`, Baxter **cannot** see unmentioned thread replies in public channels. Without `groups:history`, Baxter cannot read private channels it belongs to. Employees must `@Baxter` again for each channel follow-up when history scopes are missing. DMs work as normal free-form conversation.
 
 ### After changing scopes
 

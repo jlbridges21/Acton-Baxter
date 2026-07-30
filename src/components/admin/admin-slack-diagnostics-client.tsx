@@ -22,6 +22,7 @@ type SearchSnapshot = {
     channelsCached: number;
     publicChannels: number;
     privateChannels: number;
+    privateBotMemberChannels?: number;
     archivedChannels?: number;
     activeHumans: number;
     lastUserResolvedAt: string | null;
@@ -29,6 +30,12 @@ type SearchSnapshot = {
     staleHint: string | null;
     health?: "ready" | "needs_attention";
   };
+  botPrivateAccess?: {
+    privateChannelsCached: number;
+    privateChannelsBotMember: number;
+    privateChannelsBotCanRead: number;
+  };
+  oauthRedirectSetupHint?: string;
   workspaceSearchNote?: string;
   capabilities: {
     publicChannels: boolean;
@@ -263,9 +270,8 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
           </dl>
           {search.oauthRedirectUri ? (
             <p className="text-xs text-[var(--acton-muted)]">
-              If Slack shows <span className="font-medium">redirect_uri did not match</span>, add
-              this exact URL under Slack API → OAuth &amp; Permissions → Redirect URLs, then Save.
-              Changing user scopes usually requires reinstalling the app.
+              {search.oauthRedirectSetupHint ??
+                `If Slack shows redirect_uri did not match, add this exact URL under Slack API → OAuth & Permissions → Redirect URLs, then Save. Changing user scopes usually requires reinstalling the app.`}
             </p>
           ) : null}
           {search.capabilityHealth ? (
@@ -328,6 +334,25 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                       : ""}
                   </span>
                 </div>
+                {typeof search.directory.privateBotMemberChannels === "number" ||
+                search.botPrivateAccess ? (
+                  <>
+                    <div>
+                      Private channels bot is member of:{" "}
+                      <span className="font-medium">
+                        {search.botPrivateAccess?.privateChannelsBotMember ??
+                          search.directory.privateBotMemberChannels}
+                      </span>
+                    </div>
+                    <div>
+                      Private channels bot can read:{" "}
+                      <span className="font-medium">
+                        {search.botPrivateAccess?.privateChannelsBotCanRead ??
+                          search.directory.privateBotMemberChannels}
+                      </span>
+                    </div>
+                  </>
+                ) : null}
                 <div>
                   Users refreshed:{" "}
                   <span className="font-medium">
@@ -370,6 +395,18 @@ export function AdminSlackDiagnosticsClient({ search }: { search?: SearchSnapsho
                   onClick={() => void run("test_channel_resolution", { query: directoryQuery })}
                 >
                   Resolve channel
+                </Button>
+                <Button
+                  type="button"
+                  disabled={Boolean(busy) || !directoryQuery.trim()}
+                  onClick={() =>
+                    void run("test_channel_history", {
+                      query: directoryQuery,
+                      channel: directoryQuery,
+                    })
+                  }
+                >
+                  Test channel history
                 </Button>
                 <input
                   className="min-w-[10rem] flex-1 rounded border border-[var(--acton-border)] px-3 py-2 text-sm"

@@ -74,6 +74,8 @@ export type SlackDirectoryHealth = {
   publicChannels: number;
   /** Non-archived private channels with names */
   privateChannels: number;
+  /** Non-archived private channels where the bot is a member (is_member=true) */
+  privateBotMemberChannels: number;
   archivedChannels: number;
   activeHumans: number;
   lastUserResolvedAt: string | null;
@@ -92,6 +94,9 @@ export async function getSlackDirectoryHealth(teamId: string): Promise<SlackDire
     const archivedChannels = channels.filter((c) => c.is_archived && c.name).length;
     const publicChannels = channels.filter((c) => !c.is_private && !c.is_archived && c.name).length;
     const privateChannels = channels.filter((c) => c.is_private && !c.is_archived && c.name).length;
+    const privateBotMemberChannels = channels.filter(
+      (c) => c.is_private && !c.is_archived && c.name && c.is_member === true,
+    ).length;
     const lastUser = users
       .map((u) => u.last_resolved_at)
       .filter((v): v is string => Boolean(v))
@@ -107,6 +112,7 @@ export async function getSlackDirectoryHealth(teamId: string): Promise<SlackDire
       channelsCached: channels.length,
       publicChannels,
       privateChannels,
+      privateBotMemberChannels,
       archivedChannels,
       activeHumans,
       lastUserResolvedAt: lastUser ?? null,
@@ -118,6 +124,7 @@ export async function getSlackDirectoryHealth(teamId: string): Promise<SlackDire
       channelsCached: 0,
       publicChannels: 0,
       privateChannels: 0,
+      privateBotMemberChannels: 0,
       archivedChannels: 0,
       activeHumans: 0,
       lastUserResolvedAt: null,

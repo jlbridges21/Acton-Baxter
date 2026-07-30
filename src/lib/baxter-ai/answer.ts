@@ -768,13 +768,14 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     // If other sources exist, continue to LLM with a Slack note instead of short-circuiting.
     if (contextItems.length === 0 && parts.length) {
       const answer = parts.join("\n\n");
+      const isAuth = Boolean(slackRuntime.authNote);
       const message = await appendAssistantMessage({
         conversationId: conversation.id,
         content: answer,
-        insufficientKnowledge: !slackRuntime.authNote,
+        insufficientKnowledge: !isAuth,
         confidence: "medium",
         modelProvider: "slack-search",
-        modelName: "no-results",
+        modelName: isAuth ? "auth-required" : "no-results",
         sources: [],
         sourceEntryIds: [],
       });
@@ -784,8 +785,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         answer,
         sources: [],
         confidence: "medium",
-        insufficientKnowledge: !slackRuntime.authNote,
-        answerMode: slackRuntime.authNote ? "clarification" : "grounded",
+        insufficientKnowledge: !isAuth,
+        // Never label a Slack recall miss as General knowledge.
+        answerMode: "clarification",
       });
     }
   }
@@ -1018,6 +1020,24 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       answerMode = "identity";
       insufficientKnowledge = false;
       if (!answerText) answerText = answerFromBaxterIdentity(question);
+    } else if (
+      forceSlack &&
+      slackRuntime?.diagnostics.role === "primary" &&
+      sources.length === 0 &&
+      !slackRuntime.selected.length
+    ) {
+      // Forced /recall with no Slack cites — never fall through to General knowledge.
+      answerMode = "clarification";
+      insufficientKnowledge = true;
+      if (slackRuntime.noResultsNote || slackRuntime.authNote || slackRuntime.incompleteNote) {
+        answerText = [
+          slackRuntime.authNote,
+          slackRuntime.noResultsNote,
+          slackRuntime.incompleteNote,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+      }
     } else if (
       (questionClass === "acton_company_specific" || questionClass === "acton_process_specific") &&
       sources.length === 0

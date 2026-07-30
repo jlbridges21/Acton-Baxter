@@ -7,8 +7,14 @@ import {
   normalizeHistoryMessage,
   normalizeSearchMessage,
 } from "./normalize";
-import { fetchLatestMessageInChannel, fetchPermalink, fetchThreadContext } from "./threads";
+import {
+  fetchLatestMessageInChannel,
+  fetchNearbyContext,
+  fetchPermalink,
+  fetchThreadContext,
+} from "./threads";
 import type {
+  ResolvedSlackChannel,
   SlackApiCallResult,
   SlackChannelKind,
   SlackCredentialResolution,
@@ -19,6 +25,88 @@ import type {
   SlackSearchIncomplete,
   SlackTimeRange,
 } from "./types";
+
+/** Channels the bot may scan via conversations.history (public + private where member). */
+export function isBotAccessibleDirectoryChannel(
+  c: Pick<ResolvedSlackChannel, "id" | "kind" | "isPrivate" | "isArchived" | "isMember">,
+): boolean {
+  if (c.isArchived) return false;
+  if (c.kind === "im" || c.kind === "mpim") return false;
+  const privateChannel = Boolean(c.isPrivate) || c.kind === "private_channel";
+  if (privateChannel) return c.isMember === true;
+  return c.kind === "public_channel" || (!c.kind && (c.id.startsWith("C") || c.id.startsWith("G")));
+}
+
+/**
+ * Expand keyword hits with adjacent non-threaded channel messages from the same history window.
+ * Enables Jackson ask → Milan reply style conversational context without requiring thread_ts.
+ */
+export function expandHitsWithAdjacentMessages(
+  hits: SlackMessageEvidence[],
+  channelMessages: SlackMessageEvidence[],
+  beforeCount = 3,
+  afterCount = 3,
+): SlackMessageEvidence[] {
+  if (!hits.length) return [];
+  const byTs = [...channelMessages].sort((a, b) =>
+    String(a.messageTs).localeCompare(String(b.messageTs)),
+  );
+  const indexByTs = new Map(byTs.map((m, i) => [m.messageTs, i]));
+  const collected = new Map<string, SlackMessageEvidence>();
+
+  const toContext = (m: SlackMessageEvidence) => ({
+    messageTs: m.messageTs,
+    authorId: m.authorId,
+    authorName: m.authorName,
+    text: m.text,
+    timestamp: m.timestamp,
+  });
+
+  for (const hit of hits) {
+    const idx = indexByTs.get(hit.messageTs);
+    if (idx == null) {
+      collected.set(`${hit.channelId}:${hit.messageTs}`, hit);
+      continue;
+    }
+    const start = Math.max(0, idx - beforeCount);
+    const end = Math.min(byTs.length, idx + afterCount + 1);
+    const window = byTs.slice(start, end);
+    const withContext: SlackMessageEvidence = {
+      ...hit,
+      contextMessages: [
+        ...hit.contextMessages,
+        ...window.filter((m) => m.messageTs !== hit.messageTs).map(toContext),
+      ],
+    };
+    collected.set(`${withContext.channelId}:${withContext.messageTs}`, withContext);
+    for (const m of window) {
+      const key = `${m.channelId}:${m.messageTs}`;
+      if (collected.has(key)) continue;
+      collected.set(key, {
+        ...m,
+        contextMessages: window.filter((x) => x.messageTs !== m.messageTs).map(toContext),
+      });
+    }
+  }
+  return [...collected.values()];
+}
+
+async function hydrateAuthorNames(
+  messages: SlackMessageEvidence[],
+  teamId: string,
+  deps?: SlackSearchDeps,
+): Promise<SlackMessageEvidence[]> {
+  const listUsers = deps?.listCachedUsers;
+  if (!listUsers || !messages.some((m) => m.authorId && !m.authorName)) return messages;
+  const users = await listUsers(teamId).catch(() => []);
+  if (!users.length) return messages;
+  const byId = new Map(users.map((u) => [u.id, u.displayName]));
+  return messages.map((m) => {
+    if (m.authorName || !m.authorId) return m;
+    const name = byId.get(m.authorId);
+    return name ? { ...m, authorName: name } : m;
+  });
+}
 
 async function apiCall(
   deps: SlackSearchDeps | undefined,
@@ -111,6 +199,60 @@ export type ExecuteSlackSearchResult = {
   >;
 };
 
+function incompleteFromAccessDenial(input: {
+  reason?: "user_oauth" | "missing_scope" | "not_member" | "other";
+  notes: string[];
+  pagesFetched: number;
+  start: number;
+  botPublicPath?: boolean;
+}): ExecuteSlackSearchResult {
+  if (input.reason === "missing_scope") {
+    return {
+      results: [],
+      incomplete: {
+        code: SLACK_SEARCH_ERROR_CODES.SCOPE_MISSING,
+        message:
+          "Baxter's Slack bot is missing groups:history (or groups:read) for private channel history. An admin must add those Bot Token Scopes and reinstall the Slack app — personal Slack Search OAuth is not the fix.",
+        retryable: false,
+      },
+      diagnostics: {
+        endpoint: "conversations.history",
+        latencyMs: Date.now() - input.start,
+        resultCount: 0,
+        paginationCount: input.pagesFetched,
+        rateLimited: false,
+        exactNewestGuaranteed: false,
+        notes: [...input.notes, "Private history denied: missing_scope (bot scopes)."],
+      },
+    };
+  }
+  const oauthMessage = input.botPublicPath
+    ? "That Slack channel is resolved but Baxter is not a member (or cannot read it with the bot token). Invite Baxter to the channel, or link Slack Search to search with your visibility."
+    : "That Slack channel is resolved but not accessible with the current Slack credentials. Link Slack Search to search with your visibility, or invite Baxter to the channel.";
+  return {
+    results: [],
+    incomplete: {
+      code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
+      message: oauthMessage,
+      retryable: false,
+    },
+    diagnostics: {
+      endpoint: "conversations.history",
+      latencyMs: Date.now() - input.start,
+      resultCount: 0,
+      paginationCount: input.pagesFetched,
+      rateLimited: false,
+      exactNewestGuaranteed: false,
+      notes: [
+        ...input.notes,
+        input.reason === "not_member"
+          ? "Private channel — bot not a member; authorization or invite required."
+          : "Channel inaccessible — user OAuth or invite may be required.",
+      ],
+    },
+  };
+}
+
 /**
  * Execute a validated query plan against Slack Real-time Search (assistant.search.context).
  * Composable — Prompt 2 can call multiple times and merge.
@@ -161,24 +303,12 @@ export async function executeSlackSearchPlan(input: {
       };
     }
     if (latest.accessDenied) {
-      return {
-        results: [],
-        incomplete: {
-          code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
-          message:
-            "That Slack channel is resolved but not accessible with the current Slack credentials. Link Slack Search to search with your visibility, or invite Baxter to the channel.",
-          retryable: false,
-        },
-        diagnostics: {
-          endpoint: "conversations.history",
-          latencyMs: Date.now() - start,
-          resultCount: 0,
-          paginationCount: latest.pagesFetched,
-          rateLimited: false,
-          exactNewestGuaranteed: false,
-          notes: [...notes, "Channel inaccessible — not falling back to RTS."],
-        },
-      };
+      return incompleteFromAccessDenial({
+        reason: latest.accessDenialReason,
+        notes,
+        pagesFetched: latest.pagesFetched,
+        start,
+      });
     }
     notes.push(
       "conversations.history did not return a matching newest message; falling back if RTS available.",
@@ -263,13 +393,23 @@ export async function executeSlackSearchPlan(input: {
         });
         notes.push(...hist.notes);
         const filtered = filterMessagesByKeywords(hist.messages, input.plan.keywords);
+        const base = filtered.length ? filtered : hist.messages.slice(0, input.plan.limit);
+        const expanded =
+          input.plan.includeNearbyContext && filtered.length
+            ? expandHitsWithAdjacentMessages(filtered, hist.messages)
+            : base;
+        const hydrated = await hydrateAuthorNames(
+          expanded,
+          input.credential.slackTeamId ?? "",
+          input.deps,
+        );
         return {
-          results: filtered.length ? filtered : hist.messages.slice(0, input.plan.limit),
+          results: hydrated.slice(0, Math.max(input.plan.limit, expanded.length)),
           incomplete: null,
           diagnostics: {
             endpoint: "conversations.history",
             latencyMs: Date.now() - start,
-            resultCount: filtered.length || hist.messages.length,
+            resultCount: hydrated.length,
             paginationCount: hist.pagesFetched,
             rateLimited: false,
             exactNewestGuaranteed: null,
@@ -285,24 +425,13 @@ export async function executeSlackSearchPlan(input: {
       });
       notes.push(...latest.notes);
       if (latest.accessDenied) {
-        return {
-          results: [],
-          incomplete: {
-            code: SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED,
-            message:
-              "That Slack channel is resolved but not accessible with Baxter's bot token. Link Slack Search to search with your visibility.",
-            retryable: false,
-          },
-          diagnostics: {
-            endpoint: "conversations.history",
-            latencyMs: Date.now() - start,
-            resultCount: 0,
-            paginationCount: latest.pagesFetched,
-            rateLimited: false,
-            exactNewestGuaranteed: false,
-            notes: [...notes, "Channel inaccessible to bot — authorization required."],
-          },
-        };
+        return incompleteFromAccessDenial({
+          reason: latest.accessDenialReason,
+          notes,
+          pagesFetched: latest.pagesFetched,
+          start,
+          botPublicPath: true,
+        });
       }
       return {
         results: latest.message ? [latest.message] : [],
@@ -319,8 +448,8 @@ export async function executeSlackSearchPlan(input: {
       };
     }
 
-    // Broad topic without action_token: scan a bounded set of public channels the bot can read.
-    // Do NOT return AUTH_REQUIRED before attempting available public history.
+    // Broad topic without action_token: scan bot-accessible channels (public + private where member).
+    // Do NOT require user OAuth for private channels the bot already belongs to.
     const teamId = input.credential.slackTeamId?.trim() || "";
     const listChannels = input.deps?.listCachedChannels;
     const directoryChannels =
@@ -329,18 +458,17 @@ export async function executeSlackSearchPlan(input: {
         : listChannels
           ? await listChannels("").catch(() => [])
           : [];
-    const publicCandidates = directoryChannels
-      .filter(
-        (c) =>
-          !c.isArchived &&
-          !c.isPrivate &&
-          (c.kind === "public_channel" || (!c.kind && c.id.startsWith("C"))),
-      )
-      .sort((a, b) => Number(Boolean(b.isMember)) - Number(Boolean(a.isMember)))
-      .slice(0, 8);
+    const botAccessibleCandidates = directoryChannels
+      .filter(isBotAccessibleDirectoryChannel)
+      .sort((a, b) => {
+        const score = (c: (typeof directoryChannels)[number]) =>
+          Number(Boolean(c.isMember)) * 2 + Number(Boolean(c.isPrivate));
+        return score(b) - score(a);
+      })
+      .slice(0, 12);
 
     if (
-      publicCandidates.length > 0 &&
+      botAccessibleCandidates.length > 0 &&
       (input.plan.keywords.length > 0 || input.plan.phrases.length)
     ) {
       const terms = [
@@ -349,13 +477,16 @@ export async function executeSlackSearchPlan(input: {
       ].filter((t) => t.trim().length >= 2);
       const collected: SlackMessageEvidence[] = [];
       let pages = 0;
-      for (const ch of publicCandidates) {
-        if (collected.length >= input.plan.limit) break;
+      const privateMemberScanned = botAccessibleCandidates.filter(
+        (c) => c.isPrivate || c.kind === "private_channel",
+      ).length;
+      for (const ch of botAccessibleCandidates) {
+        if (collected.length >= input.plan.limit * 2) break;
         const hist = await fetchChannelHistoryWindow({
           credential: input.credential,
           channelId: ch.id,
           channelName: ch.name,
-          channelKind: ch.kind ?? "public_channel",
+          channelKind: ch.kind ?? (ch.isPrivate ? "private_channel" : "public_channel"),
           limit: 25,
           timeRange: input.plan.timeRange,
           deps: input.deps,
@@ -363,10 +494,15 @@ export async function executeSlackSearchPlan(input: {
         pages += hist.pagesFetched;
         notes.push(...hist.notes.map((n) => `#${ch.name ?? ch.id}: ${n}`));
         const hits = filterMessagesByKeywords(hist.messages, terms);
-        collected.push(...hits);
+        if (!hits.length) continue;
+        const expanded = input.plan.includeNearbyContext
+          ? expandHitsWithAdjacentMessages(hits, hist.messages)
+          : hits;
+        collected.push(...expanded);
       }
       collected.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
-      const sliced = collected.slice(0, input.plan.limit);
+      const hydrated = await hydrateAuthorNames(collected, teamId, input.deps);
+      const sliced = hydrated.slice(0, Math.max(input.plan.limit, 8));
       return {
         results: sliced,
         incomplete: null,
@@ -379,10 +515,10 @@ export async function executeSlackSearchPlan(input: {
           exactNewestGuaranteed: null,
           notes: [
             ...notes,
-            `bot_public bounded public-channel scan (${publicCandidates.length} channels).`,
+            `bot_public bounded bot-accessible scan (${botAccessibleCandidates.length} channels; ${privateMemberScanned} private bot-member).`,
             sliced.length
-              ? "Found keyword matches in bot-accessible public history."
-              : "No keyword matches in scanned public channels (not an OAuth failure).",
+              ? "Found keyword matches in bot-accessible channel history (public + private bot-member)."
+              : "No keyword matches in scanned bot-accessible channels (not an OAuth failure).",
           ],
         },
       };
@@ -400,7 +536,7 @@ export async function executeSlackSearchPlan(input: {
         exactNewestGuaranteed: null,
         notes: [
           ...notes,
-          "bot_public topic search: no public channel directory to scan. Ask with a #channel, or connect Slack Search for workspace-wide search.",
+          "bot_public topic search: no bot-accessible channel directory to scan. Ask with a #channel, or connect Slack Search for workspace-wide search.",
         ],
       },
     };
@@ -539,6 +675,42 @@ export async function executeSlackSearchPlan(input: {
               timestamp: m.timestamp,
             })),
         ];
+      }
+    }
+  }
+
+  // Adjacent non-thread channel context when thread_ts is absent
+  if (input.plan.includeNearbyContext && input.credential.capabilities.threadContext) {
+    for (const item of results.slice(0, 5)) {
+      if (item.threadTs || item.contextMessages.length >= 2) continue;
+      const nearby = await fetchNearbyContext({
+        credential: input.credential,
+        channelId: item.channelId,
+        aroundTs: item.messageTs,
+        beforeCount: 3,
+        afterCount: 3,
+        deps: input.deps,
+      });
+      if (!nearby.length) continue;
+      item.contextMessages = [
+        ...item.contextMessages,
+        ...nearby
+          .filter((m) => m.messageTs !== item.messageTs)
+          .slice(0, 8)
+          .map((m) => ({
+            messageTs: m.messageTs,
+            authorId: m.authorId,
+            authorName: m.authorName,
+            text: m.text,
+            timestamp: m.timestamp,
+          })),
+      ];
+      for (const m of nearby) {
+        if (results.some((r) => r.channelId === m.channelId && r.messageTs === m.messageTs)) {
+          continue;
+        }
+        if (results.length >= limit) break;
+        results.push(m);
       }
     }
   }

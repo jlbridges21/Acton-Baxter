@@ -53,11 +53,15 @@ oauth_config:
       - channels:read
       # Processing indicator — add/remove 👀 on the user’s triggering message
       - reactions:write
-      # Slack Search (Prompt 1) — public Real-time Search + thread context
+      # Slack Search — public + private (bot-member) history + Real-time Search
       - search:read.public
       - search:read.users
       - search:read.files
       - channels:history
+      - groups:history
+      - groups:read
+      # Admin UX — resolve private channel names (conversations.info / list)
+      # groups:read listed above also covers private channel directory sync
     user:
       # Per-user Slack Search — visibility matches the authorizing employee
       - search:read.public
