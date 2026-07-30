@@ -388,6 +388,14 @@ export async function retrieveSlackForAnswer(input: {
           ],
           timeRangeLabel: plan?.timeRange?.label ?? prior?.timeRangeLabel ?? null,
           intent: plan?.intent ?? null,
+          projectNumber:
+            plan?.channels[0]?.name.match(/\b([a-z]\d{2}-\d{4,6})\b/i)?.[1]?.toUpperCase() ??
+            prior?.projectNumber ??
+            null,
+          projectName:
+            plan?.channels[0]?.name.replace(/^[a-z]\d{2}-\d{4,6}-/i, "").replace(/-/g, " ") ||
+            prior?.projectName ||
+            null,
           refs: selected.slice(0, 6).map((s) => ({
             authorName: s.authorName,
             channelName: s.channelName,
@@ -425,9 +433,20 @@ export async function retrieveSlackForAnswer(input: {
   if (selected.length === 0) {
     const channel = plan?.channels[0]?.displayLabel;
     const person = plan?.people[0]?.displayName;
+    const inspected =
+      lastResult?.diagnostics.endpoint === "conversations.history" &&
+      (lastResult.diagnostics.resultCount ?? 0) === 0;
+    const hadRawButFiltered =
+      lastResult?.diagnostics.endpoint === "conversations.history" &&
+      (lastResult.diagnostics.resultCount ?? 0) > 0 &&
+      selected.length === 0;
     let noResultsNote = formatSlackNoResultsNote(input.question);
     if (channel && person) {
       noResultsNote = `I searched ${channel} but couldn't find a matching message from ${person} in the recent history I checked.`;
+    } else if (channel && inspected) {
+      noResultsNote = `I found ${channel}, but I didn't find any messages in the accessible history.`;
+    } else if (channel && hadRawButFiltered) {
+      noResultsNote = `I found recent activity in ${channel}, but nothing I can confidently characterize as a project-status update.`;
     } else if (channel) {
       noResultsNote = `I searched ${channel} but couldn't find matching messages in the recent history I checked.`;
     }

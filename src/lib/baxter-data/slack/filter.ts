@@ -55,7 +55,8 @@ export function filterSlackEvidenceNoise(
   const isSummary =
     intent === "time_window_summary" ||
     intent === "channel_search" ||
-    intent === "conversation_recall";
+    intent === "conversation_recall" ||
+    intent === "project_status";
 
   const seen = new Set<string>();
   const out: SlackMessageEvidence[] = [];
@@ -92,6 +93,8 @@ export function evidenceBudgetForIntent(intent: string): number {
       return 1;
     case "latest_update":
       return 6;
+    case "project_status":
+      return 8;
     case "person_statement":
     case "decision_search":
       return 8;

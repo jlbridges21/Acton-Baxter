@@ -32,6 +32,12 @@ export {
   getDecisionLanguageTerms,
 } from "./intent";
 export { planSlackSearch, buildSlackSearchQuery } from "./query-plan";
+export {
+  extractProjectNumbers,
+  extractProjectNameQueries,
+  isProjectStatusQuestion,
+  scoreProjectChannelMatch,
+} from "./project-status";
 export { resolvePersonFromDirectory, resolvePeople, formatPersonLabel } from "./users";
 export { resolveChannelFromDirectory, resolveChannels, formatChannelLabel } from "./channels";
 export { executeSlackSearchPlan } from "./search";

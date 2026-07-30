@@ -1,4 +1,5 @@
 import type { SlackSearchIntent, SlackSearchSort } from "./types";
+import { isProjectStatusQuestion, isStructuralProjectKeyword } from "./project-status";
 
 const DECISION_LANGUAGE = [
   "decided",
@@ -51,6 +52,12 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
       return "person_statement";
     }
   }
+
+  // Project-status before generic latest_update so "#channel project" uses history, not keyword RTS.
+  if (isProjectStatusQuestion(question)) {
+    return "project_status";
+  }
+
   if (/\bwhat (is|was) the latest\b|\blatest on\b|\blatest update\b/.test(q)) {
     return "latest_update";
   }
@@ -93,6 +100,7 @@ export function defaultSortForIntent(intent: SlackSearchIntent): SlackSearchSort
   switch (intent) {
     case "latest_message":
     case "latest_update":
+    case "project_status":
     case "time_window_summary":
     case "channel_search":
       return "newest";
@@ -114,6 +122,8 @@ export function defaultLimitForIntent(intent: SlackSearchIntent): number {
       return 1;
     case "latest_update":
       return 8;
+    case "project_status":
+      return 20;
     case "person_statement":
     case "decision_search":
       return 12;
@@ -216,18 +226,34 @@ const STOP = new Set([
   "on",
   "summarize",
   "summary",
+  "project",
+  "projects",
+  "job",
+  "jobs",
+  "status",
+  "provide",
+  "give",
 ]);
 
 export function extractKeywords(question: string, extraDrop: string[] = []): string[] {
   const drop = new Set(extraDrop.map((s) => s.toLowerCase()));
   const cleaned = question
     .replace(/#[\w-]+/g, " ")
+    .replace(/<[#@][^>]+>/g, " ")
+    .replace(/\b[A-Za-z]\d{2}-\d{4,6}\b/gi, " ")
     .replace(/"[^"]*"|'[^']*'/g, " ")
     .replace(/[?!.,;:()]/g, " ");
   const tokens = cleaned
     .split(/\s+/)
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length >= 2 && !STOP.has(t) && !drop.has(t) && !/^\d+$/.test(t));
+    .filter(
+      (t) =>
+        t.length >= 2 &&
+        !STOP.has(t) &&
+        !drop.has(t) &&
+        !isStructuralProjectKeyword(t) &&
+        !/^\d+$/.test(t),
+    );
   const seen = new Set<string>();
   const out: string[] = [];
   for (const t of tokens) {

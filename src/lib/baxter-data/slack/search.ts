@@ -130,7 +130,7 @@ async function fetchChannelHistoryWindow(input: {
   const notes: string[] = [];
   const body: Record<string, unknown> = {
     channel: input.channelId,
-    limit: Math.min(Math.max(input.limit, 1), 50),
+    limit: Math.min(Math.max(input.limit, 1), 100),
   };
   if (input.timeRange) {
     body.oldest = String(input.timeRange.fromUnix);
@@ -273,6 +273,8 @@ export async function executeSlackSearchPlan(input: {
       input.plan.intent === "channel_search" ||
       input.plan.intent === "time_window_summary" ||
       input.plan.intent === "conversation_recall" ||
+      input.plan.intent === "project_status" ||
+      input.plan.intent === "latest_update" ||
       input.credential.tokenKind === "bot_public") &&
     input.plan.channels.length === 1;
 
@@ -315,19 +317,25 @@ export async function executeSlackSearchPlan(input: {
     );
   }
 
-  // Channel summary / topic-in-channel: prefer bounded history for the resolved channel
+  // Channel summary / project-status / topic-in-channel: prefer bounded history
   if (
     canUseHistory &&
     (input.plan.intent === "channel_search" ||
       input.plan.intent === "time_window_summary" ||
-      input.plan.intent === "conversation_recall")
+      input.plan.intent === "conversation_recall" ||
+      input.plan.intent === "project_status" ||
+      input.plan.intent === "latest_update")
   ) {
+    const historyLimit =
+      input.plan.intent === "project_status" || input.plan.intent === "latest_update"
+        ? Math.min(Math.max(input.plan.limit, 50), 100)
+        : Math.min(Math.max(input.plan.limit, 10), 40);
     const hist = await fetchChannelHistoryWindow({
       credential: input.credential,
       channelId: input.plan.channels[0]!.id,
       channelName: input.plan.channels[0]!.name,
       channelKind: input.plan.channels[0]!.kind,
-      limit: Math.min(Math.max(input.plan.limit, 10), 40),
+      limit: historyLimit,
       timeRange: input.plan.timeRange,
       deps: input.deps,
     });
@@ -337,14 +345,21 @@ export async function executeSlackSearchPlan(input: {
       const allowed = new Set(input.plan.people.map((p) => p.id));
       messages = messages.filter((m) => m.authorId && allowed.has(m.authorId));
     }
-    if (input.plan.keywords.length) {
+    // Project status / exact-channel latest: never hard-filter to zero on keywords.
+    if (
+      input.plan.keywords.length &&
+      input.plan.intent !== "project_status" &&
+      !(input.plan.intent === "latest_update" && input.plan.people.length === 0)
+    ) {
       const kwHits = filterMessagesByKeywords(messages, input.plan.keywords);
-      // Prefer keyword hits when present; otherwise keep recent channel activity
       if (kwHits.length) messages = kwHits;
     }
     messages.sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
     return {
-      results: messages.slice(0, input.plan.limit),
+      results: messages.slice(
+        0,
+        Math.max(input.plan.limit, historyLimit > 40 ? 24 : input.plan.limit),
+      ),
       incomplete: null,
       diagnostics: {
         endpoint: "conversations.history",
@@ -353,7 +368,12 @@ export async function executeSlackSearchPlan(input: {
         paginationCount: hist.pagesFetched,
         rateLimited: false,
         exactNewestGuaranteed: null,
-        notes: [...notes, "Channel-scoped history retrieval (not workspace RTS)."],
+        notes: [
+          ...notes,
+          input.plan.intent === "project_status" || input.plan.intent === "latest_update"
+            ? "Exact-channel project/latest history retrieval (no keyword gate)."
+            : "Channel-scoped history retrieval (not workspace RTS).",
+        ],
       },
     };
   }

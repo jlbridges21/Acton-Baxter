@@ -11,6 +11,11 @@ import {
 import { formatSlackDate, parseSlackTimeRange } from "./temporal";
 import { resolveChannels } from "./channels";
 import { resolvePeople } from "./users";
+import {
+  extractProjectNameQueries,
+  extractProjectNumbers,
+  isStructuralProjectKeyword,
+} from "./project-status";
 import type {
   SlackQueryPlan,
   SlackChannelAmbiguity,
@@ -45,17 +50,33 @@ export async function planSlackSearch(input: {
   const now = input.now ?? input.deps?.now?.() ?? new Date();
   const intent = input.intent ?? detectSlackSearchIntent(input.question);
   const personQueries = extractPersonQueries(input.question);
-  const channelQueries = extractChannelMentions(input.question);
+  const projectNumbers = extractProjectNumbers(input.question);
+  const projectNames =
+    intent === "project_status" || intent === "latest_update"
+      ? extractProjectNameQueries(input.question)
+      : [];
+  const channelQueries = [
+    ...extractChannelMentions(input.question),
+    ...(intent === "project_status" || intent === "latest_update"
+      ? [
+          ...projectNumbers.map((n) => n.toLowerCase()),
+          ...projectNames.map((n) => n.toLowerCase().replace(/\s+/g, "-")),
+        ]
+      : []),
+  ];
 
   const [peopleResult, channelsResult] = await Promise.all([
     resolvePeople(personQueries, input.teamId, input.deps),
-    resolveChannels(channelQueries, input.teamId, input.deps),
+    resolveChannels([...new Set(channelQueries)], input.teamId, input.deps),
   ]);
 
   const dropNames = [
     ...personQueries,
     ...peopleResult.people.flatMap((p) => [p.displayName, p.realName ?? "", p.username ?? ""]),
     ...channelQueries,
+    ...(intent === "project_status" || intent === "latest_update"
+      ? [...projectNumbers, ...projectNames]
+      : []),
   ];
 
   const phrases = extractPhrases(input.question);
@@ -63,19 +84,46 @@ export async function planSlackSearch(input: {
   const decisionLanguage =
     intent === "decision_search" ? getDecisionLanguageTerms().slice(0, 8) : [];
 
-  // Keep topic keywords for decision search alongside decision language (applied at query build).
   if (intent === "latest_message") {
     keywords = keywords.filter((k) => !["last", "message"].includes(k));
   }
 
+  // Exact-channel / project-status: never hard-gate history on structural leftovers.
+  const exactChannelScoped =
+    channelsResult.channels.length === 1 &&
+    (intent === "project_status" ||
+      intent === "latest_update" ||
+      intent === "channel_search" ||
+      intent === "conversation_recall");
+  if (exactChannelScoped || intent === "project_status") {
+    keywords = keywords.filter((k) => !isStructuralProjectKeyword(k));
+    const channelTokens = new Set(
+      channelsResult.channels.flatMap((c) =>
+        c.name
+          .toLowerCase()
+          .split(/[-_]/)
+          .filter((t) => t.length >= 2),
+      ),
+    );
+    keywords = keywords.filter((k) => !channelTokens.has(k.toLowerCase()));
+  }
+
   const timeRangeRaw = parseSlackTimeRange(input.question, now);
-  // Exact latest-message intent must not inherit a default recency window from the word "last"
   let timeRange =
     intent === "latest_message" && timeRangeRaw?.label === "last 30 days (default)"
       ? null
       : timeRangeRaw;
 
-  // Broad channel summaries without an explicit window → last 14 days
+  // Project status / latest update with an explicit channel: do NOT clamp to a short
+  // default window — the latest meaningful update may be older than 14–30 days.
+  if (
+    (intent === "project_status" || intent === "latest_update") &&
+    channelsResult.channels.length === 1 &&
+    timeRangeRaw?.label === "last 30 days (default)"
+  ) {
+    timeRange = null;
+  }
+
   if (!timeRange && (intent === "channel_search" || intent === "time_window_summary")) {
     const from = new Date(now);
     from.setUTCDate(from.getUTCDate() - 14);
@@ -134,19 +182,25 @@ export function buildSlackSearchQuery(plan: SlackQueryPlan): string {
     parts.push(`"${phrase}"`);
   }
   if (plan.intent === "decision_search" && plan.decisionLanguage.length) {
-    // OR group of decision terms — Slack uses spaces as AND; use one strong term set via keywords
     parts.push(...plan.decisionLanguage.slice(0, 3));
   }
-  parts.push(...plan.keywords);
+
+  // Project-status / exact-channel latest: channel scope alone is enough —
+  // do not AND leftover keywords that zero out RTS (e.g. "project").
+  const skipKeywords =
+    plan.channels.length === 1 &&
+    (plan.intent === "project_status" || plan.intent === "latest_update") &&
+    plan.people.length === 0;
+  if (!skipKeywords) {
+    parts.push(...plan.keywords);
+  }
 
   if (plan.timeRange) {
-    // Prefer after:/before: date filters in query as documented by Slack RTS
     parts.push(`after:${formatSlackDate(plan.timeRange.from)}`);
     parts.push(`before:${formatSlackDate(plan.timeRange.to)}`);
   }
 
   const joined = parts.join(" ").replace(/\s+/g, " ").trim();
-  // Prefer keyword query for precise filters; keep natural question when sparse.
   if (joined.length >= 3) return joined;
   return plan.naturalQuery;
 }

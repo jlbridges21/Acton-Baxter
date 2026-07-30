@@ -78,8 +78,16 @@ function channelMatches(channel: ResolvedSlackChannel, query: string): "exact" |
   const q = normalizeChannelQuery(query);
   if (q.length < 3) return null;
   if (name === q || label === q) return "exact";
+
+  // Project-number / slug channels: l01-24027 → l01-24027-mcadams, mcadams → …-mcadams
+  if (name.startsWith(`${q}-`) || name.endsWith(`-${q}`) || name.includes(`-${q}-`)) {
+    return "fuzzy";
+  }
+
   if (name.startsWith(q) || q.startsWith(name)) {
     if (Math.abs(name.length - q.length) <= 4) return "fuzzy";
+    // Longer project-number prefixes (l01-24027 vs l01-24027-mcadams)
+    if (name.startsWith(q) && q.length >= 6) return "fuzzy";
   }
   const distance = levenshtein(q, name);
   const threshold = q.length <= 5 ? 1 : 2;

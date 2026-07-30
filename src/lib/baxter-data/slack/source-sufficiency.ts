@@ -3,6 +3,8 @@
  * Presence of Knowledge is not the same as answering a dynamic WHEN/status ask.
  */
 
+import { isProjectStatusQuestion } from "./project-status";
+
 export function nonSlackEvidenceSatisfiesQuestion(
   question: string,
   contextExcerpts: string[],
@@ -17,6 +19,11 @@ export function nonSlackEvidenceSatisfiesQuestion(
       q,
     )
   ) {
+    return false;
+  }
+
+  // Project-status / latest project update — static Knowledge/GHL/sales rows are insufficient.
+  if (isProjectStatusQuestion(question)) {
     return false;
   }
 
@@ -59,6 +66,9 @@ export function shouldForceSlackDespiteOtherEvidence(question: string): boolean 
     return true;
   }
   if (/\b(when will|when is|be ready|ready by|latest on|status of|current status)\b/i.test(q)) {
+    return true;
+  }
+  if (isProjectStatusQuestion(question)) {
     return true;
   }
   return false;

@@ -19,6 +19,9 @@ export type SlackConversationContext = {
   intent: string | null;
   /** Bounded references — no message bodies. */
   refs: SlackFollowUpRef[];
+  /** Lightweight project identity for status follow-ups. */
+  projectNumber?: string | null;
+  projectName?: string | null;
   updatedAt: string;
 };
 
@@ -46,6 +49,8 @@ export function readSlackConversationState(
           channelId: String(r.channelId ?? ""),
         }))
       : [],
+    projectNumber: typeof obj.projectNumber === "string" ? obj.projectNumber : null,
+    projectName: typeof obj.projectName === "string" ? obj.projectName : null,
     updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : new Date().toISOString(),
   };
 }
@@ -70,6 +75,8 @@ export function buildSlackConversationContext(input: {
   timeRangeLabel?: string | null;
   intent?: string | null;
   refs: SlackFollowUpRef[];
+  projectNumber?: string | null;
+  projectName?: string | null;
 }): SlackConversationContext {
   return {
     topic: input.topic ?? null,
@@ -78,6 +85,8 @@ export function buildSlackConversationContext(input: {
     timeRangeLabel: input.timeRangeLabel ?? null,
     intent: input.intent ?? null,
     refs: input.refs.slice(0, 8),
+    projectNumber: input.projectNumber ?? null,
+    projectName: input.projectName ?? null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -113,6 +122,15 @@ export function expandQuestionWithSlackContext(
   // Never append prior channels when the current turn already names a channel
   if (ctx.channels.length && !hasExplicitChannel) {
     parts.push(`(channels: ${ctx.channels.join(", ")})`);
+  }
+  if (ctx.projectNumber && !/\b[A-Za-z]\d{2}-\d{4,6}\b/i.test(q)) {
+    parts.push(`(project ${ctx.projectNumber})`);
+  }
+  if (
+    ctx.projectName &&
+    !new RegExp(`\\b${ctx.projectName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(q)
+  ) {
+    parts.push(`(${ctx.projectName} project)`);
   }
   if (ctx.timeRangeLabel) parts.push(`(${ctx.timeRangeLabel})`);
   return parts.join(" ");

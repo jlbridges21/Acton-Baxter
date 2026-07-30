@@ -12,6 +12,7 @@ import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
 import { planKnowledgeQuery } from "@/lib/knowledge-index/query-planner";
 import { parseTimeRangeFromQuestion } from "@/lib/knowledge-index/temporal";
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
+import { isProjectStatusQuestion } from "@/lib/baxter-data/slack/project-status";
 
 export type BaxterRoutingIntent =
   | "concept_definition"
@@ -25,6 +26,7 @@ export type BaxterRoutingIntent =
   | "slack_recall"
   | "rulebook_process"
   | "current_status"
+  | "project_status"
   | "general_question"
   | "ambiguous";
 
@@ -115,7 +117,16 @@ export function buildBaxterQueryPlan(question: string, now: Date = new Date()): 
     slackRole === "fallback" ||
     /\b(latest|status|update on|when will|ready|what happened)\b/i.test(raw);
 
-  if (
+  // Project-status (Slack-first) before generic status/definition routing
+  if (isProjectStatusQuestion(raw)) {
+    intent = "project_status";
+    sourcePriority = ["slack", "ghl", "knowledge"];
+    needsCurrentData = true;
+    needsConversationData = true;
+    pemLookup = "skip";
+    pemSkipReason = "project_status_uses_slack";
+    sourcesSkipped.push({ source: "pem_neat", reason: "project_ops_not_prospect_intelligence" });
+  } else if (
     statusOrSlack &&
     slackRole !== "skip" &&
     !(concept.kind === "definition" && !/\b(latest|status|update|ready|when will)\b/i.test(raw))
@@ -208,7 +219,8 @@ export function buildBaxterQueryPlan(question: string, now: Date = new Date()): 
     !operationalPemMetric &&
     !structuredMetric &&
     intent !== "current_status" &&
-    intent !== "slack_recall"
+    intent !== "slack_recall" &&
+    intent !== "project_status"
   ) {
     intent = "prospect_intelligence";
     pemLookup = "run";

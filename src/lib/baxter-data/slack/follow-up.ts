@@ -32,15 +32,24 @@ export function shouldResetSlackFollowUpContext(
     return true;
   }
 
-  // Short pronoun / response follow-ups keep context
+  // Short pronoun / response / project-status follow-ups keep context
   if (
-    /\b(respond|reply|he|she|they|him|her)\b/i.test(q) &&
-    q.split(/\s+/).length <= 8 &&
+    /\b(respond|reply|he|she|they|him|her|anything newer|anything new|any update|blocker|next step|who owns)\b/i.test(
+      q,
+    ) &&
+    q.split(/\s+/).length <= 12 &&
     !newChannel
   ) {
     return false;
   }
   if (/^what about\b/i.test(q) && !newChannel && people.length <= 1) {
+    return false;
+  }
+  if (
+    (intent === "project_status" || intent === "latest_update") &&
+    !newChannel &&
+    q.split(/\s+/).length <= 14
+  ) {
     return false;
   }
 

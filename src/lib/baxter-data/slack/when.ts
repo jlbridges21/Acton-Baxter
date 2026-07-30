@@ -43,8 +43,14 @@ export function detectSlackSearchRole(input: {
     "conversation_recall",
     "channel_search",
     "latest_update",
+    "project_status",
     "thread_context",
   ];
+
+  // Project-status is always Slack-primary when detected (exact channel / project # / job name).
+  if (intent === "project_status") {
+    return "primary";
+  }
 
   if (strongIntent.includes(intent) && STRONG_SLACK_SIGNALS.test(q)) {
     return "primary";

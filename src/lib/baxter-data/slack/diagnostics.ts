@@ -447,13 +447,17 @@ export async function runSlackSearchAdminTest(input: {
           : "bot_public";
 
     let messagesInspected = 0;
+    let threadsInspected = 0;
+    let meaningfulUpdatesFound = 0;
     let latestTimestamp: string | null = null;
     let historyOk = false;
     let historyError: string | null = null;
+    const { isMeaningfulProjectUpdate } = await import("./select");
+    const { extractProjectNumbers } = await import("./project-status");
     if (access.canReadHistory) {
       const hist = await callSlackApi("conversations.history", {
         token: cred.credential.token,
-        body: { channel: access.channel.id, limit: 5 },
+        body: { channel: access.channel.id, limit: 50 },
         timeoutMs: 12_000,
       });
       historyOk = hist.ok;
@@ -463,17 +467,31 @@ export async function runSlackSearchAdminTest(input: {
         messagesInspected = messages.length;
         const firstTs = messages[0]?.ts;
         latestTimestamp = typeof firstTs === "string" ? firstTs : null;
+        for (const m of messages) {
+          const text = String(m.text ?? "");
+          if (isMeaningfulProjectUpdate(text)) meaningfulUpdatesFound += 1;
+          if (m.reply_count && Number(m.reply_count) > 0) threadsInspected += 1;
+        }
       }
     }
+
+    const projectNumber =
+      extractProjectNumbers(access.channel.name)[0] ??
+      access.channel.name.match(/\b([a-z]\d{2}-\d{4,6})\b/i)?.[1]?.toUpperCase() ??
+      null;
+    const projectName =
+      access.channel.name.replace(/^[a-z]\d{2}-\d{4,6}-/i, "").replace(/-/g, " ") || null;
 
     return {
       ok: historyOk || (access.canReadHistory && messagesInspected >= 0),
       action: input.action,
       query: q,
       result: {
+        channel_resolved: true,
         channel: access.channel.displayLabel,
         channelId: access.channel.id,
         channelType: access.isPrivate ? "private_channel" : "public_channel",
+        project: projectNumber || projectName ? { projectNumber, projectName } : null,
         resolved: true,
         private: access.isPrivate,
         botMembership: access.isMember,
@@ -484,12 +502,19 @@ export async function runSlackSearchAdminTest(input: {
             : access.canReadHistory
               ? "n/a_public"
               : "unavailable",
+        history_access: access.canReadHistory,
         historyAccess: access.canReadHistory,
+        credential_path: credentialPath,
         credentialPath,
         retrievalMethod: access.canReadHistory ? "conversations.history" : null,
+        messages_inspected: messagesInspected,
         messagesInspected,
-        messagesMatched: null,
+        threads_inspected: threadsInspected,
+        latest_timestamp: latestTimestamp,
         latestTimestamp,
+        meaningful_updates_found: meaningfulUpdatesFound,
+        messagesMatched: null,
+        incomplete_reason: historyError,
         permalinkAvailable: Boolean(cred.credential.capabilities.permalinks),
         requiresUserOauth: access.requiresUserOauth,
         historyError,

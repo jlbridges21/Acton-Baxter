@@ -86,6 +86,8 @@ export function isChannelScopedIntent(intent: string): boolean {
     intent === "latest_message" ||
     intent === "channel_search" ||
     intent === "time_window_summary" ||
-    intent === "conversation_recall"
+    intent === "conversation_recall" ||
+    intent === "project_status" ||
+    intent === "latest_update"
   );
 }

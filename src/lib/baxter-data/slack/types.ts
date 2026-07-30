@@ -13,7 +13,8 @@ export type SlackSearchIntent =
   | "channel_search"
   | "time_window_summary"
   | "thread_context"
-  | "conversation_recall";
+  | "conversation_recall"
+  | "project_status";
 
 export type SlackSearchSort = "relevance" | "newest" | "oldest";
 
