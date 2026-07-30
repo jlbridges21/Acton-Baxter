@@ -95,6 +95,7 @@ export type GhlConversation = {
   lastMessageAt: string | null;
   lastMessageBody: string | null;
   lastMessageType: string | null;
+  lastMessageDirection: "inbound" | "outbound" | "unknown";
   dateAdded: string | null;
   dateUpdated: string | null;
 };
@@ -105,11 +106,13 @@ export type GhlMessage = {
   contactId: string;
   locationId: string;
   type: string;
-  direction: "inbound" | "outbound";
+  direction: "inbound" | "outbound" | "unknown";
   body: string | null;
   status: string | null;
   dateAdded: string | null;
   attachments: Array<{ url: string; contentType?: string }>;
+  /** True when synthesized from conversation search lastMessage* fields. */
+  fromConversationSummary?: boolean;
 };
 
 export type GhlUser = {
@@ -342,11 +345,12 @@ export const ghlConversationSchema = z
     contactId: z.string().optional(),
     type: z.string().optional(),
     unreadCount: z.number().optional(),
-    lastMessageDate: z.string().nullable().optional(),
+    lastMessageDate: z.union([z.string(), z.number()]).nullable().optional(),
     lastMessageBody: z.string().nullable().optional(),
     lastMessageType: z.string().nullable().optional(),
-    dateAdded: z.string().nullable().optional(),
-    dateUpdated: z.string().nullable().optional(),
+    lastMessageDirection: z.string().nullable().optional(),
+    dateAdded: z.union([z.string(), z.number()]).nullable().optional(),
+    dateUpdated: z.union([z.string(), z.number()]).nullable().optional(),
   })
   .passthrough();
 
@@ -363,25 +367,29 @@ export const ghlMessageSchema = z
     conversationId: z.string().optional(),
     contactId: z.string().optional(),
     locationId: z.string().optional(),
-    type: z.string().optional(),
-    direction: z.enum(["inbound", "outbound"]).optional(),
+    type: z.union([z.string(), z.number()]).optional(),
+    messageType: z.string().optional(),
+    direction: z.string().optional(),
     body: z.string().nullable().optional(),
     status: z.string().nullable().optional(),
-    dateAdded: z.string().nullable().optional(),
-    attachments: z
-      .array(
-        z.object({
-          url: z.string(),
-          contentType: z.string().optional(),
-        }),
-      )
-      .optional(),
+    dateAdded: z.union([z.string(), z.number()]).nullable().optional(),
+    attachments: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
   })
   .passthrough();
 
+/** Official GHL shape nests list + pagination under `messages`. Flat shape also accepted. */
 export const ghlMessagesResponseSchema = z
   .object({
-    messages: z.array(ghlMessageSchema),
+    messages: z.union([
+      z.array(ghlMessageSchema),
+      z
+        .object({
+          messages: z.array(ghlMessageSchema).optional(),
+          nextPage: z.boolean().optional(),
+          lastMessageId: z.string().nullable().optional(),
+        })
+        .passthrough(),
+    ]),
     nextPage: z.boolean().optional(),
     lastMessageId: z.string().nullable().optional(),
   })

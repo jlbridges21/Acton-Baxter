@@ -20,10 +20,7 @@ import {
 import type { GhlContact, GhlConversation, GhlMessage } from "@/lib/connectors/ghl/types";
 import { createConversationEvidenceSource, createContactEvidenceSource } from "./evidence";
 import type { GhlEvidenceSource } from "./types";
-import type {
-  GhlMessageChannelFilter,
-  GhlMessageDirectionFilter,
-} from "./conversation-intent";
+import type { GhlMessageChannelFilter, GhlMessageDirectionFilter } from "./conversation-intent";
 
 export type { GhlMessageChannelFilter, GhlMessageDirectionFilter };
 export {
@@ -49,15 +46,26 @@ export type GhlConversationLookupResult = {
   conversations: GhlConversation[];
   messages: GhlMessage[];
   selected: GhlMessage | null;
+  selectedSource: "full_message" | "conversation_summary" | null;
   evidenceSources: GhlEvidenceSource[];
   diagnostics: {
     query: string;
     contactResolved: boolean;
     contactId: string | null;
+    conversationIds: string[];
     conversationsFound: number;
+    summaryLatestBodyPresent: boolean;
+    summaryLatestAtPresent: boolean;
+    summaryLatestType: string | null;
+    fullMessagesEndpointAttempted: boolean;
+    fullMessagesReturnedCount: number;
+    fallbackUsed: boolean;
     messagesInspected: number;
     emailMessagesFound: number;
     latestEmailTimestamp: string | null;
+    selectedTimestamp: string | null;
+    selectedType: string | null;
+    selectedSource: "full_message" | "conversation_summary" | null;
     direction: GhlMessageDirectionFilter;
     channel: GhlMessageChannelFilter;
     incompleteReason: string | null;
@@ -97,6 +105,7 @@ export function messageMatchesDirection(
   direction: GhlMessageDirectionFilter,
 ): boolean {
   if (direction === "any") return true;
+  if (message.direction === "unknown") return false;
   return message.direction === direction;
 }
 
@@ -115,6 +124,32 @@ export function sortMessagesNewestFirst(messages: GhlMessage[]): GhlMessage[] {
   return [...messages].sort((a, b) => messageTimestampMs(b) - messageTimestampMs(a));
 }
 
+/**
+ * Convert conversation-search lastMessage* fields into a synthetic message.
+ * Prefer lastMessageType over conversation.type (TYPE_PHONE + TYPE_EMAIL is common).
+ */
+export function messageFromConversationSummary(
+  conversation: GhlConversation,
+  contactId: string,
+): GhlMessage | null {
+  const body = (conversation.lastMessageBody ?? "").trim();
+  if (!body) return null;
+  const type = conversation.lastMessageType || "unknown";
+  return {
+    id: `summary:${conversation.id}`,
+    conversationId: conversation.id,
+    contactId: conversation.contactId || contactId,
+    locationId: conversation.locationId,
+    type,
+    direction: conversation.lastMessageDirection || "unknown",
+    body,
+    status: null,
+    dateAdded: conversation.lastMessageAt,
+    attachments: [],
+    fromConversationSummary: true,
+  };
+}
+
 export async function collectMessagesForContact(
   contactId: string,
   options: {
@@ -122,7 +157,13 @@ export async function collectMessagesForContact(
     messagesPerConversation?: number;
     maxMessages?: number;
   } = {},
-): Promise<{ conversations: GhlConversation[]; messages: GhlMessage[] }> {
+): Promise<{
+  conversations: GhlConversation[];
+  messages: GhlMessage[];
+  fullMessagesReturnedCount: number;
+  fullMessagesEndpointAttempted: boolean;
+  summaryMessages: GhlMessage[];
+}> {
   const maxConversations = options.maxConversations ?? 8;
   const messagesPerConversation = options.messagesPerConversation ?? 40;
   const maxMessages = options.maxMessages ?? 120;
@@ -131,13 +172,19 @@ export async function collectMessagesForContact(
     limit: maxConversations,
   });
   const all: GhlMessage[] = [];
+  let fullMessagesEndpointAttempted = false;
 
   for (const conv of conversations) {
     if (all.length >= maxMessages) break;
     let lastMessageId: string | undefined;
     let pages = 0;
     while (pages < 3 && all.length < maxMessages) {
-      const { messages, hasMore } = await getConversationMessages(conv.id, {
+      fullMessagesEndpointAttempted = true;
+      const {
+        messages,
+        hasMore,
+        lastMessageId: cursor,
+      } = await getConversationMessages(conv.id, {
         limit: Math.min(messagesPerConversation, maxMessages - all.length),
         lastMessageId,
       });
@@ -151,12 +198,26 @@ export async function collectMessagesForContact(
         });
       }
       if (!hasMore) break;
-      lastMessageId = messages[messages.length - 1]?.id;
+      lastMessageId = cursor || messages[messages.length - 1]?.id;
       if (!lastMessageId) break;
     }
   }
 
-  return { conversations, messages: sortMessagesNewestFirst(all).slice(0, maxMessages) };
+  const summaryMessages = conversations
+    .map((c) => messageFromConversationSummary(c, contactId))
+    .filter((m): m is GhlMessage => Boolean(m));
+
+  const fullMessagesReturnedCount = all.length;
+  // Prefer full history; fall back to verified search summaries when messages endpoint is empty.
+  const merged = all.length > 0 ? all : summaryMessages;
+
+  return {
+    conversations,
+    messages: sortMessagesNewestFirst(merged).slice(0, maxMessages),
+    fullMessagesReturnedCount,
+    fullMessagesEndpointAttempted,
+    summaryMessages,
+  };
 }
 
 export async function lookupGhlConversationMessages(
@@ -171,10 +232,20 @@ export async function lookupGhlConversationMessages(
     query,
     contactResolved: false,
     contactId: null as string | null,
+    conversationIds: [] as string[],
     conversationsFound: 0,
+    summaryLatestBodyPresent: false,
+    summaryLatestAtPresent: false,
+    summaryLatestType: null as string | null,
+    fullMessagesEndpointAttempted: false,
+    fullMessagesReturnedCount: 0,
+    fallbackUsed: false,
     messagesInspected: 0,
     emailMessagesFound: 0,
     latestEmailTimestamp: null as string | null,
+    selectedTimestamp: null as string | null,
+    selectedType: null as string | null,
+    selectedSource: null as "full_message" | "conversation_summary" | null,
     direction,
     channel,
     incompleteReason: null as string | null,
@@ -187,6 +258,7 @@ export async function lookupGhlConversationMessages(
       conversations: [],
       messages: [],
       selected: null,
+      selectedSource: null,
       evidenceSources: [],
       diagnostics: { ...emptyDiagnostics, incompleteReason: "ghl_not_configured" },
       failureMessage:
@@ -211,6 +283,7 @@ export async function lookupGhlConversationMessages(
       conversations: [],
       messages: [],
       selected: null,
+      selectedSource: null,
       evidenceSources: [],
       diagnostics: emptyDiagnostics,
       ambiguityMessage:
@@ -229,6 +302,7 @@ export async function lookupGhlConversationMessages(
         conversations: [],
         messages: [],
         selected: null,
+        selectedSource: null,
         evidenceSources: [],
         diagnostics: { ...emptyDiagnostics, contactResolved: false },
         ambiguityMessage: `I found ${search.contacts.length} contacts matching “${query}”. Which one do you mean?`,
@@ -244,27 +318,99 @@ export async function lookupGhlConversationMessages(
       conversations: [],
       messages: [],
       selected: null,
+      selectedSource: null,
       evidenceSources: [],
       diagnostics: { ...emptyDiagnostics, incompleteReason: "contact_not_found" },
       failureMessage: `I couldn’t find a GHL contact matching “${query}”.`,
     };
   }
 
-  // Prefer fully hydrated contact when available
   const hydrated = (await getContactById(contact.id).catch(() => null)) ?? contact;
-  const { conversations, messages } = await collectMessagesForContact(hydrated.id, {
+  const collected = await collectMessagesForContact(hydrated.id, {
     maxConversations: input.maxConversations,
     messagesPerConversation: input.messagesPerConversation,
   });
+  const {
+    conversations,
+    fullMessagesReturnedCount,
+    fullMessagesEndpointAttempted,
+    summaryMessages,
+  } = collected;
 
-  const emailMessages = messages.filter((m) => isEmailMessageType(m.type));
-  const filtered = sortMessagesNewestFirst(
+  let messages = collected.messages;
+  // Channel/direction filter on full messages first.
+  let filtered = sortMessagesNewestFirst(
     messages.filter(
       (m) => messageMatchesChannel(m, channel) && messageMatchesDirection(m, direction),
     ),
   );
+
+  // If direction-specific filter removed everything but summaries with unknown direction exist,
+  // allow email/any-channel summaries as last resort (neutral wording).
+  if (!filtered.length && direction !== "any") {
+    const summaryFallback = sortMessagesNewestFirst(
+      summaryMessages.filter(
+        (m) =>
+          messageMatchesChannel(m, channel) &&
+          (m.direction === direction || m.direction === "unknown"),
+      ),
+    );
+    if (summaryFallback.length) {
+      filtered = summaryFallback;
+      messages = summaryFallback;
+    }
+  }
+
+  // If channel filter emptied results but summaries match channel via lastMessageType, use them.
+  if (!filtered.length && channel !== "any") {
+    const bySummaryType = sortMessagesNewestFirst(
+      summaryMessages.filter((m) => messageMatchesChannel(m, channel)),
+    );
+    if (bySummaryType.length) {
+      filtered = bySummaryType;
+      messages = bySummaryType;
+    }
+  }
+
+  // Latest-message with no channel: any summary is enough.
+  if (!filtered.length && channel === "any" && summaryMessages.length) {
+    filtered = sortMessagesNewestFirst(summaryMessages);
+    messages = filtered;
+  }
+
   const selectedList = filtered.slice(0, limit);
   const selected = selectedList[0] ?? null;
+  const selectedSource: "full_message" | "conversation_summary" | null = selected
+    ? selected.fromConversationSummary
+      ? "conversation_summary"
+      : "full_message"
+    : null;
+  const fallbackUsed = selectedSource === "conversation_summary";
+  const emailMessages = messages.filter((m) => isEmailMessageType(m.type));
+  const newestSummary = sortMessagesNewestFirst(summaryMessages)[0] ?? null;
+
+  const baseDiagnostics = {
+    query,
+    contactResolved: true,
+    contactId: hydrated.id,
+    conversationIds: conversations.map((c) => c.id),
+    conversationsFound: conversations.length,
+    summaryLatestBodyPresent: Boolean(newestSummary?.body),
+    summaryLatestAtPresent: Boolean(newestSummary?.dateAdded),
+    summaryLatestType: newestSummary?.type ?? null,
+    fullMessagesEndpointAttempted,
+    fullMessagesReturnedCount,
+    fallbackUsed,
+    messagesInspected: messages.length,
+    emailMessagesFound: emailMessages.length,
+    latestEmailTimestamp: emailMessages[0]?.dateAdded ?? null,
+    selectedTimestamp: selected?.dateAdded ?? null,
+    selectedType: selected?.type ?? null,
+    selectedSource,
+    direction,
+    channel,
+    incompleteReason: null as string | null,
+  };
 
   const evidenceSources: GhlEvidenceSource[] = [
     createContactEvidenceSource(hydrated.id, displayContactName(hydrated), "Conversation contact"),
@@ -278,35 +424,8 @@ export async function lookupGhlConversationMessages(
     );
   }
 
-  if (!messages.length) {
-    return {
-      ok: false,
-      contact: hydrated,
-      conversations,
-      messages: [],
-      selected: null,
-      evidenceSources,
-      diagnostics: {
-        query,
-        contactResolved: true,
-        contactId: hydrated.id,
-        conversationsFound: conversations.length,
-        messagesInspected: 0,
-        emailMessagesFound: 0,
-        latestEmailTimestamp: null,
-        direction,
-        channel,
-        incompleteReason: conversations.length
-          ? "no_messages_in_accessible_history"
-          : "no_conversations",
-      },
-      failureMessage: conversations.length
-        ? `I found ${displayContactName(hydrated)} in GHL, but I didn’t find any messages in the conversation history I can access.`
-        : `I found ${displayContactName(hydrated)} in GHL, but I didn’t find any conversations for that contact.`,
-    };
-  }
-
   if (!selected) {
+    const hasAnySummary = summaryMessages.length > 0;
     const channelLabel = channel === "any" ? "matching" : channel;
     return {
       ok: false,
@@ -314,22 +433,21 @@ export async function lookupGhlConversationMessages(
       conversations,
       messages: filtered,
       selected: null,
+      selectedSource: null,
       evidenceSources,
       diagnostics: {
-        query,
-        contactResolved: true,
-        contactId: hydrated.id,
-        conversationsFound: conversations.length,
-        messagesInspected: messages.length,
-        emailMessagesFound: emailMessages.length,
-        latestEmailTimestamp: emailMessages[0]?.dateAdded ?? null,
-        direction,
-        channel,
-        incompleteReason: `no_${channel}_${direction}_message`,
+        ...baseDiagnostics,
+        incompleteReason: conversations.length
+          ? hasAnySummary
+            ? `no_${channel}_${direction}_message`
+            : "no_messages_and_no_summary"
+          : "no_conversations",
       },
-      failureMessage: `I found ${displayContactName(hydrated)} in GHL, but I didn’t find an ${channelLabel} message${
-        direction === "any" ? "" : ` (${direction})`
-      } in the conversation history I can access.`,
+      failureMessage: conversations.length
+        ? `I found ${displayContactName(hydrated)} in GHL, but I didn’t find an ${channelLabel} message${
+            direction === "any" ? "" : ` (${direction})`
+          } in the conversation history I can access.`
+        : `I found ${displayContactName(hydrated)} in GHL, but I didn’t find any conversations for that contact.`,
     };
   }
 
@@ -339,19 +457,9 @@ export async function lookupGhlConversationMessages(
     conversations,
     messages: selectedList,
     selected,
+    selectedSource,
     evidenceSources,
-    diagnostics: {
-      query,
-      contactResolved: true,
-      contactId: hydrated.id,
-      conversationsFound: conversations.length,
-      messagesInspected: messages.length,
-      emailMessagesFound: emailMessages.length,
-      latestEmailTimestamp: emailMessages[0]?.dateAdded ?? null,
-      direction,
-      channel,
-      incompleteReason: null,
-    },
+    diagnostics: baseDiagnostics,
   };
 }
 
@@ -368,7 +476,7 @@ export function formatGhlMessageEvidence(message: GhlMessage, contactName: strin
       ? contactName
       : message.direction === "outbound"
         ? "Acton"
-        : "Unknown";
+        : "Unknown / not specified";
   const channel = labelMessageType(message.type);
   return [
     `Contact: ${contactName}`,
@@ -376,6 +484,7 @@ export function formatGhlMessageEvidence(message: GhlMessage, contactName: strin
     `Direction: ${message.direction}`,
     `From/actor: ${who}`,
     `Timestamp: ${when}`,
+    message.fromConversationSummary ? `Source: conversation_summary` : `Source: full_message`,
     `Body:\n${body.slice(0, 3500)}`,
     `Conversation ID: ${message.conversationId}`,
     `Message ID: ${message.id}`,
@@ -398,31 +507,29 @@ export function buildDeterministicConversationAnswer(input: {
       ).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
     : "unknown time";
   const channel = labelMessageType(input.message.type);
-  const direction =
-    input.message.direction === "inbound"
-      ? "inbound"
-      : input.message.direction === "outbound"
-        ? "outbound"
-        : "unknown direction";
   const q = input.question.toLowerCase();
   const wantsEmail = /\be-?mail\b/.test(q);
   const label = wantsEmail ? "email" : channel.toLowerCase();
-  const who =
-    input.message.direction === "inbound"
-      ? input.contactName
-      : input.message.direction === "outbound"
-        ? "Acton"
-        : input.contactName;
+  const fromSummary = Boolean(input.message.fromConversationSummary);
+  const direction = input.message.direction;
 
-  const header =
-    direction === "inbound"
-      ? `${input.contactName}'s latest ${label} in GoHighLevel (${when}):`
-      : direction === "outbound"
-        ? `The latest ${label} Acton sent to ${input.contactName} in GoHighLevel (${when}):`
-        : `Latest ${label} with ${input.contactName} in GoHighLevel (${when}):`;
+  let header: string;
+  if (direction === "inbound") {
+    header = `${input.contactName}'s latest ${label} in GoHighLevel (${when}):`;
+  } else if (direction === "outbound") {
+    header = `The latest ${label} Acton sent to ${input.contactName} in GoHighLevel (${when}):`;
+  } else {
+    header = `The latest ${label} on ${input.contactName}'s GoHighLevel conversation (${when}):`;
+  }
 
   const emailLine = input.contactEmail ? `\nContact email: ${input.contactEmail}` : "";
-  const meta = `\n${channel} · ${direction} · from ${who}${emailLine}`;
+  const sourceNote = fromSummary
+    ? "\nSource: GHL conversation summary (full message history unavailable or empty)"
+    : "";
+  const meta =
+    direction === "unknown"
+      ? `\n${channel}${emailLine}${sourceNote}`
+      : `\n${channel} · ${direction}${emailLine}${sourceNote}`;
 
   if (!body) {
     return `${header}${meta}\n\n(No message body was available in GHL for this message.)`;

@@ -157,38 +157,64 @@ export function normalizePipeline(raw: RawPipeline, locationId?: string): GhlPip
 }
 
 export function normalizeConversation(raw: RawConversation): GhlConversation {
+  const directionRaw = (asString(raw.lastMessageDirection) ?? "").toLowerCase();
   return {
     id: asString(raw.id) ?? "",
     locationId: asString(raw.locationId) ?? "",
     contactId: asString(raw.contactId) ?? "",
     type: asString(raw.type) ?? "unknown",
     unreadCount: asNumber(raw.unreadCount) ?? 0,
-    lastMessageAt: asString(raw.lastMessageDate),
+    lastMessageAt: asString(raw.lastMessageDate) ?? asString(raw.lastMessageAt),
     lastMessageBody: asString(raw.lastMessageBody),
     lastMessageType: asString(raw.lastMessageType),
+    lastMessageDirection:
+      directionRaw === "inbound" ? "inbound" : directionRaw === "outbound" ? "outbound" : "unknown",
     dateAdded: asString(raw.dateAdded),
     dateUpdated: asString(raw.dateUpdated),
   };
 }
 
 export function normalizeMessage(raw: RawMessage): GhlMessage {
-  const attachments = raw.attachments as Array<{ url?: string; contentType?: string }> | undefined;
+  const attachmentsRaw = raw.attachments;
+  const attachments: GhlMessage["attachments"] = [];
+  if (Array.isArray(attachmentsRaw)) {
+    for (const item of attachmentsRaw) {
+      if (typeof item === "string" && item.trim()) {
+        attachments.push({ url: item });
+      } else if (item && typeof item === "object") {
+        const obj = item as { url?: unknown; contentType?: unknown };
+        const url = typeof obj.url === "string" ? obj.url : null;
+        if (url) {
+          attachments.push({
+            url,
+            contentType: typeof obj.contentType === "string" ? obj.contentType : undefined,
+          });
+        }
+      }
+    }
+  }
+
+  // GHL returns numeric `type` plus string `messageType` (e.g. TYPE_EMAIL). Prefer messageType.
+  const messageType =
+    asString(raw.messageType) ??
+    (typeof raw.type === "string" && /[A-Za-z]/.test(raw.type) ? raw.type : null) ??
+    "unknown";
+
+  const directionRaw = (asString(raw.direction) ?? "").toLowerCase();
+  const direction: GhlMessage["direction"] =
+    directionRaw === "inbound" ? "inbound" : directionRaw === "outbound" ? "outbound" : "unknown";
 
   return {
     id: asString(raw.id) ?? "",
     conversationId: asString(raw.conversationId) ?? "",
     contactId: asString(raw.contactId) ?? "",
     locationId: asString(raw.locationId) ?? "",
-    type: asString(raw.type) ?? "unknown",
-    direction: raw.direction === "inbound" ? "inbound" : "outbound",
+    type: messageType,
+    direction,
     body: asString(raw.body),
     status: asString(raw.status),
     dateAdded: asString(raw.dateAdded),
-    attachments: Array.isArray(attachments)
-      ? attachments
-          .filter((a) => a && typeof a.url === "string")
-          .map((a) => ({ url: a.url!, contentType: a.contentType }))
-      : [],
+    attachments,
   };
 }
 

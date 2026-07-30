@@ -73,7 +73,7 @@ export async function searchConversations(
 export async function getConversationMessages(
   conversationId: string,
   options: { limit?: number; lastMessageId?: string } = {},
-): Promise<{ messages: GhlMessage[]; hasMore: boolean }> {
+): Promise<{ messages: GhlMessage[]; hasMore: boolean; lastMessageId: string | null }> {
   const query: Record<string, string | number | boolean | undefined> = {};
 
   if (options.limit) {
@@ -86,31 +86,92 @@ export async function getConversationMessages(
   try {
     const response = await ghlGet(`/conversations/${conversationId}/messages`, query, {
       injectLocationId: false,
+      resource: "messages",
     });
-    const parsed = ghlMessagesResponseSchema.safeParse(response);
-
-    if (!parsed.success) {
-      console.warn("[GHL Messages] Response validation warning:", parsed.error.message);
-      const raw = response as { messages?: unknown[]; nextPage?: boolean };
-      return {
-        messages: Array.isArray(raw.messages)
-          ? (raw.messages as Record<string, unknown>[]).map(normalizeMessage)
-          : [],
-        hasMore: Boolean(raw.nextPage),
-      };
-    }
-
+    const extracted = extractMessagesPayload(response);
     return {
-      messages: parsed.data.messages.map((m) => normalizeMessage(m as Record<string, unknown>)),
-      hasMore: Boolean(parsed.data.nextPage),
+      messages: extracted.rawMessages.map((m) => normalizeMessage(m)),
+      hasMore: extracted.hasMore,
+      lastMessageId: extracted.lastMessageId,
     };
   } catch (error) {
     console.warn(
       "[GHL Messages] API may not be available:",
       error instanceof Error ? error.message : "Unknown error",
     );
-    return { messages: [], hasMore: false };
+    return { messages: [], hasMore: false, lastMessageId: null };
   }
+}
+
+/**
+ * GHL returns either:
+ *   { messages: Message[], nextPage?, lastMessageId? }
+ * or (official / production):
+ *   { messages: { messages: Message[], nextPage?, lastMessageId? } }
+ */
+export function extractMessagesPayload(response: unknown): {
+  rawMessages: Record<string, unknown>[];
+  hasMore: boolean;
+  lastMessageId: string | null;
+} {
+  const parsed = ghlMessagesResponseSchema.safeParse(response);
+  if (parsed.success) {
+    const top = parsed.data.messages;
+    if (Array.isArray(top)) {
+      return {
+        rawMessages: top as Record<string, unknown>[],
+        hasMore: Boolean(parsed.data.nextPage),
+        lastMessageId:
+          typeof parsed.data.lastMessageId === "string" ? parsed.data.lastMessageId : null,
+      };
+    }
+    const nested = top as {
+      messages?: unknown[];
+      nextPage?: boolean;
+      lastMessageId?: string | null;
+    };
+    return {
+      rawMessages: Array.isArray(nested.messages)
+        ? (nested.messages as Record<string, unknown>[])
+        : [],
+      hasMore: Boolean(nested.nextPage ?? parsed.data.nextPage),
+      lastMessageId:
+        typeof nested.lastMessageId === "string"
+          ? nested.lastMessageId
+          : typeof parsed.data.lastMessageId === "string"
+            ? parsed.data.lastMessageId
+            : null,
+    };
+  }
+
+  console.warn("[GHL Messages] Response validation warning:", parsed.error.message);
+  const raw = response as {
+    messages?: unknown;
+    nextPage?: boolean;
+    lastMessageId?: string | null;
+  };
+  if (Array.isArray(raw.messages)) {
+    return {
+      rawMessages: raw.messages as Record<string, unknown>[],
+      hasMore: Boolean(raw.nextPage),
+      lastMessageId: typeof raw.lastMessageId === "string" ? raw.lastMessageId : null,
+    };
+  }
+  if (raw.messages && typeof raw.messages === "object") {
+    const nested = raw.messages as {
+      messages?: unknown;
+      nextPage?: boolean;
+      lastMessageId?: string | null;
+    };
+    return {
+      rawMessages: Array.isArray(nested.messages)
+        ? (nested.messages as Record<string, unknown>[])
+        : [],
+      hasMore: Boolean(nested.nextPage),
+      lastMessageId: typeof nested.lastMessageId === "string" ? nested.lastMessageId : null,
+    };
+  }
+  return { rawMessages: [], hasMore: false, lastMessageId: null };
 }
 
 export async function listConversationsForContact(

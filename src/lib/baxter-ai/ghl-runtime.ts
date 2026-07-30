@@ -642,7 +642,9 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
           ? "SMS"
           : filters.channel === "call"
             ? "Call"
-            : "Message";
+            : lookup.selected.fromConversationSummary
+              ? "Conversation"
+              : "Message";
 
     return {
       items: [

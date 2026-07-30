@@ -22,6 +22,7 @@ import {
   sortMessagesNewestFirst,
   messageTimestampMs,
   buildDeterministicConversationAnswer,
+  messageFromConversationSummary,
 } from "@/lib/baxter-data/ghl/conversation-lookup";
 import type { GhlMessage } from "@/lib/connectors/ghl/types";
 import { deriveAnswerTypeLabel } from "@/lib/baxter-ai/classify";
@@ -406,6 +407,7 @@ describe("conversation lookup with mocked GHL APIs", () => {
       getConversationMessages: async () => ({
         messages: [FIXTURE_MESSAGES[2]!],
         hasMore: false,
+        lastMessageId: null,
       }),
       searchConversations: async () => ({ conversations: [], total: 0 }),
     }));
@@ -427,4 +429,248 @@ describe("conversation lookup with mocked GHL APIs", () => {
     vi.doUnmock("@/lib/connectors/ghl/resources/contacts");
     vi.doUnmock("@/lib/connectors/ghl/resources/conversations");
   });
+
+  it("Case A: empty messages endpoint falls back to conversation summary body", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/connectors/ghl/config", () => ({
+      isGhlConfigured: () => true,
+      requireGhlLocationId: () => "loc",
+    }));
+    vi.doMock("@/lib/baxter-data/ghl/resolve", () => ({
+      resolveContact: async () => ({
+        resolved: true,
+        ambiguous: false,
+        notFound: false,
+        entity: {
+          id: JOHN.id,
+          name: JOHN.name,
+          email: JOHN.email,
+          phone: null,
+          firstName: "John",
+          lastName: "Example",
+        },
+      }),
+    }));
+    vi.doMock("@/lib/connectors/ghl/resources/contacts", () => ({
+      searchContacts: async () => ({ contacts: [], total: 0 }),
+      getContactById: async () => ({
+        id: JOHN.id,
+        name: JOHN.name,
+        email: JOHN.email,
+        phone: null,
+        firstName: "John",
+        lastName: "Example",
+      }),
+    }));
+    vi.doMock("@/lib/connectors/ghl/resources/conversations", () => ({
+      listConversationsForContact: async () => [
+        {
+          id: "conv-john-1",
+          contactId: JOHN.id,
+          locationId: "loc",
+          type: "TYPE_PHONE",
+          unreadCount: 0,
+          lastMessageBody: "Latest customer message",
+          lastMessageAt: "2026-07-29T09:48:00.000Z",
+          lastMessageType: "TYPE_EMAIL",
+          lastMessageDirection: "unknown",
+          dateAdded: null,
+          dateUpdated: null,
+        },
+      ],
+      getConversationMessages: async () => ({ messages: [], hasMore: false, lastMessageId: null }),
+      searchConversations: async () => ({ conversations: [], total: 0 }),
+    }));
+
+    const { lookupGhlConversationMessages, buildDeterministicConversationAnswer } =
+      await import("@/lib/baxter-data/ghl/conversation-lookup");
+    const result = await lookupGhlConversationMessages({
+      contactQuery: "John Example",
+      channel: "email",
+      direction: "inbound",
+      limit: 1,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.selectedSource).toBe("conversation_summary");
+    expect(result.selected?.body).toContain("Latest customer message");
+    expect(result.diagnostics.fallbackUsed).toBe(true);
+    expect(isEmailMessageType(result.selected?.type)).toBe(true);
+
+    const answer = buildDeterministicConversationAnswer({
+      question: "What is the last email from John Example in GHL?",
+      contactName: JOHN.name,
+      contactEmail: JOHN.email,
+      message: result.selected!,
+    });
+    expect(answer).toContain("Latest customer message");
+    expect(answer).toMatch(/latest email on John Example/i);
+
+    vi.resetModules();
+    vi.doUnmock("@/lib/connectors/ghl/config");
+    vi.doUnmock("@/lib/baxter-data/ghl/resolve");
+    vi.doUnmock("@/lib/connectors/ghl/resources/contacts");
+    vi.doUnmock("@/lib/connectors/ghl/resources/conversations");
+  });
+
+  it("Case B: full messages win over older summary", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/connectors/ghl/config", () => ({
+      isGhlConfigured: () => true,
+      requireGhlLocationId: () => "loc",
+    }));
+    vi.doMock("@/lib/baxter-data/ghl/resolve", () => ({
+      resolveContact: async () => ({
+        resolved: true,
+        ambiguous: false,
+        notFound: false,
+        entity: {
+          id: JOHN.id,
+          name: JOHN.name,
+          email: JOHN.email,
+          phone: null,
+          firstName: "John",
+          lastName: "Example",
+        },
+      }),
+    }));
+    vi.doMock("@/lib/connectors/ghl/resources/contacts", () => ({
+      searchContacts: async () => ({ contacts: [], total: 0 }),
+      getContactById: async () => ({
+        id: JOHN.id,
+        name: JOHN.name,
+        email: JOHN.email,
+        phone: null,
+        firstName: "John",
+        lastName: "Example",
+      }),
+    }));
+    vi.doMock("@/lib/connectors/ghl/resources/conversations", () => ({
+      listConversationsForContact: async () => [
+        {
+          id: "conv-john-1",
+          contactId: JOHN.id,
+          type: "TYPE_PHONE",
+          lastMessageBody: "Older summary preview",
+          lastMessageAt: "2026-06-01T00:00:00.000Z",
+          lastMessageType: "TYPE_EMAIL",
+          lastMessageDirection: "inbound",
+        },
+      ],
+      getConversationMessages: async () => ({
+        messages: [
+          msg({
+            id: "m-newer-full",
+            type: "TYPE_EMAIL",
+            direction: "inbound",
+            dateAdded: "2026-07-29T10:00:00.000Z",
+            body: "Newer full message body",
+          }),
+        ],
+        hasMore: false,
+        lastMessageId: null,
+      }),
+      searchConversations: async () => ({ conversations: [], total: 0 }),
+    }));
+
+    const { lookupGhlConversationMessages } =
+      await import("@/lib/baxter-data/ghl/conversation-lookup");
+    const result = await lookupGhlConversationMessages({
+      contactQuery: "John Example",
+      channel: "email",
+      direction: "any",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.selectedSource).toBe("full_message");
+    expect(result.selected?.body).toContain("Newer full message body");
+    expect(result.diagnostics.fallbackUsed).toBe(false);
+
+    vi.resetModules();
+    vi.doUnmock("@/lib/connectors/ghl/config");
+    vi.doUnmock("@/lib/baxter-data/ghl/resolve");
+    vi.doUnmock("@/lib/connectors/ghl/resources/contacts");
+    vi.doUnmock("@/lib/connectors/ghl/resources/conversations");
+  });
 });
+
+describe("GHL messages API payload shape", () => {
+  it("unwraps nested messages.messages (official GHL shape)", async () => {
+    const { extractMessagesPayload } = await import("@/lib/connectors/ghl/resources/conversations");
+    const nested = extractMessagesPayload({
+      messages: {
+        lastMessageId: "msg-2",
+        nextPage: true,
+        messages: [
+          {
+            id: "msg-1",
+            type: 3,
+            messageType: "TYPE_EMAIL",
+            direction: "inbound",
+            body: "Hello from nested payload",
+            dateAdded: "2026-07-29T10:00:00.000Z",
+            attachments: ["https://example.com/a.pdf"],
+          },
+        ],
+      },
+    });
+    expect(nested.rawMessages).toHaveLength(1);
+    expect(nested.hasMore).toBe(true);
+    expect(nested.lastMessageId).toBe("msg-2");
+
+    const { normalizeMessage } = await import("@/lib/connectors/ghl/normalize");
+    const m = normalizeMessage(nested.rawMessages[0]!);
+    expect(m.type).toBe("TYPE_EMAIL");
+    expect(m.direction).toBe("inbound");
+    expect(m.attachments[0]?.url).toContain("example.com");
+  });
+
+  it("Case C: conversation.type PHONE + lastMessageType EMAIL still counts as email", () => {
+    const summary = messageFromConversationSummary(
+      {
+        id: "c1",
+        locationId: "loc",
+        contactId: JOHN.id,
+        type: "TYPE_PHONE",
+        unreadCount: 10,
+        lastMessageAt: "2026-07-29T10:00:00.000Z",
+        lastMessageBody: "Agenda attached",
+        lastMessageType: "TYPE_EMAIL",
+        lastMessageDirection: "inbound",
+        dateAdded: null,
+        dateUpdated: null,
+      },
+      JOHN.id,
+    );
+    expect(summary).not.toBeNull();
+    expect(isEmailMessageType(summary!.type)).toBe(true);
+    expect(messageMatchesChannel(summary!, "email")).toBe(true);
+    // Do not use conversation.type for email filtering
+    expect(summary!.type).not.toMatch(/PHONE/i);
+  });
+});
+
+describe("Case D: admin preview and Baxter evidence share summary body", () => {
+  it("messageFromConversationSummary matches admin lastMessageBody preview source", () => {
+    const body =
+      "Hi James and team, Kindly find the agenda attached, along with meeting call info below:";
+    const conv = {
+      id: "c-alex",
+      locationId: "loc",
+      contactId: "contact-alex",
+      type: "TYPE_PHONE",
+      unreadCount: 10,
+      lastMessageAt: "2026-07-29T10:00:00.000Z",
+      lastMessageBody: body,
+      lastMessageType: "TYPE_EMAIL",
+      lastMessageDirection: "unknown" as const,
+      dateAdded: null,
+      dateUpdated: null,
+    };
+    const message = messageFromConversationSummary(conv, conv.contactId);
+    expect(message?.body).toBe(body);
+    expect(sanitizePreviewParity(message?.body ?? "")).toContain("agenda attached");
+  });
+});
+
+function sanitizePreviewParity(text: string) {
+  return text.toLowerCase();
+}

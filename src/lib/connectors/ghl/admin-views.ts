@@ -377,7 +377,12 @@ export async function buildConversationDetailView(
       return {
         id: m.id,
         direction: m.direction,
-        actorLabel: m.direction === "inbound" ? contactName : "Acton",
+        actorLabel:
+          m.direction === "inbound"
+            ? contactName
+            : m.direction === "outbound"
+              ? "Acton"
+              : "Unknown",
         channel,
         body: stripHtmlToText(m.body ?? "")
           .replace(/\s+\n/g, "\n")

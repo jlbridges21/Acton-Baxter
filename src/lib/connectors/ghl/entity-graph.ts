@@ -386,7 +386,12 @@ export function formatCustomerSnapshot(
         );
       }
       if (last.type) lines.push(`Channel/type: ${last.type}`);
-      const who = last.direction === "inbound" ? "Last inbound" : "Last outbound";
+      const who =
+        last.direction === "inbound"
+          ? "Last inbound"
+          : last.direction === "outbound"
+            ? "Last outbound"
+            : "Latest message";
       if (last.body) lines.push(`${who}: ${last.body.slice(0, 200)}`);
       if (last.status) lines.push(`Status: ${last.status}`);
     }

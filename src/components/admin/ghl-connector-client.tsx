@@ -359,6 +359,9 @@ export function GhlConnectorClient({
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupResult, setLookupResult] = useState<string | null>(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
 
   const [browse, setBrowse] = useState<BrowsePayload | null>(null);
   const [pipelines, setPipelines] = useState<PipelineCard[] | null>(null);
@@ -1420,6 +1423,74 @@ export function GhlConnectorClient({
 
             {activeTab === "advanced" ? (
               <div className="space-y-6">
+                <section>
+                  <h3 className="mb-2 text-sm font-medium text-[var(--acton-fg)]">
+                    Test GHL conversation lookup
+                  </h3>
+                  <p className="mb-3 text-xs text-[var(--acton-muted)]">
+                    Safe diagnostics only (no message bodies). Uses the same path as Baxter Q&amp;A.
+                  </p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="min-w-[220px] flex-1 text-sm">
+                      <span className="mb-1 block text-xs text-[var(--acton-muted)]">
+                        Contact name / email / phone
+                      </span>
+                      <input
+                        value={lookupQuery}
+                        onChange={(e) => setLookupQuery(e.target.value)}
+                        placeholder="e.g. contact name"
+                        className="h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--acton-navy)]"
+                      />
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={lookupBusy || !lookupQuery.trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setLookupBusy(true);
+                          setLookupResult(null);
+                          try {
+                            const { data } = await postAction({
+                              action: "test_conversation_lookup",
+                              query: lookupQuery.trim(),
+                            });
+                            const result = data.result as {
+                              pass?: boolean;
+                              message?: string;
+                              data?: Record<string, unknown>;
+                            };
+                            setLookupResult(
+                              JSON.stringify(
+                                {
+                                  pass: result?.pass,
+                                  message: result?.message,
+                                  ...(result?.data ?? {}),
+                                },
+                                null,
+                                2,
+                              ),
+                            );
+                          } catch (err) {
+                            setLookupResult(
+                              err instanceof Error ? err.message : "Lookup diagnostic failed.",
+                            );
+                          } finally {
+                            setLookupBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      {lookupBusy ? "Testing…" : "Run lookup"}
+                    </Button>
+                  </div>
+                  {lookupResult ? (
+                    <pre className="mt-3 max-h-64 overflow-auto rounded-md border border-[var(--acton-border)] bg-slate-50 p-3 text-xs text-[var(--acton-fg)]">
+                      {lookupResult}
+                    </pre>
+                  ) : null}
+                </section>
+
                 <section>
                   <h3 className="mb-2 text-sm font-medium text-[var(--acton-fg)]">
                     Capability checks

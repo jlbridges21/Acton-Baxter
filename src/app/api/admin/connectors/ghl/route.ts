@@ -87,6 +87,7 @@ export async function POST(request: Request) {
           "cancel_admin_action",
           "disconnect",
           "mark_connected_from_pit",
+          "test_conversation_lookup",
         ]),
         tab: z
           .enum([
@@ -464,6 +465,46 @@ export async function POST(request: Request) {
         lastMessageId: parsed.lastMessageId,
       });
       return jsonOk({ result: { pass: true, data: detail } });
+    }
+
+    if (parsed.action === "test_conversation_lookup") {
+      const q = (parsed.query ?? "").trim();
+      if (!q) {
+        return jsonOk({
+          result: { pass: false, message: "query is required (contact name, email, or phone)." },
+        });
+      }
+      const { lookupGhlConversationMessages, inferConversationLookupFilters } =
+        await import("@/lib/baxter-data/ghl/conversation-lookup");
+      const filters = inferConversationLookupFilters(
+        parsed.source === "email" ? `last email from ${q}` : `latest message from ${q}`,
+      );
+      const lookup = await lookupGhlConversationMessages({
+        contactQuery: q,
+        channel: filters.channel,
+        direction: filters.direction,
+        limit: 1,
+      });
+      // Safe diagnostics only — no message bodies.
+      return jsonOk({
+        result: {
+          pass: lookup.ok,
+          message: lookup.ok
+            ? `Resolved conversation message via ${lookup.selectedSource}.`
+            : lookup.failureMessage || lookup.ambiguityMessage || "Lookup failed.",
+          data: {
+            ...lookup.diagnostics,
+            contactName: lookup.contact
+              ? lookup.contact.name ||
+                [lookup.contact.firstName, lookup.contact.lastName].filter(Boolean).join(" ")
+              : null,
+            contactEmail: lookup.contact?.email ?? null,
+            // Explicitly omit bodies
+            bodyPresent: Boolean(lookup.selected?.body),
+            bodyLength: lookup.selected?.body?.length ?? 0,
+          },
+        },
+      });
     }
 
     if (parsed.action === "propose_admin_action") {
