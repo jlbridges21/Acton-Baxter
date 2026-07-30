@@ -4,6 +4,7 @@
 import "server-only";
 
 import { detectPemIntent, pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-neats/intent";
+import { detectConceptQuestion } from "@/lib/baxter/concept-vocabulary";
 import { canUserWriteGhl } from "@/lib/connectors/ghl/actions/permissions";
 import { isMonitoringCapabilityKnown } from "@/lib/baxter-ai/governance/capabilities";
 import type { Profile } from "@/lib/research/db-types";
@@ -23,7 +24,11 @@ export type CapabilityHelpAnswer = {
 function isCapabilityOrHelpQuestion(question: string): boolean {
   const q = question.trim().toLowerCase();
   if (!q) return false;
+  const concept = detectConceptQuestion(question);
+  if (concept.kind === "how_to" || concept.kind === "capability_overview") return true;
+  // Definitions may use Knowledge first — still allow capability help as fallback.
   if (pemHelpDefinitionAnswer(question)) return true;
+  if (concept.kind === "definition") return true;
   if (
     /\b(what can you (do|help)|what (all )?can (baxter|you) help|what tools|how do you (work|help)|who (are|is) (you|baxter)|what (are|is) (you|baxter))\b/i.test(
       q,
@@ -41,14 +46,20 @@ function isCapabilityOrHelpQuestion(question: string): boolean {
   }
   if (
     /\b(where (do i|can i|are)|how (do i|to))\b/i.test(q) &&
-    /\b(pem|neat|knowledge|google|drive|property|report|ghl|crm|clear|chat|connect|generate|create|settings|users|integrations|rulebook|monitoring|transcript|buildertrend|handoff)\b/i.test(
+    /\b(pem|neat|knowledge|google|drive|property|report|ghl|crm|clear|chat|connect|generate|create|settings|users|integrations|rulebook|monitoring|transcript|buildertrend|handoff|slack)\b/i.test(
       q,
     )
   ) {
     return true;
   }
   if (/\b(clear (this )?chat|new chat)\b/i.test(q)) return true;
-  if (/\bwhat is (a |an )?(pem|neat|palo|type\s*[12])\b/i.test(q)) return true;
+  if (
+    /\bwhat is (a |an )?(pem|neat|palo|type\s*[12]|slack recall|property research|process monitoring|rulebook|ghl|knowledge)\b/i.test(
+      q,
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -57,6 +68,8 @@ export function detectCapabilityHelpIntent(question: string): boolean {
   if (!isCapabilityOrHelpQuestion(question)) return false;
   // Prospect-specific PEM lookups are handled by the PEM evidence provider.
   if (detectPemIntent(question).intent === "record_lookup") return false;
+  const concept = detectConceptQuestion(question);
+  if (concept.isConcept) return true;
   // "Can you tell me Lori's stage?" is CRM work, not capability help.
   if (
     /\bcan you (tell|show|look|find|get|check|move|update)\b/i.test(question) &&
@@ -77,6 +90,15 @@ export function detectCapabilityHelpIntent(question: string): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Whether answerBaxterQuestion should prefer Knowledge retrieval over the
+ * deterministic capability short-circuit (definitions with a KB title).
+ */
+export function shouldPreferKnowledgeForConcept(question: string): boolean {
+  const concept = detectConceptQuestion(question);
+  return concept.kind === "definition" && concept.knowledgeSearchTerms.length > 0;
 }
 
 function linkFor(

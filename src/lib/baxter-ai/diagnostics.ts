@@ -24,6 +24,7 @@ import { getGovernanceAdminSummary, assembleBaxterRuntime } from "./governance";
 import { getPemNeatHealthSnapshot } from "@/lib/pem-neat/health";
 import {
   capabilityRegistryStats,
+  describeConceptRoutingDiagnostics,
   getCapabilityRuntimeHealth,
 } from "@/lib/baxter/capability-registry";
 import { isMonitoringCapabilityKnown } from "@/lib/baxter-ai/governance/capabilities";
@@ -39,6 +40,7 @@ export async function getBaxterDiagnosticsSnapshot() {
     monitoringKnown: isMonitoringCapabilityKnown(),
   });
   const capabilityStats = capabilityRegistryStats(capabilityHealth);
+  const conceptRoutingSample = describeConceptRoutingDiagnostics("What is a PEM NEAT?");
 
   let completedPems: number | null = pemNeat.activeCount;
   let stalePems: number | null = null;
@@ -167,6 +169,7 @@ export async function getBaxterDiagnosticsSnapshot() {
       deletedExcluded: true,
       capabilityCount: capabilityStats.total,
       enabledCapabilityCount: capabilityStats.enabled,
+      conceptRoutingSample,
     },
   };
 }

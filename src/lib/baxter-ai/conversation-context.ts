@@ -133,6 +133,8 @@ export function decideConversationContext(
   };
 }
 
+import { isReservedConceptName } from "@/lib/baxter/concept-vocabulary";
+
 /**
  * Extract likely person entities from a prior user question for follow-up inheritance.
  */
@@ -142,7 +144,9 @@ export function extractPriorEntitiesFromHistory(history: BaxterHistoryMessage[])
     .find((m) => m.role === "user" && m.content.trim().length > 0);
   if (!priorUser) return [];
   const matches = priorUser.content.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g) ?? [];
-  return Array.from(new Set(matches.map((m) => m.trim()))).slice(0, 3);
+  return Array.from(
+    new Set(matches.map((m) => m.trim()).filter((m) => !isReservedConceptName(m))),
+  ).slice(0, 3);
 }
 
 const UNDERSPECIFIED_FIELD =

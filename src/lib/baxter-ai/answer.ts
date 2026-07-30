@@ -52,8 +52,18 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import type { Profile } from "@/lib/research/db-types";
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./conversation-context";
-import { answerCapabilityHelp, buildCapabilityPromptBlock } from "@/lib/baxter/capability-help";
+import {
+  answerCapabilityHelp,
+  buildCapabilityPromptBlock,
+  shouldPreferKnowledgeForConcept,
+} from "@/lib/baxter/capability-help";
+import {
+  detectConceptQuestion,
+  resolveConceptFollowUp,
+  resolveRetryQuestion,
+} from "@/lib/baxter/concept-vocabulary";
 import { retrievePemEvidence } from "@/lib/baxter-data/pem-neats";
+import { pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-neats/intent";
 import { writePemConversationState } from "@/lib/baxter-data/pem-neats/conversation-state";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
 import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
@@ -69,6 +79,37 @@ import {
   classifySourceAuthority,
 } from "@/lib/baxter-ai/source-authority";
 import type { BaxterSourceReference } from "./types";
+import { getPublicAppBaseUrl } from "@/lib/slack/config";
+
+function withAbsoluteAppLinks(answer: string, links: Array<{ href: string }>): string {
+  const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
+  let out = answer;
+  const paths = [...links.map((l) => l.href).filter((h) => h.startsWith("/"))].sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const path of paths) {
+    const absolute = `${baseUrl}${path}`;
+    // Replace only relative occurrences of this path.
+    let next = "";
+    let i = 0;
+    while (i < out.length) {
+      const idx = out.indexOf(path, i);
+      if (idx < 0) {
+        next += out.slice(i);
+        break;
+      }
+      const before = out.slice(Math.max(0, idx - baseUrl.length), idx);
+      if (before.endsWith(baseUrl) || /https?:\/\/\S*$/i.test(out.slice(0, idx))) {
+        next += out.slice(i, idx + path.length);
+      } else {
+        next += out.slice(i, idx) + absolute;
+      }
+      i = idx + path.length;
+    }
+    out = next;
+  }
+  return out.replaceAll(`${baseUrl}${baseUrl}`, baseUrl);
+}
 
 /**
  * Shared Baxter answering entry point for web and Slack.
@@ -145,8 +186,6 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
-  const questionClass = classifyBaxterQuestion(question);
-
   const conversation = await getOrCreateConversation({
     userId: input.userId,
     userName: input.userName,
@@ -160,6 +199,20 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     conversationId: conversation.id,
     content: question,
   });
+
+  // Resolve "try again" / "how do I make one?" against prior turns before routing.
+  const historyForRouting = await getRecentConversationHistory(conversation.id, {
+    limit: 12,
+    excludeLastUser: true,
+  });
+  const retryResolved = resolveRetryQuestion(question, [
+    ...historyForRouting,
+    { role: "user", content: question },
+  ]);
+  const followUpResolved = resolveConceptFollowUp(retryResolved ?? question, historyForRouting);
+  const routingQuestion = followUpResolved ?? retryResolved ?? question;
+  const questionClass = classifyBaxterQuestion(routingQuestion);
+  const conceptIntent = detectConceptQuestion(routingQuestion);
 
   if (questionClass === "unsafe_or_disallowed") {
     const answer =
@@ -318,29 +371,36 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     }
   }
 
-  // Deterministic capability / how-to / PEM definition answers (no vector search).
+  // Deterministic capability / how-to answers.
+  // Definition questions prefer approved Knowledge first (not a canned short-circuit).
+  const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
   const capabilityHelp = answerCapabilityHelp({
-    question,
+    question: routingQuestion,
     role: profile?.role ?? null,
     profile,
   });
-  if (capabilityHelp) {
-    const sources: BaxterSourceReference[] = capabilityHelp.links.map((link, index) => ({
-      title: link.label,
-      sourceName: "Baxter",
-      category: "Baxter capability",
-      sourceUrl: link.href,
-      citationLabel: link.label,
-      sourceKind: "capability" as const,
-      openLabel: link.label,
-      lastUpdated: null,
-      relevanceScore: 100,
-      availability: "available" as const,
-      knowledgeEntryId: `capability-${index}-${link.href}`,
-    }));
+  if (capabilityHelp && !preferKnowledgeForConcept) {
+    const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
+    const sources: BaxterSourceReference[] = capabilityHelp.links.map((link, index) => {
+      const href = link.href.startsWith("http") ? link.href : `${baseUrl}${link.href}`;
+      return {
+        title: link.label,
+        sourceName: "Baxter",
+        category: "Baxter capability",
+        sourceUrl: href,
+        citationLabel: link.label,
+        sourceKind: "capability" as const,
+        openLabel: link.label,
+        lastUpdated: null,
+        relevanceScore: 100,
+        availability: "available" as const,
+        knowledgeEntryId: `capability-${index}-${link.href}`,
+      };
+    });
+    const helpAnswer = withAbsoluteAppLinks(capabilityHelp.answer, capabilityHelp.links);
     const message = await appendAssistantMessage({
       conversationId: conversation.id,
-      content: capabilityHelp.answer,
+      content: helpAnswer,
       insufficientKnowledge: false,
       confidence: "high",
       modelProvider: "capability-registry",
@@ -355,7 +415,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     return toPublicAnswer({
       conversationId: conversation.id,
       messageId: message.id,
-      answer: capabilityHelp.answer,
+      answer: helpAnswer,
       sources,
       confidence: "high",
       insufficientKnowledge: false,
@@ -364,17 +424,14 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   }
 
   // Fast path: identity questions with no need for OpenAI when KB is empty.
-  const historyEarly = await getRecentConversationHistory(conversation.id, {
-    limit: 10,
-    excludeLastUser: true,
-  });
-  const evidence = await retrieveBaxterEvidence(question, historyEarly);
+  const historyEarly = historyForRouting;
+  const evidence = await retrieveBaxterEvidence(routingQuestion, historyEarly);
   let contextItems = evidence.contextItems;
 
   // Merge live GoHighLevel operational evidence when the question is CRM-related.
   let ghlEvidence: Awaited<ReturnType<typeof retrieveGhlLiveEvidence>> | null = null;
   if (isGhlConfigured()) {
-    ghlEvidence = await retrieveGhlLiveEvidence(question).catch(() => null);
+    ghlEvidence = await retrieveGhlLiveEvidence(routingQuestion).catch(() => null);
     if (ghlEvidence?.diagnostics) {
       logBaxterDiagnostic("ghlEvidence", {
         code: "GHL_ENTITY_RESOLUTION",
@@ -448,7 +505,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   // Merge Process Rulebook evidence for responsibility/process questions.
   const { retrieveRulebookEvidence } = await import("@/lib/rulebook");
-  const rulebookEvidence = await retrieveRulebookEvidence(question).catch(() => []);
+  const rulebookEvidence = await retrieveRulebookEvidence(routingQuestion).catch(() => []);
   if (rulebookEvidence.length > 0) {
     const currentOffset = contextItems.length;
     const rulebookItems = rulebookEvidence.map((item, index) => ({
@@ -460,7 +517,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   // Merge completed PEM NEAT structured evidence (first-class; not Knowledge Base text).
   const pemEvidence = await retrievePemEvidence({
-    question,
+    question: routingQuestion,
     history: historyEarly,
     role: profile?.role ?? null,
     channel: input.channel,
@@ -577,18 +634,92 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     contextItems = [...renumbered, ...rest].slice(0, 8);
   }
 
+  // Concept definitions: if Knowledge missed, fall back to capability/PEM governing copy.
+  if (preferKnowledgeForConcept) {
+    const conceptTerms = conceptIntent.knowledgeSearchTerms.map((t) => t.toLowerCase());
+    const strongKb = contextItems.some((item) => {
+      const title = (item.title ?? "").toLowerCase();
+      const score = item.relevanceScore ?? 0;
+      return (
+        score >= 40 &&
+        (conceptTerms.some((t) => title === t.toLowerCase() || title.includes(t.toLowerCase())) ||
+          /pem\s*neat/i.test(title))
+      );
+    });
+    if (!strongKb) {
+      const fallback =
+        capabilityHelp ??
+        (pemHelpDefinitionAnswer(routingQuestion)
+          ? {
+              answer: pemHelpDefinitionAnswer(routingQuestion)!,
+              links: [
+                { label: "Open PEM NEATs", href: "/pem-neats" },
+                { label: "Create PEM NEAT", href: "/pem-neats/new" },
+              ],
+            }
+          : null);
+      if (fallback) {
+        const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
+        const helpAnswer = withAbsoluteAppLinks(fallback.answer, fallback.links);
+        const sources: BaxterSourceReference[] = fallback.links.map((link, index) => {
+          const href = link.href.startsWith("http") ? link.href : `${baseUrl}${link.href}`;
+          return {
+            title: link.label,
+            sourceName: "Baxter",
+            category: "Baxter capability",
+            sourceUrl: href,
+            citationLabel: link.label,
+            sourceKind: "capability" as const,
+            openLabel: link.label,
+            lastUpdated: null,
+            relevanceScore: 90,
+            availability: "available" as const,
+            knowledgeEntryId: `capability-fallback-${index}-${link.href}`,
+          };
+        });
+        // Keep any weak KB hits as additional context sources when present
+        const kbSources = contextItems
+          .slice(0, 2)
+          .map((item) => contextItemToSourceReference(item));
+        const allSources = [...kbSources, ...sources];
+        const message = await appendAssistantMessage({
+          conversationId: conversation.id,
+          content: helpAnswer,
+          insufficientKnowledge: false,
+          confidence: "high",
+          modelProvider: "capability-registry",
+          modelName: "concept-fallback",
+          sources: allSources,
+          sourceEntryIds: [],
+        });
+        return toPublicAnswer({
+          conversationId: conversation.id,
+          messageId: message.id,
+          answer: helpAnswer,
+          sources: allSources,
+          confidence: "high",
+          insufficientKnowledge: false,
+          answerMode: kbSources.length ? "grounded" : "identity",
+        });
+      }
+    }
+  }
+
   // Live Slack conversational evidence (authorized before model; not Knowledge).
   // Presence of Knowledge ≠ answering the requested dimension (e.g. WHEN / what did X say).
   const priorSlack = readSlackConversationState(conversation.metadata ?? {});
   const knowledgeExcerpts = contextItems.map(
     (item) => `${item.title ?? ""}\n${item.summary ?? ""}\n${item.contentExcerpt ?? ""}`,
   );
-  const otherEvidenceSatisfies = nonSlackEvidenceSatisfiesQuestion(question, knowledgeExcerpts);
+  const otherEvidenceSatisfies = nonSlackEvidenceSatisfiesQuestion(
+    routingQuestion,
+    knowledgeExcerpts,
+  );
   // CRM contact-field asks (address/phone/email/…) must not fall through to Slack.
-  const skipSlackForGhlContactField = shouldSkipSlackForGhlContactField(question);
+  const skipSlackForGhlContactField = shouldSkipSlackForGhlContactField(routingQuestion);
   const forceSlack =
     !skipSlackForGhlContactField &&
-    (Boolean(input.slackRecallForced) || shouldForceSlackDespiteOtherEvidence(question));
+    (Boolean(input.slackRecallForced) || shouldForceSlackDespiteOtherEvidence(routingQuestion));
   const hasOtherStrongEvidence =
     (otherEvidenceSatisfies || skipSlackForGhlContactField) &&
     !forceSlack &&
@@ -598,7 +729,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     : input.slackRecallForced
       ? "primary"
       : detectSlackSearchRole({
-          question,
+          question: routingQuestion,
           hasOtherStrongEvidence,
           followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
         });
@@ -646,7 +777,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         },
       } satisfies Awaited<ReturnType<typeof retrieveSlackForAnswer>>)
     : await retrieveSlackForAnswer({
-        question,
+        question: routingQuestion,
         requester: {
           baxterUserId: input.userId,
           slackUserId: input.externalUserId,
@@ -814,7 +945,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   let direct = slackRuntime?.selected.length
     ? null
     : evidence.structured && !evidence.structured.ambiguous
-      ? draftDirectStructuredAnswer(question, evidence.structured)
+      ? draftDirectStructuredAnswer(routingQuestion, evidence.structured)
       : evidence.structured?.ambiguous
         ? evidence.structured.clarificationPrompt
         : null;
@@ -966,7 +1097,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   try {
     const provider = getBaxterLlmProvider();
-    const authority = classifySourceAuthority(question);
+    const authority = classifySourceAuthority(routingQuestion);
     const slackStatusBlock =
       slackRuntime?.retrievalStatusPrompt ??
       (slackRuntime
@@ -1001,7 +1132,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
             .filter(Boolean)
             .join("\n");
     const llm = await provider.generateAnswer({
-      question,
+      question: routingQuestion,
       contextItems,
       userName: input.userName,
       channel: input.channel,

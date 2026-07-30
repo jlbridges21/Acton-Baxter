@@ -1,7 +1,14 @@
 /**
  * PEM NEAT question intent — help/definitions vs record lookup.
  * Entity parsing is case-insensitive and supports "Robert Vertin Test 8".
+ * Reserved concept phrases (e.g. "PEM NEAT") are never treated as prospect names.
  */
+import {
+  detectConceptQuestion,
+  isReservedConceptName,
+  isReservedConceptToken,
+  stripReservedConceptPhrases,
+} from "@/lib/baxter/concept-vocabulary";
 import { detectRequestedPemFields, type PemFieldKey } from "./fields";
 
 export type PemQuestionIntent =
@@ -52,30 +59,28 @@ export type PemIntentResult = {
   switchPemHint: string | null;
 };
 
-const HELP_DEFINITION =
-  /\b(what (is|are) (a |an )?(pem|neat|palo)|define (pem|neat|palo)|explain (pem|neat)|what does neat stand for|how (do i|to) (generate|create|make|start) (a )?(pem )?neat|where (do i|to) (paste|add).*(transcript|pem))\b/i;
-
-const HELP_TYPE_CONCEPT =
-  /\b(what (is|are) (a |an )?(type\s*[12]|type one|type two)\s*pain|define type\s*[12]|explain type\s*[12])\b/i;
-
 const RECORD_SIGNAL =
   /\b(pem|neat|type\s*[12]|palo|budget|decision|schedule|outcome|qualification|coaching|assessment|handoff|buildertrend|follow[- ]?up email|customer story|customer pain|next steps?|salesperson|advisor)\b/i;
 
-const LOOKUP_SIGNAL =
-  /\b(tell me about|what (was|were|is|are)|who (conducted|ran|did)|how did .+ (do|perform)|what did .+ (commit|promise|miss)|handoff notes?|buildertrend (fields?|notes?)|type\s*[12]\s*pain)\b/i;
+const RECORD_REQUEST =
+  /\b(show|open|get|pull up|find|look up|fetch|bring up)\b.+\b(pem|neat)\b|\b(pem|neat)\b.+\b(for|about|with)\b|\btell me about\b.+\b(pem|meeting|neat)\b/i;
+
+const LOOKUP_WITH_PERSON =
+  /\b(tell me about|what (was|were)|who (conducted|ran|did)|how did .+ (do|perform)|what did .+ (commit|promise|miss)|handoff notes?|buildertrend (fields?|notes?))\b/i;
 
 function isStopName(name: string): boolean {
-  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Their|What|Who|When|Where|How|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An)$/i.test(
+  if (isReservedConceptToken(name)) return true;
+  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Their|What|Who|When|Where|How|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again)$/i.test(
     name.trim(),
   );
 }
 
 const QUESTION_LEAD =
-  /^(?:what|who|when|where|how|tell(?:\s+me)?|give(?:\s+me)?|show(?:\s+me)?|use|try|pick|choose|actually|that|this|is|are|was|were|about|for|with|regarding|do|does|did|the|a|an)\b/i;
+  /^(?:what|who|when|where|how|tell(?:\s+me)?|give(?:\s+me)?|show(?:\s+me)?|use|try|pick|choose|actually|that|this|is|are|was|were|about|for|with|regarding|do|does|did|the|a|an|explain|define|please)\b/i;
 
 function stripQuestionLead(value: string): string {
   let v = value.trim();
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     if (!QUESTION_LEAD.test(v)) break;
     v = v.replace(QUESTION_LEAD, "").trim();
   }
@@ -85,6 +90,7 @@ function stripQuestionLead(value: string): string {
 function looksLikePersonName(value: string): boolean {
   const parts = value.trim().split(/\s+/).filter(Boolean);
   if (parts.length < 1 || parts.length > 4) return false;
+  if (isReservedConceptName(value)) return false;
   if (parts.some((p) => isStopName(p))) return false;
   return parts.every((p) => /^[A-Za-z][A-Za-z'-]*$/.test(p));
 }
@@ -109,13 +115,14 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
   if (testMatch?.index != null && testMatch[1]) {
     const disc = titleCaseWords(testMatch[1]);
     const before = stripQuestionLead(
-      q
-        .slice(0, testMatch.index)
-        .replace(/['’]s\s*$/i, "")
-        .trim(),
+      stripReservedConceptPhrases(
+        q
+          .slice(0, testMatch.index)
+          .replace(/['’]s\s*$/i, "")
+          .trim(),
+      ),
     );
     const words = before.split(/\s+/).filter(Boolean);
-    // Take trailing 1–3 name tokens
     for (let n = Math.min(3, words.length); n >= 1; n--) {
       const candidate = words.slice(-n).join(" ");
       if (looksLikePersonName(candidate)) {
@@ -123,7 +130,6 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
         return { nameQuery: `${base} ${disc}`, baseName: base, discriminator: disc };
       }
     }
-    // Discriminator alone (selection reply)
     if (
       /^\s*(?:use|try|pick|choose|go with|go back to|actually use)?\s*test\s*[\w.-]+\s*$/i.test(q)
     ) {
@@ -131,31 +137,45 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
     }
   }
 
-  // Possessive: Robert Vertin's / Robert's
-  const possessive = q.match(/\b([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})(?:'s|’s)\b/);
-  if (possessive?.[1] && looksLikePersonName(possessive[1])) {
-    const base = titleCaseWords(possessive[1]);
-    return { nameQuery: base, baseName: base, discriminator: null };
+  // Possessive: prefer the rightmost valid person name ("Show me Robert Vertin's …")
+  const possessiveMatches = [
+    ...q.matchAll(/\b([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})(?:'s|’s)\b/g),
+  ];
+  for (let i = possessiveMatches.length - 1; i >= 0; i--) {
+    const raw = possessiveMatches[i]?.[1];
+    if (!raw) continue;
+    // Drop leading stop tokens ("me Robert Vertin" → "Robert Vertin")
+    const parts = raw.split(/\s+/).filter(Boolean);
+    while (parts.length && isStopName(parts[0]!)) parts.shift();
+    const candidate = parts.join(" ");
+    if (looksLikePersonName(candidate)) {
+      const base = titleCaseWords(candidate);
+      return { nameQuery: base, baseName: base, discriminator: null };
+    }
   }
 
-  // about/for/with Name
+  // about/for/with Name — ignore reserved concepts
   const about = q.match(
     /\b(?:about|for|with|regarding)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\b/i,
   );
   if (about?.[1]) {
-    const cleaned = stripQuestionLead(about[1]);
+    const cleaned = stripQuestionLead(stripReservedConceptPhrases(about[1]));
     if (looksLikePersonName(cleaned)) {
       const base = titleCaseWords(cleaned);
       return { nameQuery: base, baseName: base, discriminator: null };
     }
   }
 
-  // First Last somewhere after stripping leads
-  const remainder = stripQuestionLead(q.replace(/[?’']/g, " "));
-  const full = remainder.match(/\b([A-Za-z][A-Za-z'-]+)\s+([A-Za-z][A-Za-z'-]+)\b/);
-  if (full?.[1] && full[2] && looksLikePersonName(`${full[1]} ${full[2]}`)) {
-    const base = titleCaseWords(`${full[1]} ${full[2]}`);
-    return { nameQuery: base, baseName: base, discriminator: null };
+  // First Last somewhere after stripping leads + reserved concept phrases
+  const remainder = stripQuestionLead(stripReservedConceptPhrases(q.replace(/[?’']/g, " ")));
+  const fullMatches = [...remainder.matchAll(/\b([A-Za-z][A-Za-z'-]+)\s+([A-Za-z][A-Za-z'-]+)\b/g)];
+  for (const full of fullMatches) {
+    if (!full[1] || !full[2]) continue;
+    const candidate = `${full[1]} ${full[2]}`;
+    if (looksLikePersonName(candidate)) {
+      const base = titleCaseWords(candidate);
+      return { nameQuery: base, baseName: base, discriminator: null };
+    }
   }
 
   // "the Vertin meeting/pem/neat"
@@ -192,8 +212,13 @@ function extractDateHint(question: string): string | null {
 }
 
 function extractSwitchPemHint(question: string): string | null {
+  // Only treat as PEM switch when a Test discriminator (or similar) is present —
+  // not "Try again." corrections.
+  if (/\btry again\b/i.test(question) && !/\btest\s*[\w.-]+\b/i.test(question)) {
+    return null;
+  }
   const m = question.match(
-    /\b(?:use|try|pick|choose|go with|go back to|actually use|switch to)\s+((?:test\s*)?[\w.-]+)/i,
+    /\b(?:use|try|pick|choose|go with|go back to|actually use|switch to)\s+(test\s*[\w.-]+)/i,
   );
   return m?.[1] ? m[1].trim() : null;
 }
@@ -213,17 +238,11 @@ export function detectPemIntent(question: string): PemIntentResult {
   };
   if (!q) return empty;
 
+  const concept = detectConceptQuestion(q);
   const entity = parsePemEntityQuery(q);
 
-  // Pure concept help — not a prospect lookup
-  if (HELP_DEFINITION.test(q) && !entity.nameQuery) {
-    return { ...empty, intent: "help_definition" };
-  }
-  if (
-    HELP_TYPE_CONCEPT.test(q) &&
-    !entity.nameQuery &&
-    !/\b(his|her|their|robert|alex)\b/i.test(q)
-  ) {
+  // Concept / definition / how-to — never a prospect lookup
+  if (concept.isConcept && (concept.kind === "definition" || concept.kind === "how_to")) {
     return { ...empty, intent: "help_definition" };
   }
 
@@ -237,9 +256,11 @@ export function detectPemIntent(question: string): PemIntentResult {
     };
   }
 
+  // "Use Test 2" / "Try Test 8" — not "Try again"
   if (
     /^(use|try|pick|choose|go with|go back to|actually use)\b/i.test(q) &&
-    !RECORD_SIGNAL.test(q)
+    /\btest\s*[\w.-]+\b/i.test(q) &&
+    !RECORD_SIGNAL.test(q.replace(/\btest\s*[\w.-]+\b/i, ""))
   ) {
     return {
       ...empty,
@@ -256,10 +277,11 @@ export function detectPemIntent(question: string): PemIntentResult {
 
   const looksLikeRecord =
     !capabilityShape &&
-    ((RECORD_SIGNAL.test(q) && LOOKUP_SIGNAL.test(q)) ||
-      (RECORD_SIGNAL.test(q) && Boolean(entity.nameQuery)) ||
-      /\b(pem|neat)\b.*\b(for|about|with)\b/i.test(q) ||
-      /\b(tell me about|what about)\b.+\b(pem|meeting|neat)\b/i.test(q) ||
+    !concept.isConcept &&
+    ((RECORD_SIGNAL.test(q) && Boolean(entity.nameQuery)) ||
+      (RECORD_SIGNAL.test(q) && /\b(his|her|their)\b/i.test(q)) ||
+      (RECORD_REQUEST.test(q) && !concept.isConcept) ||
+      (LOOKUP_WITH_PERSON.test(q) && Boolean(entity.nameQuery)) ||
       (/\btell me about\b/i.test(q) &&
         Boolean(entity.nameQuery) &&
         !/\b(acton|google|baxter|policy|procedure|rulebook|knowledge)\b/i.test(q)) ||
@@ -267,7 +289,6 @@ export function detectPemIntent(question: string): PemIntentResult {
         (Boolean(entity.nameQuery) || /\b(his|her|their)\b/i.test(q))));
 
   if (!looksLikeRecord) {
-    // Still allow discriminator + active context to be handled upstream
     if (entity.discriminator && /\b(type\s*[12]|budget|decision|pain)\b/i.test(q)) {
       return {
         ...empty,
@@ -296,10 +317,13 @@ export function detectPemIntent(question: string): PemIntentResult {
   };
 }
 
-/** Authoritative short definitions from Acton PEM/NEAT governing docs. */
+/** Authoritative short definitions from Acton PEM/NEAT governing docs (fallback when KB misses). */
 export function pemHelpDefinitionAnswer(question: string): string | null {
-  const q = question.toLowerCase();
-  if (/\bwhat is a? ?pem\b|\bwhat are pems\b|\bdefine pem\b/.test(q) && !/\bneat\b/.test(q)) {
+  const q = question.toLowerCase().replace(/[’‘]/g, "'");
+  if (
+    /\bwhat is a? ?pem\b|\bwhat are pems\b|\bdefine pem\b|\bexplain (a )?pem\b/.test(q) &&
+    !/\bneat\b/.test(q)
+  ) {
     return [
       "A **PEM** is a Partnership Evaluation Meeting — Acton's sales meeting to determine whether there's a mutually appropriate ADU partnership.",
       "",
@@ -309,7 +333,7 @@ export function pemHelpDefinitionAnswer(question: string): string | null {
     ].join("\n");
   }
   if (
-    /\bwhat is a? ?pem neat\b|\bwhat is a? ?neat\b|\bwhat does neat stand for\b|\bdefine neat\b/.test(
+    /\bwhat is a? ?pem neat\b|\bwhat is a? ?neat\b|\bwhat does (a )?pem neat mean\b|\bwhat does neat stand for\b|\bdefine (a )?(pem )?neat\b|\bexplain (what )?(a )?pem neat\b|\bwhat is a? ?pem neat (for|used for)\b/.test(
       q,
     )
   ) {

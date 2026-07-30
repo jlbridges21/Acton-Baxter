@@ -211,6 +211,26 @@ function scoreTerms(entry: KnowledgeEntry, terms: string[], fullQuery: string): 
     if (content.includes(fullQuery)) score += 8;
   }
 
+  // Exact / near-exact title match for concept questions (e.g. title "PEM NEAT")
+  const titleCompact = title.replace(/\s+/g, " ").trim();
+  const queryConcept = fullQuery
+    .replace(
+      /\b(what|is|are|a|an|the|explain|define|does|mean|for|used|how|do|i|to|generate|create|make)\b/g,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  if (titleCompact && queryConcept && titleCompact === queryConcept) {
+    score += 80;
+  } else if (
+    titleCompact &&
+    queryConcept &&
+    titleCompact.includes(queryConcept) &&
+    queryConcept.length >= 3
+  ) {
+    score += 40;
+  }
+
   // Phrase boost for common Acton vocabulary
   for (const phrase of [
     "digital employee",
@@ -219,6 +239,13 @@ function scoreTerms(entry: KnowledgeEntry, terms: string[], fullQuery: string): 
     "knowledge base",
     "partnership evaluation meeting",
     "partnership evaluation",
+    "pem neat",
+    "type 1 pain",
+    "type 2 pain",
+    "property research",
+    "process rulebook",
+    "process monitoring",
+    "slack recall",
   ]) {
     if (
       (fullQuery.includes(phrase) || terms.some((t) => phrase.includes(t) && t.length >= 3)) &&

@@ -9,6 +9,8 @@ import { isGhlConfigured, isGhlEnabled } from "@/lib/connectors/ghl/config";
 import { isGoogleWorkspaceConfigured } from "@/lib/connectors/google/auth";
 import { isActiveRulebookKnown } from "@/lib/rulebook/capabilities";
 import { isSlackSearchEnabled } from "@/lib/baxter-data/slack/config";
+import { detectConceptQuestion } from "@/lib/baxter/concept-vocabulary";
+import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
 
 export type BaxterCapabilityAudience = "employee" | "admin";
 export type BaxterCapabilityStatus =
@@ -540,5 +542,33 @@ export function capabilityRegistryStats(health?: CapabilityRuntimeHealth): {
   return {
     total: all.length,
     enabled: all.filter((c) => c.enabled).length,
+  };
+}
+
+/** Safe routing diagnostics for concept vs record questions. */
+export function describeConceptRoutingDiagnostics(question: string): {
+  question: string;
+  intent: string;
+  concept: string | null;
+  entityLookup: "skipped" | "active";
+  knowledgeSearchTerms: string[];
+  capabilityKey: string | null;
+} {
+  const concept = detectConceptQuestion(question);
+  const pem = detectPemIntent(question);
+  return {
+    question,
+    intent:
+      concept.kind !== "none"
+        ? concept.kind === "definition"
+          ? "concept_definition"
+          : concept.kind
+        : pem.intent === "record_lookup"
+          ? "record_lookup"
+          : pem.intent,
+    concept: concept.conceptKey,
+    entityLookup: pem.intent === "record_lookup" ? "active" : "skipped",
+    knowledgeSearchTerms: concept.knowledgeSearchTerms,
+    capabilityKey: concept.conceptKey,
   };
 }
