@@ -132,6 +132,45 @@ export function parseTimeRangeFromQuestion(
     };
   }
 
+  // Bare month name: "in February" / "February 2025"
+  const monthNames = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ] as const;
+  const monthMatch = q.match(
+    /\b(?:in\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s+(20\d{2}))?\b/,
+  );
+  if (monthMatch?.[1]) {
+    const monthIndex = monthNames.indexOf(monthMatch[1] as (typeof monthNames)[number]);
+    // Skip "February 12" day patterns — those are handled elsewhere if needed
+    const afterMonth = q.slice((monthMatch.index ?? 0) + monthMatch[0].length);
+    if (monthIndex >= 0 && !/^\s+\d{1,2}(?:st|nd|rd|th)?\b/.test(afterMonth)) {
+      let year = monthMatch[2] ? Number(monthMatch[2]) : y;
+      if (!monthMatch[2] && monthIndex > m) year = y - 1;
+      const from = new Date(Date.UTC(year, monthIndex, 1));
+      const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0));
+      const labelMonth =
+        monthNames[monthIndex]!.charAt(0).toUpperCase() + monthNames[monthIndex]!.slice(1);
+      return {
+        field: defaultField,
+        fromIso: iso(from),
+        toIso: iso(endOfDay(lastDay)),
+        label: `${labelMonth} ${year}`,
+        year,
+      };
+    }
+  }
+
   return null;
 }
 

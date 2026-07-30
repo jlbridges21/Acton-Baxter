@@ -27,12 +27,16 @@ export type ConceptDefinition = {
 /** Single-token stop words that must never start/become a person name. */
 export const RESERVED_CONCEPT_TOKENS = [
   "pem",
+  "pems",
   "neat",
+  "neats",
   "palo",
   "adu",
   "raci",
   "ghl",
   "crm",
+  "kpi",
+  "kpis",
   "baxter",
   "acton",
   "buildertrend",
@@ -42,14 +46,20 @@ export const RESERVED_CONCEPT_TOKENS = [
   "rulebook",
   "monitoring",
   "transcript",
+  "transcripts",
   "partnership",
   "evaluation",
   "meeting",
+  "meetings",
+  "pipeline",
+  "opportunity",
+  "opportunities",
   "property",
   "research",
   "process",
   "type",
   "pain",
+  "pains",
   "budget",
   "decision",
   "schedule",
@@ -59,6 +69,40 @@ export const RESERVED_CONCEPT_TOKENS = [
   "handoff",
   "notes",
   "email",
+  "sales",
+  "marketing",
+  "team",
+  "area",
+  "bay",
+  "la",
+  "february",
+  "january",
+  "march",
+  "april",
+  "may",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "month",
+  "months",
+  "year",
+  "years",
+  "quarter",
+  "many",
+  "several",
+  "few",
+  "some",
+  "most",
+  "all",
+  "our",
+  "their",
+  "his",
+  "her",
+  "its",
   "me",
   "us",
   "we",
@@ -69,6 +113,7 @@ export const RESERVED_CONCEPT_TOKENS = [
 export const RESERVED_CONCEPT_PHRASES = [
   "partnership evaluation meeting neat",
   "partnership evaluation meeting",
+  "partnership evaluation meetings",
   "buildertrend custom fields",
   "buildertrend fields",
   "process monitoring",
@@ -84,9 +129,16 @@ export const RESERVED_CONCEPT_PHRASES = [
   "type one pain",
   "type two pain",
   "pem neat",
+  "pem neats",
+  "pem meetings",
+  "pem meeting",
+  "bay area",
+  "los angeles",
   "acton crm",
   "go high level",
   "gohighlevel",
+  "sales team",
+  "sales pipeline",
 ] as const;
 
 export const BAXTER_CONCEPT_CATALOG: ConceptDefinition[] = [
@@ -252,8 +304,53 @@ export function stripReservedConceptPhrases(text: string): string {
     out = out.replace(new RegExp(`\\s${escapeRegExp(phrase)}\\s`, "gi"), " ");
   }
   // Also strip standalone reserved tokens that commonly appear as false names
-  out = out.replace(/\b(pem|neat|palo)\b/gi, " ");
+  out = out.replace(/\b(pem|pems|neat|neats|palo|kpi|kpis)\b/gi, " ");
   return out.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Operational / metric questions about PEMs as meetings — not prospect NEAT records.
+ * e.g. "How many PEM meetings were conducted in February…"
+ */
+export function isOperationalPemMetricQuestion(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (hasLikelyPersonRecordSignal(q)) return false;
+  const metricShape =
+    /\b(how many|how much|number of|count of|total|average|avg|kpi|kpis|conversion rate|win rate|volume)\b/i.test(
+      q,
+    ) ||
+    /\b(conducted|ran|run|held|completed|scheduled)\b.+\b(pem|meeting|meetings)\b/i.test(q) ||
+    /\b(pem|meeting|meetings)\b.+\b(conducted|ran|run|held|completed|kpi)\b/i.test(q);
+  if (!metricShape) return false;
+  // Explicit prospect-field asks are not operational metrics
+  if (
+    /\b(type\s*[12]\s*pain|customer story|customer pain|budget|decision process|meeting outcome|sales assessment|buildertrend handoff)\b/i.test(
+      q,
+    ) &&
+    hasLikelyPersonRecordSignal(q)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Company-wide structured metric / KPI / count questions (any domain).
+ */
+export function isStructuredMetricQuestion(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (hasLikelyPersonRecordSignal(q)) return false;
+  if (isOperationalPemMetricQuestion(q)) return true;
+  return (
+    /\b(how many|how much|number of|total|average|avg|kpi|kpis|conversion rate|year to date|ytd)\b/i.test(
+      q,
+    ) &&
+    /\b(sold|sell|sales|projects?|contracts?|deals?|margin|revenue|meetings?|pems?|pipeline|opportunities)\b/i.test(
+      q,
+    )
+  );
 }
 
 export function matchConceptFromQuestion(question: string): ConceptDefinition | null {

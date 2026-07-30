@@ -2,11 +2,15 @@
  * PEM NEAT question intent — help/definitions vs record lookup.
  * Entity parsing is case-insensitive and supports "Robert Vertin Test 8".
  * Reserved concept phrases (e.g. "PEM NEAT") are never treated as prospect names.
+ * Operational metric questions ("How many PEM meetings…") never invent prospects.
  */
 import {
   detectConceptQuestion,
+  hasLikelyPersonRecordSignal,
+  isOperationalPemMetricQuestion,
   isReservedConceptName,
   isReservedConceptToken,
+  isStructuredMetricQuestion,
   stripReservedConceptPhrases,
 } from "@/lib/baxter/concept-vocabulary";
 import { detectRequestedPemFields, type PemFieldKey } from "./fields";
@@ -45,6 +49,8 @@ export type PemEntityParse = {
   baseName: string | null;
   /** Discriminator like "Test 8", "Test 2". */
   discriminator: string | null;
+  /** How the name was extracted — bare bigrams are weakest. */
+  nameSignal: "none" | "possessive" | "about" | "test_disc" | "surname" | "bigram" | "strong";
 };
 
 export type PemIntentResult = {
@@ -57,6 +63,9 @@ export type PemIntentResult = {
   wantsFirst: boolean;
   dateHint: string | null;
   switchPemHint: string | null;
+  /** True when the question is about PEM meeting volume/KPI, not a prospect NEAT. */
+  operationalMetric: boolean;
+  nameSignal: PemEntityParse["nameSignal"];
 };
 
 const RECORD_SIGNAL =
@@ -68,15 +77,18 @@ const RECORD_REQUEST =
 const LOOKUP_WITH_PERSON =
   /\b(tell me about|what (was|were)|who (conducted|ran|did)|how did .+ (do|perform)|what did .+ (commit|promise|miss)|handoff notes?|buildertrend (fields?|notes?))\b/i;
 
+const PEM_FIELD_ASK =
+  /\b(type\s*[12]\s*pain|customer story|customer pain|budget|decision process|schedule|meeting outcome|sales assessment|buildertrend|handoff|concerns?|fears?|priorities|next steps?|personality|project intelligence)\b/i;
+
 function isStopName(name: string): boolean {
   if (isReservedConceptToken(name)) return true;
-  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Their|What|Who|When|Where|How|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again)$/i.test(
+  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|Meetings|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Their|What|Who|When|Where|How|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again|Many|Several|Few|Some|Most|All|Conducted|Ran|Held|Completed|February|January|March|April|May|June|July|August|September|October|November|December|Bay|Area|KPI|KPIs)$/i.test(
     name.trim(),
   );
 }
 
 const QUESTION_LEAD =
-  /^(?:what|who|when|where|how|tell(?:\s+me)?|give(?:\s+me)?|show(?:\s+me)?|use|try|pick|choose|actually|that|this|is|are|was|were|about|for|with|regarding|do|does|did|the|a|an|explain|define|please)\b/i;
+  /^(?:what|who|when|where|how|tell(?:\s+me)?|give(?:\s+me)?|show(?:\s+me)?|use|try|pick|choose|actually|that|this|is|are|was|were|about|for|with|regarding|do|does|did|the|a|an|explain|define|please|many|much)\b/i;
 
 function stripQuestionLead(value: string): string {
   let v = value.trim();
@@ -103,12 +115,25 @@ function titleCaseWords(value: string): string {
     .join(" ");
 }
 
+function emptyEntity(): PemEntityParse {
+  return { nameQuery: null, baseName: null, discriminator: null, nameSignal: "none" };
+}
+
 /**
  * Parse prospect + optional PEM discriminator from a question (case-insensitive).
+ * Does not invent names from operational metric grammar (e.g. "many meetings").
  */
 export function parsePemEntityQuery(question: string): PemEntityParse {
   const q = question.trim();
-  if (!q) return { nameQuery: null, baseName: null, discriminator: null };
+  if (!q) return emptyEntity();
+
+  // Operational metric asks never yield a prospect from grammar alone.
+  if (isOperationalPemMetricQuestion(q) || isStructuredMetricQuestion(q)) {
+    // Still allow strong possessive / about person if somehow present.
+    if (!hasLikelyPersonRecordSignal(q)) {
+      return emptyEntity();
+    }
+  }
 
   // Find "... Name Name Test N ..." by anchoring on the Test discriminator.
   const testMatch = q.match(/\b(test\s*[\w.-]+)\b/i);
@@ -127,13 +152,18 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
       const candidate = words.slice(-n).join(" ");
       if (looksLikePersonName(candidate)) {
         const base = titleCaseWords(candidate);
-        return { nameQuery: `${base} ${disc}`, baseName: base, discriminator: disc };
+        return {
+          nameQuery: `${base} ${disc}`,
+          baseName: base,
+          discriminator: disc,
+          nameSignal: "test_disc",
+        };
       }
     }
     if (
       /^\s*(?:use|try|pick|choose|go with|go back to|actually use)?\s*test\s*[\w.-]+\s*$/i.test(q)
     ) {
-      return { nameQuery: null, baseName: null, discriminator: disc };
+      return { nameQuery: null, baseName: null, discriminator: disc, nameSignal: "test_disc" };
     }
   }
 
@@ -144,13 +174,12 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
   for (let i = possessiveMatches.length - 1; i >= 0; i--) {
     const raw = possessiveMatches[i]?.[1];
     if (!raw) continue;
-    // Drop leading stop tokens ("me Robert Vertin" → "Robert Vertin")
     const parts = raw.split(/\s+/).filter(Boolean);
     while (parts.length && isStopName(parts[0]!)) parts.shift();
     const candidate = parts.join(" ");
     if (looksLikePersonName(candidate)) {
       const base = titleCaseWords(candidate);
-      return { nameQuery: base, baseName: base, discriminator: null };
+      return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "possessive" };
     }
   }
 
@@ -162,19 +191,27 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
     const cleaned = stripQuestionLead(stripReservedConceptPhrases(about[1]));
     if (looksLikePersonName(cleaned)) {
       const base = titleCaseWords(cleaned);
-      return { nameQuery: base, baseName: base, discriminator: null };
+      return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "about" };
     }
   }
 
-  // First Last somewhere after stripping leads + reserved concept phrases
-  const remainder = stripQuestionLead(stripReservedConceptPhrases(q.replace(/[?’']/g, " ")));
-  const fullMatches = [...remainder.matchAll(/\b([A-Za-z][A-Za-z'-]+)\s+([A-Za-z][A-Za-z'-]+)\b/g)];
-  for (const full of fullMatches) {
-    if (!full[1] || !full[2]) continue;
-    const candidate = `${full[1]} ${full[2]}`;
-    if (looksLikePersonName(candidate)) {
-      const base = titleCaseWords(candidate);
-      return { nameQuery: base, baseName: base, discriminator: null };
+  // Bare First+Last bigrams — only when there is a strong person/field cue.
+  // Never use grammar alone (that produced "Many Meetings" from "How many PEM meetings…").
+  const allowBareBigram =
+    hasLikelyPersonRecordSignal(q) || (PEM_FIELD_ASK.test(q) && !isOperationalPemMetricQuestion(q));
+
+  if (allowBareBigram) {
+    const remainder = stripQuestionLead(stripReservedConceptPhrases(q.replace(/[?’']/g, " ")));
+    const fullMatches = [
+      ...remainder.matchAll(/\b([A-Za-z][A-Za-z'-]+)\s+([A-Za-z][A-Za-z'-]+)\b/g),
+    ];
+    for (const full of fullMatches) {
+      if (!full[1] || !full[2]) continue;
+      const candidate = `${full[1]} ${full[2]}`;
+      if (looksLikePersonName(candidate)) {
+        const base = titleCaseWords(candidate);
+        return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "bigram" };
+      }
     }
   }
 
@@ -182,7 +219,7 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
   const surname = q.match(/\bthe\s+([A-Za-z][A-Za-z'-]+)\s+(?:pem|neat|meeting)\b/i);
   if (surname?.[1] && looksLikePersonName(surname[1])) {
     const base = titleCaseWords(surname[1]);
-    return { nameQuery: base, baseName: base, discriminator: null };
+    return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "surname" };
   }
 
   // Bare discriminator
@@ -194,10 +231,11 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
       nameQuery: null,
       baseName: null,
       discriminator: titleCaseWords(bareDisc[1]),
+      nameSignal: "test_disc",
     };
   }
 
-  return { nameQuery: null, baseName: null, discriminator: null };
+  return emptyEntity();
 }
 
 export function extractNameQuery(question: string): string | null {
@@ -212,8 +250,6 @@ function extractDateHint(question: string): string | null {
 }
 
 function extractSwitchPemHint(question: string): string | null {
-  // Only treat as PEM switch when a Test discriminator (or similar) is present —
-  // not "Try again." corrections.
   if (/\btry again\b/i.test(question) && !/\btest\s*[\w.-]+\b/i.test(question)) {
     return null;
   }
@@ -235,15 +271,23 @@ export function detectPemIntent(question: string): PemIntentResult {
     wantsFirst: false,
     dateHint: null,
     switchPemHint: null,
+    operationalMetric: false,
+    nameSignal: "none",
   };
   if (!q) return empty;
 
+  const operationalMetric = isOperationalPemMetricQuestion(q) || isStructuredMetricQuestion(q);
   const concept = detectConceptQuestion(q);
   const entity = parsePemEntityQuery(q);
 
   // Concept / definition / how-to — never a prospect lookup
   if (concept.isConcept && (concept.kind === "definition" || concept.kind === "how_to")) {
-    return { ...empty, intent: "help_definition" };
+    return { ...empty, intent: "help_definition", operationalMetric };
+  }
+
+  // Operational / KPI / volume questions are never PEM record lookups unless a real person is named.
+  if (operationalMetric && !hasLikelyPersonRecordSignal(q) && !entity.nameQuery) {
+    return { ...empty, operationalMetric: true, nameSignal: entity.nameSignal };
   }
 
   // Bare / short discriminator replies are handled with pending state.
@@ -253,6 +297,7 @@ export function detectPemIntent(question: string): PemIntentResult {
       intent: "pem_selection_reply",
       discriminator: entity.discriminator,
       fields: detectRequestedPemFields(q),
+      nameSignal: entity.nameSignal,
     };
   }
 
@@ -268,6 +313,7 @@ export function detectPemIntent(question: string): PemIntentResult {
       discriminator: entity.discriminator ?? extractSwitchPemHint(q),
       fields: detectRequestedPemFields(q),
       switchPemHint: extractSwitchPemHint(q),
+      nameSignal: entity.nameSignal,
     };
   }
 
@@ -275,21 +321,37 @@ export function detectPemIntent(question: string): PemIntentResult {
     /\b(can you|are you able to|do you (support|have)|how do i|where (do i|can i))\b/i.test(q) &&
     !entity.nameQuery;
 
+  // RECORD_SIGNAL + invented bigram name is not enough — require a real person cue
+  // or a strong name signal (possessive / about / test disc).
+  const strongName =
+    entity.nameSignal === "possessive" ||
+    entity.nameSignal === "about" ||
+    entity.nameSignal === "test_disc" ||
+    entity.nameSignal === "surname" ||
+    (entity.nameSignal === "bigram" && hasLikelyPersonRecordSignal(q));
+
   const looksLikeRecord =
     !capabilityShape &&
     !concept.isConcept &&
-    ((RECORD_SIGNAL.test(q) && Boolean(entity.nameQuery)) ||
+    !operationalMetric &&
+    ((RECORD_SIGNAL.test(q) && Boolean(entity.nameQuery) && strongName) ||
       (RECORD_SIGNAL.test(q) && /\b(his|her|their)\b/i.test(q)) ||
-      (RECORD_REQUEST.test(q) && !concept.isConcept) ||
-      (LOOKUP_WITH_PERSON.test(q) && Boolean(entity.nameQuery)) ||
+      (RECORD_REQUEST.test(q) && Boolean(entity.nameQuery) && strongName) ||
+      (RECORD_REQUEST.test(q) && !entity.nameQuery && !operationalMetric) ||
+      (LOOKUP_WITH_PERSON.test(q) && Boolean(entity.nameQuery) && strongName) ||
       (/\btell me about\b/i.test(q) &&
         Boolean(entity.nameQuery) &&
+        strongName &&
         !/\b(acton|google|baxter|policy|procedure|rulebook|knowledge)\b/i.test(q)) ||
       (/\b(type\s*[12]\s*pain|handoff notes?|buildertrend)\b/i.test(q) &&
         (Boolean(entity.nameQuery) || /\b(his|her|their)\b/i.test(q))));
 
   if (!looksLikeRecord) {
-    if (entity.discriminator && /\b(type\s*[12]|budget|decision|pain)\b/i.test(q)) {
+    if (
+      !operationalMetric &&
+      entity.discriminator &&
+      /\b(type\s*[12]|budget|decision|pain)\b/i.test(q)
+    ) {
       return {
         ...empty,
         intent: "record_lookup",
@@ -298,9 +360,10 @@ export function detectPemIntent(question: string): PemIntentResult {
         baseName: entity.baseName,
         discriminator: entity.discriminator,
         switchPemHint: extractSwitchPemHint(q),
+        nameSignal: entity.nameSignal,
       };
     }
-    return empty;
+    return { ...empty, operationalMetric, nameSignal: entity.nameSignal };
   }
 
   const wantsFirst = /\b(first|earlier|initial|older)\b/i.test(q);
@@ -314,6 +377,8 @@ export function detectPemIntent(question: string): PemIntentResult {
     wantsFirst,
     dateHint: extractDateHint(q),
     switchPemHint: extractSwitchPemHint(q),
+    operationalMetric: false,
+    nameSignal: entity.nameSignal,
   };
 }
 

@@ -14,6 +14,8 @@ import { AnthropicBaxterProvider } from "@/lib/baxter-ai/anthropic-provider";
 import { embedText } from "@/lib/knowledge-index/embeddings";
 import { getBaxterVisionProvider } from "@/lib/baxter-ai/vision";
 import { retrieveBaxterEvidence } from "@/lib/baxter-ai/context";
+import { buildBaxterQueryPlan } from "@/lib/baxter/query-plan";
+import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
 import { runPemOpenAiDiagnosticTest } from "@/lib/pem-neat/openai-client";
 
 export async function GET() {
@@ -93,6 +95,25 @@ export async function POST(request: Request) {
             sourceAuthority: authority,
             intent: evidence.intent,
             queryMode: evidence.queryMode,
+            routingPlan: (() => {
+              const plan = buildBaxterQueryPlan(question);
+              const pem = detectPemIntent(question);
+              return {
+                intent: plan.intent,
+                prospectCandidates: plan.prospectCandidates,
+                metrics: plan.metrics,
+                aggregations: plan.aggregations,
+                timeRange: plan.timeRange,
+                geography: plan.geography,
+                sourcePriority: plan.sourcePriority,
+                sourcesSkipped: plan.sourcesSkipped,
+                pemLookup: plan.pemLookup,
+                pemSkipReason: plan.pemSkipReason,
+                operationalPemMetric: plan.operationalPemMetric,
+                pemIntent: pem.intent,
+                pemNameQuery: pem.nameQuery,
+              };
+            })(),
             contextDecision: evidence.contextDecision,
             inheritEntities: evidence.inheritEntities,
             entitiesReset,
@@ -103,6 +124,7 @@ export async function POST(request: Request) {
               requestedFields: evidence.plan.requestedFields,
               aggregation: evidence.plan.aggregation,
               timeRange: evidence.plan.timeRange ?? null,
+              filters: evidence.plan.filters ?? [],
             },
             slack: slackPlan,
             structured: {

@@ -33,6 +33,19 @@ export function nonSlackEvidenceSatisfiesQuestion(
     return hasTimeline;
   }
 
+  // Metric / count / KPI asks are not satisfied by definition-only evidence.
+  if (
+    /\b(how many|how much|number of|kpi|conversion rate|total sold|we sold)\b/i.test(q) &&
+    !/\b(what is a? |define |definition of )\b/i.test(q)
+  ) {
+    const hasNumericOrMetric =
+      /\b\d[\d,]*(?:\.\d+)?%?\b/.test(blob) ||
+      /\b(kpi|count|total|sum|average|sold|conducted|completed)\b/i.test(blob);
+    const looksLikeDefinitionOnly =
+      /\b(is a |refers to |means |stands for |definition)\b/i.test(blob) && !hasNumericOrMetric;
+    if (looksLikeDefinitionOnly || !hasNumericOrMetric) return false;
+  }
+
   return true;
 }
 

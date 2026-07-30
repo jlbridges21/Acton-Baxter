@@ -64,9 +64,17 @@ export function planKnowledgeQuery(question: string, now: Date = new Date()): Kn
   const entities = extractEntities(raw);
   const keywords = tokenize(raw);
 
+  const pemMeetingMetric =
+    /\b(how many|number of|count)\b/i.test(raw) &&
+    /\b(pem|pems|pem meetings?|partnership evaluation meetings?)\b/i.test(raw) &&
+    !/\b(type\s*[12]|budget|pain|neat for)\b/i.test(raw);
+  const kpiMetric = /\bkpi\b/i.test(raw);
+
   const wantsAggregate =
     soldIntent ||
     Boolean(timeRange) ||
+    pemMeetingMetric ||
+    kpiMetric ||
     /\b(how many|average|avg|total|sum|largest|highest|lowest|smallest|min|max|how much (have|did|do) we)\b/i.test(
       q,
     ) ||
@@ -77,11 +85,14 @@ export function planKnowledgeQuery(question: string, now: Date = new Date()): Kn
     requestedFields.length > 0 ||
     soldIntent ||
     Boolean(timeRange) ||
+    pemMeetingMetric ||
+    kpiMetric ||
     /\b(agreement|margin|sq\.?\s*ft|close date|custom|build ready|lori|harris)\b/i.test(q) ||
     wantsAggregate;
 
   let aggregation: KnowledgeQueryPlan["aggregation"] = null;
-  if (/\bhow many\b|\bcount\b|\btotal contracts\b|\bnumber of\b/i.test(q)) aggregation = "count";
+  if (/\bhow many\b|\bcount\b|\btotal contracts\b|\bnumber of\b/i.test(q) || pemMeetingMetric)
+    aggregation = "count";
   else if (/\baverage\b|\bavg\b/i.test(q) && !/\bmargin\b/i.test(q)) aggregation = "average";
   else if (/\blargest\b|\bhighest\b|\bmax\b/i.test(q)) aggregation = "max";
   else if (/\bsmallest\b|\blowest\b|\bmin\b/i.test(q)) aggregation = "min";
@@ -120,6 +131,15 @@ export function planKnowledgeQuery(question: string, now: Date = new Date()): Kn
   ) {
     filters.push({ field: "Project Type (BR/Custom)", value: "Custom" });
   }
+  if (/\bbay area\b/i.test(q)) {
+    filters.push({ field: "Region", value: "Bay Area" });
+  }
+  if (/\b\bla\b|\blos angeles\b/i.test(q)) {
+    filters.push({ field: "Region", value: "LA" });
+  }
+  if (kpiMetric && !requestedFields.includes("KPI")) {
+    requestedFields.push("KPI");
+  }
 
   const wantsMultimodal =
     /\b(diagram|image|screenshot|photo|chart|slide|presentation|floor plan|site plan|png|jpg|jpeg)\b/i.test(
@@ -138,18 +158,20 @@ export function planKnowledgeQuery(question: string, now: Date = new Date()): Kn
     (e) => !/trailing|report|agreement|margin|total|average|project/i.test(e),
   );
 
-  // Company-wide sold / temporal aggregates: never keep spurious entities
-  if (soldIntent || timeRange) {
+  // Company-wide sold / temporal aggregates / PEM meeting metrics: never keep spurious entities
+  if (soldIntent || timeRange || pemMeetingMetric || kpiMetric) {
     const realPeople = personLike.filter(
       (e) =>
-        !/\b(we|sell|sold|this|last|year|have|did|do|much|many|in)\b/i.test(e) &&
+        !/\b(we|sell|sold|this|last|year|have|did|do|much|many|in|pem|meeting|meetings|kpi|bay|area)\b/i.test(
+          e,
+        ) &&
         /[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(e) &&
         !/^(How|What|When|Our|The)\b/i.test(e),
     );
     if (realPeople.length === 0) {
       mode = "structured_aggregate";
       intent = "structured_aggregation";
-      if (!aggregation) aggregation = soldIntent ? "sum" : aggregation;
+      if (!aggregation) aggregation = soldIntent ? "sum" : (aggregation ?? "count");
       return {
         mode,
         intent,
@@ -157,7 +179,7 @@ export function planKnowledgeQuery(question: string, now: Date = new Date()): Kn
         requestedFields,
         filters,
         timeRange,
-        aggregation: aggregation ?? "sum",
+        aggregation: aggregation ?? (soldIntent ? "sum" : "count"),
         weightedMargin,
         keywords,
         rawQuestion: raw,

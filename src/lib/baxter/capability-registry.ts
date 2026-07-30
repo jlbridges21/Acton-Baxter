@@ -10,6 +10,7 @@ import { isGoogleWorkspaceConfigured } from "@/lib/connectors/google/auth";
 import { isActiveRulebookKnown } from "@/lib/rulebook/capabilities";
 import { isSlackSearchEnabled } from "@/lib/baxter-data/slack/config";
 import { detectConceptQuestion } from "@/lib/baxter/concept-vocabulary";
+import { buildBaxterQueryPlan } from "@/lib/baxter/query-plan";
 import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
 
 export type BaxterCapabilityAudience = "employee" | "admin";
@@ -553,22 +554,22 @@ export function describeConceptRoutingDiagnostics(question: string): {
   entityLookup: "skipped" | "active";
   knowledgeSearchTerms: string[];
   capabilityKey: string | null;
+  pemSkipReason: string | null;
+  operationalMetric: boolean;
+  prospectCandidates: string[];
 } {
   const concept = detectConceptQuestion(question);
   const pem = detectPemIntent(question);
+  const plan = buildBaxterQueryPlan(question);
   return {
     question,
-    intent:
-      concept.kind !== "none"
-        ? concept.kind === "definition"
-          ? "concept_definition"
-          : concept.kind
-        : pem.intent === "record_lookup"
-          ? "record_lookup"
-          : pem.intent,
+    intent: plan.intent,
     concept: concept.conceptKey,
-    entityLookup: pem.intent === "record_lookup" ? "active" : "skipped",
+    entityLookup: plan.pemLookup === "run" ? "active" : "skipped",
     knowledgeSearchTerms: concept.knowledgeSearchTerms,
     capabilityKey: concept.conceptKey,
+    pemSkipReason: plan.pemSkipReason,
+    operationalMetric: plan.operationalPemMetric || pem.operationalMetric,
+    prospectCandidates: plan.prospectCandidates,
   };
 }

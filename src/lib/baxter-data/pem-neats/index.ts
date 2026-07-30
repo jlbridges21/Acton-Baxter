@@ -38,3 +38,11 @@ export {
   type PemConversationState,
   type PemPendingSelection,
 } from "./conversation-state";
+export {
+  buildPemProspectIndex,
+  hasConfidentProspectMatch,
+  matchProspectInIndex,
+  toProspectIndexEntry,
+  type PemProspectIndexEntry,
+  type PemProspectMatch,
+} from "./prospect-index";

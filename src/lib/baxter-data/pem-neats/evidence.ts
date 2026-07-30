@@ -24,6 +24,16 @@ import {
   type PemFieldValue,
 } from "./fields";
 import { detectPemIntent, parsePemEntityQuery, type PemIntentResult } from "./intent";
+import {
+  buildPemProspectIndex,
+  hasConfidentProspectMatch,
+  matchProspectInIndex,
+} from "./prospect-index";
+import {
+  isOperationalPemMetricQuestion,
+  isStructuredMetricQuestion,
+} from "@/lib/baxter/concept-vocabulary";
+import { decideConversationContext } from "@/lib/baxter-ai/conversation-context";
 
 export type PemAnswerMode =
   "deterministic_structured" | "model_grounded" | "clarification" | "not_determinable" | "none";
@@ -37,6 +47,9 @@ export type PemResolutionDiagnostics = {
   inheritedFromConversation: boolean;
   explicitOverride: boolean;
   answerMode: PemAnswerMode;
+  pemLookupSkipped: boolean;
+  pemSkipReason: string | null;
+  matchedProspect: string | null;
 };
 
 export type PemEvidenceResult = {
@@ -61,6 +74,9 @@ function emptyDiagnostics(partial?: Partial<PemResolutionDiagnostics>): PemResol
     inheritedFromConversation: false,
     explicitOverride: false,
     answerMode: "none",
+    pemLookupSkipped: false,
+    pemSkipReason: null,
+    matchedProspect: null,
     ...partial,
   };
 }
@@ -342,7 +358,7 @@ async function loadAndAnswer(input: {
     staleWarning,
     deterministicAnswer,
     answerMode,
-    diagnostics: {
+    diagnostics: emptyDiagnostics({
       detectedProspect: full.prospect_name,
       candidateCount: 1,
       resolvedPemId: full.id,
@@ -351,7 +367,10 @@ async function loadAndAnswer(input: {
       inheritedFromConversation: input.inherited,
       explicitOverride: input.explicitOverride,
       answerMode,
-    },
+      matchedProspect: full.prospect_name,
+      pemLookupSkipped: false,
+      pemSkipReason: null,
+    }),
     nextConversationState: { pending: null, active: nextActive },
   };
 }
@@ -406,6 +425,21 @@ export async function retrievePemEvidence(input: {
   const pemState = readPemConversationState(input.conversationMetadata);
   const intent: PemIntentResult = detectPemIntent(input.question);
   const q = input.question.trim();
+  const contextDecision = decideConversationContext(q, input.history ?? []);
+  const operationalMetric =
+    intent.operationalMetric || isOperationalPemMetricQuestion(q) || isStructuredMetricQuestion(q);
+
+  // Metric / KPI / volume questions are never PEM prospect lookups.
+  if (operationalMetric && intent.intent !== "pem_selection_reply") {
+    return {
+      ...none(),
+      diagnostics: emptyDiagnostics({
+        answerMode: "none",
+        pemLookupSkipped: true,
+        pemSkipReason: "operational_metric_no_prospect",
+      }),
+    };
+  }
 
   // --- Pending clarification resolution ("Test 8") ---
   if (
@@ -549,10 +583,16 @@ export async function retrievePemEvidence(input: {
   let explicitOverride = Boolean(intent.nameQuery || intent.discriminator);
 
   // Explicit current-message entities always win over memory.
-  if (!nameQuery && !discriminator && pemState.active) {
+  // Do not inherit prospect context into aggregations / new subjects / time filters.
+  const canInherit =
+    !contextDecision.isAggregation &&
+    !contextDecision.isNewSubject &&
+    !(contextDecision.hasTimeFilter && !contextDecision.hasPronounReference);
+
+  if (!nameQuery && !discriminator && pemState.active && canInherit) {
     if (
       /\b(his|her|their|he|she|they|that|this)\b/i.test(q) ||
-      q.trim().split(/\s+/).length <= 12
+      (q.trim().split(/\s+/).length <= 12 && contextDecision.hasPronounReference)
     ) {
       nameQuery = pemState.active.activeProspectName;
       baseName = pemState.active.baseProspectHint;
@@ -561,7 +601,7 @@ export async function retrievePemEvidence(input: {
     }
   }
 
-  if (!nameQuery && input.history?.length) {
+  if (!nameQuery && canInherit && input.history?.length) {
     for (let i = input.history.length - 1; i >= 0; i--) {
       const msg = input.history[i]!;
       if (msg.role !== "user") continue;
@@ -577,19 +617,63 @@ export async function retrievePemEvidence(input: {
   }
 
   if (!nameQuery && !pemState.active) {
-    return {
-      items: [],
-      clarification:
-        "Which prospect's PEM NEAT should I use? Please include their name (for example: John Doe).",
-      staleWarning: null,
-      deterministicAnswer: null,
-      answerMode: "clarification",
-      diagnostics: emptyDiagnostics({
+    // Show/open PEM without a person — ask for a prospect, don't invent one.
+    if (intent.intent === "record_lookup") {
+      return {
+        items: [],
+        clarification:
+          "Which prospect's PEM NEAT should I use? Please include their name (for example: John Doe).",
+        staleWarning: null,
+        deterministicAnswer: null,
         answerMode: "clarification",
-        requestedFields: intent.fields,
-      }),
-      nextConversationState: null,
-    };
+        diagnostics: emptyDiagnostics({
+          answerMode: "clarification",
+          requestedFields: intent.fields,
+        }),
+        nextConversationState: null,
+      };
+    }
+    return none();
+  }
+
+  // Name-gate: only search PEM records when the candidate matches a saved prospect
+  // (or we have an active conversation PEM / discriminator selection).
+  if (nameQuery && !inherited && !discriminator) {
+    const index = await buildPemProspectIndex({ includeNeedsRegeneration: true });
+    const matches = matchProspectInIndex(nameQuery, index);
+    if (matches.length === 0 && !hasConfidentProspectMatch(baseName, index)) {
+      // Weak or unmatched name — skip PEM entirely (do not claim "Many Meetings" miss).
+      const strongSignal =
+        intent.nameSignal === "possessive" ||
+        intent.nameSignal === "about" ||
+        intent.nameSignal === "test_disc";
+      if (!strongSignal) {
+        return {
+          ...none(),
+          diagnostics: emptyDiagnostics({
+            answerMode: "none",
+            detectedProspect: nameQuery,
+            pemLookupSkipped: true,
+            pemSkipReason: "no_matched_saved_prospect",
+          }),
+        };
+      }
+      return {
+        items: [],
+        clarification: `I couldn't find a completed PEM NEAT for ${nameQuery}.`,
+        staleWarning: null,
+        deterministicAnswer: null,
+        answerMode: "clarification",
+        diagnostics: emptyDiagnostics({
+          answerMode: "clarification",
+          detectedProspect: nameQuery,
+          requestedFields: intent.fields,
+          pemLookupSkipped: false,
+          matchedProspect: null,
+        }),
+        nextConversationState: pemState.active ? { pending: null, active: pemState.active } : null,
+      };
+    }
   }
 
   // Explicit discriminator on known active prospect (e.g. "Robert Vertin Test 8")

@@ -537,6 +537,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       inheritedFromConversation: false,
       explicitOverride: false,
       answerMode: "none" as const,
+      pemLookupSkipped: false,
+      pemSkipReason: null,
+      matchedProspect: null,
     },
     nextConversationState: null,
   }));
@@ -550,7 +553,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     await updateBaxterConversationMetadata(conversation.id, nextMeta).catch(() => undefined);
   }
 
-  if (pemEvidence.diagnostics.answerMode !== "none") {
+  if (pemEvidence.diagnostics.answerMode !== "none" || pemEvidence.diagnostics.pemLookupSkipped) {
     logBaxterDiagnostic("pemEvidence", {
       code: "PEM_RESOLUTION",
       route: "answerBaxterQuestion",
@@ -564,6 +567,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         inheritedFromConversation: pemEvidence.diagnostics.inheritedFromConversation,
         explicitOverride: pemEvidence.diagnostics.explicitOverride,
         answerMode: pemEvidence.diagnostics.answerMode,
+        pemLookupSkipped: pemEvidence.diagnostics.pemLookupSkipped,
+        pemSkipReason: pemEvidence.diagnostics.pemSkipReason,
+        matchedProspect: pemEvidence.diagnostics.matchedProspect,
       }),
     });
   }

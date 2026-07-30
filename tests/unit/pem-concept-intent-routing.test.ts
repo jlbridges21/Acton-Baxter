@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetEnvCacheForTests } from "@/lib/env";
-import {
-  detectPemIntent,
-  parsePemEntityQuery,
-} from "@/lib/baxter-data/pem-neats";
+import { detectPemIntent, parsePemEntityQuery } from "@/lib/baxter-data/pem-neats";
 import {
   detectConceptQuestion,
   isReservedConceptName,
