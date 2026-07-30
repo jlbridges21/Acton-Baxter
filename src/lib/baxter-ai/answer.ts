@@ -54,6 +54,7 @@ import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import { ENTITY_CLARIFICATION_PROMPT, needsEntityClarification } from "./conversation-context";
 import {
   answerCapabilityHelp,
+  answerResourceAccessCheck,
   buildCapabilityPromptBlock,
   shouldPreferKnowledgeForConcept,
 } from "@/lib/baxter/capability-help";
@@ -373,7 +374,56 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   // Deterministic capability / how-to answers.
   // Definition questions prefer approved Knowledge first (not a canned short-circuit).
+  // Specific resource access (e.g. a Google Doc URL) is verified live — never the full overview.
   const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
+  const resourceAccess = await answerResourceAccessCheck({
+    question: routingQuestion,
+    role: profile?.role ?? null,
+  }).catch(() => null);
+  if (resourceAccess) {
+    const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
+    const sources: BaxterSourceReference[] = resourceAccess.links.map((link, index) => {
+      const href = link.href.startsWith("http") ? link.href : `${baseUrl}${link.href}`;
+      return {
+        title: link.label,
+        sourceName: "Baxter",
+        category: "Baxter capability",
+        sourceUrl: href,
+        citationLabel: link.label,
+        sourceKind: "capability" as const,
+        openLabel: link.label,
+        lastUpdated: null,
+        relevanceScore: 100,
+        availability: "available" as const,
+        knowledgeEntryId: `capability-access-${index}-${link.href}`,
+      };
+    });
+    const helpAnswer = withAbsoluteAppLinks(resourceAccess.answer, resourceAccess.links);
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: helpAnswer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "capability-registry",
+      modelName: "resource-access",
+      sources,
+      sourceEntryIds: sources.map((s, index) => ({
+        id: s.knowledgeEntryId!,
+        relevanceScore: 100,
+        order: index + 1,
+      })),
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer: helpAnswer,
+      sources,
+      confidence: "high",
+      insufficientKnowledge: false,
+      answerMode: "identity",
+    });
+  }
+
   const capabilityHelp = answerCapabilityHelp({
     question: routingQuestion,
     role: profile?.role ?? null,

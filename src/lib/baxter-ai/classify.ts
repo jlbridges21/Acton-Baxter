@@ -39,12 +39,21 @@ export function classifyBaxterQuestion(question: string): BaxterQuestionClass {
   }
 
   if (
-    /\b(who (are|is) (you|baxter)|what (are|is) (you|baxter)|what can you do|how do you work|what do you know\b|what information can you|what (sources|systems) can you|are you customer|can you access (buildertrend|gohighlevel|domo)|what version|runtime version|what tools|how do i (generate|create|make) (a )?(pem )?neat|what is (a )?(pem|neat))\b/.test(
+    /\b(who (are|is) (you|baxter)|what (are|is) (you|baxter)|what can you (do|help)|how do you work|what do you know\b|what information can you|what (sources|systems) can you|what are your (capabilities|limitations)|are you customer|what version|runtime version|what tools)\b/.test(
       q,
     ) ||
     q === "what do you know" ||
     q === "who is baxter" ||
     q === "what are you"
+  ) {
+    return "baxter_identity";
+  }
+
+  // Narrow “can you access X / do you have BuilderTrend” stay identity-scoped, not company process.
+  if (
+    /\b(can you (access|search|read|generate)|do you have access to|do you support)\b/.test(q) &&
+    /\b(buildertrend|gohighlevel|ghl|slack|google|pem|neat|domo)\b/.test(q) &&
+    !/\bhttps?:\/\/|docs\.google\.com\b/.test(q)
   ) {
     return "baxter_identity";
   }

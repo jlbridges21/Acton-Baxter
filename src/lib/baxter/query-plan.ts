@@ -13,10 +13,14 @@ import { planKnowledgeQuery } from "@/lib/knowledge-index/query-planner";
 import { parseTimeRangeFromQuestion } from "@/lib/knowledge-index/temporal";
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
 import { isProjectStatusQuestion } from "@/lib/baxter-data/slack/project-status";
+import { classifyCapabilityQuestion } from "@/lib/baxter/capability-intent";
 
 export type BaxterRoutingIntent =
   | "concept_definition"
   | "capability_help"
+  | "general_capabilities"
+  | "specific_capability"
+  | "resource_access_check"
   | "company_policy_process"
   | "structured_metric"
   | "spreadsheet_data"
@@ -152,8 +156,27 @@ export function buildBaxterQueryPlan(question: string, now: Date = new Date()): 
     pemLookup = "skip";
     pemSkipReason = "concept_definition";
     sourcesSkipped.push({ source: "pem_neat", reason: "concept_definition_not_prospect" });
-  } else if (concept.kind === "how_to" || concept.kind === "capability_overview") {
-    intent = "capability_help";
+  } else if (
+    (() => {
+      const capKind = classifyCapabilityQuestion(raw).kind;
+      return (
+        capKind === "general_capabilities" ||
+        capKind === "specific_capability" ||
+        capKind === "resource_access_check" ||
+        concept.kind === "how_to" ||
+        concept.kind === "capability_overview"
+      );
+    })()
+  ) {
+    const capKind = classifyCapabilityQuestion(raw).kind;
+    intent =
+      capKind === "general_capabilities" || concept.kind === "capability_overview"
+        ? "general_capabilities"
+        : capKind === "resource_access_check"
+          ? "resource_access_check"
+          : capKind === "specific_capability"
+            ? "specific_capability"
+            : "capability_help";
     sourcePriority = ["capability_registry", "knowledge"];
     pemLookup = "skip";
     pemSkipReason = "capability_help";
@@ -220,7 +243,11 @@ export function buildBaxterQueryPlan(question: string, now: Date = new Date()): 
     !structuredMetric &&
     intent !== "current_status" &&
     intent !== "slack_recall" &&
-    intent !== "project_status"
+    intent !== "project_status" &&
+    intent !== "general_capabilities" &&
+    intent !== "specific_capability" &&
+    intent !== "resource_access_check" &&
+    intent !== "capability_help"
   ) {
     intent = "prospect_intelligence";
     pemLookup = "run";

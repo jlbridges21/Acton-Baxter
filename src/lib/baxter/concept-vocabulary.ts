@@ -266,7 +266,7 @@ const HOW_TO_SHAPE =
   /\b(how (do i|to|can i)|where (do i|can i)|how do you)\b.+\b(generate|create|make|start|use|open|run|add|paste)\b/i;
 
 const CAPABILITY_OVERVIEW =
-  /\b(what can you (do|help)|what (all )?can (baxter|you) help|what tools|how do you (work|help)|who (are|is) (you|baxter)|what (are|is) (you|baxter))\b/i;
+  /\b(what can you (do|help with|help)|what (all )?can (baxter|you) help( me)? with|what are your (capabilities|limits|limitations)|what (all )?(systems|tools|sources) (do you|can you|you have)|tell me (everything|all) .{0,30}(can|capabilities)|give me (a )?(list|overview) of (your )?capabilities|how do you (work|help))\b/i;
 
 const RETRY_SHAPE =
   /\b(try again|bad answer|wrong answer|that('s| is) (wrong|incorrect|not (right|what i)|bad)|do better|re(-| )?answer|explain (it |that )?(again|properly|better)|for those who don'?t know)\b/i;
