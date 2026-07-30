@@ -10,3 +10,6 @@ export * from "./resolve";
 export * from "./conversation-intent";
 export * from "./conversation-lookup";
 export * from "./context-builder";
+export * from "./field-aliases";
+export * from "./conversation-state";
+export * from "./query-plan";

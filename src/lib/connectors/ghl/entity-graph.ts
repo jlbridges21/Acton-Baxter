@@ -7,7 +7,7 @@ import type {
   GhlConversation,
   GhlMessage,
 } from "./types";
-import { getContactById, hydrateGhlContact, searchContacts } from "./resources/contacts";
+import { getContactById, hydrateGhlContact } from "./resources/contacts";
 import { listOpportunitiesByContact, getOpportunityById } from "./resources/opportunities";
 import { listPipelines } from "./resources/pipelines";
 import { listUsers } from "./resources/users";
@@ -15,9 +15,15 @@ import { listCustomFields } from "./resources/custom-fields";
 import { listEventsForContact } from "./resources/calendars";
 import { searchConversations, getConversationMessages } from "./resources/conversations";
 import { resolveContact } from "@/lib/baxter-data/ghl/resolve";
-import { rankOpportunitiesForContact, opportunitiesNeedClarification } from "./opportunity-ranking";
+import {
+  rankOpportunitiesForContact,
+  opportunitiesNeedClarification,
+  DEFAULT_OPPORTUNITY_RANK_POLICY,
+  type OpportunityRankPolicy,
+} from "./opportunity-ranking";
 import type { GhlReferenceData } from "./reference-data";
 import { contactAddressFromGhl, detectGhlSnapshotFocus, type GhlSnapshotFocus } from "./address";
+import { isPronounOrStopwordName } from "@/lib/baxter-data/ghl/field-aliases";
 
 export type GhlEntityGraph = {
   retrievedAt: string;
@@ -60,6 +66,10 @@ export async function resolveGhlEntityGraph(
     includeConversations?: boolean;
     messageLimit?: number;
     opportunityId?: string;
+    /** Authoritative contact id (active entity / prior turn). */
+    contactId?: string;
+    /** Ranking policy for opportunity selection. */
+    opportunityRankPolicy?: OpportunityRankPolicy;
   } = {},
 ): Promise<GhlEntityGraph> {
   const retrievedAt = new Date().toISOString();
@@ -84,7 +94,18 @@ export async function resolveGhlEntityGraph(
     return enrichGraph(query, retrievedAt, contact, [opp], options);
   }
 
+  if (options.contactId?.trim()) {
+    const contact = await getContactById(options.contactId.trim()).catch(() => null);
+    if (contact) {
+      return enrichGraph(query, retrievedAt, contact, undefined, options);
+    }
+  }
+
   const trimmed = query.trim();
+  if (!trimmed || isPronounOrStopwordName(trimmed)) {
+    return empty;
+  }
+
   const resolution = await resolveContact({
     email: looksLikeEmail(trimmed) ? trimmed : undefined,
     phone: looksLikePhone(trimmed) ? trimmed : undefined,
@@ -104,16 +125,8 @@ export async function resolveGhlEntityGraph(
     return enrichGraph(query, retrievedAt, resolution.entity, undefined, options);
   }
 
-  const search = await searchContacts({ query: trimmed, limit: 5 });
-  if (search.contacts.length > 1) {
-    return {
-      ...empty,
-      ambiguous: true,
-      clarificationMessage: `I found ${search.contacts.length} contacts matching that. Which one do you mean?`,
-    };
-  }
-  if (search.contacts.length === 0) return empty;
-  return enrichGraph(query, retrievedAt, search.contacts[0]!, undefined, options);
+  // Do NOT fall back to searchContacts[0] — that lets unrelated contacts leak in.
+  return empty;
 }
 
 async function enrichGraph(
@@ -125,6 +138,7 @@ async function enrichGraph(
     includeAppointments?: boolean;
     includeConversations?: boolean;
     messageLimit?: number;
+    opportunityRankPolicy?: OpportunityRankPolicy;
   },
 ): Promise<GhlEntityGraph> {
   if (!contact) {
@@ -165,10 +179,12 @@ async function enrichGraph(
   const refsForRank: Pick<GhlReferenceData, "pipelineNameById"> = {
     pipelineNameById: new Map(pipelines.map((p) => [p.id, p.name])),
   };
-  const rankedOpps = rankOpportunitiesForContact(opps, refsForRank as GhlReferenceData);
+  const rankPolicy = options.opportunityRankPolicy ?? DEFAULT_OPPORTUNITY_RANK_POLICY;
+  const rankedOpps = rankOpportunitiesForContact(opps, refsForRank as GhlReferenceData, rankPolicy);
   const opportunityAmbiguous = opportunitiesNeedClarification(
     rankedOpps,
     refsForRank as GhlReferenceData,
+    rankPolicy,
   );
 
   const opportunities = rankedOpps.map((opportunity) => {
@@ -264,7 +280,46 @@ export function formatCustomerSnapshot(
   const address = contactAddressFromGhl(c);
   const lines: string[] = [];
   const name = c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "Contact";
-  lines.push(name);
+  lines.push(`CONTACT`);
+  lines.push(`Name: ${name}`);
+  lines.push(`Contact ID: ${c.id}`);
+
+  const hardContactOnly =
+    focuses.some((f) => f === "email" || f === "phone" || f === "address") &&
+    !focuses.includes("opportunity") &&
+    !focuses.includes("general") &&
+    !focuses.includes("conversation");
+
+  if (hardContactOnly) {
+    if (focuses.includes("email")) {
+      lines.push(`Email: ${c.email?.trim() || "(not saved)"}`);
+      lines.push("Requested field: email");
+    }
+    if (focuses.includes("phone")) {
+      lines.push(`Phone: ${c.phone?.trim() || "(not saved)"}`);
+      lines.push("Requested field: phone");
+    }
+    if (focuses.includes("address")) {
+      if (address.hasStreet && address.formatted) {
+        lines.push(`Address: ${address.formatted}`);
+        lines.push("Address status: loaded_present (street address saved in GHL)");
+      } else if (address.present) {
+        lines.push(`Address: ${address.formatted}`);
+        lines.push(
+          "Address status: loaded_missing_street (full contact loaded; city/region present but no street address saved in GHL)",
+        );
+      } else {
+        lines.push("Address: (none saved in GoHighLevel)");
+        lines.push(
+          "Address status: loaded_missing (full contact loaded; no address fields saved in GHL)",
+        );
+      }
+      lines.push("Requested field: address");
+    }
+    lines.push(`Retrieved: ${graph.retrievedAt}`);
+    return lines.join("\n");
+  }
+
   lines.push("");
   lines.push("Contact");
   if (c.phone) lines.push(`Phone: ${c.phone}`);

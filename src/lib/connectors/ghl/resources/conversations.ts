@@ -202,9 +202,7 @@ function unwrapSingleMessageResponse(response: unknown): {
  * GET /conversations/messages/:id
  * Scope: conversations/message.readonly
  */
-export async function getConversationMessageById(
-  messageId: string,
-): Promise<{
+export async function getConversationMessageById(messageId: string): Promise<{
   message: GhlMessage | null;
   ok: boolean;
   fieldNames: string[];
@@ -246,9 +244,7 @@ export async function getConversationMessageById(
  * Official email content endpoint (subject/body/html/from/to).
  * Scope: conversations/message.readonly
  */
-export async function getEmailMessageById(
-  emailMessageId: string,
-): Promise<{
+export async function getEmailMessageById(emailMessageId: string): Promise<{
   message: GhlMessage | null;
   ok: boolean;
   fieldNames: string[];

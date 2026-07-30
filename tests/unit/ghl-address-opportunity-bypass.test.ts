@@ -143,15 +143,23 @@ describe("retrieveGhlLiveEvidence skips opp ambiguity for address", () => {
     vi.doMock("@/lib/connectors/ghl/config", () => ({
       isGhlConfigured: () => true,
     }));
-    vi.doMock("@/lib/baxter-ai/ghl-intent", () => ({
-      detectGhlIntent: () => ({
-        intent: "contact_lookup",
-        confidence: 0.9,
-        entities: { contactName: "Rachel And Genaro Redmond" },
-        isWriteIntent: false,
-        requiresConfirmation: false,
-      }),
-    }));
+    vi.doMock("@/lib/baxter-ai/ghl-intent", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/baxter-ai/ghl-intent")>();
+      return {
+        ...actual,
+        detectGhlIntent: () => ({
+          intent: "contact_lookup",
+          confidence: 0.9,
+          entities: {
+            contactName: "Rachel And Genaro Redmond",
+            requestedField: "address",
+          },
+          isWriteIntent: false,
+          requiresConfirmation: false,
+          explicitGhl: true,
+        }),
+      };
+    });
     vi.doMock("@/lib/connectors/ghl/entity-graph", async () => {
       const actual = await vi.importActual<typeof import("@/lib/connectors/ghl/entity-graph")>(
         "@/lib/connectors/ghl/entity-graph",
@@ -176,15 +184,23 @@ describe("retrieveGhlLiveEvidence skips opp ambiguity for address", () => {
     vi.doMock("@/lib/connectors/ghl/config", () => ({
       isGhlConfigured: () => true,
     }));
-    vi.doMock("@/lib/baxter-ai/ghl-intent", () => ({
-      detectGhlIntent: () => ({
-        intent: "opportunity_lookup",
-        confidence: 0.9,
-        entities: { contactName: "Rachel And Genaro Redmond" },
-        isWriteIntent: false,
-        requiresConfirmation: false,
-      }),
-    }));
+    vi.doMock("@/lib/baxter-ai/ghl-intent", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/baxter-ai/ghl-intent")>();
+      return {
+        ...actual,
+        detectGhlIntent: () => ({
+          intent: "opportunity_lookup",
+          confidence: 0.9,
+          entities: {
+            contactName: "Rachel And Genaro Redmond",
+            requestedField: "stage",
+          },
+          isWriteIntent: false,
+          requiresConfirmation: false,
+          explicitGhl: true,
+        }),
+      };
+    });
     vi.doMock("@/lib/connectors/ghl/entity-graph", async () => {
       const actual = await vi.importActual<typeof import("@/lib/connectors/ghl/entity-graph")>(
         "@/lib/connectors/ghl/entity-graph",

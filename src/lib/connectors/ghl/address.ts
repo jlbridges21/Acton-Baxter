@@ -1,3 +1,8 @@
+import {
+  detectRequestedGhlFields,
+  type GhlRequestedField,
+} from "@/lib/baxter-data/ghl/field-aliases";
+
 import type { GhlContact } from "./types";
 
 export type GhlContactAddress = {
@@ -182,34 +187,21 @@ export function contactMatchesAddressQuery(
 
 /** Detect which CRM facets the employee question emphasizes. */
 export function detectGhlSnapshotFocus(question: string): GhlSnapshotFocus[] {
-  const q = question.toLowerCase();
+  const fields = detectRequestedGhlFields(question);
   const focuses: GhlSnapshotFocus[] = [];
-  if (/\b(address|street|mailing|full address|lives?|located|zip|postal|city)\b/.test(q)) {
-    focuses.push("address");
+  if (fields.includes("address")) focuses.push("address");
+  if (fields.includes("phone")) focuses.push("phone");
+  if (fields.includes("email")) focuses.push("email");
+  if (fields.includes("owner")) focuses.push("owner");
+  if (fields.includes("tags")) focuses.push("tags");
+  if (fields.includes("source")) focuses.push("source");
+  if (fields.includes("stage") || fields.includes("pipeline") || fields.includes("value")) {
+    focuses.push("opportunity");
   }
-  if (/\b(phone|mobile|cell|telephone)\b/.test(q)) {
-    focuses.push("phone");
-  }
-  if (/\b(e-?mail)\b/.test(q) && !/\b(last email|email we sent)\b/.test(q)) {
-    focuses.push("email");
-  }
-  if (/\b(owner|assigned|who owns|who is assigned)\b/.test(q) && !/\bopportunity owner\b/.test(q)) {
-    focuses.push("owner");
-  }
-  if (/\b(tags?|tagged)\b/.test(q)) {
-    focuses.push("tags");
-  }
-  if (
-    /\b(lead source|where did .+ come from|contact source)\b/.test(q) ||
-    (/\bsource\b/.test(q) && !/\bsource field\b/.test(q) && !/\bopportunit/.test(q))
-  ) {
-    focuses.push("source");
-  }
+
+  const q = question.toLowerCase();
   if (/\b(custom field|lead city|utm|source field)\b/.test(q)) {
     focuses.push("custom_fields");
-  }
-  if (/\b(opportunit|pipeline|stage|deal|monetary|value of)\b/.test(q)) {
-    focuses.push("opportunity");
   }
   if (
     /\b(last (talk|contact|message|email|call|communicat)|when did we|replied|conversation)\b/.test(
@@ -222,9 +214,44 @@ export function detectGhlSnapshotFocus(question: string): GhlSnapshotFocus[] {
   return focuses;
 }
 
+function formatContactFieldLine(
+  field: GhlRequestedField,
+  contact: Pick<
+    GhlContact,
+    "email" | "phone" | "address1" | "city" | "state" | "postalCode" | "country"
+  >,
+): { label: string; value: string | null; missing: string } {
+  const address = contactAddressFromGhl(contact);
+  switch (field) {
+    case "email":
+      return {
+        label: "Email",
+        value: contact.email?.trim() || null,
+        missing: "an email address",
+      };
+    case "phone":
+      return {
+        label: "Phone",
+        value: contact.phone?.trim() || null,
+        missing: "a phone number",
+      };
+    case "address":
+      return {
+        label: "Address",
+        value: address.hasStreet && address.formatted ? address.formatted : null,
+        missing:
+          address.present && !address.hasStreet
+            ? "a street address (only city/region is saved)"
+            : "an address",
+      };
+    default:
+      return { label: field, value: null, missing: `a ${field}` };
+  }
+}
+
 /**
  * Deterministic CRM contact-field answers from a hydrated GHL contact.
- * Prefer this over LLM paraphrase for address/phone/email/city when evidence is loaded.
+ * Returns ALL requested contact fields with explicit missing notes — never silently omits one.
  */
 export function buildDeterministicGhlContactFieldAnswer(
   question: string,
@@ -241,8 +268,8 @@ export function buildDeterministicGhlContactFieldAnswer(
     | "postalCode"
     | "country"
   >,
+  requestedFields?: GhlRequestedField[],
 ): string | null {
-  const focuses = detectGhlSnapshotFocus(question);
   const name =
     contact.name?.trim() ||
     [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() ||
@@ -261,30 +288,75 @@ export function buildDeterministicGhlContactFieldAnswer(
     return `I checked the full GoHighLevel contact record for ${name}. No city is saved.`;
   }
 
-  if (focuses.includes("address")) {
-    if (address.hasStreet && address.formatted) {
-      return `${name}'s address in GoHighLevel is ${address.formatted}.`;
+  const fields =
+    requestedFields?.filter((f) => f === "email" || f === "phone" || f === "address") ??
+    detectRequestedGhlFields(question).filter(
+      (f) => f === "email" || f === "phone" || f === "address",
+    );
+
+  if (!fields.length) return null;
+
+  const lines: string[] = [];
+  const missing: string[] = [];
+  for (const field of fields) {
+    const line = formatContactFieldLine(field, contact);
+    if (line.value) lines.push(`• ${line.label}: ${line.value}`);
+    else missing.push(line.missing);
+  }
+
+  if (fields.length === 1) {
+    const field = fields[0]!;
+    const line = formatContactFieldLine(field, contact);
+    if (line.value) {
+      if (field === "email") return `${name}'s email in GoHighLevel is ${line.value}.`;
+      if (field === "phone") return `${name}'s phone number in GoHighLevel is ${line.value}.`;
+      if (field === "address") return `${name}'s address in GoHighLevel is ${line.value}.`;
     }
-    if (address.present && !address.hasStreet) {
+    if (field === "address" && address.present && !address.hasStreet) {
       const place = contact.city?.trim() || address.formatted;
       return `I checked the full GoHighLevel contact record. It lists ${place}, but no street address is saved.`;
     }
-    return `I checked the full GoHighLevel contact record for ${name}. No address is saved.`;
+    return `I found ${name} in GoHighLevel, but the contact record does not include ${line.missing}.`;
   }
 
-  if (focuses.includes("phone")) {
-    if (contact.phone?.trim()) {
-      return `${name}'s phone number in GoHighLevel is ${contact.phone.trim()}.`;
-    }
-    return `I checked the full GoHighLevel contact record for ${name}. No phone number is saved.`;
+  if (!lines.length) {
+    return `I found ${name} in GoHighLevel, but the contact record does not include ${missing.join(" or ")}.`;
   }
 
-  if (focuses.includes("email")) {
-    if (contact.email?.trim()) {
-      return `${name}'s email in GoHighLevel is ${contact.email.trim()}.`;
-    }
-    return `I checked the full GoHighLevel contact record for ${name}. No email is saved.`;
+  const header = `${name}'s GHL contact information:`;
+  if (!missing.length) return `${header}\n${lines.join("\n")}`;
+  const missingNote =
+    missing.length === 1
+      ? `I don't have ${missing[0]} in the GHL contact record.`
+      : `I don't have ${missing.join(" or ")} in the GHL contact record.`;
+  return `${header}\n${lines.join("\n")}\n${missingNote}`;
+}
+
+/** Deterministic opportunity stage/pipeline answer from a hydrated entity graph row. */
+export function buildDeterministicGhlOpportunityAnswer(input: {
+  contactName: string;
+  pipelineName: string | null;
+  stageName: string | null;
+  requestedFields: GhlRequestedField[];
+}): string | null {
+  const name = input.contactName.trim() || "This contact";
+  const wantsStage =
+    input.requestedFields.includes("stage") || input.requestedFields.includes("other");
+  const wantsPipeline = input.requestedFields.includes("pipeline");
+  const stage = input.stageName?.trim() || null;
+  const pipeline = input.pipelineName?.trim() || null;
+
+  if (!stage && !pipeline) return null;
+
+  if (wantsPipeline && !wantsStage) {
+    if (pipeline) return `${name} is in the ${pipeline} in GoHighLevel.`;
+    return `I found ${name} in GoHighLevel, but I couldn't resolve the pipeline name.`;
   }
 
+  if (stage && pipeline) {
+    return `${name} is currently in ${stage} in the ${pipeline}.`;
+  }
+  if (stage) return `${name} is currently in ${stage}.`;
+  if (pipeline) return `${name} is in the ${pipeline}.`;
   return null;
 }

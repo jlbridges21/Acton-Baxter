@@ -17,6 +17,10 @@ import { retrieveBaxterEvidence } from "@/lib/baxter-ai/context";
 import { buildBaxterQueryPlan } from "@/lib/baxter/query-plan";
 import { detectPemIntent } from "@/lib/baxter-data/pem-neats/intent";
 import { runPemOpenAiDiagnosticTest } from "@/lib/pem-neat/openai-client";
+import { buildGhlQueryPlan } from "@/lib/baxter-data/ghl/query-plan";
+import { detectGhlIntent } from "@/lib/baxter-ai/ghl-intent";
+import { retrieveGhlLiveEvidence } from "@/lib/baxter-ai/ghl-runtime";
+import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 
 export async function GET() {
   try {
@@ -61,6 +65,22 @@ export async function POST(request: Request) {
         !evidence.contextDecision.inheritPriorEntities &&
         evidence.contextDecision.reason !== "no_history",
       );
+
+      let ghlLive: Record<string, unknown> | null = null;
+      if (isGhlConfigured()) {
+        try {
+          const ghl = await retrieveGhlLiveEvidence(question, { activeGhl: null });
+          ghlLive = {
+            intent: ghl.intent.intent,
+            diagnostics: ghl.diagnostics ?? null,
+            hasDeterministicAnswer: Boolean(ghl.deterministicAnswer),
+            itemCount: ghl.items.length,
+            ambiguityWarning: ghl.ambiguityWarning ?? null,
+          };
+        } catch {
+          ghlLive = { error: true };
+        }
+      }
 
       let slackPlan: Record<string, unknown> | null = null;
       try {
@@ -114,6 +134,21 @@ export async function POST(request: Request) {
                 pemNameQuery: pem.nameQuery,
               };
             })(),
+            ghlQueryPlan: (() => {
+              const plan = buildGhlQueryPlan({ question, activeGhl: null });
+              const intent = detectGhlIntent(question);
+              return {
+                intent: plan.intent,
+                entityName: plan.entityName,
+                requestedFields: plan.requestedFields,
+                followupEntityInherited: plan.followupEntityInherited,
+                needsEntityClarification: plan.needsEntityClarification,
+                resolutionMethod: plan.diagnostics.resolutionMethod,
+                ghlIntent: intent.intent,
+                ghlRequestedField: intent.entities.requestedField ?? null,
+              };
+            })(),
+            ghlLive,
             contextDecision: evidence.contextDecision,
             inheritEntities: evidence.inheritEntities,
             entitiesReset,
@@ -171,6 +206,21 @@ export async function POST(request: Request) {
           question,
           intent: evidence.intent,
           queryMode: evidence.queryMode,
+          ghlQueryPlan: (() => {
+            const plan = buildGhlQueryPlan({ question, activeGhl: null });
+            const intent = detectGhlIntent(question);
+            return {
+              intent: plan.intent,
+              entityName: plan.entityName,
+              requestedFields: plan.requestedFields,
+              followupEntityInherited: plan.followupEntityInherited,
+              needsEntityClarification: plan.needsEntityClarification,
+              resolutionMethod: plan.diagnostics.resolutionMethod,
+              ghlIntent: intent.intent,
+              ghlRequestedField: intent.entities.requestedField ?? null,
+            };
+          })(),
+          ghlLive,
           contextDecision: evidence.contextDecision,
           inheritEntities: evidence.inheritEntities,
           entitiesReset,

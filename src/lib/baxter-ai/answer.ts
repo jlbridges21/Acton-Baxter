@@ -66,6 +66,10 @@ import {
 import { retrievePemEvidence } from "@/lib/baxter-data/pem-neats";
 import { pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-neats/intent";
 import { writePemConversationState } from "@/lib/baxter-data/pem-neats/conversation-state";
+import {
+  readGhlConversationState,
+  writeGhlConversationState,
+} from "@/lib/baxter-data/ghl/conversation-state";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
 import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
@@ -481,7 +485,8 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   // Merge live GoHighLevel operational evidence when the question is CRM-related.
   let ghlEvidence: Awaited<ReturnType<typeof retrieveGhlLiveEvidence>> | null = null;
   if (isGhlConfigured()) {
-    ghlEvidence = await retrieveGhlLiveEvidence(routingQuestion).catch(() => null);
+    const activeGhl = readGhlConversationState(conversation.metadata ?? {});
+    ghlEvidence = await retrieveGhlLiveEvidence(routingQuestion, { activeGhl }).catch(() => null);
     if (ghlEvidence?.diagnostics) {
       logBaxterDiagnostic("ghlEvidence", {
         code: "GHL_ENTITY_RESOLUTION",
@@ -489,6 +494,14 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         conversationId: conversation.id,
         safeMessage: JSON.stringify(ghlEvidence.diagnostics),
       });
+    }
+    if (ghlEvidence?.nextConversationState) {
+      const nextGhlMeta = writeGhlConversationState(
+        conversation.metadata ?? {},
+        ghlEvidence.nextConversationState,
+      );
+      conversation.metadata = nextGhlMeta;
+      await updateBaxterConversationMetadata(conversation.id, nextGhlMeta).catch(() => undefined);
     }
     if (ghlEvidence?.ambiguityWarning) {
       const message = await appendAssistantMessage({
@@ -528,7 +541,11 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     if (ghlEvidence?.deterministicAnswer) {
       const hasItems = ghlEvidence.items.length > 0;
       const isConversationLookup = ghlEvidence.intent?.intent === "conversation_lookup";
-      if (hasItems || isConversationLookup) {
+      const isCrmLookup =
+        ghlEvidence.intent?.intent === "contact_lookup" ||
+        ghlEvidence.intent?.intent === "opportunity_lookup" ||
+        ghlEvidence.intent?.intent === "conversation_lookup";
+      if (hasItems || isConversationLookup || isCrmLookup) {
         const sources = ghlEvidence.items.map((item) => contextItemToSourceReference(item));
         const message = await appendAssistantMessage({
           conversationId: conversation.id,
@@ -538,7 +555,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
           modelProvider: "ghl-resolve",
           modelName: isConversationLookup
             ? "deterministic-conversation"
-            : "deterministic-contact-field",
+            : ghlEvidence.intent?.intent === "opportunity_lookup"
+              ? "deterministic-opportunity"
+              : "deterministic-contact-field",
           sources,
           sourceEntryIds: sources.map((s, index) => ({
             id: s.knowledgeEntryId || ghlEvidence!.items[index]!.id,

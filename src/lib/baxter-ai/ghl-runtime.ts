@@ -489,23 +489,40 @@ async function proposeWriteFromIntent(
 /**
  * Fetch live GHL context for CRM questions and convert to Baxter context items.
  */
-export async function retrieveGhlLiveEvidence(question: string): Promise<{
+export async function retrieveGhlLiveEvidence(
+  question: string,
+  options: {
+    activeGhl?: import("@/lib/baxter-data/ghl/conversation-state").GhlConversationContext | null;
+  } = {},
+): Promise<{
   items: BaxterContextItem[];
   contextText: string;
   ambiguityWarning?: string;
   intent: GhlIntentDetection;
   handledInsight?: boolean;
   deterministicAnswer?: string | null;
+  nextConversationState?:
+    import("@/lib/baxter-data/ghl/conversation-state").GhlConversationContext | null;
   diagnostics?: {
     query: string;
+    intent: string;
     entityType: "contact" | "none";
+    resolvedContactName: string | null;
     requestedField: string | null;
+    requestedFields: string[];
     ghlContactSearchAttempted: boolean;
     matchesFound: number;
     selectedContactId: string | null;
+    resolutionMethod: string | null;
+    activeEntityInherited: boolean;
     fullContactHydrated: boolean | null;
     addressPresent: boolean | null;
     explicitGhl: boolean;
+    opportunitiesFound: number;
+    selectedOpportunityId: string | null;
+    pipelineResolved: string | null;
+    stageResolved: string | null;
+    completeness: { requested: number; found: number } | null;
   };
 }> {
   if (!isGhlConfigured()) {
@@ -522,11 +539,92 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     };
   }
 
-  const intent = detectGhlIntent(question);
-  const requestedField = intent.entities.requestedField ?? null;
+  const { buildGhlQueryPlan } = await import("@/lib/baxter-data/ghl/query-plan");
+  const { buildGhlConversationContext } = await import("@/lib/baxter-data/ghl/conversation-state");
+  const { detectRequestedGhlFields, isContactField, isOpportunityField } =
+    await import("@/lib/baxter-data/ghl/field-aliases");
 
-  // Conversation / email / SMS recall — contact → conversations → messages (bounded).
-  if (intent.intent === "conversation_lookup") {
+  const plan = buildGhlQueryPlan({
+    question,
+    activeGhl: options.activeGhl ?? null,
+  });
+  const intent = detectGhlIntent(question);
+  const effectiveIntent: GhlIntentDetection = {
+    ...intent,
+    intent:
+      plan.intent === "conversation_lookup"
+        ? "conversation_lookup"
+        : plan.intent === "opportunity_lookup"
+          ? "opportunity_lookup"
+          : plan.intent === "contact_lookup"
+            ? "contact_lookup"
+            : intent.intent,
+    entities: {
+      ...intent.entities,
+      contactName: plan.entityName || intent.entities.contactName,
+      contactEmail: plan.entityEmail || intent.entities.contactEmail,
+      contactPhone: plan.entityPhone || intent.entities.contactPhone,
+      requestedField:
+        plan.primaryField === "pipeline" || plan.primaryField === "value"
+          ? "stage"
+          : plan.primaryField === "email" ||
+              plan.primaryField === "phone" ||
+              plan.primaryField === "address" ||
+              plan.primaryField === "city" ||
+              plan.primaryField === "owner" ||
+              plan.primaryField === "tags" ||
+              plan.primaryField === "source" ||
+              plan.primaryField === "stage"
+            ? plan.primaryField
+            : intent.entities.requestedField,
+    },
+  };
+  const requestedFields = plan.requestedFields.length
+    ? plan.requestedFields
+    : detectRequestedGhlFields(question);
+  const requestedField = effectiveIntent.entities.requestedField ?? null;
+
+  if (plan.needsEntityClarification) {
+    const clarify =
+      plan.primaryField === "email"
+        ? "Whose email address do you mean?"
+        : plan.primaryField === "phone"
+          ? "Whose phone number do you mean?"
+          : plan.primaryField === "address"
+            ? "Whose address do you mean?"
+            : plan.intent === "opportunity_lookup"
+              ? "Whose opportunity stage do you mean?"
+              : "Which contact should I look up in GoHighLevel?";
+    return {
+      items: [],
+      contextText: "",
+      intent: effectiveIntent,
+      deterministicAnswer: clarify,
+      diagnostics: {
+        query: question.slice(0, 80),
+        intent: String(plan.intent),
+        entityType: "none",
+        resolvedContactName: null,
+        requestedField,
+        requestedFields,
+        ghlContactSearchAttempted: false,
+        matchesFound: 0,
+        selectedContactId: null,
+        resolutionMethod: plan.diagnostics.resolutionMethod,
+        activeEntityInherited: false,
+        fullContactHydrated: null,
+        addressPresent: null,
+        explicitGhl: Boolean(intent.explicitGhl),
+        opportunitiesFound: 0,
+        selectedOpportunityId: null,
+        pipelineResolved: null,
+        stageResolved: null,
+        completeness: null,
+      },
+    };
+  }
+
+  if (plan.intent === "conversation_lookup" || effectiveIntent.intent === "conversation_lookup") {
     const {
       lookupGhlConversationMessages,
       inferConversationLookupFilters,
@@ -536,9 +634,12 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     } = await import("@/lib/baxter-data/ghl/conversation-lookup");
     const filters = inferConversationLookupFilters(question);
     const contactQuery =
-      intent.entities.contactEmail ||
-      intent.entities.contactPhone ||
-      intent.entities.contactName ||
+      plan.entityEmail ||
+      plan.entityPhone ||
+      plan.entityName ||
+      effectiveIntent.entities.contactEmail ||
+      effectiveIntent.entities.contactPhone ||
+      effectiveIntent.entities.contactName ||
       extractConversationContactQuery(question) ||
       "";
 
@@ -546,20 +647,29 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
       return {
         items: [],
         contextText: "",
-        intent,
+        intent: effectiveIntent,
         deterministicAnswer:
           "Which contact should I look up in GoHighLevel? Share a name, email, or phone.",
-        ambiguityWarning: undefined,
         diagnostics: {
           query: question.slice(0, 80),
+          intent: "conversation_lookup",
           entityType: "none",
+          resolvedContactName: null,
           requestedField: "conversation",
+          requestedFields,
           ghlContactSearchAttempted: false,
           matchesFound: 0,
           selectedContactId: null,
+          resolutionMethod: plan.diagnostics.resolutionMethod,
+          activeEntityInherited: plan.followupEntityInherited,
           fullContactHydrated: null,
           addressPresent: null,
           explicitGhl: Boolean(intent.explicitGhl),
+          opportunitiesFound: 0,
+          selectedOpportunityId: null,
+          pipelineResolved: null,
+          stageResolved: null,
+          completeness: null,
         },
       };
     }
@@ -573,30 +683,34 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
       messagesPerConversation: 40,
     });
 
-    console.info(
-      "[GHL conversation lookup]",
-      JSON.stringify({
-        ...lookup.diagnostics,
-        // No message bodies in logs
-      }),
-    );
+    console.info("[GHL conversation lookup]", JSON.stringify({ ...lookup.diagnostics }));
 
     if (lookup.ambiguityMessage) {
       return {
         items: [],
         contextText: "",
         ambiguityWarning: lookup.ambiguityMessage,
-        intent,
+        intent: effectiveIntent,
         diagnostics: {
           query: contactQuery,
+          intent: "conversation_lookup",
           entityType: "contact",
+          resolvedContactName: null,
           requestedField: "conversation",
+          requestedFields,
           ghlContactSearchAttempted: true,
           matchesFound: 2,
           selectedContactId: null,
+          resolutionMethod: plan.diagnostics.resolutionMethod,
+          activeEntityInherited: plan.followupEntityInherited,
           fullContactHydrated: null,
           addressPresent: null,
           explicitGhl: Boolean(intent.explicitGhl),
+          opportunitiesFound: 0,
+          selectedOpportunityId: null,
+          pipelineResolved: null,
+          stageResolved: null,
+          completeness: null,
         },
       };
     }
@@ -608,18 +722,31 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
       return {
         items: [],
         contextText: failure,
-        intent,
+        intent: effectiveIntent,
         deterministicAnswer: failure,
         diagnostics: {
           query: contactQuery,
+          intent: "conversation_lookup",
           entityType: lookup.contact ? "contact" : "none",
+          resolvedContactName:
+            lookup.contact?.name ||
+            [lookup.contact?.firstName, lookup.contact?.lastName].filter(Boolean).join(" ") ||
+            null,
           requestedField: "conversation",
+          requestedFields,
           ghlContactSearchAttempted: true,
           matchesFound: lookup.contact ? 1 : 0,
           selectedContactId: lookup.contact?.id ?? null,
+          resolutionMethod: plan.diagnostics.resolutionMethod,
+          activeEntityInherited: plan.followupEntityInherited,
           fullContactHydrated: lookup.contact ? true : null,
           addressPresent: null,
           explicitGhl: Boolean(intent.explicitGhl),
+          opportunitiesFound: 0,
+          selectedOpportunityId: null,
+          pipelineResolved: null,
+          stageResolved: null,
+          completeness: null,
         },
       };
     }
@@ -646,6 +773,17 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
               ? "Conversation"
               : "Message";
 
+    const nextConversationState = buildGhlConversationContext({
+      contact: {
+        id: lookup.contact.id,
+        displayName: contactName,
+        email: lookup.contact.email,
+        setAt: new Date().toISOString(),
+      },
+      opportunity: options.activeGhl?.opportunity ?? null,
+      lastRequestedFields: requestedFields,
+    });
+
     return {
       items: [
         {
@@ -666,24 +804,35 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
         },
       ],
       contextText: evidenceText,
-      intent,
+      intent: effectiveIntent,
       deterministicAnswer: answer,
+      nextConversationState,
       diagnostics: {
         query: contactQuery,
+        intent: "conversation_lookup",
         entityType: "contact",
+        resolvedContactName: contactName,
         requestedField: "conversation",
+        requestedFields,
         ghlContactSearchAttempted: true,
         matchesFound: 1,
         selectedContactId: lookup.contact.id,
+        resolutionMethod: plan.diagnostics.resolutionMethod,
+        activeEntityInherited: plan.followupEntityInherited,
         fullContactHydrated: true,
         addressPresent: null,
         explicitGhl: Boolean(intent.explicitGhl),
+        opportunitiesFound: 0,
+        selectedOpportunityId: null,
+        pipelineResolved: null,
+        stageResolved: null,
+        completeness: null,
       },
     };
   }
 
-  if (String(intent.intent).startsWith("insight_")) {
-    const insightText = await runInsightReport(intent).catch(
+  if (String(effectiveIntent.intent).startsWith("insight_")) {
+    const insightText = await runInsightReport(effectiveIntent).catch(
       (error) =>
         `I couldn't run that CRM insight: ${error instanceof Error ? error.message.slice(0, 160) : "error"}`,
     );
@@ -707,121 +856,228 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
         },
       ],
       contextText: insightText,
-      intent,
+      intent: effectiveIntent,
       handledInsight: true,
     };
   }
 
   const name =
-    intent.entities.contactName ||
-    intent.entities.opportunityName ||
-    intent.entities.contactEmail ||
-    intent.entities.contactPhone;
+    plan.entityName ||
+    plan.entityEmail ||
+    plan.entityPhone ||
+    effectiveIntent.entities.contactName ||
+    effectiveIntent.entities.opportunityName ||
+    effectiveIntent.entities.contactEmail ||
+    effectiveIntent.entities.contactPhone;
 
-  // Explicit GHL / contact-field asks must use the entity graph even when intent was weak.
   const forceEntityGraph =
-    Boolean(name) &&
+    Boolean(name || plan.entityContactId) &&
     (intent.explicitGhl ||
-      intent.intent === "contact_lookup" ||
-      intent.intent === "opportunity_lookup" ||
-      intent.intent === "general_crm" ||
-      intent.intent === "calendar_query" ||
-      requestedField === "address" ||
-      requestedField === "phone" ||
-      requestedField === "email" ||
-      requestedField === "city");
+      plan.intent === "contact_lookup" ||
+      plan.intent === "opportunity_lookup" ||
+      effectiveIntent.intent === "contact_lookup" ||
+      effectiveIntent.intent === "opportunity_lookup" ||
+      effectiveIntent.intent === "general_crm" ||
+      effectiveIntent.intent === "calendar_query" ||
+      requestedFields.some((f) => isContactField(f) || isOpportunityField(f)));
 
-  if (name && forceEntityGraph) {
+  if ((name || plan.entityContactId) && forceEntityGraph) {
     const { resolveGhlEntityGraph, formatCustomerSnapshot } =
       await import("@/lib/connectors/ghl/entity-graph");
     const {
       buildDeterministicGhlContactFieldAnswer,
+      buildDeterministicGhlOpportunityAnswer,
       contactAddressFromGhl,
       isContactLevelGhlQuestion,
     } = await import("@/lib/connectors/ghl/address");
-    const graph = await resolveGhlEntityGraph(name, {
-      includeAppointments: true,
-      includeConversations: true,
+    const { STAGE_QUESTION_RANK_POLICY } = await import("@/lib/connectors/ghl/opportunity-ranking");
+
+    const wantsOpp =
+      requestedFields.some(isOpportunityField) || plan.intent === "opportunity_lookup";
+    const graph = await resolveGhlEntityGraph(name || plan.entityContactId || "", {
+      includeAppointments: false,
+      includeConversations: false,
+      contactId: plan.entityContactId || undefined,
+      opportunityRankPolicy: wantsOpp ? STAGE_QUESTION_RANK_POLICY : undefined,
     }).catch(() => null);
 
+    if (graph?.contact && plan.entityContactId && graph.contact.id !== plan.entityContactId) {
+      return {
+        items: [],
+        contextText: "",
+        intent: effectiveIntent,
+        deterministicAnswer: `I couldn’t find a GHL contact matching ${plan.entityName || "that person"}.`,
+        diagnostics: {
+          query: name || "",
+          intent: String(plan.intent),
+          entityType: "none",
+          resolvedContactName: null,
+          requestedField,
+          requestedFields,
+          ghlContactSearchAttempted: true,
+          matchesFound: 0,
+          selectedContactId: null,
+          resolutionMethod: "entity_id_mismatch",
+          activeEntityInherited: plan.followupEntityInherited,
+          fullContactHydrated: null,
+          addressPresent: null,
+          explicitGhl: Boolean(intent.explicitGhl),
+          opportunitiesFound: 0,
+          selectedOpportunityId: null,
+          pipelineResolved: null,
+          stageResolved: null,
+          completeness: null,
+        },
+      };
+    }
+
     const address = graph?.contact ? contactAddressFromGhl(graph.contact) : null;
+    const selectedOpp = graph?.opportunities[0] ?? null;
+    const contactName =
+      graph?.contact?.name ||
+      [graph?.contact?.firstName, graph?.contact?.lastName].filter(Boolean).join(" ") ||
+      plan.entityName ||
+      name ||
+      null;
+
+    const contactFields = requestedFields.filter(
+      (f) => f === "email" || f === "phone" || f === "address",
+    );
+    let foundCount = 0;
+    if (graph?.contact) {
+      if (contactFields.includes("email") && graph.contact.email?.trim()) foundCount += 1;
+      if (contactFields.includes("phone") && graph.contact.phone?.trim()) foundCount += 1;
+      if (contactFields.includes("address") && address?.hasStreet) foundCount += 1;
+    }
+
     const diagnostics = {
-      query: name,
-      entityType: "contact" as const,
+      query: name || plan.entityContactId || "",
+      intent: String(plan.intent),
+      entityType: (graph?.contact ? "contact" : "none") as "contact" | "none",
+      resolvedContactName: contactName,
       requestedField,
+      requestedFields,
       ghlContactSearchAttempted: true,
       matchesFound: graph?.ambiguous ? 2 : graph?.contact ? 1 : 0,
       selectedContactId: graph?.contact?.id ?? null,
+      resolutionMethod: plan.entityContactId ? "contact_id" : plan.diagnostics.resolutionMethod,
+      activeEntityInherited: plan.followupEntityInherited,
       fullContactHydrated: graph?.contact ? true : null,
       addressPresent: address ? address.present : null,
       explicitGhl: Boolean(intent.explicitGhl),
+      opportunitiesFound: graph?.opportunities.length ?? 0,
+      selectedOpportunityId: selectedOpp?.opportunity.id ?? null,
+      pipelineResolved: selectedOpp?.pipelineName ?? null,
+      stageResolved: selectedOpp?.stageName ?? null,
+      completeness: contactFields.length
+        ? { requested: contactFields.length, found: foundCount }
+        : wantsOpp
+          ? {
+              requested: 1,
+              found: selectedOpp?.stageName || selectedOpp?.pipelineName ? 1 : 0,
+            }
+          : null,
     };
 
-    console.info(
-      "[GHL entity resolution]",
-      JSON.stringify({
-        ...diagnostics,
-        // No PII field values — ids/counts only
-      }),
-    );
+    console.info("[GHL entity resolution]", JSON.stringify({ ...diagnostics }));
 
     if (graph?.ambiguous) {
       return {
         items: [],
         contextText: "",
         ambiguityWarning: graph.clarificationMessage ?? undefined,
-        intent,
-        diagnostics,
-      };
-    }
-    if (graph?.contact) {
-      const snapshot = formatCustomerSnapshot(graph, { question });
-      // Contact-level asks (address, phone, email, tags, …) must not be blocked by
-      // opportunity disambiguation — the admin UI already shows full contact details.
-      const ambiguityWarning =
-        graph.opportunityAmbiguous &&
-        graph.clarificationMessage &&
-        !isContactLevelGhlQuestion(question)
-          ? graph.clarificationMessage
-          : undefined;
-      const deterministicAnswer = ambiguityWarning
-        ? null
-        : buildDeterministicGhlContactFieldAnswer(question, graph.contact);
-      return {
-        items: [
-          {
-            number: 1,
-            id: graph.contact.id,
-            title: `GoHighLevel — ${graph.contact.name || name}`,
-            summary: null,
-            contentExcerpt: snapshot.slice(0, 1600),
-            category: "GoHighLevel",
-            tags: ["gohighlevel", "contact"],
-            sourceName: "GoHighLevel",
-            sourceUrl: null,
-            sourceType: "GoHighLevel",
-            mimeType: null,
-            updatedAt: graph.retrievedAt,
-            citationLabel: `GoHighLevel — ${graph.contact.name || name}${
-              !isContactLevelGhlQuestion(question) && graph.opportunities[0]?.opportunity.name
-                ? ` — ${graph.opportunities[0].opportunity.name}`
-                : ""
-            }`,
-            relevanceScore: 0.95,
-          },
-        ],
-        contextText: snapshot,
-        ambiguityWarning,
-        intent,
-        deterministicAnswer,
+        intent: effectiveIntent,
         diagnostics,
       };
     }
 
+    if (!graph?.contact) {
+      return {
+        items: [],
+        contextText: "",
+        intent: effectiveIntent,
+        deterministicAnswer: `I couldn’t find a GHL contact matching ${plan.entityName || name || "that person"}.`,
+        diagnostics,
+      };
+    }
+
+    const snapshot = formatCustomerSnapshot(graph, { question });
+    const ambiguityWarning =
+      graph.opportunityAmbiguous &&
+      graph.clarificationMessage &&
+      !isContactLevelGhlQuestion(question) &&
+      wantsOpp
+        ? graph.clarificationMessage
+        : undefined;
+
+    let deterministicAnswer: string | null = null;
+    if (!ambiguityWarning) {
+      if (wantsOpp) {
+        if (!selectedOpp) {
+          deterministicAnswer = `I found ${contactName} in GHL, but I didn’t find an opportunity tied to that contact.`;
+        } else {
+          deterministicAnswer = buildDeterministicGhlOpportunityAnswer({
+            contactName: contactName || "This contact",
+            pipelineName: selectedOpp.pipelineName,
+            stageName: selectedOpp.stageName,
+            requestedFields,
+          });
+        }
+      } else {
+        deterministicAnswer = buildDeterministicGhlContactFieldAnswer(
+          question,
+          graph.contact,
+          requestedFields,
+        );
+      }
+    }
+
+    const citationPipeline =
+      wantsOpp && selectedOpp?.pipelineName ? ` — ${selectedOpp.pipelineName}` : "";
+    const nextConversationState = buildGhlConversationContext({
+      contact: {
+        id: graph.contact.id,
+        displayName: contactName || graph.contact.id,
+        email: graph.contact.email,
+        setAt: new Date().toISOString(),
+      },
+      opportunity: selectedOpp
+        ? {
+            id: selectedOpp.opportunity.id,
+            pipelineId: selectedOpp.opportunity.pipelineId,
+            pipelineName: selectedOpp.pipelineName,
+            stageId: selectedOpp.opportunity.pipelineStageId,
+            stageName: selectedOpp.stageName,
+            setAt: new Date().toISOString(),
+          }
+        : (options.activeGhl?.opportunity ?? null),
+      lastRequestedFields: requestedFields,
+    });
+
     return {
-      items: [],
-      contextText: "",
-      intent,
+      items: [
+        {
+          number: 1,
+          id: graph.contact.id,
+          title: `GoHighLevel — ${contactName || name}`,
+          summary: null,
+          contentExcerpt: snapshot.slice(0, 1600),
+          category: "GoHighLevel",
+          tags: ["gohighlevel", "contact"],
+          sourceName: "GoHighLevel",
+          sourceUrl: null,
+          sourceType: "GoHighLevel",
+          mimeType: null,
+          updatedAt: graph.retrievedAt,
+          citationLabel: `GoHighLevel — ${contactName || name}${citationPipeline}`,
+          relevanceScore: 0.95,
+        },
+      ],
+      contextText: snapshot,
+      ambiguityWarning,
+      intent: effectiveIntent,
+      deterministicAnswer,
+      nextConversationState,
       diagnostics,
     };
   }
@@ -831,18 +1087,28 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
     return {
       items: [],
       contextText: "",
-      intent: result?.intent ?? intent,
+      intent: result?.intent ?? effectiveIntent,
       ambiguityWarning: result?.ambiguityWarning,
       diagnostics: {
         query: name || question.slice(0, 80),
+        intent: String(plan.intent),
         entityType: "none",
+        resolvedContactName: null,
         requestedField,
+        requestedFields,
         ghlContactSearchAttempted: Boolean(name),
         matchesFound: 0,
         selectedContactId: null,
+        resolutionMethod: plan.diagnostics.resolutionMethod,
+        activeEntityInherited: plan.followupEntityInherited,
         fullContactHydrated: null,
         addressPresent: null,
         explicitGhl: Boolean(intent.explicitGhl),
+        opportunitiesFound: 0,
+        selectedOpportunityId: null,
+        pipelineResolved: null,
+        stageResolved: null,
+        completeness: null,
       },
     };
   }

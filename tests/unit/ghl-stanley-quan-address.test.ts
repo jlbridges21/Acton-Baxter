@@ -104,9 +104,9 @@ describe("Stanley Quan address normalization + evidence", () => {
       question: "What is Stanley Quan\u2019s address?",
     });
     expect(snapshot).toContain("Address: 2050 Kent Drive, Los Altos, CA 94024");
-    expect(snapshot).toContain("akaltos3@gmail.com");
-    expect(snapshot).toContain("(650) 823-6728");
-    expect(snapshot).toContain("loaded_present");
+    expect(snapshot).toContain("Requested field: address");
+    expect(snapshot).toContain("stanley-quan-contact");
+    expect(snapshot).not.toContain("Opportunity");
   });
 
   it("deterministic address answer matches expected production phrasing", () => {

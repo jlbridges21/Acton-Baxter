@@ -8,12 +8,26 @@ export type OpportunityRankPolicy = {
   marketingPipelineKeywords: string[];
   /** Prefer open status over closed. */
   preferOpen: boolean;
+  /**
+   * Extra score for preferred pipelines (stage/pipeline questions).
+   * Lets Feasibility beat an open Marketing opp even when FP is closed.
+   */
+  preferredPipelineBoost?: number;
 };
 
 export const DEFAULT_OPPORTUNITY_RANK_POLICY: OpportunityRankPolicy = {
   preferredPipelineKeywords: ["feasibility", "design agreement", "pem", "project", "sales"],
   marketingPipelineKeywords: ["marketing", "nurture", "cold"],
   preferOpen: true,
+  preferredPipelineBoost: 0,
+};
+
+/** Stronger preferred-pipeline bias for stage/pipeline questions (FP over Marketing). */
+export const STAGE_QUESTION_RANK_POLICY: OpportunityRankPolicy = {
+  preferredPipelineKeywords: ["feasibility", "design agreement", "pem", "project", "sales"],
+  marketingPipelineKeywords: ["marketing", "nurture", "cold"],
+  preferOpen: true,
+  preferredPipelineBoost: 50,
 };
 
 function scoreOpportunity(
@@ -24,12 +38,13 @@ function scoreOpportunity(
   let score = 0;
   const pipelineName = (refs?.pipelineNameById.get(opp.pipelineId) ?? "").toLowerCase();
   const status = (opp.status || "").toLowerCase();
+  const preferredBoost = policy.preferredPipelineBoost ?? 0;
 
   if (policy.preferOpen && status === "open") score += 100;
   if (status === "won" || status === "lost" || status === "abandoned") score -= 50;
 
   for (const kw of policy.preferredPipelineKeywords) {
-    if (pipelineName.includes(kw.toLowerCase())) score += 40;
+    if (pipelineName.includes(kw.toLowerCase())) score += 40 + preferredBoost;
   }
   for (const kw of policy.marketingPipelineKeywords) {
     if (pipelineName.includes(kw.toLowerCase())) score -= 30;

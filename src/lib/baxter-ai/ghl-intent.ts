@@ -5,6 +5,11 @@ import "server-only";
  * Detects when a user question requires CRM data from GoHighLevel.
  */
 
+import {
+  detectRequestedGhlFields,
+  primaryRequestedField,
+} from "@/lib/baxter-data/ghl/field-aliases";
+
 export type GhlIntentType =
   | "contact_lookup" // "Who is John Smith?" / "Find contact for jane@example.com"
   | "contact_list" // "Show me all contacts tagged as 'hot lead'"
@@ -100,8 +105,9 @@ export function stripContactNamePossessive(name: string): string {
     .trim();
 }
 
+// email address before bare address so "email address" never captures as street address
 const CONTACT_FIELD =
-  "(?:full\\s+)?(?:street\\s+)?address|phone(?:\\s+number)?|email|e-mail|city|zip(?:\\s*code)?|postal(?:\\s*code)?|tags?|owner";
+  "e-?mail\\s+address|phone(?:\\s+number)?|e-?mail|mobile|cell|(?:full\\s+)?(?:street\\s+|home\\s+|mailing\\s+)?address|city|zip(?:\\s*code)?|postal(?:\\s*code)?|tags?|owner";
 
 const LOOKUP_PATTERNS = [
   /who\s+is\s+(\w+(?:\s+\w+)?)/i,
@@ -167,8 +173,9 @@ const WRITE_PATTERNS = [
 ];
 
 const STAGE_LOOKUP_PATTERNS = [
-  /what\s+stage\s+is\s+(.+?)(?:\s+in)?\??$/i,
-  /(?:which|what)\s+(?:pipeline\s+)?stage\s+(?:is|for)\s+(.+)/i,
+  /what\s+stage\s+is\s+(?:the\s+)?(.+?)(?:\s+opportunity|\s+deal)?(?:\s+in)?\??$/i,
+  /(?:which|what)\s+(?:pipeline\s+)?stage\s+(?:is|for)\s+(?:the\s+)?(.+?)(?:\s+opportunity|\s+deal)?/i,
+  /what\s+pipeline\s+is\s+(?:the\s+)?(.+?)(?:\s+in|\s+opportunity|\s+deal)?\??$/i,
   /where\s+is\s+(.+?)\s+in\s+(?:the\s+)?(?:pipeline|process)/i,
   /what\s+happens\s+next\s+(?:for|with)\s+(.+)/i,
   /what(?:'s|\s+is)\s+going\s+on\s+with\s+(.+)/i,
@@ -216,14 +223,21 @@ function detectConversationLookup(normalized: string): {
 }
 
 function detectRequestedField(question: string): GhlIntentDetection["entities"]["requestedField"] {
-  const q = question.toLowerCase();
-  if (/\b(address|street|mailing|zip|postal)\b/.test(q)) return "address";
-  if (/\b(phone|mobile|cell|telephone)\b/.test(q)) return "phone";
-  if (/\b(e-?mail)\b/.test(q) && !/\blast email|email we sent\b/.test(q)) return "email";
-  if (/\bcity\b/.test(q)) return "city";
-  if (/\b(tags?|tagged)\b/.test(q)) return "tags";
-  if (/\b(owner|assigned|who owns)\b/.test(q)) return "owner";
-  if (/\b(stage|pipeline|opportunit)\b/.test(q)) return "stage";
+  // Longest-phrase registry: "email address" → email, never street address.
+  const primary = primaryRequestedField(detectRequestedGhlFields(question));
+  if (
+    primary === "email" ||
+    primary === "phone" ||
+    primary === "address" ||
+    primary === "city" ||
+    primary === "owner" ||
+    primary === "tags" ||
+    primary === "source" ||
+    primary === "stage"
+  ) {
+    return primary;
+  }
+  if (primary === "pipeline" || primary === "value") return "stage";
   return "other";
 }
 
@@ -234,19 +248,29 @@ function isExplicitGhlMention(question: string): boolean {
 function cleanExtractedName(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   let name = stripContactNamePossessive(raw);
-  // Drop trailing CRM noise from capture groups
+  // Drop CRM / opportunity noise from capture groups ("the Denis Kornilov opportunity")
   name = name
+    .replace(/^(the|a|an)\s+/i, "")
     .replace(/\b(in\s+)?(ghl|gohighlevel|crm|go\s*high\s*level)\b/gi, "")
+    .replace(/\b(opportunity|deal|project|pipeline|stage)\b/gi, "")
     .replace(
-      /\b(full\s+)?(street\s+)?address|phone(\s+number)?|e-?mail|city|zip|postal|tags?|owner\b/gi,
+      /\b(full\s+)?(street\s+|home\s+|mailing\s+)?address|phone(\s+number)?|e-?mail(\s+address)?|city|zip|postal|tags?|owner\b/gi,
       "",
     )
     .replace(/[?.,!:;]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
   if (!name || name.length < 2) return undefined;
+  // Reject pronouns / stopwords — follow-ups inherit active entity in the query plan
+  if (/^(his|her|their|him|them|he|she|they|it|this|that)\b/i.test(name)) {
+    return undefined;
+  }
   // Reject if it looks like a sentence fragment without a person name
   if (/^(the|a|an|our|my|this|that)\b/i.test(name) && name.split(/\s+/).length < 2) {
+    return undefined;
+  }
+  // Also reject when cleanExtractedName left a question fragment
+  if (/^(what|who|where|when|why|how)\b/i.test(name)) {
     return undefined;
   }
   return name;
@@ -516,12 +540,22 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
             /(?:for|of)\s+([A-Za-z][A-Za-z .'-]{1,60}?)(?:\s+(?:in\s+)?(?:ghl|gohighlevel|crm))?[.?!]?$/i,
           )?.[1],
         ) ||
-        cleanExtractedName(
-          normalized.match(
-            /^([A-Za-z][A-Za-z .'-]{1,60}?)(?:'s)?\s+(?:full\s+)?(?:street\s+)?address/i,
-          )?.[1],
-        );
-      if (salvage) {
+        (requestedField === "address"
+          ? cleanExtractedName(
+              normalized.match(
+                /^([A-Za-z][A-Za-z .'-]{1,60}?)(?:'s)?\s+(?:full\s+)?(?:street\s+|home\s+|mailing\s+)?address\b/i,
+              )?.[1],
+            )
+          : undefined) ||
+        (requestedField === "email" || requestedField === "phone"
+          ? cleanExtractedName(
+              normalized.match(
+                /^([A-Za-z][A-Za-z .'-]{1,60}?)(?:'s)?\s+(?:e-?mail(?:\s+address)?|phone(?:\s+number)?)\b/i,
+              )?.[1],
+            )
+          : undefined);
+      // Reject sentence fragments / pronouns from salvage
+      if (salvage && !/^(what|who|where|when|why|how)\b/i.test(salvage)) {
         return {
           intent: "contact_lookup",
           confidence: 0.9,
@@ -570,7 +604,14 @@ export function shouldSkipSlackForGhlContactField(question: string): boolean {
   if (/\b(slack|#\w+|what did .+ say|who (said|mentioned)|in #)\b/i.test(question)) {
     return false;
   }
+  // Project UPDATE questions may still use Slack
+  if (/\b(latest update|project update|what(?:'s| is) (?:the )?latest on)\b/i.test(question)) {
+    return false;
+  }
   const intent = detectGhlIntent(question);
+  if (intent.intent === "opportunity_lookup" || intent.intent === "conversation_lookup") {
+    return true;
+  }
   if (intent.explicitGhl) {
     const field = intent.entities.requestedField;
     if (
@@ -579,7 +620,8 @@ export function shouldSkipSlackForGhlContactField(question: string): boolean {
       field === "email" ||
       field === "city" ||
       field === "tags" ||
-      field === "owner"
+      field === "owner" ||
+      field === "stage"
     ) {
       return true;
     }
