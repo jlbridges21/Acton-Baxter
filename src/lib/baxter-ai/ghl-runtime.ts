@@ -525,6 +525,161 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
   const intent = detectGhlIntent(question);
   const requestedField = intent.entities.requestedField ?? null;
 
+  // Conversation / email / SMS recall — contact → conversations → messages (bounded).
+  if (intent.intent === "conversation_lookup") {
+    const {
+      lookupGhlConversationMessages,
+      inferConversationLookupFilters,
+      formatGhlMessageEvidence,
+      buildDeterministicConversationAnswer,
+      extractConversationContactQuery,
+    } = await import("@/lib/baxter-data/ghl/conversation-lookup");
+    const filters = inferConversationLookupFilters(question);
+    const contactQuery =
+      intent.entities.contactEmail ||
+      intent.entities.contactPhone ||
+      intent.entities.contactName ||
+      extractConversationContactQuery(question) ||
+      "";
+
+    if (!contactQuery.trim()) {
+      return {
+        items: [],
+        contextText: "",
+        intent,
+        deterministicAnswer:
+          "Which contact should I look up in GoHighLevel? Share a name, email, or phone.",
+        ambiguityWarning: undefined,
+        diagnostics: {
+          query: question.slice(0, 80),
+          entityType: "none",
+          requestedField: "conversation",
+          ghlContactSearchAttempted: false,
+          matchesFound: 0,
+          selectedContactId: null,
+          fullContactHydrated: null,
+          addressPresent: null,
+          explicitGhl: Boolean(intent.explicitGhl),
+        },
+      };
+    }
+
+    const lookup = await lookupGhlConversationMessages({
+      contactQuery: contactQuery.trim(),
+      channel: filters.channel,
+      direction: filters.direction,
+      limit: /\brecent\b/i.test(question) ? 5 : 1,
+      maxConversations: 8,
+      messagesPerConversation: 40,
+    });
+
+    console.info(
+      "[GHL conversation lookup]",
+      JSON.stringify({
+        ...lookup.diagnostics,
+        // No message bodies in logs
+      }),
+    );
+
+    if (lookup.ambiguityMessage) {
+      return {
+        items: [],
+        contextText: "",
+        ambiguityWarning: lookup.ambiguityMessage,
+        intent,
+        diagnostics: {
+          query: contactQuery,
+          entityType: "contact",
+          requestedField: "conversation",
+          ghlContactSearchAttempted: true,
+          matchesFound: 2,
+          selectedContactId: null,
+          fullContactHydrated: null,
+          addressPresent: null,
+          explicitGhl: Boolean(intent.explicitGhl),
+        },
+      };
+    }
+
+    if (!lookup.ok || !lookup.selected || !lookup.contact) {
+      const failure =
+        lookup.failureMessage ||
+        `I couldn’t retrieve a matching conversation message for “${contactQuery}” in GoHighLevel.`;
+      return {
+        items: [],
+        contextText: failure,
+        intent,
+        deterministicAnswer: failure,
+        diagnostics: {
+          query: contactQuery,
+          entityType: lookup.contact ? "contact" : "none",
+          requestedField: "conversation",
+          ghlContactSearchAttempted: true,
+          matchesFound: lookup.contact ? 1 : 0,
+          selectedContactId: lookup.contact?.id ?? null,
+          fullContactHydrated: lookup.contact ? true : null,
+          addressPresent: null,
+          explicitGhl: Boolean(intent.explicitGhl),
+        },
+      };
+    }
+
+    const contactName =
+      lookup.contact.name ||
+      [lookup.contact.firstName, lookup.contact.lastName].filter(Boolean).join(" ") ||
+      contactQuery;
+    const evidenceText = formatGhlMessageEvidence(lookup.selected, contactName);
+    const answer = buildDeterministicConversationAnswer({
+      question,
+      contactName,
+      contactEmail: lookup.contact.email,
+      message: lookup.selected,
+    });
+    const channelLabel =
+      filters.channel === "email"
+        ? "Email"
+        : filters.channel === "sms"
+          ? "SMS"
+          : filters.channel === "call"
+            ? "Call"
+            : "Message";
+
+    return {
+      items: [
+        {
+          number: 1,
+          id: lookup.selected.id,
+          title: `GoHighLevel — ${contactName} — ${channelLabel}`,
+          summary: null,
+          contentExcerpt: evidenceText.slice(0, 1600),
+          category: "GoHighLevel",
+          tags: ["gohighlevel", "conversation", filters.channel],
+          sourceName: "GoHighLevel",
+          sourceUrl: null,
+          sourceType: "GoHighLevel",
+          mimeType: null,
+          updatedAt: lookup.selected.dateAdded || new Date().toISOString(),
+          citationLabel: `GoHighLevel — ${contactName} — ${channelLabel}`,
+          relevanceScore: 0.99,
+        },
+      ],
+      contextText: evidenceText,
+      intent,
+      deterministicAnswer: answer,
+      diagnostics: {
+        query: contactQuery,
+        entityType: "contact",
+        requestedField: "conversation",
+        ghlContactSearchAttempted: true,
+        matchesFound: 1,
+        selectedContactId: lookup.contact.id,
+        fullContactHydrated: true,
+        addressPresent: null,
+        explicitGhl: Boolean(intent.explicitGhl),
+      },
+    };
+  }
+
   if (String(intent.intent).startsWith("insight_")) {
     const insightText = await runInsightReport(intent).catch(
       (error) =>
@@ -568,7 +723,6 @@ export async function retrieveGhlLiveEvidence(question: string): Promise<{
       intent.intent === "contact_lookup" ||
       intent.intent === "opportunity_lookup" ||
       intent.intent === "general_crm" ||
-      intent.intent === "conversation_lookup" ||
       intent.intent === "calendar_query" ||
       requestedField === "address" ||
       requestedField === "phone" ||

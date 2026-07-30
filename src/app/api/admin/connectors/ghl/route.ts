@@ -23,7 +23,7 @@ import {
 } from "@/lib/connectors/ghl/resources/opportunities";
 import { listPipelines } from "@/lib/connectors/ghl/resources/pipelines";
 import { listCalendars } from "@/lib/connectors/ghl/resources/calendars";
-import { searchConversations } from "@/lib/connectors/ghl/resources/conversations";
+import { searchConversationsForAdmin } from "@/lib/baxter-data/ghl/conversation-lookup";
 import { listUsers } from "@/lib/connectors/ghl/resources/users";
 import { probeGhlCapabilities } from "@/lib/connectors/ghl/capabilities";
 import { getRecentAuditEntries } from "@/lib/connectors/ghl/actions/audit";
@@ -248,19 +248,23 @@ export async function POST(request: Request) {
           }
 
           case "conversations": {
-            const conversations = await searchConversations({
+            const searched = await searchConversationsForAdmin({
+              query: parsed.query,
               contactId: parsed.contactId,
               limit,
             });
-            const rows = await hydrateConversationRows(conversations.conversations);
+            const rows = await hydrateConversationRows(searched.conversations);
             browseData = {
               type: "conversations",
               rows,
               conversations: rows,
-              total: conversations.total,
+              total: searched.total,
               page,
               pageLimit: limit,
-              hasMore: rows.length >= limit,
+              hasMore: false,
+              statusMessage: searched.statusMessage,
+              searchMode: searched.searchMode,
+              contactsMatched: searched.contactsMatched,
             };
             break;
           }

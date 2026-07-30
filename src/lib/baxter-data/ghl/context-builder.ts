@@ -8,21 +8,18 @@ import {
 } from "@/lib/connectors/ghl/resources/opportunities";
 import { listPipelines, getPipelineById } from "@/lib/connectors/ghl/resources/pipelines";
 import { listUpcomingEvents } from "@/lib/connectors/ghl/resources/calendars";
-import { listConversationsForContact } from "@/lib/connectors/ghl/resources/conversations";
 import type {
   GhlEvidenceSource,
   GhlContact,
   GhlOpportunity,
   GhlPipeline,
   GhlCalendarEvent,
-  GhlConversation,
 } from "@/lib/connectors/ghl/types";
 import {
   createContactEvidenceSource,
   createOpportunityEvidenceSource,
   createPipelineEvidenceSource,
   createCalendarEventEvidenceSource,
-  createConversationEvidenceSource,
 } from "./evidence";
 import { detectGhlIntent, type GhlIntentDetection } from "@/lib/baxter-ai/ghl-intent";
 import { resolveContact, resolveOpportunity } from "./resolve";
@@ -342,57 +339,73 @@ async function buildCalendarContext(intent: GhlIntentDetection): Promise<GhlCont
 }
 
 async function buildConversationContext(intent: GhlIntentDetection): Promise<GhlContextResult> {
-  const { contactName } = intent.entities;
+  const contactQuery =
+    intent.entities.contactEmail || intent.entities.contactPhone || intent.entities.contactName;
 
-  if (!contactName) {
+  if (!contactQuery) {
     return {
       hasData: false,
-      contextText: "Please specify a contact name to look up conversations.",
+      contextText: "Please specify a contact name, email, or phone to look up conversations.",
       evidenceSources: [],
       citations: [],
       intent,
     };
   }
 
-  const contactResult = await resolveContact({ name: contactName });
-  if (!contactResult.resolved || !contactResult.entity) {
-    return {
-      hasData: false,
-      contextText: `No contact found matching "${contactName}".`,
-      evidenceSources: [],
-      citations: [],
-      intent,
-    };
-  }
+  const {
+    lookupGhlConversationMessages,
+    formatGhlMessageEvidence,
+    inferConversationLookupFilters,
+  } = await import("./conversation-lookup");
 
-  const conversations = await listConversationsForContact(contactResult.entity.id, {
-    limit: 5,
-  }).catch(() => [] as GhlConversation[]);
+  // Intent alone doesn't carry channel/direction; default to recent messages.
+  const filters = inferConversationLookupFilters(
+    [intent.entities.contactName, intent.entities.contactEmail, "latest message"]
+      .filter(Boolean)
+      .join(" "),
+  );
 
-  if (conversations.length === 0) {
-    return {
-      hasData: false,
-      contextText: `No conversations found for ${contactResult.entity.name}.`,
-      evidenceSources: [],
-      citations: [],
-      intent,
-    };
-  }
-
-  const contextParts = conversations.map((c: GhlConversation) => {
-    const lastMessage = c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : "Unknown";
-    return `- ${c.type || "Unknown type"}: Last message ${lastMessage}`;
+  const lookup = await lookupGhlConversationMessages({
+    contactQuery,
+    channel: filters.channel,
+    direction: "any",
+    limit: 3,
   });
+
+  if (lookup.ambiguityMessage) {
+    return {
+      hasData: false,
+      contextText: lookup.ambiguityMessage,
+      evidenceSources: [],
+      citations: [],
+      ambiguityWarning: lookup.ambiguityMessage,
+      intent,
+    };
+  }
+
+  if (!lookup.ok || !lookup.selected || !lookup.contact) {
+    return {
+      hasData: false,
+      contextText: lookup.failureMessage || `No conversations found for "${contactQuery}".`,
+      evidenceSources: lookup.evidenceSources,
+      citations: [],
+      intent,
+    };
+  }
+
+  const contactName =
+    lookup.contact.name ||
+    [lookup.contact.firstName, lookup.contact.lastName].filter(Boolean).join(" ") ||
+    contactQuery;
+  const parts = lookup.messages.map((m) => formatGhlMessageEvidence(m, contactName));
 
   return {
     hasData: true,
-    contextText: `Conversations with ${contactResult.entity.name}:\n${contextParts.join("\n")}`,
-    evidenceSources: conversations.map((c: GhlConversation) =>
-      createConversationEvidenceSource(c.id, `Conversation with ${contactResult.entity!.name}`),
-    ),
-    citations: conversations.map(
-      () => `GoHighLevel — conversation with ${contactResult.entity!.name}`,
-    ),
+    contextText: `Conversation messages for ${contactName}:\n\n${parts.join("\n\n---\n\n")}`,
+    evidenceSources: lookup.evidenceSources,
+    citations: [
+      `GoHighLevel — ${contactName} — ${lookup.selected.type.includes("EMAIL") || /email/i.test(lookup.selected.type) ? "Email" : "Message"}`,
+    ],
     intent,
   };
 }

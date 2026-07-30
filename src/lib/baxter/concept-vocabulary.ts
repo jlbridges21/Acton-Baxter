@@ -399,6 +399,20 @@ export function detectConceptQuestion(question: string): ConceptQuestionDetectio
     };
   }
 
+  // "What is the last email from X in GHL?" is CRM recall, not a tool definition.
+  if (
+    /\b(last|latest|recent)\s+(e-?mail|message|sms|conversation)\b/i.test(q) ||
+    /\bwhat did\s+.+\s+(e-?mail|say|send)\b/i.test(q)
+  ) {
+    return {
+      kind: "none",
+      conceptKey: null,
+      conceptName: null,
+      knowledgeSearchTerms: [],
+      isConcept: false,
+    };
+  }
+
   const concept = matchConceptFromQuestion(q);
   const hasPersonSignal = hasLikelyPersonRecordSignal(q);
 

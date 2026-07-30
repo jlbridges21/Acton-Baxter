@@ -7,4 +7,6 @@ export * from "./calendars";
 export * from "./conversations";
 export * from "./users";
 export * from "./resolve";
+export * from "./conversation-intent";
+export * from "./conversation-lookup";
 export * from "./context-builder";

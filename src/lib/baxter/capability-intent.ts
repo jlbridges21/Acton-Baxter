@@ -6,6 +6,7 @@
 import { looksLikeGoogleUrl, parseGoogleWorkspaceUrl } from "@/lib/connectors/google/google-url";
 import { detectSlackSearchIntent } from "@/lib/baxter-data/slack/intent";
 import { isProjectStatusQuestion } from "@/lib/baxter-data/slack/project-status";
+import { isGhlConversationLookupQuestion } from "@/lib/baxter-data/ghl/conversation-intent";
 
 export type CapabilityQuestionKind =
   | "general_capabilities"
@@ -84,6 +85,9 @@ export function isImpliedCapabilityAction(question: string): boolean {
   if (!q) return false;
   if (GENERAL_CAPABILITIES.test(q)) return false;
 
+  // GHL conversation / email recall is an action, not a capability FAQ
+  if (isGhlConversationLookupQuestion(q)) return true;
+
   // Strong Slack / project retrieval already owned by those pipelines
   const slackIntent = detectSlackSearchIntent(q);
   if (
@@ -131,6 +135,17 @@ export function classifyCapabilityQuestion(question: string): CapabilityQuestion
   const googleUrl = extractGoogleUrl(q);
   const slackChannel = extractSlackChannel(q);
   const topic = detectTopic(q);
+
+  // Conversation / CRM message recall must never become a capability FAQ.
+  if (isGhlConversationLookupQuestion(q)) {
+    return {
+      kind: "implied_action",
+      topic: "ghl",
+      googleUrl,
+      slackChannel,
+      reason: "ghl_conversation_lookup",
+    };
+  }
 
   if (GENERAL_CAPABILITIES.test(q)) {
     return {

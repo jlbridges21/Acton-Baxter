@@ -68,7 +68,10 @@ export type HydratedConversationRow = {
   id: string;
   contactId: string;
   contactName: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
   channel: string;
+  direction: "inbound" | "outbound" | "unknown";
   preview: string;
   unreadCount: number;
   lastActivityAt: string | null;
@@ -172,11 +175,23 @@ export async function hydrateConversationRows(
   const contacts = await getContactsByIds(contactIds);
   return conversations.map((c) => {
     const contact = contacts.get(c.contactId);
+    const lastType = (c.lastMessageType || c.type || "").toUpperCase();
+    // Conversation summaries sometimes mislabel TYPE_CALL while body looks like email —
+    // prefer explicit EMAIL/SMS/CALL tokens when present.
+    let channel = labelMessageType(c.lastMessageType || c.type);
+    if (lastType.includes("EMAIL")) channel = "Email";
+    else if (lastType.includes("SMS")) channel = "SMS";
+    else if (lastType.includes("VOICEMAIL")) channel = "Voicemail";
+    else if (lastType.includes("CALL")) channel = "Call";
+
     return {
       id: c.id,
       contactId: c.contactId,
       contactName: contact ? displayContactName(contact) : "Unknown contact",
-      channel: labelMessageType(c.lastMessageType || c.type),
+      contactEmail: contact?.email ?? null,
+      contactPhone: contact?.phone ? formatPhoneDisplay(contact.phone) : null,
+      channel,
+      direction: "unknown" as const,
       preview: sanitizeMessagePreview(c.lastMessageBody),
       unreadCount: c.unreadCount ?? 0,
       lastActivityAt: c.lastMessageAt || c.dateUpdated,
@@ -313,16 +328,36 @@ export async function buildConversationDetailView(
     limit: options?.limit ?? 30,
     lastMessageId: options?.lastMessageId,
   });
-  const convResult = await searchConversations({ limit: 50 }).catch(() => ({
-    conversations: [] as GhlConversation[],
-  }));
-  const conversation = convResult.conversations.find((c) => c.id === conversationId) ?? null;
+
+  // Prefer contact id from messages (avoids scanning only the first page of recent conversations).
+  let contactId = messagesResult.messages.find((m) => m.contactId)?.contactId || "";
+  let conversation: GhlConversation | null = null;
+
+  if (contactId) {
+    const scoped = await searchConversations({ contactId, limit: 20 }).catch(() => ({
+      conversations: [] as GhlConversation[],
+    }));
+    conversation = scoped.conversations.find((c) => c.id === conversationId) ?? null;
+  }
+  if (!conversation) {
+    const convResult = await searchConversations({ limit: 50 }).catch(() => ({
+      conversations: [] as GhlConversation[],
+    }));
+    conversation = convResult.conversations.find((c) => c.id === conversationId) ?? null;
+    if (!contactId) contactId = conversation?.contactId ?? "";
+  }
+
   let contactName = "Unknown contact";
-  const contactId = conversation?.contactId ?? "";
+  let contactEmail: string | null = null;
+  let contactPhone: string | null = null;
   if (contactId) {
     const map = await getContactsByIds([contactId]);
     const contact = map.get(contactId);
-    if (contact) contactName = displayContactName(contact);
+    if (contact) {
+      contactName = displayContactName(contact);
+      contactEmail = contact.email;
+      contactPhone = contact.phone ? formatPhoneDisplay(contact.phone) : null;
+    }
   }
 
   const messages = messagesResult.messages
@@ -332,23 +367,37 @@ export async function buildConversationDetailView(
       const tb = b.dateAdded ? new Date(b.dateAdded).getTime() : 0;
       return ta - tb;
     })
-    .map((m: GhlMessage) => ({
-      id: m.id,
-      direction: m.direction,
-      actorLabel: m.direction === "inbound" ? contactName : "Acton",
-      channel: labelMessageType(m.type),
-      body: stripHtmlToText(m.body ?? "")
-        .replace(/\s+\n/g, "\n")
-        .trim(),
-      at: formatGhlDateTime(m.dateAdded),
-      status: m.status,
-    }));
+    .map((m: GhlMessage) => {
+      const typeUpper = (m.type || "").toUpperCase();
+      let channel = labelMessageType(m.type);
+      if (typeUpper.includes("EMAIL")) channel = "Email";
+      else if (typeUpper.includes("SMS")) channel = "SMS";
+      else if (typeUpper.includes("VOICEMAIL")) channel = "Voicemail";
+      else if (typeUpper.includes("CALL")) channel = "Call";
+      return {
+        id: m.id,
+        direction: m.direction,
+        actorLabel: m.direction === "inbound" ? contactName : "Acton",
+        channel,
+        body: stripHtmlToText(m.body ?? "")
+          .replace(/\s+\n/g, "\n")
+          .trim(),
+        at: formatGhlDateTime(m.dateAdded),
+        status: m.status,
+        attachments: m.attachments?.length ?? 0,
+      };
+    });
+
+  const latest = messages.length ? messages[messages.length - 1] : null;
 
   return {
     conversationId,
     contactId,
     contactName,
+    contactEmail,
+    contactPhone,
     channel: labelMessageType(conversation?.lastMessageType || conversation?.type),
+    latestActivityLabel: latest?.at ?? formatGhlDateRelative(conversation?.lastMessageAt),
     messages,
     hasMore: messagesResult.hasMore,
   };

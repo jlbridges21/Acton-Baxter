@@ -32,7 +32,10 @@ type ConversationRow = {
   id: string;
   contactId?: string;
   contactName?: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
   channel?: string;
+  direction?: string;
   preview?: string;
   unreadCount?: number;
   lastActivityLabel?: string | null;
@@ -46,6 +49,9 @@ type BrowsePayload = {
   pageLimit: number;
   hasMore: boolean;
   filters?: Record<string, unknown>;
+  statusMessage?: string | null;
+  searchMode?: string | null;
+  contactsMatched?: number | null;
 };
 
 type PipelineCard = {
@@ -146,6 +152,9 @@ function normalizeBrowseData(
       data.filters && typeof data.filters === "object"
         ? (data.filters as Record<string, unknown>)
         : undefined,
+    statusMessage: typeof data.statusMessage === "string" ? data.statusMessage : null,
+    searchMode: typeof data.searchMode === "string" ? data.searchMode : null,
+    contactsMatched: typeof data.contactsMatched === "number" ? data.contactsMatched : null,
   };
 }
 
@@ -972,17 +981,32 @@ export function GhlConnectorClient({
                       placeholder={
                         activeTab === "contacts"
                           ? "Name, email, phone, address, city, ZIP…"
-                          : "Contact or preview…"
+                          : "Name, email, phone, or message keyword…"
                       }
                       className="h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm text-[var(--acton-fg)] outline-none focus:ring-2 focus:ring-[var(--acton-navy)]"
                     />
                   </label>
                 </div>
 
-                {loading ? <LoadingState label={`Loading ${activeTab}…`} /> : null}
+                {loading ? (
+                  <LoadingState
+                    label={
+                      activeTab === "conversations" && debouncedQuery
+                        ? "Searching GoHighLevel…"
+                        : `Loading ${activeTab}…`
+                    }
+                  />
+                ) : null}
 
                 {!loading && loadError ? (
                   <ErrorPanel title={loadError.message} error={loadError} onRetry={retryActive} />
+                ) : null}
+
+                {!loading &&
+                !loadError &&
+                activeTab === "conversations" &&
+                browse?.statusMessage ? (
+                  <p className="text-xs text-[var(--acton-muted)]">{browse.statusMessage}</p>
                 ) : null}
 
                 {!loading && !loadError && activeTab === "contacts" ? (
@@ -1102,7 +1126,13 @@ export function GhlConnectorClient({
 
                 {!loading && !loadError && activeTab === "conversations" ? (
                   conversationRows.length === 0 ? (
-                    <EmptyState message="No conversations found." />
+                    <EmptyState
+                      message={
+                        debouncedQuery
+                          ? browse?.statusMessage || "No matching conversations."
+                          : "No conversations found."
+                      }
+                    />
                   ) : (
                     <div className="space-y-3">
                       <ul className="divide-y divide-[var(--acton-border)] rounded-md border border-[var(--acton-border)]">
@@ -1114,7 +1144,7 @@ export function GhlConnectorClient({
                                   <p className="text-sm font-medium text-[var(--acton-fg)]">
                                     {row.contactName || "Unknown contact"}
                                   </p>
-                                  <span className="text-xs text-[var(--acton-muted)]">
+                                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700">
                                     {row.channel || "Message"}
                                   </span>
                                   {(row.unreadCount ?? 0) > 0 ? (
@@ -1123,7 +1153,12 @@ export function GhlConnectorClient({
                                     </span>
                                   ) : null}
                                 </div>
-                                <p className="mt-1 truncate text-sm text-[var(--acton-muted)]">
+                                <p className="mt-0.5 text-xs text-[var(--acton-muted)]">
+                                  {[row.contactEmail, row.contactPhone]
+                                    .filter(Boolean)
+                                    .join(" · ") || "No email/phone on contact"}
+                                </p>
+                                <p className="mt-1 line-clamp-2 text-sm text-[var(--acton-muted)]">
                                   {row.preview || "No preview"}
                                 </p>
                                 <p className="mt-1 text-xs text-[var(--acton-muted)]">

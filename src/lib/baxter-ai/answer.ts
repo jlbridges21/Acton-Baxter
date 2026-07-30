@@ -524,32 +524,38 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       contextItems = [...renumbered, ...kbItems].slice(0, 8);
     }
 
-    // Deterministic contact-field answers (address/phone/email/city) — no Slack/LLM guessing.
-    if (ghlEvidence?.deterministicAnswer && ghlEvidence.items.length > 0) {
-      const sources = ghlEvidence.items.map((item) => contextItemToSourceReference(item));
-      const message = await appendAssistantMessage({
-        conversationId: conversation.id,
-        content: ghlEvidence.deterministicAnswer,
-        insufficientKnowledge: false,
-        confidence: "high",
-        modelProvider: "ghl-resolve",
-        modelName: "deterministic-contact-field",
-        sources,
-        sourceEntryIds: sources.map((s, index) => ({
-          id: s.knowledgeEntryId || ghlEvidence!.items[index]!.id,
-          relevanceScore: 100,
-          order: index + 1,
-        })),
-      });
-      return toPublicAnswer({
-        conversationId: conversation.id,
-        messageId: message.id,
-        answer: ghlEvidence.deterministicAnswer,
-        sources,
-        confidence: "high",
-        insufficientKnowledge: false,
-        answerMode: "grounded",
-      });
+    // Deterministic contact-field / conversation answers — no Slack/LLM guessing.
+    if (ghlEvidence?.deterministicAnswer) {
+      const hasItems = ghlEvidence.items.length > 0;
+      const isConversationLookup = ghlEvidence.intent?.intent === "conversation_lookup";
+      if (hasItems || isConversationLookup) {
+        const sources = ghlEvidence.items.map((item) => contextItemToSourceReference(item));
+        const message = await appendAssistantMessage({
+          conversationId: conversation.id,
+          content: ghlEvidence.deterministicAnswer,
+          insufficientKnowledge: !hasItems,
+          confidence: hasItems ? "high" : "medium",
+          modelProvider: "ghl-resolve",
+          modelName: isConversationLookup
+            ? "deterministic-conversation"
+            : "deterministic-contact-field",
+          sources,
+          sourceEntryIds: sources.map((s, index) => ({
+            id: s.knowledgeEntryId || ghlEvidence!.items[index]!.id,
+            relevanceScore: 100,
+            order: index + 1,
+          })),
+        });
+        return toPublicAnswer({
+          conversationId: conversation.id,
+          messageId: message.id,
+          answer: ghlEvidence.deterministicAnswer,
+          sources,
+          confidence: hasItems ? "high" : "medium",
+          insufficientKnowledge: !hasItems,
+          answerMode: hasItems ? "grounded" : "clarification",
+        });
+      }
     }
   }
 

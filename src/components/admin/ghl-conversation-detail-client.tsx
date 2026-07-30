@@ -13,6 +13,8 @@ type Message = {
   channel: string;
   body: string;
   at: string | null;
+  status?: string | null;
+  attachments?: number;
 };
 
 export function GhlConversationDetailClient() {
@@ -20,11 +22,16 @@ export function GhlConversationDetailClient() {
   const conversationId = params.conversationId;
   const [contactName, setContactName] = useState("Conversation");
   const [contactId, setContactId] = useState<string | null>(null);
+  const [contactEmail, setContactEmail] = useState<string | null>(null);
+  const [contactPhone, setContactPhone] = useState<string | null>(null);
   const [channel, setChannel] = useState<string | null>(null);
+  const [latestActivity, setLatestActivity] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [channelFilter, setChannelFilter] = useState<"all" | "Email" | "SMS" | "Call">("all");
 
   const load = useCallback(
     async (opts?: { lastMessageId?: string; append?: boolean }) => {
@@ -49,7 +56,10 @@ export function GhlConversationDetailClient() {
         const data = json.result.data;
         setContactName(data.contactName || "Conversation");
         setContactId(data.contactId || null);
+        setContactEmail(data.contactEmail || null);
+        setContactPhone(data.contactPhone || null);
         setChannel(data.channel || null);
+        setLatestActivity(data.latestActivityLabel || null);
         setHasMore(Boolean(data.hasMore));
         setMessages((prev) => (opts?.append ? [...data.messages, ...prev] : data.messages));
       } catch (err) {
@@ -71,11 +81,21 @@ export function GhlConversationDetailClient() {
     };
   }, [load]);
 
+  async function copyBody(message: Message) {
+    try {
+      await navigator.clipboard.writeText(message.body || "");
+      setCopiedId(message.id);
+      window.setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      setError("Couldn't copy message body.");
+    }
+  }
+
   if (loading) {
     return <p className="p-6 text-sm text-[var(--acton-muted)]">Opening conversation…</p>;
   }
 
-  if (error) {
+  if (error && messages.length === 0) {
     return (
       <div className="space-y-3 p-6">
         <p className="text-sm text-red-700">{error}</p>
@@ -86,18 +106,27 @@ export function GhlConversationDetailClient() {
     );
   }
 
+  const visible =
+    channelFilter === "all"
+      ? messages
+      : messages.filter((m) => m.channel === channelFilter || m.channel?.includes(channelFilter));
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
       <div>
         <Link
-          href="/admin/connectors/ghl"
+          href="/admin/connectors/ghl?tab=conversations"
           className="text-sm text-[var(--acton-muted)] hover:text-[var(--acton-fg)]"
         >
-          ← Acton CRM
+          ← Conversations
         </Link>
         <h1 className="mt-2 text-2xl font-semibold text-[var(--acton-fg)]">{contactName}</h1>
         <p className="text-sm text-[var(--acton-muted)]">
+          {[contactEmail, contactPhone].filter(Boolean).join(" · ") || "No email/phone"}
+        </p>
+        <p className="mt-1 text-sm text-[var(--acton-muted)]">
           {channel || "Conversation"}
+          {latestActivity ? ` · Latest ${latestActivity}` : null}
           {contactId ? (
             <>
               {" · "}
@@ -110,6 +139,23 @@ export function GhlConversationDetailClient() {
             </>
           ) : null}
         </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {(["all", "Email", "SMS", "Call"] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setChannelFilter(f)}
+            className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
+              channelFilter === f
+                ? "border-sky-600 bg-sky-50 text-sky-800"
+                : "border-[var(--acton-border)] text-[var(--acton-muted)]"
+            }`}
+          >
+            {f === "all" ? "All types" : f}
+          </button>
+        ))}
       </div>
 
       {hasMore ? (
@@ -128,10 +174,10 @@ export function GhlConversationDetailClient() {
       ) : null}
 
       <Card className="divide-y divide-[var(--acton-border)] p-0">
-        {messages.length === 0 ? (
+        {visible.length === 0 ? (
           <p className="p-4 text-sm text-[var(--acton-muted)]">No messages in this window.</p>
         ) : (
-          messages.map((m) => (
+          visible.map((m) => (
             <div
               key={m.id}
               className={`space-y-1 px-4 py-3 text-sm ${
@@ -140,8 +186,24 @@ export function GhlConversationDetailClient() {
             >
               <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--acton-muted)]">
                 <span className="font-medium text-[var(--acton-fg)]">{m.actorLabel}</span>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                    m.direction === "inbound"
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {m.direction === "inbound" ? "Inbound" : "Outbound"}
+                </span>
                 <span>{m.channel}</span>
                 <span>{m.at || "—"}</span>
+                <button
+                  type="button"
+                  onClick={() => void copyBody(m)}
+                  className="ml-auto text-[11px] font-medium text-sky-700 hover:underline"
+                >
+                  {copiedId === m.id ? "Copied" : "Copy"}
+                </button>
               </div>
               <p className="whitespace-pre-wrap text-[var(--acton-fg)]">{m.body || "(no body)"}</p>
             </div>

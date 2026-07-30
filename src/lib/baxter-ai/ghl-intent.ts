@@ -174,6 +174,47 @@ const STAGE_LOOKUP_PATTERNS = [
   /what(?:'s|\s+is)\s+going\s+on\s+with\s+(.+)/i,
 ];
 
+const CONVERSATION_LOOKUP_PATTERNS = [
+  /\blast\s+(?:e-?mail|message|sms|text).{0,40}\bfrom\s+([A-Za-z][A-Za-z .'-]{1,60})/i,
+  /\b(?:e-?mail|message|sms|text).{0,40}\bfrom\s+([A-Za-z][A-Za-z .'-]{1,60})/i,
+  /\bwhat did\s+([A-Za-z][A-Za-z .'-]{1,60})\s+(?:last\s+)?(?:e-?mail|say|send|text)/i,
+  /\b(?:latest|recent|last)\s+(?:e-?mails?|messages?|conversation).{0,40}\b(?:with|for|from)\s+([A-Za-z][A-Za-z .'-]{1,60})/i,
+  /\b(?:show|get|find|pull)\s+(?:me\s+)?([A-Za-z][A-Za-z .'-]{1,60})(?:'s)?\s+(?:(?:recent|latest|last)\s+)?(?:e-?mails?|messages?)/i,
+  /\b([A-Za-z][A-Za-z .'-]{1,60})(?:'s)\s+(?:(?:recent|latest|last)\s+)?(?:e-?mail|message|sms|conversation)\b/i,
+  /\bconversation(?:s)?\s+(?:with|for)\s+([A-Za-z][A-Za-z .'-]{1,60})/i,
+  /\blast\s+e-?mail\s+we\s+sent\s+([A-Za-z][A-Za-z .'-]{1,60})/i,
+];
+
+function detectConversationLookup(normalized: string): {
+  contactName?: string;
+  contactEmail?: string;
+} | null {
+  const email = normalized.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const isConvShape =
+    /\b(last|latest|recent)\s+(e-?mail|message|sms|text|conversation)\b/i.test(normalized) ||
+    /\bwhat did\s+.+\s+(e-?mail|say|send|text)\b/i.test(normalized) ||
+    /\b(show|get|find|pull).{0,40}\b(e-?mails?|messages?|conversation)\b/i.test(normalized) ||
+    /\bconversation(?:s)?\s+(?:with|for|from)\b/i.test(normalized);
+  if (!isConvShape && !email) return null;
+
+  if (email?.[0] && isConvShape) {
+    return { contactEmail: email[0] };
+  }
+
+  for (const pattern of CONVERSATION_LOOKUP_PATTERNS) {
+    const match = normalized.match(pattern);
+    if (match?.[1]) {
+      const name = cleanExtractedName(match[1]);
+      if (name) return { contactName: name };
+    }
+  }
+
+  if (email?.[0] && /\b(e-?mail|message|conversation)\b/i.test(normalized)) {
+    return { contactEmail: email[0] };
+  }
+  return null;
+}
+
 function detectRequestedField(question: string): GhlIntentDetection["entities"]["requestedField"] {
   const q = question.toLowerCase();
   if (/\b(address|street|mailing|zip|postal)\b/.test(q)) return "address";
@@ -310,6 +351,24 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
       intent: "insight_unread",
       confidence: 0.8,
       entities,
+      isWriteIntent: false,
+      requiresConfirmation: false,
+      explicitGhl,
+    };
+  }
+
+  // Conversation / email recall before contact-field and opportunity patterns
+  const conversationHit = detectConversationLookup(normalized);
+  if (conversationHit) {
+    return {
+      intent: "conversation_lookup",
+      confidence: 0.95,
+      entities: {
+        ...entities,
+        contactName: conversationHit.contactName,
+        contactEmail: conversationHit.contactEmail,
+        requestedField: "other",
+      },
       isWriteIntent: false,
       requiresConfirmation: false,
       explicitGhl,
