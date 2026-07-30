@@ -118,7 +118,7 @@ export function PemNeatCreateClient({
               id="prospect-name"
               value={prospectName}
               onChange={(e) => setProspectName(e.target.value)}
-              placeholder="Betsy Smith"
+              placeholder="John Doe"
               disabled={submitting}
               className="mt-1 h-10 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--acton-navy)]"
               required

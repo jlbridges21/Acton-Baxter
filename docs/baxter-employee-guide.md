@@ -22,9 +22,9 @@ Baxter is Acton ADU’s internal AI teammate. It helps employees with company pr
 - “What is our process for X?” (when documented in approved sources)
 - “What is an ADU?” (general knowledge)
 - “How much have we sold this year?” (from approved Sales Performance Report)
-- “What stage is Lori Harris in?” (live GoHighLevel, when connected)
-- “What happens next for Lori?” (live CRM stage + approved process docs)
-- “Move Lori to Project Findings Complete.” (authorized users only — Baxter previews, then requires **confirm**)
+- “What stage is Jane Doe in?” (live GoHighLevel, when connected)
+- “What happens next for Jane?” (live CRM stage + approved process docs)
+- “Move Jane Doe to Project Findings Complete.” (authorized users only — Baxter previews, then requires **confirm**)
 
 Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins.
 

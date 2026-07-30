@@ -85,35 +85,26 @@ describe("Slack Search OAuth redirect URI", () => {
   });
 });
 
-describe("PEM identity without Slack Search", () => {
+describe("PEM slash command without Slack Search", () => {
   beforeEach(() => {
     vi.resetModules();
     seedEnv();
   });
 
-  it("opens PEM modal when Slack maps via email without search connection", async () => {
+  it("returns web handoff without opening a modal or requiring identity mapping", async () => {
+    const identity = vi.fn();
     vi.doMock("@/lib/slack/identity", () => ({
-      resolveBaxterUserForSlackIdentity: async () => ({
-        userId: "11111111-1111-1111-1111-111111111111",
-        displayName: "Jackson Bridges",
-        matchedVia: "email",
-      }),
+      resolveBaxterUserForSlackIdentity: identity,
       PEM_UNMAPPED_SLACK_USER_MESSAGE,
       upsertSlackUserMapping: async () => undefined,
     }));
-    vi.doMock("@/lib/pem-neat/salespeople", () => ({
-      listSalespeople: async () => [
-        { id: "11111111-1111-1111-1111-111111111111", displayName: "Alex Sales" },
-      ],
-      resolveSalespersonDisplayName: async () => ({ displayName: "Alex Sales" }),
-    }));
 
-    const viewsOpen = vi.fn(async () => ({ ok: true }));
+    const viewsOpen = vi.fn();
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
         if (String(url).includes("views.open")) {
-          await viewsOpen();
+          viewsOpen();
           return { json: async () => ({ ok: true }) };
         }
         return { json: async () => ({ ok: false }) };
@@ -128,11 +119,13 @@ describe("PEM identity without Slack Search", () => {
       trigger_id: "trig.1",
       command: "/pem",
     });
-    expect(ack.text).toMatch(/Opening PEM/i);
-    expect(viewsOpen).toHaveBeenCalled();
+    expect(ack.text).toMatch(/too long for Slack/i);
+    expect(JSON.stringify(ack.blocks)).toContain("/pem-neats/new");
+    expect(viewsOpen).not.toHaveBeenCalled();
+    expect(identity).not.toHaveBeenCalled();
   });
 
-  it("unmapped Slack user gets Baxter mapping error, not Connect Slack Search", async () => {
+  it("unmapped Slack user still gets web handoff, not Connect Slack Search", async () => {
     vi.doMock("@/lib/slack/identity", () => ({
       resolveBaxterUserForSlackIdentity: async () => null,
       PEM_UNMAPPED_SLACK_USER_MESSAGE,
@@ -147,8 +140,9 @@ describe("PEM identity without Slack Search", () => {
       trigger_id: "trig.1",
       command: "/pem",
     });
-    expect(ack.text).toContain("couldn’t match your Slack account");
+    expect(ack.text).toMatch(/too long for Slack/i);
     expect(ack.text).not.toMatch(/Connect Slack Search/i);
+    expect(ack.text).not.toContain("couldn’t match your Slack account");
   });
 });
 
@@ -167,6 +161,8 @@ describe("/help and /clear without OAuth", () => {
     });
     expect(ack.text).toContain("/recall");
     expect(ack.text).toContain("/pem");
+    expect(ack.text).toContain("PEM NEAT tool");
+    expect(ack.text).not.toMatch(/transcript.*Slack modal|modal to create/i);
   });
 
   it("/clear works without Slack Search", async () => {

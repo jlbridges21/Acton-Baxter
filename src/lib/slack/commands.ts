@@ -20,6 +20,8 @@ export type SlackCommandPayload = {
 export type SlackCommandAck = {
   response_type: "ephemeral";
   text: string;
+  /** Optional Block Kit blocks (e.g. link buttons for `/pem` web handoff). */
+  blocks?: unknown[];
 };
 
 /**

@@ -3,7 +3,6 @@ import { resetEnvCacheForTests } from "@/lib/env";
 import {
   detectPemIntent,
   parsePemEntityQuery,
-  pemHelpDefinitionAnswer,
 } from "@/lib/baxter-data/pem-neats";
 import {
   detectConceptQuestion,
@@ -149,6 +148,7 @@ describe("Knowledge exact title ranking for PEM NEAT", () => {
         status: "approved",
         visibility: "internal",
         category: "General",
+        source_type: "manual",
       },
       SALES_ID,
     );
@@ -160,6 +160,7 @@ describe("Knowledge exact title ranking for PEM NEAT", () => {
         status: "approved",
         visibility: "internal",
         category: "Sales",
+        source_type: "manual",
       },
       SALES_ID,
     );
@@ -211,6 +212,7 @@ describe("answerBaxterQuestion concept routing", () => {
         status: "approved",
         visibility: "internal",
         category: "Sales",
+        source_type: "manual",
       },
       SALES_ID,
     );

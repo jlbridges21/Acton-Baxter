@@ -187,7 +187,7 @@ Secrets are never displayed — only present/absent indicators.
 | `/clear` slash command       | Yes — reset Baxter conversation      |
 | `/help` slash command        | Yes — capabilities and examples      |
 | `/recall` slash command      | Yes — live Slack history search      |
-| `/pem` slash command         | Yes — PEM NEAT modal (interactivity) |
+| `/pem` slash command         | Yes — opens Baxter web PEM NEAT tool |
 | Bot-to-bot messages          | Ignored                              |
 | Duplicate Slack retries      | Deduped safely                       |
 
@@ -217,15 +217,15 @@ Full code list: `docs/slack-setup.md` section K.
 
 ## API routes
 
-| Route                          | Method | Purpose                    |
-| ------------------------------ | ------ | -------------------------- |
-| `/api/slack/events`            | POST   | Events API (DMs, mentions) |
-| `/api/slack/commands/property` | POST   | `/property` slash command  |
-| `/api/slack/commands/clear`    | POST   | `/clear` slash command     |
-| `/api/slack/commands/help`     | POST   | `/help` slash command      |
-| `/api/slack/commands/recall`   | POST   | `/recall` slash command    |
-| `/api/slack/commands/pem`      | POST   | `/pem` slash command       |
-| `/api/slack/interactions`      | POST   | Modal submissions (`/pem`) |
+| Route                          | Method | Purpose                            |
+| ------------------------------ | ------ | ---------------------------------- |
+| `/api/slack/events`            | POST   | Events API (DMs, mentions)         |
+| `/api/slack/commands/property` | POST   | `/property` slash command          |
+| `/api/slack/commands/clear`    | POST   | `/clear` slash command             |
+| `/api/slack/commands/help`     | POST   | `/help` slash command              |
+| `/api/slack/commands/recall`   | POST   | `/recall` slash command            |
+| `/api/slack/commands/pem`      | POST   | `/pem` — open Baxter PEM NEAT tool |
+| `/api/slack/interactions`      | POST   | Reserved for interactive payloads  |
 
 Manifest: `docs/slack-app-manifest.yaml`
 
@@ -233,18 +233,18 @@ Manifest: `docs/slack-app-manifest.yaml`
 
 ## Slash commands (quick reference)
 
-| Route                          | Purpose                            | Slash Command     |
-| ------------------------------ | ---------------------------------- | ----------------- |
-| `/api/slack/commands/property` | Start Property Research workflow   | `/property`       |
-| `/api/slack/commands/clear`    | Clear Baxter conversation context  | `/clear`          |
-| `/api/slack/commands/help`     | Show Baxter help and capabilities  | `/help`           |
-| `/api/slack/commands/pem`      | Open PEM NEAT creation modal       | `/pem`            |
-| `/api/slack/commands/recall`   | Explicitly search Slack history    | `/recall`         |
-| `/api/slack/interactions`      | Handle PEM modal `view_submission` | _(interactivity)_ |
+| Route                          | Purpose                                                | Slash Command     |
+| ------------------------------ | ------------------------------------------------------ | ----------------- |
+| `/api/slack/commands/property` | Start Property Research workflow                       | `/property`       |
+| `/api/slack/commands/clear`    | Clear Baxter conversation context                      | `/clear`          |
+| `/api/slack/commands/help`     | Show Baxter help and capabilities                      | `/help`           |
+| `/api/slack/commands/pem`      | Open Baxter’s Partnership Evaluation Meeting NEAT tool | `/pem`            |
+| `/api/slack/commands/recall`   | Explicitly search Slack history                        | `/recall`         |
+| `/api/slack/interactions`      | Reserved (no PEM modal)                                | _(interactivity)_ |
 
 Plain-text `/clear` and `/help` in DMs still work via the Events API. Slash commands are shortcuts that use the same underlying Baxter logic.
 
 - `/help` — always works; no Slack Search OAuth; no OpenAI.
 - `/clear` — resets conversation using Slack user/thread identity only; no Slack Search OAuth.
 - `/recall` — forces live Slack retrieval. Public history can use the bot path; private channels/DMs need the employee’s Slack Search link under Settings → Integrations.
-- `/pem` — requires Interactivity plus a Slack→Baxter user match (email / mapping). **Does not require Slack Search OAuth.**
+- `/pem` — returns a link/button to `/pem-neats/new` because full meeting transcripts exceed practical Slack modal input limits (~3000 characters). **Does not require Slack Search OAuth.** Generation stays in the Baxter web app.

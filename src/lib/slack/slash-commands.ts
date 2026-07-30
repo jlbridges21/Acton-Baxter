@@ -4,19 +4,21 @@ import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
 import { baxterHelpText, CLEAR_RESPONSE_SLACK } from "@/lib/baxter-ai/commands";
+import { DEMO_CUSTOMER_NAME, DEMO_PROSPECT_NAME } from "@/lib/demo-identity";
 import { getPublicAppBaseUrl } from "@/lib/slack/config";
 import { buildSlackExternalThreadId } from "@/lib/slack/baxter-events";
 import { buildBaxterSlackText, splitSlackMessage } from "@/lib/slack/format";
 import type { SlackCommandAck, SlackCommandPayload } from "@/lib/slack/commands";
-import { listSalespeople, resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
-import { createPemNeatInputSchema } from "@/lib/pem-neat/schemas";
-import { getPemNeatStore } from "@/lib/pem-neat/store";
-import { startPemNeatGeneration } from "@/lib/pem-neat/run-generation";
 
-/** Slack plain_text_input max length for multiline blocks. */
+/**
+ * Slack `plain_text_input` max_length is capped near 3000 characters.
+ * Real PEM transcripts are often ~100k+ characters, so `/pem` hands off to the web app.
+ * Kept as documentation of the platform limit (not used for input validation anymore).
+ */
 export const SLACK_PEM_TRANSCRIPT_MAX_CHARS = 3000;
 
-export const PEM_MODAL_CALLBACK_ID = "baxter_pem_create";
+export const PEM_NEW_PATH = "/pem-neats/new";
+export const PEM_LIST_PATH = "/pem-neats";
 
 function assertTeamAllowed(teamId: string | undefined): void {
   const env = getEnv();
@@ -81,18 +83,68 @@ export function buildSlashHelpText(): string {
     "• `/clear` — reset this Baxter conversation",
     "• `/help` — show this help",
     "• `/recall <query>` — search Slack history (same live retrieval as chat)",
-    "• `/pem` — start a Partnership Evaluation Meeting NEAT",
+    "• `/pem` — open Baxter’s PEM NEAT tool to generate structured sales intelligence from a Partnership Evaluation Meeting transcript",
     "• `/property <address>` — start Property Research",
     "",
     "Examples:",
-    '• Ask: "What is Carter French’s Type 1 Pain?"',
-    '• GHL: "What is Rachel Redmond’s address?"',
+    `• Ask: "What is ${DEMO_PROSPECT_NAME}’s Type 1 Pain?"`,
+    `• GHL: "What is ${DEMO_CUSTOMER_NAME}’s address?"`,
     "• Recall: `/recall what did Jess say last in #project-management?`",
     "",
     `• Baxter: ${base}/`,
-    `• PEM NEATs: ${base}/pem-neats`,
+    `• PEM NEATs: ${base}${PEM_LIST_PATH}`,
     `• Integrations: ${base}/settings/integrations`,
   ].join("\n");
+}
+
+/** Ephemeral `/pem` response: Slack cannot hold realistic PEM transcript lengths. */
+export function buildPemWebHandoffAck(): SlackCommandAck {
+  const base = getPublicAppBaseUrl();
+  const newUrl = `${base}${PEM_NEW_PATH}`;
+  const listUrl = `${base}${PEM_LIST_PATH}`;
+  const text = [
+    "Generate a Partnership Evaluation Meeting NEAT in Baxter.",
+    "",
+    "PEM transcripts are usually too long for Slack input, so PEM generation happens in the Baxter web app.",
+    "",
+    `<${newUrl}|Open PEM NEAT Tool> · <${listUrl}|View Existing PEM NEATs>`,
+  ].join("\n");
+
+  return {
+    response_type: "ephemeral",
+    text,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            "*Generate a Partnership Evaluation Meeting NEAT in Baxter.*",
+            "",
+            "PEM transcripts are usually too long for Slack input, so PEM generation happens in the Baxter web app.",
+          ].join("\n"),
+        },
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "Open PEM NEAT Tool" },
+            url: newUrl,
+            action_id: "open_pem_neat_tool",
+            style: "primary",
+          },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "View Existing PEM NEATs" },
+            url: listUrl,
+            action_id: "view_existing_pem_neats",
+          },
+        ],
+      },
+    ],
+  };
 }
 
 export async function handleHelpSlashCommand(
@@ -135,286 +187,14 @@ export async function handleRecallSlashCommand(
   };
 }
 
-async function slackApiPost(
-  method: string,
-  body: Record<string, unknown>,
-): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> {
-  const env = getEnv();
-  if (!env.SLACK_BOT_TOKEN) {
-    return { ok: false, error: "missing_bot_token" };
-  }
-  const response = await fetch(`https://slack.com/api/${method}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: JSON.stringify(body),
-  });
-  return (await response.json().catch(() => ({ ok: false, error: "bad_json" }))) as {
-    ok: boolean;
-    error?: string;
-  };
-}
-
 /**
- * Resolve Slack user → Baxter profile for PEM creation.
- * Uses Slack identity mapping (email / mappings / incidental Search link).
- * Does NOT require Slack Search OAuth.
+ * `/pem` — launcher into Baxter web PEM NEAT tool.
+ * Does not open a Slack modal (transcripts exceed Slack plain_text_input limits).
+ * Does not require Slack Search OAuth or a Baxter user mapping.
  */
-export async function resolveBaxterUserIdForSlackPem(input: {
-  slackUserId: string;
-  slackTeamId: string;
-}): Promise<{ userId: string; displayName: string | null } | null> {
-  const { resolveBaxterUserForSlackIdentity } = await import("@/lib/slack/identity");
-  const matched = await resolveBaxterUserForSlackIdentity(input);
-  if (!matched) return null;
-  return { userId: matched.userId, displayName: matched.displayName };
-}
-
-export async function buildPemCreateModalView(input: {
-  privateMetadata: string;
-}): Promise<Record<string, unknown>> {
-  const salespeople = await listSalespeople();
-  const options = salespeople.slice(0, 100).map((s) => ({
-    text: { type: "plain_text", text: s.displayName.slice(0, 75) },
-    value: s.id,
-  }));
-
-  if (options.length === 0) {
-    options.push({
-      text: { type: "plain_text", text: "No Sales users available" },
-      value: "none",
-    });
-  }
-
-  const base = getPublicAppBaseUrl();
-
-  return {
-    type: "modal",
-    callback_id: PEM_MODAL_CALLBACK_ID,
-    private_metadata: input.privateMetadata,
-    title: { type: "plain_text", text: "PEM NEAT" },
-    submit: { type: "plain_text", text: "Generate" },
-    close: { type: "plain_text", text: "Cancel" },
-    blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `Create a Partnership Evaluation Meeting NEAT. Long transcripts (>${SLACK_PEM_TRANSCRIPT_MAX_CHARS} chars): use <${base}/pem-neats/new|the web form>.`,
-        },
-      },
-      {
-        type: "input",
-        block_id: "prospect_name",
-        label: { type: "plain_text", text: "Prospect Name" },
-        element: {
-          type: "plain_text_input",
-          action_id: "value",
-          placeholder: { type: "plain_text", text: "Robert Vertin" },
-        },
-      },
-      {
-        type: "input",
-        block_id: "salesperson",
-        label: { type: "plain_text", text: "Salesperson" },
-        element: {
-          type: "static_select",
-          action_id: "value",
-          placeholder: { type: "plain_text", text: "Select salesperson" },
-          options,
-        },
-      },
-      {
-        type: "input",
-        block_id: "meeting_date",
-        optional: true,
-        label: { type: "plain_text", text: "Meeting Date (YYYY-MM-DD)" },
-        element: {
-          type: "plain_text_input",
-          action_id: "value",
-          placeholder: { type: "plain_text", text: "2026-07-29" },
-        },
-      },
-      {
-        type: "input",
-        block_id: "transcript",
-        label: { type: "plain_text", text: "Transcript" },
-        element: {
-          type: "plain_text_input",
-          action_id: "value",
-          multiline: true,
-          max_length: SLACK_PEM_TRANSCRIPT_MAX_CHARS,
-          placeholder: {
-            type: "plain_text",
-            text: "Paste the full Partnership Evaluation Meeting transcript…",
-          },
-        },
-      },
-    ],
-  };
-}
-
 export async function handlePemSlashCommand(
-  payload: SlackCommandPayload & { trigger_id?: string },
+  payload: SlackCommandPayload,
 ): Promise<SlackCommandAck> {
   assertTeamAllowed(payload.team_id);
-
-  if (!payload.user_id || !payload.team_id) {
-    return {
-      response_type: "ephemeral",
-      text: "Unable to identify your Slack user for PEM creation.",
-    };
-  }
-
-  const mapped = await resolveBaxterUserIdForSlackPem({
-    slackUserId: payload.user_id,
-    slackTeamId: payload.team_id,
-  });
-  if (!mapped) {
-    const base = getPublicAppBaseUrl();
-    const { PEM_UNMAPPED_SLACK_USER_MESSAGE } = await import("@/lib/slack/identity");
-    return {
-      response_type: "ephemeral",
-      text: `${PEM_UNMAPPED_SLACK_USER_MESSAGE}\n\nWeb: <${base}/pem-neats/new|Create PEM NEAT>`,
-    };
-  }
-
-  if (!payload.trigger_id) {
-    return {
-      response_type: "ephemeral",
-      text: "Slack did not provide a trigger_id to open the PEM form. Try again, or use the web form.",
-    };
-  }
-
-  const privateMetadata = JSON.stringify({
-    teamId: payload.team_id,
-    userId: payload.user_id,
-    channelId: payload.channel_id ?? null,
-    responseUrl: payload.response_url ?? null,
-    baxterUserId: mapped.userId,
-  });
-
-  const view = await buildPemCreateModalView({ privateMetadata });
-  const opened = await slackApiPost("views.open", {
-    trigger_id: payload.trigger_id,
-    view,
-  });
-
-  if (!opened.ok) {
-    const base = getPublicAppBaseUrl();
-    return {
-      response_type: "ephemeral",
-      text: `Couldn't open the PEM form (${opened.error ?? "unknown"}). Enable Interactivity on the Slack app, or create at <${base}/pem-neats/new|PEM NEATs>.`,
-    };
-  }
-
-  return {
-    response_type: "ephemeral",
-    text: "Opening PEM NEAT form…",
-  };
-}
-
-type PemPrivateMeta = {
-  teamId?: string;
-  userId?: string;
-  channelId?: string | null;
-  responseUrl?: string | null;
-  baxterUserId?: string;
-};
-
-export async function handlePemModalSubmission(view: {
-  private_metadata?: string;
-  state?: {
-    values?: Record<
-      string,
-      Record<string, { value?: string; selected_option?: { value?: string } }>
-    >;
-  };
-}): Promise<
-  | { ok: true; message: string }
-  | { ok: false; errors: Record<string, string> }
-  | { ok: false; message: string }
-> {
-  let meta: PemPrivateMeta = {};
-  try {
-    meta = JSON.parse(view.private_metadata || "{}") as PemPrivateMeta;
-  } catch {
-    return { ok: false, message: "Invalid PEM form metadata." };
-  }
-
-  if (!meta.baxterUserId || !meta.userId || !meta.teamId) {
-    return { ok: false, message: "Missing Baxter identity for PEM creation." };
-  }
-
-  // Re-verify mapping still valid
-  const mapped = await resolveBaxterUserIdForSlackPem({
-    slackUserId: meta.userId,
-    slackTeamId: meta.teamId,
-  });
-  if (!mapped || mapped.userId !== meta.baxterUserId) {
-    return {
-      ok: false,
-      message: "Your Slack account is not authorized to create PEM NEATs.",
-    };
-  }
-
-  const values = view.state?.values ?? {};
-  const prospectName = values.prospect_name?.value?.value?.trim() ?? "";
-  const salespersonUserId = values.salesperson?.value?.selected_option?.value ?? "";
-  const meetingDateRaw = values.meeting_date?.value?.value?.trim() || null;
-  const transcript = values.transcript?.value?.value ?? "";
-
-  const errors: Record<string, string> = {};
-  if (!prospectName) errors.prospect_name = "Prospect name is required.";
-  if (!salespersonUserId || salespersonUserId === "none") {
-    errors.salesperson = "Select a salesperson.";
-  }
-  if (transcript.length > SLACK_PEM_TRANSCRIPT_MAX_CHARS) {
-    errors.transcript = `Transcript exceeds Slack’s ${SLACK_PEM_TRANSCRIPT_MAX_CHARS}-character limit. Use the web form for long transcripts.`;
-  }
-
-  const parsed = createPemNeatInputSchema.safeParse({
-    prospectName,
-    salespersonUserId,
-    meetingDate: meetingDateRaw || null,
-    transcript,
-  });
-  if (!parsed.success) {
-    for (const issue of parsed.error.issues) {
-      const path = String(issue.path[0] ?? "transcript");
-      if (path === "prospectName") errors.prospect_name = issue.message;
-      else if (path === "salespersonUserId") errors.salesperson = issue.message;
-      else if (path === "meetingDate") errors.meeting_date = issue.message;
-      else if (path === "transcript") errors.transcript = issue.message;
-    }
-  }
-
-  if (Object.keys(errors).length) {
-    return { ok: false, errors };
-  }
-
-  const input = parsed.data!;
-  const salesperson = await resolveSalespersonDisplayName(input.salespersonUserId);
-  if (!salesperson) {
-    return { ok: false, errors: { salesperson: "Select a valid salesperson from Sales." } };
-  }
-
-  const store = getPemNeatStore();
-  const record = await store.create({
-    prospectName: input.prospectName,
-    salespersonUserId: input.salespersonUserId,
-    salespersonDisplayName: salesperson.displayName,
-    meetingDate: input.meetingDate ?? null,
-    transcript: input.transcript,
-    createdBy: mapped.userId,
-  });
-
-  await startPemNeatGeneration(record.id);
-  const base = getPublicAppBaseUrl();
-  return {
-    ok: true,
-    message: `PEM NEAT started for *${input.prospectName}*. Baxter is analyzing the transcript now.\n\n<${base}/pem-neats/${record.id}|Open PEM NEAT>`,
-  };
+  return buildPemWebHandoffAck();
 }

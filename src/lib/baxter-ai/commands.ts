@@ -3,6 +3,7 @@
  */
 
 import { isGhlConfigured } from "@/lib/connectors/ghl/config";
+import { DEMO_CUSTOMER_NAME } from "@/lib/demo-identity";
 
 export type ChatCommand = { type: "clear" } | { type: "help" } | { type: "none"; text: string };
 
@@ -51,12 +52,12 @@ export function baxterHelpText(channel: "web" | "slack"): string {
     lines.push(
       "",
       "GoHighLevel (live CRM):",
-      "• What stage is Lori Harris in?",
-      "• Who owns the Wong opportunity?",
+      `• What stage is ${DEMO_CUSTOMER_NAME} in?`,
+      "• Who owns the Doe opportunity?",
       "• When is the next appointment?",
       "• What did this lead last say?",
       "• Show open opportunities without an owner",
-      "• Move Lori to Project Findings Complete (authorized users — confirmation required)",
+      `• Move ${DEMO_CUSTOMER_NAME} to Project Findings Complete (authorized users — confirmation required)`,
       "• I will not send texts or book calendars through chat yet",
     );
   }

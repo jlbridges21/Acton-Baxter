@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetEnvCacheForTests } from "@/lib/env";
 import { CLEAR_RESPONSE_SLACK } from "@/lib/baxter-ai/commands";
+import { DEMO_CUSTOMER_NAME, DEMO_PROSPECT_NAME } from "@/lib/demo-identity";
 import {
+  buildPemWebHandoffAck,
   buildSlashHelpText,
   RECALL_USAGE,
+  PEM_LIST_PATH,
+  PEM_NEW_PATH,
   SLACK_PEM_TRANSCRIPT_MAX_CHARS,
-  PEM_MODAL_CALLBACK_ID,
 } from "@/lib/slack/slash-commands";
 import { parseSlackCommandBody } from "@/lib/slack/commands";
 
@@ -40,13 +43,18 @@ describe("Slack slash command helpers", () => {
     expect(parseSlackCommandBody(body).trigger_id).toBe("trig.123");
   });
 
-  it("help text includes slash commands and examples without LLM", () => {
+  it("help text includes slash commands and web PEM handoff description", () => {
     const text = buildSlashHelpText();
     expect(text).toContain("/clear");
     expect(text).toContain("/recall");
     expect(text).toContain("/pem");
     expect(text).toContain("/property");
-    expect(text).toContain("Rachel Redmond");
+    expect(text).toContain("PEM NEAT tool");
+    expect(text).toContain(DEMO_PROSPECT_NAME);
+    expect(text).toContain(DEMO_CUSTOMER_NAME);
+    expect(text).not.toContain("Robert Vertin");
+    expect(text).not.toContain("Lori Harris");
+    expect(text).not.toContain("Rachel Redmond");
     expect(text).toContain("acton-baxter.vercel.app");
   });
 
@@ -55,34 +63,78 @@ describe("Slack slash command helpers", () => {
     expect(RECALL_USAGE).toContain("RACI");
   });
 
-  it("PEM modal uses salesperson options and transcript max", async () => {
-    vi.resetModules();
-    seedEnv();
-    vi.doMock("@/lib/pem-neat/salespeople", () => ({
-      listSalespeople: async () => [
-        { id: "11111111-1111-1111-1111-111111111111", displayName: "Alex Sales" },
-      ],
-      resolveSalespersonDisplayName: async () => ({
-        displayName: "Alex Sales",
-      }),
-    }));
-    const { buildPemCreateModalView } = await import("@/lib/slack/slash-commands");
-    const view = await buildPemCreateModalView({ privateMetadata: "{}" });
-    expect(view.callback_id).toBe(PEM_MODAL_CALLBACK_ID);
-    const blocks = view.blocks as Array<Record<string, unknown>>;
-    const transcript = blocks.find((b) => b.block_id === "transcript") as {
-      element: { max_length: number; multiline: boolean };
-    };
-    expect(transcript.element.max_length).toBe(SLACK_PEM_TRANSCRIPT_MAX_CHARS);
-    expect(transcript.element.multiline).toBe(true);
-    const salesperson = blocks.find((b) => b.block_id === "salesperson") as {
-      element: { options: Array<{ value: string; text: { text: string } }> };
-    };
-    expect(salesperson.element.options[0]?.text.text).toBe("Alex Sales");
+  it("documents Slack transcript platform limit without offering modal input", () => {
+    expect(SLACK_PEM_TRANSCRIPT_MAX_CHARS).toBe(3000);
+    const ack = buildPemWebHandoffAck();
+    expect(ack.text).toMatch(/too long for Slack/i);
+    const blocksJson = JSON.stringify(ack.blocks ?? []);
+    expect(blocksJson).not.toMatch(/plain_text_input|block_id.:.transcript/i);
   });
 
   it("clear response constant matches product copy", () => {
     expect(CLEAR_RESPONSE_SLACK).toBe("Conversation cleared. We’re starting fresh.");
+  });
+});
+
+describe("handlePemSlashCommand web handoff", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    seedEnv();
+  });
+
+  it("returns web handoff with /pem-neats/new button and no modal", async () => {
+    const viewsOpen = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("views.open")) {
+          viewsOpen();
+          return { json: async () => ({ ok: true }) };
+        }
+        return { json: async () => ({ ok: false }) };
+      }),
+    );
+
+    const { handlePemSlashCommand } = await import("@/lib/slack/slash-commands");
+    const ack = await handlePemSlashCommand({
+      team_id: "T_ACTON",
+      user_id: "U1",
+      channel_id: "D1",
+      command: "/pem",
+    });
+
+    expect(ack.text).toMatch(/too long for Slack/i);
+    expect(ack.text).toMatch(/web app/i);
+    expect(viewsOpen).not.toHaveBeenCalled();
+
+    const blocksJson = JSON.stringify(ack.blocks ?? []);
+    expect(blocksJson).toContain(`https://acton-baxter.vercel.app${PEM_NEW_PATH}`);
+    expect(blocksJson).toContain(`https://acton-baxter.vercel.app${PEM_LIST_PATH}`);
+    expect(blocksJson).toContain("Open PEM NEAT Tool");
+    expect(blocksJson).toContain("View Existing PEM NEATs");
+    expect(blocksJson).not.toMatch(/plain_text_input|callback_id|baxter_pem_create/i);
+  });
+
+  it("does not require Slack Search OAuth or Baxter user mapping", async () => {
+    const identity = vi.fn();
+    vi.doMock("@/lib/slack/identity", () => ({
+      resolveBaxterUserForSlackIdentity: identity,
+      PEM_UNMAPPED_SLACK_USER_MESSAGE: "should not appear",
+      upsertSlackUserMapping: async () => undefined,
+    }));
+
+    const { handlePemSlashCommand } = await import("@/lib/slack/slash-commands");
+    const ack = await handlePemSlashCommand({
+      team_id: "T_ACTON",
+      user_id: "U_UNKNOWN",
+      channel_id: "D1",
+      command: "/pem",
+    });
+
+    expect(identity).not.toHaveBeenCalled();
+    expect(ack.text).not.toMatch(/Connect Slack Search/i);
+    expect(ack.text).not.toMatch(/couldn’t match your Slack account/i);
+    expect(ack.text).toMatch(/too long for Slack/i);
   });
 });
 
@@ -175,44 +227,5 @@ describe("handleRecallSlashCommand", () => {
       text: "  ",
     });
     expect(ack.text).toBe(RECALL_USAGE);
-  });
-});
-
-describe("handlePemModalSubmission auth", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    seedEnv();
-  });
-
-  it("rejects unauthorized Slack users", async () => {
-    vi.doMock("@/lib/slack/identity", () => ({
-      resolveBaxterUserForSlackIdentity: async () => null,
-      PEM_UNMAPPED_SLACK_USER_MESSAGE: "Baxter couldn’t match your Slack account to a Baxter user.",
-      upsertSlackUserMapping: async () => undefined,
-    }));
-
-    const { handlePemModalSubmission } = await import("@/lib/slack/slash-commands");
-    const result = await handlePemModalSubmission({
-      private_metadata: JSON.stringify({
-        teamId: "T_ACTON",
-        userId: "U_EXT",
-        baxterUserId: "11111111-1111-1111-1111-111111111111",
-      }),
-      state: {
-        values: {
-          prospect_name: { value: { value: "Robert Vertin" } },
-          salesperson: {
-            value: { selected_option: { value: "11111111-1111-1111-1111-111111111111" } },
-          },
-          transcript: {
-            value: { value: "x".repeat(250) },
-          },
-        },
-      },
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect("message" in result ? result.message : "").toMatch(/not authorized|identity|match/i);
-    }
   });
 });

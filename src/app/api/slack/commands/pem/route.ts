@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     });
 
     const payload = parseSlackCommandBody(rawBody);
-    // views.open must use trigger_id within ~3s — handle synchronously.
+    // views.open is no longer required — `/pem` returns an immediate web handoff.
     const ack = await handlePemSlashCommand(payload);
     return NextResponse.json(ack);
   } catch (error) {
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
         text:
           error instanceof AppError && error.expose
             ? error.message
-            : "Unable to open the PEM NEAT form.",
+            : "Unable to open the PEM NEAT tool link.",
       },
       { status: 200 },
     );

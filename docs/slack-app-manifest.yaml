@@ -31,7 +31,7 @@ features:
       should_escape: false
     - command: /pem
       url: https://acton-baxter.vercel.app/api/slack/commands/pem
-      description: Start a Partnership Evaluation Meeting NEAT
+      description: Open Baxter’s Partnership Evaluation Meeting NEAT tool
       usage_hint: ""
       should_escape: false
 oauth_config:

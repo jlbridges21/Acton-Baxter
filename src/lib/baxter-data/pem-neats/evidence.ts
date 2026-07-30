@@ -532,7 +532,7 @@ export async function retrievePemEvidence(input: {
     return {
       items: [],
       clarification:
-        "Which prospect's PEM NEAT should I use? Please include their name (for example: Robert Vertin).",
+        "Which prospect's PEM NEAT should I use? Please include their name (for example: John Doe).",
       staleWarning: null,
       deterministicAnswer: null,
       answerMode: "clarification",
@@ -580,7 +580,7 @@ export async function retrievePemEvidence(input: {
     return {
       items: [],
       clarification:
-        "Which prospect's PEM NEAT should I use? Please include their name (for example: Robert Vertin).",
+        "Which prospect's PEM NEAT should I use? Please include their name (for example: John Doe).",
       staleWarning: null,
       deterministicAnswer: null,
       answerMode: "clarification",
