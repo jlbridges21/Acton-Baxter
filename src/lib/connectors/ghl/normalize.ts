@@ -204,6 +204,32 @@ export function normalizeMessage(raw: RawMessage): GhlMessage {
   const direction: GhlMessage["direction"] =
     directionRaw === "inbound" ? "inbound" : directionRaw === "outbound" ? "outbound" : "unknown";
 
+  const meta =
+    raw.meta && typeof raw.meta === "object" ? (raw.meta as Record<string, unknown>) : null;
+  const metaEmail =
+    meta?.email && typeof meta.email === "object" ? (meta.email as Record<string, unknown>) : null;
+  const nestedEmail =
+    metaEmail?.email && typeof metaEmail.email === "object"
+      ? (metaEmail.email as Record<string, unknown>)
+      : metaEmail;
+  const emailMessageIdsRaw = nestedEmail?.messageIds;
+  const emailMessageIds = Array.isArray(emailMessageIdsRaw)
+    ? emailMessageIdsRaw.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
+
+  const toRaw = raw.to ?? raw.emailTo;
+  const toAddresses = Array.isArray(toRaw)
+    ? toRaw.filter((v): v is string => typeof v === "string")
+    : typeof toRaw === "string" && toRaw.trim()
+      ? [toRaw]
+      : [];
+
+  const body =
+    asString(raw.body) ?? asString(raw.message) ?? asString(raw.text) ?? asString(raw.textBody);
+  const htmlBody = asString(raw.html) ?? asString(raw.htmlBody);
+  const subject = asString(raw.subject);
+  const fromAddress = asString(raw.from) ?? asString(raw.emailFrom) ?? asString(raw.fromEmail);
+
   return {
     id: asString(raw.id) ?? "",
     conversationId: asString(raw.conversationId) ?? "",
@@ -211,7 +237,17 @@ export function normalizeMessage(raw: RawMessage): GhlMessage {
     locationId: asString(raw.locationId) ?? "",
     type: messageType,
     direction,
-    body: asString(raw.body),
+    body,
+    textBody:
+      asString(raw.textBody) ??
+      asString(raw.message) ??
+      (body && !/<[a-z]/i.test(body) ? body : null),
+    htmlBody,
+    subject,
+    fromAddress,
+    toAddresses,
+    emailMessageIds,
+    threadId: asString(raw.threadId),
     status: asString(raw.status),
     dateAdded: asString(raw.dateAdded),
     attachments,

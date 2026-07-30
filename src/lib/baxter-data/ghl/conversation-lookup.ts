@@ -66,6 +66,8 @@ export type GhlConversationLookupResult = {
     selectedTimestamp: string | null;
     selectedType: string | null;
     selectedSource: "full_message" | "conversation_summary" | null;
+    contentSource: string | null;
+    finalContentAvailable: boolean;
     direction: GhlMessageDirectionFilter;
     channel: GhlMessageChannelFilter;
     incompleteReason: string | null;
@@ -143,10 +145,18 @@ export function messageFromConversationSummary(
     type,
     direction: conversation.lastMessageDirection || "unknown",
     body,
+    textBody: body,
+    htmlBody: null,
+    subject: null,
+    fromAddress: null,
+    toAddresses: [],
+    emailMessageIds: [],
+    threadId: null,
     status: null,
     dateAdded: conversation.lastMessageAt,
     attachments: [],
     fromConversationSummary: true,
+    contentSource: "conversation_summary",
   };
 }
 
@@ -246,6 +256,8 @@ export async function lookupGhlConversationMessages(
     selectedTimestamp: null as string | null,
     selectedType: null as string | null,
     selectedSource: null as "full_message" | "conversation_summary" | null,
+    contentSource: null as string | null,
+    finalContentAvailable: false,
     direction,
     channel,
     incompleteReason: null as string | null,
@@ -378,15 +390,38 @@ export async function lookupGhlConversationMessages(
     messages = filtered;
   }
 
-  const selectedList = filtered.slice(0, limit);
-  const selected = selectedList[0] ?? null;
+  const selectedList = filtered.slice(0, Math.max(limit, 3));
+  // Hydrate candidate latest messages before final selection (emails often lack list bodies).
+  const { resolveConversationMessageContent, messageHasUsableContent } =
+    await import("@/lib/connectors/ghl/message-content");
+  const matchingConversation = (msg: GhlMessage) =>
+    conversations.find((c) => c.id === msg.conversationId) ?? conversations[0] ?? null;
+
+  const hydratedCandidates: GhlMessage[] = [];
+  for (const candidate of selectedList.slice(0, 3)) {
+    const { message: hydratedMsg } = await resolveConversationMessageContent({
+      message: candidate,
+      conversation: matchingConversation(candidate),
+      hydrate: true,
+    });
+    hydratedCandidates.push(hydratedMsg);
+  }
+
+  // Prefer candidates that now have content; keep newest-first order within that set.
+  const withContent = hydratedCandidates.filter((m) => messageHasUsableContent(m));
+  const ranked = withContent.length ? withContent : hydratedCandidates;
+  const finalSelectedList = ranked.slice(0, limit);
+  const selected = finalSelectedList[0] ?? null;
   const selectedSource: "full_message" | "conversation_summary" | null = selected
-    ? selected.fromConversationSummary
+    ? selected.fromConversationSummary || selected.contentSource === "conversation_summary"
       ? "conversation_summary"
       : "full_message"
     : null;
-  const fallbackUsed = selectedSource === "conversation_summary";
-  const emailMessages = messages.filter((m) => isEmailMessageType(m.type));
+  const fallbackUsed =
+    selectedSource === "conversation_summary" || selected?.contentSource === "conversation_summary";
+  const emailMessages = (withContent.length ? withContent : messages).filter((m) =>
+    isEmailMessageType(m.type),
+  );
   const newestSummary = sortMessagesNewestFirst(summaryMessages)[0] ?? null;
 
   const baseDiagnostics = {
@@ -407,6 +442,8 @@ export async function lookupGhlConversationMessages(
     selectedTimestamp: selected?.dateAdded ?? null,
     selectedType: selected?.type ?? null,
     selectedSource,
+    contentSource: selected?.contentSource ?? null,
+    finalContentAvailable: selected ? messageHasUsableContent(selected) : false,
     direction,
     channel,
     incompleteReason: null as string | null,
@@ -451,11 +488,30 @@ export async function lookupGhlConversationMessages(
     };
   }
 
+  if (!messageHasUsableContent(selected)) {
+    return {
+      ok: false,
+      contact: hydrated,
+      conversations,
+      messages: finalSelectedList,
+      selected,
+      selectedSource,
+      evidenceSources,
+      diagnostics: {
+        ...baseDiagnostics,
+        incompleteReason: "message_body_unavailable_after_hydration",
+      },
+      failureMessage: `I found ${displayContactName(hydrated)} in GHL and located the latest ${
+        channel === "email" ? "email" : "message"
+      }, but no message body was available from the conversation list, full-message lookup, or conversation summary.`,
+    };
+  }
+
   return {
     ok: true,
     contact: hydrated,
     conversations,
-    messages: selectedList,
+    messages: finalSelectedList,
     selected,
     selectedSource,
     evidenceSources,
@@ -464,7 +520,7 @@ export async function lookupGhlConversationMessages(
 }
 
 export function formatGhlMessageEvidence(message: GhlMessage, contactName: string): string {
-  const body = stripHtmlToText(message.body ?? "").trim();
+  const body = stripHtmlToText(message.textBody ?? message.body ?? "").trim();
   const when = message.dateAdded
     ? new Date(messageTimestampMs(message) || Date.parse(message.dateAdded)).toLocaleString(
         undefined,
@@ -473,22 +529,25 @@ export function formatGhlMessageEvidence(message: GhlMessage, contactName: strin
     : "unknown time";
   const who =
     message.direction === "inbound"
-      ? contactName
+      ? message.fromAddress || contactName
       : message.direction === "outbound"
-        ? "Acton"
-        : "Unknown / not specified";
+        ? message.fromAddress || "Acton"
+        : message.fromAddress || "Unknown / not specified";
   const channel = labelMessageType(message.type);
   return [
     `Contact: ${contactName}`,
     `Message type: ${channel}`,
     `Direction: ${message.direction}`,
     `From/actor: ${who}`,
+    message.subject ? `Subject: ${message.subject}` : null,
     `Timestamp: ${when}`,
-    message.fromConversationSummary ? `Source: conversation_summary` : `Source: full_message`,
+    `Content source: ${message.contentSource ?? (message.fromConversationSummary ? "conversation_summary" : "full_message")}`,
     `Body:\n${body.slice(0, 3500)}`,
     `Conversation ID: ${message.conversationId}`,
     `Message ID: ${message.id}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -500,7 +559,7 @@ export function buildDeterministicConversationAnswer(input: {
   contactEmail?: string | null;
   message: GhlMessage;
 }): string {
-  const body = stripHtmlToText(input.message.body ?? "").trim();
+  const body = stripHtmlToText(input.message.textBody ?? input.message.body ?? "").trim();
   const when = input.message.dateAdded
     ? new Date(
         messageTimestampMs(input.message) || Date.parse(input.message.dateAdded),
@@ -509,8 +568,11 @@ export function buildDeterministicConversationAnswer(input: {
   const channel = labelMessageType(input.message.type);
   const q = input.question.toLowerCase();
   const wantsEmail = /\be-?mail\b/.test(q);
+  const wantsFull = /\b(full e-?mail|full message|show me the (full )?e-?mail)\b/.test(q);
   const label = wantsEmail ? "email" : channel.toLowerCase();
-  const fromSummary = Boolean(input.message.fromConversationSummary);
+  const fromSummary =
+    Boolean(input.message.fromConversationSummary) ||
+    input.message.contentSource === "conversation_summary";
   const direction = input.message.direction;
 
   let header: string;
@@ -523,19 +585,22 @@ export function buildDeterministicConversationAnswer(input: {
   }
 
   const emailLine = input.contactEmail ? `\nContact email: ${input.contactEmail}` : "";
+  const subjectLine = input.message.subject ? `\nSubject: ${input.message.subject}` : "";
+  const fromLine = input.message.fromAddress ? `\nFrom: ${input.message.fromAddress}` : "";
   const sourceNote = fromSummary
     ? "\nSource: GHL conversation summary (full message history unavailable or empty)"
     : "";
   const meta =
     direction === "unknown"
-      ? `\n${channel}${emailLine}${sourceNote}`
-      : `\n${channel} · ${direction}${emailLine}${sourceNote}`;
+      ? `\n${channel}${subjectLine}${fromLine}${emailLine}${sourceNote}`
+      : `\n${channel} · ${direction}${subjectLine}${fromLine}${emailLine}${sourceNote}`;
 
   if (!body) {
     return `${header}${meta}\n\n(No message body was available in GHL for this message.)`;
   }
 
-  return `${header}${meta}\n\n${body.slice(0, 4500)}`;
+  const max = wantsFull ? 4500 : 1800;
+  return `${header}${meta}\n\n${body.slice(0, max)}`;
 }
 
 /**
@@ -557,12 +622,17 @@ export async function searchConversationsForAdmin(input: {
 
   if (input.contactId) {
     const conversations = await listConversationsForContact(input.contactId, { limit });
+    const sorted = [...conversations].sort((a, b) => {
+      const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
+      const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
     return {
-      conversations,
+      conversations: sorted,
       contactsMatched: 1,
-      total: conversations.length,
+      total: sorted.length,
       searchMode: "contact_id",
-      statusMessage: `Found ${conversations.length} conversation(s) for contact.`,
+      statusMessage: `Found ${sorted.length} conversation(s) for contact.`,
     };
   }
 
@@ -658,11 +728,16 @@ export async function searchConversationsForAdmin(input: {
   }
 
   const recent = await searchConversations({ limit });
+  const sorted = [...recent.conversations].sort((a, b) => {
+    const ta = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
+    const tb = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
+    return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+  });
   return {
-    conversations: recent.conversations,
+    conversations: sorted,
     contactsMatched: 0,
     total: recent.total,
     searchMode: "recent",
-    statusMessage: `Showing ${recent.conversations.length} recent conversation(s).`,
+    statusMessage: `Showing ${sorted.length} recent conversation(s), newest first.`,
   };
 }

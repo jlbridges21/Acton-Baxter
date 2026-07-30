@@ -174,6 +174,125 @@ export function extractMessagesPayload(response: unknown): {
   return { rawMessages: [], hasMore: false, lastMessageId: null };
 }
 
+function unwrapSingleMessageResponse(response: unknown): {
+  raw: Record<string, unknown> | null;
+  fieldNames: string[];
+  ok: boolean;
+} {
+  if (!response || typeof response !== "object") {
+    return { raw: null, fieldNames: [], ok: false };
+  }
+  const obj = response as Record<string, unknown>;
+  const fieldNames = Object.keys(obj);
+  if (obj.message && typeof obj.message === "object") {
+    const nested = obj.message as Record<string, unknown>;
+    return { raw: nested, fieldNames: Object.keys(nested), ok: true };
+  }
+  if (obj.email && typeof obj.email === "object" && !Array.isArray(obj.email)) {
+    const nested = obj.email as Record<string, unknown>;
+    return { raw: nested, fieldNames: Object.keys(nested), ok: true };
+  }
+  if (typeof obj.id === "string") {
+    return { raw: obj, fieldNames, ok: true };
+  }
+  return { raw: null, fieldNames, ok: false };
+}
+
+/**
+ * GET /conversations/messages/:id
+ * Scope: conversations/message.readonly
+ */
+export async function getConversationMessageById(
+  messageId: string,
+): Promise<{
+  message: GhlMessage | null;
+  ok: boolean;
+  fieldNames: string[];
+  statusCode: number | null;
+}> {
+  if (!messageId || messageId.startsWith("summary:")) {
+    return { message: null, ok: false, fieldNames: [], statusCode: null };
+  }
+  try {
+    const response = await ghlGet(`/conversations/messages/${messageId}`, undefined, {
+      injectLocationId: false,
+      resource: "messages",
+    });
+    const unwrapped = unwrapSingleMessageResponse(response);
+    if (!unwrapped.raw) {
+      return { message: null, ok: false, fieldNames: unwrapped.fieldNames, statusCode: 200 };
+    }
+    return {
+      message: normalizeMessage(unwrapped.raw),
+      ok: true,
+      fieldNames: unwrapped.fieldNames,
+      statusCode: 200,
+    };
+  } catch (error) {
+    const statusCode =
+      error && typeof error === "object" && "statusCode" in error
+        ? Number((error as { statusCode?: number }).statusCode) || null
+        : null;
+    console.warn(
+      "[GHL Message by ID] unavailable:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+    return { message: null, ok: false, fieldNames: [], statusCode };
+  }
+}
+
+/**
+ * GET /conversations/messages/email/:id
+ * Official email content endpoint (subject/body/html/from/to).
+ * Scope: conversations/message.readonly
+ */
+export async function getEmailMessageById(
+  emailMessageId: string,
+): Promise<{
+  message: GhlMessage | null;
+  ok: boolean;
+  fieldNames: string[];
+  statusCode: number | null;
+}> {
+  if (!emailMessageId || emailMessageId.startsWith("summary:")) {
+    return { message: null, ok: false, fieldNames: [], statusCode: null };
+  }
+  try {
+    const response = await ghlGet(`/conversations/messages/email/${emailMessageId}`, undefined, {
+      injectLocationId: false,
+      resource: "messages",
+    });
+    const unwrapped = unwrapSingleMessageResponse(response);
+    // Email endpoint often returns the email object at the top level.
+    const raw =
+      unwrapped.raw ??
+      (response && typeof response === "object" ? (response as Record<string, unknown>) : null);
+    if (!raw || typeof raw !== "object") {
+      return { message: null, ok: false, fieldNames: unwrapped.fieldNames, statusCode: 200 };
+    }
+    // Ensure type marks as email when endpoint omits messageType.
+    if (!raw.messageType && !raw.type) {
+      raw.messageType = "TYPE_EMAIL";
+    }
+    return {
+      message: normalizeMessage(raw),
+      ok: true,
+      fieldNames: Object.keys(raw),
+      statusCode: 200,
+    };
+  } catch (error) {
+    const statusCode =
+      error && typeof error === "object" && "statusCode" in error
+        ? Number((error as { statusCode?: number }).statusCode) || null
+        : null;
+    console.warn(
+      "[GHL Email by ID] unavailable:",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+    return { message: null, ok: false, fieldNames: [], statusCode };
+  }
+}
+
 export async function listConversationsForContact(
   contactId: string,
   options: { limit?: number } = {},

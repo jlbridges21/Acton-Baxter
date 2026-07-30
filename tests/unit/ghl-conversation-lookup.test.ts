@@ -56,6 +56,13 @@ function msg(
     status: "delivered",
     attachments: [],
     ...partial,
+    textBody: partial.textBody ?? partial.body ?? null,
+    htmlBody: partial.htmlBody ?? null,
+    subject: partial.subject ?? null,
+    fromAddress: partial.fromAddress ?? null,
+    toAddresses: partial.toAddresses ?? [],
+    emailMessageIds: partial.emailMessageIds ?? [],
+    threadId: partial.threadId ?? null,
   };
 }
 
@@ -674,3 +681,190 @@ describe("Case D: admin preview and Baxter evidence share summary body", () => {
 function sanitizePreviewParity(text: string) {
   return text.toLowerCase();
 }
+
+describe("GHL email content hydration", () => {
+  it("Case body hydration: list body null + HTML full message → plain text", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/connectors/ghl/resources/conversations", async () => {
+      const actual = await vi.importActual<
+        typeof import("@/lib/connectors/ghl/resources/conversations")
+      >("@/lib/connectors/ghl/resources/conversations");
+      return {
+        ...actual,
+        getConversationMessageById: async () => ({
+          ok: true,
+          fieldNames: ["id", "html", "subject", "messageType"],
+          statusCode: 200,
+          message: {
+            id: "m1",
+            conversationId: "c1",
+            contactId: JOHN.id,
+            locationId: "loc",
+            type: "TYPE_EMAIL",
+            direction: "inbound",
+            body: null,
+            textBody: null,
+            htmlBody: "<p>Hello Kevin...</p>",
+            subject: "Project update",
+            fromAddress: "john.example@example.com",
+            toAddresses: [],
+            emailMessageIds: [],
+            threadId: null,
+            status: "delivered",
+            dateAdded: "2026-07-29T10:00:00.000Z",
+            attachments: [],
+          },
+        }),
+        getEmailMessageById: async () => ({
+          ok: false,
+          message: null,
+          fieldNames: [],
+          statusCode: 404,
+        }),
+      };
+    });
+
+    const { resolveConversationMessageContent } =
+      await import("@/lib/connectors/ghl/message-content");
+    const listMsg = msg({
+      id: "m1",
+      type: "TYPE_EMAIL",
+      direction: "inbound",
+      dateAdded: "2026-07-29T10:00:00.000Z",
+      body: null,
+    });
+    const result = await resolveConversationMessageContent({
+      message: listMsg,
+      hydrate: true,
+    });
+    expect(result.message.subject).toBe("Project update");
+    expect(result.message.body).toContain("Hello Kevin");
+    expect(result.message.contentSource).toBe("full_message_html");
+    expect(result.diagnostics.finalContentAvailable).toBe(true);
+
+    vi.resetModules();
+    vi.doUnmock("@/lib/connectors/ghl/resources/conversations");
+  });
+
+  it("Case summary fallback when full message empty", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/connectors/ghl/resources/conversations", async () => {
+      const actual = await vi.importActual<
+        typeof import("@/lib/connectors/ghl/resources/conversations")
+      >("@/lib/connectors/ghl/resources/conversations");
+      return {
+        ...actual,
+        getConversationMessageById: async () => ({
+          ok: true,
+          fieldNames: ["id"],
+          statusCode: 200,
+          message: {
+            id: "m1",
+            conversationId: "c1",
+            contactId: JOHN.id,
+            locationId: "loc",
+            type: "TYPE_EMAIL",
+            direction: "inbound",
+            body: null,
+            textBody: null,
+            htmlBody: null,
+            subject: null,
+            fromAddress: null,
+            toAddresses: [],
+            emailMessageIds: [],
+            threadId: null,
+            status: null,
+            dateAdded: "2026-07-29T10:00:00.000Z",
+            attachments: [],
+          },
+        }),
+        getEmailMessageById: async () => ({
+          ok: false,
+          message: null,
+          fieldNames: [],
+          statusCode: 404,
+        }),
+      };
+    });
+
+    const { resolveConversationMessageContent } =
+      await import("@/lib/connectors/ghl/message-content");
+    const result = await resolveConversationMessageContent({
+      message: msg({
+        id: "m1",
+        type: "TYPE_EMAIL",
+        direction: "inbound",
+        dateAdded: "2026-07-29T10:00:00.000Z",
+        body: null,
+      }),
+      conversation: {
+        id: "c1",
+        locationId: "loc",
+        contactId: JOHN.id,
+        type: "TYPE_PHONE",
+        unreadCount: 0,
+        lastMessageAt: "2026-07-29T10:00:00.000Z",
+        lastMessageBody: "Customer's newest message",
+        lastMessageType: "TYPE_EMAIL",
+        lastMessageDirection: "inbound",
+        dateAdded: null,
+        dateUpdated: null,
+      },
+      hydrate: true,
+    });
+    expect(result.message.body).toBe("Customer's newest message");
+    expect(result.message.contentSource).toBe("conversation_summary");
+
+    vi.resetModules();
+    vi.doUnmock("@/lib/connectors/ghl/resources/conversations");
+  });
+
+  it("dedupes duplicate email rows", async () => {
+    const { dedupeConversationMessages } = await import("@/lib/connectors/ghl/message-content");
+    const a = msg({
+      id: "m-a",
+      type: "TYPE_EMAIL",
+      direction: "inbound",
+      dateAdded: "2026-07-29T10:00:00.000Z",
+      body: null,
+      emailMessageIds: ["email-1"],
+    });
+    const b = msg({
+      id: "m-b",
+      type: "TYPE_EMAIL",
+      direction: "inbound",
+      dateAdded: "2026-07-29T10:00:00.000Z",
+      body: "Full body here",
+      emailMessageIds: ["email-1"],
+    });
+    const deduped = dedupeConversationMessages([a, b]);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]?.body).toContain("Full body");
+  });
+
+  it("same-timestamp inbound + outbound: from Petr keeps inbound", () => {
+    const inbound = msg({
+      id: "in",
+      type: "TYPE_EMAIL",
+      direction: "inbound",
+      dateAdded: "2026-07-29T09:48:00.000Z",
+      body: "Arborist update",
+      fromAddress: "petr@example.com",
+    });
+    const outbound = msg({
+      id: "out",
+      type: "TYPE_EMAIL",
+      direction: "outbound",
+      dateAdded: "2026-07-29T09:48:00.000Z",
+      body: "Out of office",
+      fromAddress: "jesse@actonadu.com",
+    });
+    const filtered = sortMessagesNewestFirst(
+      [inbound, outbound].filter(
+        (m) => messageMatchesChannel(m, "email") && messageMatchesDirection(m, "inbound"),
+      ),
+    );
+    expect(filtered[0]?.id).toBe("in");
+    expect(filtered[0]?.body).toContain("Arborist");
+  });
+});

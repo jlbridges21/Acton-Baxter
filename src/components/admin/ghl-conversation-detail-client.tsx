@@ -10,11 +10,16 @@ type Message = {
   id: string;
   direction: string;
   actorLabel: string;
+  fromAddress?: string | null;
   channel: string;
+  subject?: string | null;
   body: string;
+  bodyPreview?: string;
+  hasFullBody?: boolean;
   at: string | null;
   status?: string | null;
   attachments?: number;
+  contentSource?: string | null;
 };
 
 export function GhlConversationDetailClient() {
@@ -31,6 +36,7 @@ export function GhlConversationDetailClient() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [channelFilter, setChannelFilter] = useState<"all" | "Email" | "SMS" | "Call">("all");
 
   const load = useCallback(
@@ -177,37 +183,64 @@ export function GhlConversationDetailClient() {
         {visible.length === 0 ? (
           <p className="p-4 text-sm text-[var(--acton-muted)]">No messages in this window.</p>
         ) : (
-          visible.map((m) => (
-            <div
-              key={m.id}
-              className={`space-y-1 px-4 py-3 text-sm ${
-                m.direction === "outbound" ? "bg-slate-50" : "bg-white"
-              }`}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--acton-muted)]">
-                <span className="font-medium text-[var(--acton-fg)]">{m.actorLabel}</span>
-                <span
-                  className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                    m.direction === "inbound"
-                      ? "bg-emerald-50 text-emerald-800"
-                      : "bg-slate-200 text-slate-700"
-                  }`}
-                >
-                  {m.direction === "inbound" ? "Inbound" : "Outbound"}
-                </span>
-                <span>{m.channel}</span>
-                <span>{m.at || "—"}</span>
-                <button
-                  type="button"
-                  onClick={() => void copyBody(m)}
-                  className="ml-auto text-[11px] font-medium text-sky-700 hover:underline"
-                >
-                  {copiedId === m.id ? "Copied" : "Copy"}
-                </button>
+          visible.map((m) => {
+            const expanded = Boolean(expandedIds[m.id]);
+            const preview = m.bodyPreview || m.body.slice(0, 400);
+            const showExpand = Boolean(m.hasFullBody || (m.body && m.body.length > 400));
+            const displayBody = expanded ? m.body : preview;
+            return (
+              <div
+                key={m.id}
+                className={`space-y-1 px-4 py-3 text-sm ${
+                  m.direction === "outbound" ? "bg-slate-50" : "bg-white"
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--acton-muted)]">
+                  <span className="font-medium text-[var(--acton-fg)]">{m.actorLabel}</span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                      m.direction === "inbound"
+                        ? "bg-emerald-50 text-emerald-800"
+                        : "bg-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {m.direction === "inbound"
+                      ? "Inbound"
+                      : m.direction === "outbound"
+                        ? "Outbound"
+                        : "Unknown"}
+                  </span>
+                  <span>{m.channel}</span>
+                  <span>{m.at || "—"}</span>
+                  <button
+                    type="button"
+                    onClick={() => void copyBody(m)}
+                    className="ml-auto text-[11px] font-medium text-sky-700 hover:underline"
+                  >
+                    {copiedId === m.id ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                {m.subject ? (
+                  <p className="text-sm font-medium text-[var(--acton-fg)]">{m.subject}</p>
+                ) : null}
+                {m.fromAddress ? (
+                  <p className="text-xs text-[var(--acton-muted)]">From: {m.fromAddress}</p>
+                ) : null}
+                <p className="whitespace-pre-wrap text-[var(--acton-fg)]">
+                  {displayBody || "(no body)"}
+                </p>
+                {showExpand ? (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-sky-700 hover:underline"
+                    onClick={() => setExpandedIds((prev) => ({ ...prev, [m.id]: !prev[m.id] }))}
+                  >
+                    {expanded ? "Show less" : "Show full email"}
+                  </button>
+                ) : null}
               </div>
-              <p className="whitespace-pre-wrap text-[var(--acton-fg)]">{m.body || "(no body)"}</p>
-            </div>
-          ))
+            );
+          })
         )}
       </Card>
 

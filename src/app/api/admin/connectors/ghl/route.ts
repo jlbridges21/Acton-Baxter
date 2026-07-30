@@ -88,6 +88,7 @@ export async function POST(request: Request) {
           "disconnect",
           "mark_connected_from_pit",
           "test_conversation_lookup",
+          "test_message_content",
         ]),
         tab: z
           .enum([
@@ -500,8 +501,127 @@ export async function POST(request: Request) {
               : null,
             contactEmail: lookup.contact?.email ?? null,
             // Explicitly omit bodies
-            bodyPresent: Boolean(lookup.selected?.body),
-            bodyLength: lookup.selected?.body?.length ?? 0,
+            bodyPresent: Boolean(lookup.selected?.body || lookup.selected?.textBody),
+            bodyLength: (lookup.selected?.textBody || lookup.selected?.body || "").length,
+            subjectPresent: Boolean(lookup.selected?.subject),
+            contentSource: lookup.selected?.contentSource ?? null,
+          },
+        },
+      });
+    }
+
+    if (parsed.action === "test_message_content") {
+      const q = (parsed.query ?? parsed.conversationId ?? "").trim();
+      if (!q) {
+        return jsonOk({
+          result: {
+            pass: false,
+            message: "query (contact) or conversationId is required.",
+          },
+        });
+      }
+      const { lookupGhlConversationMessages, inferConversationLookupFilters } =
+        await import("@/lib/baxter-data/ghl/conversation-lookup");
+      const { resolveConversationMessageContent } =
+        await import("@/lib/connectors/ghl/message-content");
+      const { getConversationMessages } =
+        await import("@/lib/connectors/ghl/resources/conversations");
+
+      let conversationId = parsed.conversationId ?? null;
+      let candidate: Awaited<ReturnType<typeof lookupGhlConversationMessages>>["selected"] = null;
+      let contactName: string | null = null;
+      let contactResolved = false;
+
+      if (!conversationId) {
+        const filters = inferConversationLookupFilters(`last email from ${q}`);
+        const lookup = await lookupGhlConversationMessages({
+          contactQuery: q,
+          channel: filters.channel,
+          direction: filters.direction,
+          limit: 1,
+        });
+        contactResolved = lookup.diagnostics.contactResolved;
+        candidate = lookup.selected;
+        conversationId = candidate?.conversationId ?? lookup.conversations[0]?.id ?? null;
+        contactName = lookup.contact
+          ? lookup.contact.name ||
+            [lookup.contact.firstName, lookup.contact.lastName].filter(Boolean).join(" ")
+          : null;
+        if (!candidate && conversationId) {
+          const listed = await getConversationMessages(conversationId, { limit: 10 });
+          candidate =
+            listed.messages.find((m) => /email/i.test(m.type)) ?? listed.messages[0] ?? null;
+        }
+        if (!candidate) {
+          return jsonOk({
+            result: {
+              pass: false,
+              message: lookup.failureMessage || "No candidate message found.",
+              data: {
+                contactResolved,
+                contactName,
+                conversationId,
+              },
+            },
+          });
+        }
+        const { diagnostics } = await resolveConversationMessageContent({
+          message: candidate,
+          conversation: lookup.conversations.find((c) => c.id === conversationId) ?? null,
+          hydrate: true,
+          includeFieldNames: process.env.NODE_ENV !== "production",
+        });
+        return jsonOk({
+          result: {
+            pass: diagnostics.finalContentAvailable,
+            message: diagnostics.finalContentAvailable
+              ? "Message content resolved."
+              : "No usable message content after hydration.",
+            data: {
+              contactResolved,
+              contactName,
+              conversationId,
+              candidateMessageId: candidate.id,
+              ...diagnostics,
+              type: candidate.type,
+              direction: candidate.direction,
+              timestamp: candidate.dateAdded,
+            },
+          },
+        });
+      }
+
+      const listed = await getConversationMessages(conversationId, { limit: 10 });
+      candidate = listed.messages.find((m) => /email/i.test(m.type)) ?? listed.messages[0] ?? null;
+      if (!candidate) {
+        return jsonOk({
+          result: {
+            pass: false,
+            message: "No messages found for conversation.",
+            data: { conversationId, contactResolved: false },
+          },
+        });
+      }
+      const { diagnostics } = await resolveConversationMessageContent({
+        message: candidate,
+        hydrate: true,
+        includeFieldNames: process.env.NODE_ENV !== "production",
+      });
+      return jsonOk({
+        result: {
+          pass: diagnostics.finalContentAvailable,
+          message: diagnostics.finalContentAvailable
+            ? "Message content resolved."
+            : "No usable message content after hydration.",
+          data: {
+            contactResolved: Boolean(candidate.contactId),
+            contactName,
+            conversationId,
+            candidateMessageId: candidate.id,
+            ...diagnostics,
+            type: candidate.type,
+            direction: candidate.direction,
+            timestamp: candidate.dateAdded,
           },
         },
       });

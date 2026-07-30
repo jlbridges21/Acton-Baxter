@@ -322,6 +322,7 @@ export async function buildConversationDetailView(
   options?: {
     limit?: number;
     lastMessageId?: string;
+    hydrateBodies?: boolean;
   },
 ) {
   const messagesResult = await getConversationMessages(conversationId, {
@@ -360,7 +361,18 @@ export async function buildConversationDetailView(
     }
   }
 
-  const messages = messagesResult.messages
+  const { hydrateMessagesContent, dedupeConversationMessages } = await import("./message-content");
+  const shouldHydrate = options?.hydrateBodies !== false;
+  const hydrated = shouldHydrate
+    ? await hydrateMessagesContent(messagesResult.messages, {
+        conversation,
+        concurrency: 3,
+        onlyMissing: true,
+      })
+    : messagesResult.messages;
+  const deduped = dedupeConversationMessages(hydrated);
+
+  const messages = deduped
     .slice()
     .sort((a, b) => {
       const ta = a.dateAdded ? new Date(a.dateAdded).getTime() : 0;
@@ -374,22 +386,28 @@ export async function buildConversationDetailView(
       else if (typeUpper.includes("SMS")) channel = "SMS";
       else if (typeUpper.includes("VOICEMAIL")) channel = "Voicemail";
       else if (typeUpper.includes("CALL")) channel = "Call";
+      const body = stripHtmlToText(m.textBody ?? m.body ?? "")
+        .replace(/\s+\n/g, "\n")
+        .trim();
       return {
         id: m.id,
         direction: m.direction,
         actorLabel:
           m.direction === "inbound"
-            ? contactName
+            ? m.fromAddress || contactName
             : m.direction === "outbound"
-              ? "Acton"
-              : "Unknown",
+              ? m.fromAddress || "Acton"
+              : m.fromAddress || "Unknown",
+        fromAddress: m.fromAddress,
         channel,
-        body: stripHtmlToText(m.body ?? "")
-          .replace(/\s+\n/g, "\n")
-          .trim(),
+        subject: m.subject,
+        body,
+        bodyPreview: body.slice(0, 400),
+        hasFullBody: body.length > 400,
         at: formatGhlDateTime(m.dateAdded),
         status: m.status,
         attachments: m.attachments?.length ?? 0,
+        contentSource: m.contentSource ?? null,
       };
     });
 

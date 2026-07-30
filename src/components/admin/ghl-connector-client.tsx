@@ -1425,7 +1425,7 @@ export function GhlConnectorClient({
               <div className="space-y-6">
                 <section>
                   <h3 className="mb-2 text-sm font-medium text-[var(--acton-fg)]">
-                    Test GHL conversation lookup
+                    Test GHL conversation / message content
                   </h3>
                   <p className="mb-3 text-xs text-[var(--acton-muted)]">
                     Safe diagnostics only (no message bodies). Uses the same path as Baxter Q&amp;A.
@@ -1442,6 +1442,47 @@ export function GhlConnectorClient({
                         className="h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-[var(--acton-navy)]"
                       />
                     </label>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={lookupBusy || !lookupQuery.trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setLookupBusy(true);
+                          setLookupResult(null);
+                          try {
+                            const { data } = await postAction({
+                              action: "test_message_content",
+                              query: lookupQuery.trim(),
+                            });
+                            const result = data.result as {
+                              pass?: boolean;
+                              message?: string;
+                              data?: Record<string, unknown>;
+                            };
+                            setLookupResult(
+                              JSON.stringify(
+                                {
+                                  pass: result?.pass,
+                                  message: result?.message,
+                                  ...(result?.data ?? {}),
+                                },
+                                null,
+                                2,
+                              ),
+                            );
+                          } catch (err) {
+                            setLookupResult(
+                              err instanceof Error ? err.message : "Lookup diagnostic failed.",
+                            );
+                          } finally {
+                            setLookupBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      {lookupBusy ? "Testing…" : "Test message content"}
+                    </Button>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -1481,7 +1522,7 @@ export function GhlConnectorClient({
                         })();
                       }}
                     >
-                      {lookupBusy ? "Testing…" : "Run lookup"}
+                      Test conversation lookup
                     </Button>
                   </div>
                   {lookupResult ? (

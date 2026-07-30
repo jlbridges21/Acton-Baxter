@@ -100,6 +100,14 @@ export type GhlConversation = {
   dateUpdated: string | null;
 };
 
+export type GhlMessageContentSource =
+  | "list_body"
+  | "full_message_text"
+  | "full_message_html"
+  | "email_endpoint"
+  | "conversation_summary"
+  | "none";
+
 export type GhlMessage = {
   id: string;
   conversationId: string;
@@ -108,9 +116,17 @@ export type GhlMessage = {
   type: string;
   direction: "inbound" | "outbound" | "unknown";
   body: string | null;
+  textBody: string | null;
+  htmlBody: string | null;
+  subject: string | null;
+  fromAddress: string | null;
+  toAddresses: string[];
+  emailMessageIds: string[];
+  threadId: string | null;
   status: string | null;
   dateAdded: string | null;
   attachments: Array<{ url: string; contentType?: string }>;
+  contentSource?: GhlMessageContentSource;
   /** True when synthesized from conversation search lastMessage* fields. */
   fromConversationSummary?: boolean;
 };
@@ -371,9 +387,18 @@ export const ghlMessageSchema = z
     messageType: z.string().optional(),
     direction: z.string().optional(),
     body: z.string().nullable().optional(),
+    message: z.string().nullable().optional(),
+    html: z.string().nullable().optional(),
+    htmlBody: z.string().nullable().optional(),
+    textBody: z.string().nullable().optional(),
+    subject: z.string().nullable().optional(),
+    from: z.string().nullable().optional(),
+    emailFrom: z.string().nullable().optional(),
+    threadId: z.string().nullable().optional(),
     status: z.string().nullable().optional(),
     dateAdded: z.union([z.string(), z.number()]).nullable().optional(),
     attachments: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])).optional(),
+    meta: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
