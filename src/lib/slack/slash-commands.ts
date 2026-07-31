@@ -83,7 +83,7 @@ export function buildSlashHelpText(): string {
     "• `/clear` — reset this Baxter conversation",
     "• `/help` — show this help",
     "• `/recall <query>` — search Slack history (same live retrieval as chat)",
-    "• `/pem` — open Baxter’s PEM NEAT tool to generate structured sales intelligence from a Partnership Evaluation Meeting transcript",
+    "• `/pem` — open Baxter’s PEM NEAT tool to generate sales inteligence",
     "• `/property <address>` — start Property Research",
     "• `/new-project` — set up a new project from a GoHighLevel customer (Drive folder, charter, Slack channel)",
     "",

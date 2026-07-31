@@ -165,6 +165,47 @@ Implement whichever of these applies based on your diagnosis (implement all that
 
 End your reply with a checklist: redeploy; run `/new-project` in Slack end to end (search with a slow-ish GHL response if you can simulate it, confirm no "trouble connecting" error, confirm the modal updates through every state to a completed run); confirm the web app flow is untouched and still works. Separately, flag as a follow-up (not fixed in this prompt unless trivial): Vercel logs show `Invalid cron secret` on `/api/internal/process-jobs` — verify the `CRON_SECRET` env var in Vercel matches what the Vercel Cron configuration (or any external pinger) sends; this is unrelated to the Slack fix but is a real misconfiguration worth resolving separately.
 
+Status: Prompt 3b's fix (omit `hash`, double try/catch, `runtime = "nodejs"`, shared payload parser) shipped but did NOT resolve the issue — "We had some trouble connecting. Try again?" still occurs at the search-submission step, identically to before. The stale-hash theory was evidently incomplete or wrong. Prompt 3c below requires evidence (measured timing + actual response payload) before any further code change, since a guess-based fix already missed once.
+
+---
+
+## Prompt 3c — Evidence-based fix: `/new-project` search step still fails
+
+You are working in the Acton ADU Baxter repo. Read `AGENTS.md` first. Do NOT modify the web app `/projects/setup` flow, `src/lib/project-setup/` step execution, or Google-side code. Slack interactivity code only.
+
+### Do not guess again
+
+The previous fix (omit `hash` on `views.update`, double try/catch, `export const runtime = "nodejs"`, shared payload parser) shipped and was reasoned through, but the symptom is unchanged: submitting the search step in the `/new-project` modal still returns Slack's generic "We had some trouble connecting. Try again?" This means the actual root cause is still present. Before writing any fix, instrument and measure — then report the measured evidence in your reply, not just a new theory.
+
+### Instrument and measure
+
+1. In the `view_submission` handler for the search step specifically, add explicit timing: log a timestamp the instant the handler starts, immediately before constructing the response, and immediately before returning it. Log the total elapsed milliseconds.
+2. Log the exact JSON body being returned as the immediate HTTP response (the loading view or whatever `response_action` is sent synchronously) — full payload, not a summary.
+3. Deploy, reproduce the failure in Slack, and pull the Vercel function logs for that specific invocation of `/api/slack/interactions`. Note Vercel's own reported function duration for that invocation, not just your internal timestamps — a slow cold start can occur before your handler code even runs.
+4. Only after you have these numbers, diagnose. Do not apply a fix whose justification isn't backed by what you measured in step 3.
+
+### Most likely culprits, in priority order — check each against your evidence
+
+1. **Cold start / import-graph weight on the fast-ack path.** `runtime = "nodejs"` was added in the last fix; Node functions can have materially slower cold starts than Edge, especially with a large bundled dependency graph. Check whether `src/app/api/slack/interactions/route.ts` (or any module it imports at the top level, even transitively) pulls in heavy modules not needed for the immediate ack — in particular `src/lib/connectors/ghl/index.ts`, which re-exports a wide surface (client, resources, actions, entity-graph, insights, admin-views, etc.), or the Google connector. If the route's module graph includes these at import time, the function must initialize all of it before handling any request, which can by itself exceed the 3-second budget on a cold invocation — independent of whether the GHL search call itself is awaited synchronously. Fix: ensure the interactions route only statically imports what the immediate-ack code path needs (signature verification, payload parsing, minimal view-building) and uses dynamic `await import(...)` for the GHL search / job-enqueue code so that weight is only paid on the code path that runs after the ack, not before it.
+2. **An awaited call still exists before the ack is sent.** Re-walk the handler with fresh eyes (not trusting the "already async" conclusion from the last pass) and confirm there is zero `await` of any network or Supabase call between receiving the request and returning the immediate response. Add a code comment marking the exact line the response is constructed, and verify nothing above it does I/O.
+3. **Malformed or oversized immediate response payload.** Validate the logged JSON from step 2 against Slack's modal view schema: `type: "modal"` present, `title` ≤ 24 chars, blocks well-formed, total under Slack's size/block-count limits, valid `callback_id` carried through if required for your `view_submission` matching logic. A schema violation can cause Slack to reject the update, which may also surface to the user as a generic connection error.
+4. **Response framing.** Confirm the route returns `Content-Type: application/json` with no extra whitespace, logging output, or BOM leaking into the body, and that exactly one response is ever sent for the request (no code path that could write twice).
+5. **Runtime choice.** If evidence points to Node cold start as the cause, check whether `src/lib/slack/verify.ts` (signature verification) requires Node's `crypto` module or can run under Edge (Web Crypto `crypto.subtle`). If it's Edge-compatible and nothing else on the fast-ack path requires Node APIs, switching back to Edge runtime for this route is a legitimate fix — but only do this if you've confirmed compatibility, and keep the heavy connector work (GHL search, run creation) in whatever context it already correctly runs in (job queue / Node) regardless of this route's runtime.
+
+### Fix
+
+Apply the fix(es) your evidence actually points to. Remove the timing/payload debug logging once confirmed fixed, or downgrade it to a low-volume structured log line consistent with the existing `[new-project] *.async.*` logging convention already added.
+
+### Test
+
+- Unit test asserting the interactions route's search-step handler path does not statically import the heavy GHL/Google connector barrels (a simple module-boundary test or a lint rule check is acceptable if a runtime test isn't practical).
+- Existing payload-parsing and error-path tests from the prior prompt must still pass.
+- Run `npm run format && npm run lint && npm run typecheck && npm run test`.
+
+### Report
+
+Your reply must include: the measured elapsed time and Vercel-reported function duration from your reproduction BEFORE the fix, the specific root cause the evidence pointed to, what you changed, and a fresh reproduction confirming the search step now works with no "trouble connecting" error — with new measured numbers showing the fix. Confirm the web app flow and prior working Google/Slack execution steps are unchanged.
+
 ---
 
 ## Prompt 3 follow-up — Fix Slack slash command "trouble connecting" error

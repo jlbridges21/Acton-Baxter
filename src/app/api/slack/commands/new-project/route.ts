@@ -5,7 +5,7 @@ import { getEnv } from "@/lib/env";
 import { parseSlackCommandBody, postSlackResponseUrl } from "@/lib/slack/commands";
 import { verifySlackRequest } from "@/lib/slack/verify";
 import { isSlackTeamAllowed, isSlackUserAllowed } from "@/lib/slack/config";
-import { openNewProjectModal } from "@/lib/project-setup/new-project-slack";
+import { openNewProjectModal } from "@/lib/project-setup/new-project-async";
 
 /**
  * /new-project — open the GHL search → confirm modal within Slack's 3s window.

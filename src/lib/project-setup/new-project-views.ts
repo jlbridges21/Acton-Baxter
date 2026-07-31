@@ -3,7 +3,16 @@
  * Pure builders — no I/O — so unit tests can assert structure without Slack.
  */
 
-import type { ProjectSetupSearchHit } from "./service";
+/** Lightweight contact hit shape for pick modal (avoid importing GHL service). */
+export type ProjectSetupSearchHit = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  postalCode: string | null;
+};
 
 export const NEW_PROJECT_CALLBACK_SEARCH = "project_setup_search";
 export const NEW_PROJECT_CALLBACK_PICK = "project_setup_pick";
