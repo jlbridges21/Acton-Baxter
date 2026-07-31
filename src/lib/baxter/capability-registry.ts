@@ -85,6 +85,7 @@ export function buildBaxterCapabilityCatalog(
 ): BaxterCapability[] {
   const pemTool = BAXTER_TOOLS.find((t) => t.key === "pem-neat");
   const propertyTool = BAXTER_TOOLS.find((t) => t.key === "property-research");
+  const projectSetupTool = BAXTER_TOOLS.find((t) => t.key === "project-setup");
   const knowledgeCard = BAXTER_ADMIN_CARDS.find((c) => c.key === "knowledge-base");
   const integrationsCard = BAXTER_ADMIN_CARDS.find((c) => c.key === "integrations");
   const adminLinks = getAdminNavLinks();
@@ -299,6 +300,33 @@ export function buildBaxterCapabilityCatalog(
         "research a property",
       ],
       synonyms: ["property research", "parcel", "zoning", "reports", "property tool"],
+      sourceOfTruth: "baxter_tools",
+    },
+    {
+      key: "project_setup",
+      name: projectSetupTool?.name ?? "New Project Setup",
+      shortDescription:
+        "Prepare new-project setup runs (dry-run) from GoHighLevel customer records for human confirmation",
+      detailedDescription:
+        "Search GoHighLevel for a customer, confirm project details, and launch a dry-run that allocates the next Master Project Log number and records the planned Drive/Sheets/Slack actions. No external mutations yet (Prompts 2–3).",
+      category: "process",
+      audience: ["employee", "admin"],
+      rolesAllowed: ["user", "admin", "super_admin", "*"],
+      status: projectSetupTool?.enabled === false ? "disabled" : "available",
+      enabled: projectSetupTool?.enabled !== false,
+      webRoute: projectSetupTool?.href ?? "/projects/setup",
+      createRoute: "/projects/setup",
+      adminRoute: "/admin/project-setup",
+      supportedActions: [
+        "Search GHL contacts",
+        "Confirm project details",
+        "Run dry-run project setup",
+      ],
+      limitations: [
+        "Dry-run only — does not create Drive folders, Sheets rows, or Slack channels yet",
+      ],
+      helpTopics: ["new project setup", "project number", "feasibility package"],
+      synonyms: ["project setup", "new project", "master project log", "feasibility"],
       sourceOfTruth: "baxter_tools",
     },
     {

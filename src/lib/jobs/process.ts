@@ -140,6 +140,19 @@ async function processPemNeatGenerate(job: ReportJob): Promise<void> {
   await runPemNeatGenerationJob(pemNeatId);
 }
 
+async function processProjectSetup(job: ReportJob): Promise<void> {
+  const runId =
+    typeof job.metadata.projectSetupRunId === "string" ? job.metadata.projectSetupRunId : null;
+  if (!runId) {
+    throw new Error("project_setup job requires metadata.projectSetupRunId");
+  }
+  const { runProjectSetupJob } = await import("@/lib/project-setup/runner");
+  const result = await runProjectSetupJob(runId);
+  if (result.status === "failed") {
+    throw new Error(result.error ?? "Project setup run failed");
+  }
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -158,6 +171,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processSlackMonitoringReaction(job);
     } else if (job.jobType === "pem_neat_generate") {
       await processPemNeatGenerate(job);
+    } else if (job.jobType === "project_setup") {
+      await processProjectSetup(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

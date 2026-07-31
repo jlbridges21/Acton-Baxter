@@ -5,6 +5,7 @@ import {
   BookMarked,
   ClipboardList,
   Cloud,
+  FolderKanban,
   LayoutDashboard,
   MessageSquare,
   Palette,
@@ -48,6 +49,12 @@ export function getAdminNavLinks(): AdminNavLink[] {
       label: "Integrations",
       icon: Cloud,
       match: (pathname) => pathname.startsWith("/admin/connectors"),
+    },
+    {
+      href: "/admin/project-setup",
+      label: "Project Setup",
+      icon: FolderKanban,
+      match: (pathname) => pathname.startsWith("/admin/project-setup"),
     },
     {
       href: "/admin/users",

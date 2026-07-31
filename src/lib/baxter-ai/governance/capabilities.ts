@@ -18,6 +18,7 @@ export const BAXTER_CURRENT_CAPABILITIES = [
   "Cite approved Acton sources for company-specific answers",
   "Generate and review PEM NEATs; answer questions about completed PEMs",
   "Help with Property Research navigation and prior reports",
+  "Prepare new-project setup runs (dry-run) from GoHighLevel customer records for human confirmation",
   "Help with general explanations, drafting, and summarization",
   "Draft customer-facing copy only when requested, clearly marked for human review",
 ] as const;

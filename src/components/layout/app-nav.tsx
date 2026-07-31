@@ -1,7 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { ClipboardList, LayoutDashboard, LogOut, Menu, PlusCircle, Search, X } from "lucide-react";
+import {
+  ClipboardList,
+  FolderKanban,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  PlusCircle,
+  Search,
+  X,
+} from "lucide-react";
 
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -52,13 +61,25 @@ function employeeLinks(context: NavContext): NavLink[] {
         href: "/pem-neats",
         label: "PEM NEATs",
         icon: ClipboardList,
-        match: (pathname) => pathname === "/pem-neats",
+        match: (pathname) => pathname.startsWith("/pem-neats"),
       },
       {
         href: "/pem-neats/new",
         label: "Add PEM NEAT",
         icon: PlusCircle,
         match: (pathname) => pathname === "/pem-neats/new",
+      },
+    ];
+  }
+
+  if (context === "project-setup") {
+    return [
+      home,
+      {
+        href: "/projects/setup",
+        label: "New Project Setup",
+        icon: FolderKanban,
+        match: (pathname) => pathname.startsWith("/projects/setup"),
       },
     ];
   }

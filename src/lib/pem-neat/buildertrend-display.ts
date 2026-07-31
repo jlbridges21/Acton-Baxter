@@ -21,13 +21,13 @@ export const BUILDERTREND_FIELD_DEFS: BuildertrendFieldDef[] = [
   { key: "customerStory", label: "Customer Story" },
   {
     key: "customerPain1",
-    label: "Customer Type 1 Pain",
+    label: "Customer Pain 1",
     hint: "Type 1 Pain — Why Build an ADU?",
   },
   {
     key: "customerPain",
-    label: "Customer Type 2 Pain",
-    hint: "Type 2 Pain — Why Acton / the Right Partner? (Customer Pain 2)",
+    label: "Customer Pain",
+    hint: "Type 2 Pain — Why Acton / the Right Partner?",
   },
   { key: "customerPriorities", label: "Customer Priorities", isBulletList: true },
   { key: "designHandoff", label: "Design Handoff" },

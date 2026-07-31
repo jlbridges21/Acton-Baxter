@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Cloud, ClipboardList, House } from "lucide-react";
+import { BookOpen, Cloud, ClipboardList, FolderKanban, House } from "lucide-react";
 
 export type BaxterTool = {
   key: string;
@@ -43,6 +43,18 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     ctaLabel: "Open PEM NEAT",
     aliases: ["pem", "neat", "pem neat", "sales meeting", "transcript", "buildertrend handoff"],
   },
+  {
+    key: "project-setup",
+    name: "New Project Setup",
+    description:
+      "Prepare a new-project setup run (dry-run) from a GoHighLevel customer for human confirmation.",
+    href: "/projects/setup",
+    createHref: "/projects/setup",
+    enabled: true,
+    icon: FolderKanban,
+    ctaLabel: "Start project setup",
+    aliases: ["project setup", "new project", "feasibility package", "project number"],
+  },
 ];
 
 /** Admin-only platform cards (not employee tools). */
@@ -77,7 +89,7 @@ export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTo
 }
 
 export type NavContext =
-  "platform" | "property-research" | "pem-neat" | "knowledge" | "platform-admin";
+  "platform" | "property-research" | "pem-neat" | "project-setup" | "knowledge" | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
   if (pathname.startsWith("/admin/knowledge")) {
@@ -89,6 +101,9 @@ export function getNavContext(pathname: string): NavContext {
   }
   if (pathname.startsWith("/pem-neats")) {
     return "pem-neat";
+  }
+  if (pathname.startsWith("/projects/setup")) {
+    return "project-setup";
   }
   return "platform";
 }

@@ -7,6 +7,7 @@ export const JOB_TYPES = [
   "baxter_alert_delivery",
   "slack_monitoring_reaction",
   "pem_neat_generate",
+  "project_setup",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
