@@ -115,7 +115,7 @@ vi.mock("@/lib/slack/config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/slack/config")>();
   return {
     ...actual,
-    isSlackUserAllowed: () => true,
+    isSlackUserAllowed: vi.fn(() => true),
     getPublicAppBaseUrl: () => "https://acton-baxter.vercel.app",
   };
 });
@@ -129,6 +129,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   openSlackDm.mockResolvedValue({ channelId: "D123" });
   postSlackMessage.mockResolvedValue({ ok: true, ts: "1.2" });
+  updateSlackModal.mockResolvedValue(undefined);
+  openSlackModal.mockResolvedValue(undefined);
 });
 
 describe("planned status labels", () => {
@@ -292,6 +294,7 @@ describe("new-project modal views + view_submission", () => {
     const search = buildSearchModal({ prefill: "Lisa Wright", meta });
     expect(search.callback_id).toBe(NEW_PROJECT_CALLBACK_SEARCH);
     expect(JSON.stringify(search)).toContain("Lisa Wright");
+    expect(JSON.stringify(search)).toContain("Step 1 of 3");
 
     const pick = buildPickModal({
       meta,
@@ -308,6 +311,7 @@ describe("new-project modal views + view_submission", () => {
       ],
     });
     expect(pick.callback_id).toBe(NEW_PROJECT_CALLBACK_PICK);
+    expect(JSON.stringify(pick)).toContain("Step 2 of 3");
 
     const confirm = buildConfirmModal({
       meta: { ...meta, contactId: "c1" },
@@ -324,10 +328,11 @@ describe("new-project modal views + view_submission", () => {
       fpPaidDate: "2026-07-31",
     });
     expect(confirm.callback_id).toBe(NEW_PROJECT_CALLBACK_CONFIRM);
+    expect(JSON.stringify(confirm)).toContain("Step 3 of 3");
     expect(decodeModalMeta(encodeModalMeta(meta))?.slackUserId).toBe("U1");
   });
 
-  it("search submission returns loading update and schedules GHL search", async () => {
+  it("search submission returns loading update and schedules GHL search without hash", async () => {
     const scheduled: Array<() => Promise<void>> = [];
     const response = await handleNewProjectViewSubmission(
       {
@@ -336,6 +341,7 @@ describe("new-project modal views + view_submission", () => {
         team: { id: "T1" },
         view: {
           id: "V1",
+          hash: "stale-hash-from-payload",
           callback_id: NEW_PROJECT_CALLBACK_SEARCH,
           private_metadata: encodeModalMeta({ slackUserId: "U1", slackTeamId: "T1" }),
           state: {
@@ -350,9 +356,124 @@ describe("new-project modal views + view_submission", () => {
       },
     );
     expect(response.response_action).toBe("update");
+    expect(JSON.stringify(response)).toContain("Step 1 of 3");
     expect(scheduled).toHaveLength(1);
     await scheduled[0]!();
     expect(updateSlackModal).toHaveBeenCalled();
+    for (const call of updateSlackModal.mock.calls) {
+      const arg = call[0] as { hash?: string; viewId: string };
+      expect(arg).not.toHaveProperty("hash");
+      expect(arg.viewId).toBe("V1");
+    }
+  });
+
+  it("pick submission omits hash on async views.update (success and failure)", async () => {
+    const { loadProjectSetupContactSnapshot } = await import("@/lib/project-setup/service");
+    const scheduled: Array<() => Promise<void>> = [];
+    const response = await handleNewProjectViewSubmission(
+      {
+        type: "view_submission",
+        user: { id: "U1" },
+        team: { id: "T1" },
+        view: {
+          id: "V2",
+          hash: "stale-pick-hash",
+          callback_id: NEW_PROJECT_CALLBACK_PICK,
+          private_metadata: encodeModalMeta({
+            slackUserId: "U1",
+            slackTeamId: "T1",
+            query: "Lisa",
+          }),
+          state: {
+            values: {
+              contact_pick: { contact_pick_input: { selected_option: { value: "c1" } } },
+            },
+          },
+        },
+      },
+      (work) => {
+        scheduled.push(work);
+      },
+    );
+    expect(response.response_action).toBe("update");
+    expect(JSON.stringify(response)).toContain("Step 2 of 3");
+    await scheduled[0]!();
+    for (const call of updateSlackModal.mock.calls) {
+      expect(call[0] as object).not.toHaveProperty("hash");
+    }
+
+    updateSlackModal.mockClear();
+    scheduled.length = 0;
+    vi.mocked(loadProjectSetupContactSnapshot).mockRejectedValueOnce(new Error("GHL down"));
+    await handleNewProjectViewSubmission(
+      {
+        type: "view_submission",
+        user: { id: "U1" },
+        team: { id: "T1" },
+        view: {
+          id: "V3",
+          hash: "stale-again",
+          callback_id: NEW_PROJECT_CALLBACK_PICK,
+          private_metadata: encodeModalMeta({
+            slackUserId: "U1",
+            slackTeamId: "T1",
+            query: "Lisa",
+          }),
+          state: {
+            values: {
+              contact_pick: { contact_pick_input: { selected_option: { value: "c1" } } },
+            },
+          },
+        },
+      },
+      (work) => {
+        scheduled.push(work);
+      },
+    );
+    await scheduled[0]!();
+    for (const call of updateSlackModal.mock.calls) {
+      expect(call[0] as object).not.toHaveProperty("hash");
+    }
+  });
+
+  it("returns a valid response_action when an unexpected error is thrown", async () => {
+    const { isSlackUserAllowed } = await import("@/lib/slack/config");
+    vi.mocked(isSlackUserAllowed).mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    const response = await handleNewProjectViewSubmission(
+      {
+        type: "view_submission",
+        user: { id: "U1" },
+        team: { id: "T1" },
+        view: {
+          id: "V1",
+          callback_id: NEW_PROJECT_CALLBACK_SEARCH,
+          private_metadata: encodeModalMeta({ slackUserId: "U1", slackTeamId: "T1" }),
+          state: {
+            values: {
+              customer_name: { customer_name_input: { value: "Lisa" } },
+            },
+          },
+        },
+      },
+      () => undefined,
+    );
+    expect(response.response_action).toBe("errors");
+    expect(response).toMatchObject({
+      errors: { customer_name: expect.stringMatching(/try \/new-project again/i) },
+    });
+  });
+
+  it("decodeModalMeta returns null for malformed/missing metadata without throwing", () => {
+    expect(decodeModalMeta(null)).toBeNull();
+    expect(decodeModalMeta(undefined)).toBeNull();
+    expect(decodeModalMeta("")).toBeNull();
+    expect(decodeModalMeta("not-json")).toBeNull();
+    expect(decodeModalMeta("{")).toBeNull();
+    expect(decodeModalMeta("{}")).toBeNull();
+    expect(decodeModalMeta('{"slackUserId":"U1"}')).toBeNull();
+    expect(() => decodeModalMeta("{{{")).not.toThrow();
   });
 
   it("confirm submission clears modal and schedules live run create", async () => {

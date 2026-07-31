@@ -85,6 +85,7 @@ export function buildSlashHelpText(): string {
     "• `/recall <query>` — search Slack history (same live retrieval as chat)",
     "• `/pem` — open Baxter’s PEM NEAT tool to generate structured sales intelligence from a Partnership Evaluation Meeting transcript",
     "• `/property <address>` — start Property Research",
+    "• `/new-project` — set up a new project from a GoHighLevel customer (Drive folder, charter, Slack channel)",
     "",
     "Examples:",
     `• Ask: "What is ${DEMO_PROSPECT_NAME}’s Type 1 Pain?"`,
@@ -93,6 +94,7 @@ export function buildSlashHelpText(): string {
     "",
     `• Baxter: ${base}/`,
     `• PEM NEATs: ${base}${PEM_LIST_PATH}`,
+    `• Project setup: ${base}/projects/setup`,
     `• Integrations: ${base}/settings/integrations`,
   ].join("\n");
 }

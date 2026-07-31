@@ -27,10 +27,19 @@ export function encodeModalMeta(meta: NewProjectModalMeta): string {
   return JSON.stringify(meta).slice(0, 3000);
 }
 
+/**
+ * Decode private_metadata. Never throws — malformed/missing → null.
+ */
 export function decodeModalMeta(raw: string | undefined | null): NewProjectModalMeta | null {
-  if (!raw?.trim()) return null;
+  if (raw == null) return null;
+  if (typeof raw !== "string") return null;
+  if (!raw.trim()) return null;
   try {
     const parsed = JSON.parse(raw) as NewProjectModalMeta;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.slackUserId !== "string" || typeof parsed.slackTeamId !== "string") {
+      return null;
+    }
     if (!parsed.slackUserId || !parsed.slackTeamId) return null;
     return parsed;
   } catch {
@@ -38,12 +47,21 @@ export function decodeModalMeta(raw: string | undefined | null): NewProjectModal
   }
 }
 
+function stepHeader(text: string): Record<string, unknown> {
+  return {
+    type: "section",
+    text: { type: "mrkdwn", text },
+  };
+}
+
 export function buildSearchModal(input: {
   prefill?: string;
   meta: NewProjectModalMeta;
   errorText?: string;
 }): Record<string, unknown> {
-  const blocks: unknown[] = [];
+  const blocks: unknown[] = [
+    stepHeader("*Step 1 of 3 — Find the customer*\nEnter a GoHighLevel name, then tap Search."),
+  ];
   if (input.errorText) {
     blocks.push({
       type: "section",
@@ -105,13 +123,9 @@ export function buildPickModal(input: {
     submit: { type: "plain_text", text: "Continue" },
     close: { type: "plain_text", text: "Cancel" },
     blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `Found *${input.hits.length}* match${input.hits.length === 1 ? "" : "es"}. Select one to continue.`,
-        },
-      },
+      stepHeader(
+        `*Step 2 of 3 — Confirm this is the right customer*\nFound *${input.hits.length}* match${input.hits.length === 1 ? "" : "es"}. Select one, then Continue.`,
+      ),
       {
         type: "input",
         block_id: "contact_pick",
@@ -148,6 +162,9 @@ export function buildConfirmModal(input: {
     submit: { type: "plain_text", text: "Start setup" },
     close: { type: "plain_text", text: "Cancel" },
     blocks: [
+      stepHeader(
+        "*Step 3 of 3 — Review before Baxter starts setup*\nCheck the details below, then tap Start setup.",
+      ),
       {
         type: "section",
         text: {
@@ -185,7 +202,17 @@ export function buildConfirmModal(input: {
 export function buildLoadingModal(input: {
   meta: NewProjectModalMeta;
   message: string;
+  /** Which step this loading state belongs to (for guided copy). */
+  step?: 1 | 2 | 3;
 }): Record<string, unknown> {
+  const step = input.step ?? 1;
+  const header =
+    step === 2
+      ? "*Step 2 of 3 — Loading customer…*"
+      : step === 3
+        ? "*Step 3 of 3 — Starting setup…*"
+        : "*Step 1 of 3 — Searching…*";
+
   return {
     type: "modal",
     callback_id: NEW_PROJECT_CALLBACK_SEARCH,
@@ -193,6 +220,7 @@ export function buildLoadingModal(input: {
     title: { type: "plain_text", text: "New project" },
     close: { type: "plain_text", text: "Cancel" },
     blocks: [
+      stepHeader(header),
       {
         type: "section",
         text: { type: "mrkdwn", text: input.message },

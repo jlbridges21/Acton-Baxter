@@ -3,7 +3,7 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { resolveBaxterUserForSlackIdentity } from "@/lib/slack/identity";
-import { openSlackModal, openSlackDm } from "@/lib/slack/provisioning";
+import { openSlackModal, openSlackDm, updateSlackModal } from "@/lib/slack/provisioning";
 import { postSlackMessage } from "@/lib/slack/client";
 import { getPublicAppBaseUrl, isSlackUserAllowed } from "@/lib/slack/config";
 import type { SlackCommandPayload } from "@/lib/slack/commands";
@@ -26,7 +26,6 @@ import {
   NEW_PROJECT_CALLBACK_SEARCH,
   type NewProjectModalMeta,
 } from "./new-project-views";
-import { updateSlackModal } from "@/lib/slack/provisioning";
 
 async function resolveInitiatorUserId(slackUserId: string, slackTeamId: string): Promise<string> {
   const matched = await resolveBaxterUserForSlackIdentity({
@@ -103,217 +102,338 @@ function readInputValue(
   return action?.value?.trim() ?? "";
 }
 
+function summarizeViewState(view: SlackViewSubmission["view"]): string {
+  const keys = Object.keys(view?.state?.values ?? {});
+  return `blocks=[${keys.join(",")}]`;
+}
+
+/**
+ * Valid Slack interaction error body. Prefer field errors that match current step inputs.
+ * Confirm has no inputs — fall back to an update with a searchable error modal.
+ */
+export function buildViewSubmissionErrorResponse(input: {
+  callbackId?: string;
+  message: string;
+  meta?: NewProjectModalMeta | null;
+}): Record<string, unknown> {
+  const callbackId = input.callbackId;
+  if (callbackId === NEW_PROJECT_CALLBACK_PICK) {
+    return {
+      response_action: "errors",
+      errors: { contact_pick: input.message },
+    };
+  }
+  if (callbackId === NEW_PROJECT_CALLBACK_CONFIRM && input.meta) {
+    return {
+      response_action: "update",
+      view: buildSearchModal({
+        meta: input.meta,
+        prefill: input.meta.query,
+        errorText: input.message,
+      }),
+    };
+  }
+  return {
+    response_action: "errors",
+    errors: { customer_name: input.message },
+  };
+}
+
 /**
  * Handle view_submission for the /new-project modal state machine.
  * Returns the immediate Slack response body (must finish within ~3s).
  * Slow work is scheduled via `schedule` (typically Next.js `after`).
+ *
+ * IMPORTANT: Follow-up `views.update` calls must NOT pass the original payload hash —
+ * returning `response_action: "update"` (loading view) advances the view hash server-side,
+ * so a stale hash causes Slack to reject the async update (and can surface as
+ * "We had some trouble connecting").
  */
 export async function handleNewProjectViewSubmission(
   payload: SlackViewSubmission,
   schedule: (work: () => Promise<void>) => void,
 ): Promise<Record<string, unknown>> {
   const callbackId = payload.view?.callback_id;
-  const meta = decodeModalMeta(payload.view?.private_metadata);
-  const slackUserId = payload.user?.id ?? meta?.slackUserId;
-  const slackTeamId = payload.team?.id ?? meta?.slackTeamId;
+  const slackUserIdHint = payload.user?.id;
 
-  if (!slackUserId || !slackTeamId || !meta) {
-    return {
-      response_action: "errors",
-      errors: { customer_name: "Session expired — run /new-project again." },
-    };
-  }
+  try {
+    const meta = decodeModalMeta(payload.view?.private_metadata);
+    const slackUserId = payload.user?.id ?? meta?.slackUserId;
+    const slackTeamId = payload.team?.id ?? meta?.slackTeamId;
 
-  if (!isSlackUserAllowed(slackUserId)) {
-    return {
-      response_action: "errors",
-      errors: { customer_name: "You are not authorized to run /new-project." },
-    };
-  }
-
-  if (callbackId === NEW_PROJECT_CALLBACK_SEARCH) {
-    const query = readInputValue(payload.view, "customer_name", "customer_name_input");
-    if (!query) {
-      return {
-        response_action: "errors",
-        errors: { customer_name: "Enter a customer name to search." },
-      };
+    if (!slackUserId || !slackTeamId || !meta) {
+      return buildViewSubmissionErrorResponse({
+        callbackId,
+        message: "Session expired — run /new-project again.",
+        meta,
+      });
     }
 
-    const viewId = payload.view?.id;
-    const hash = payload.view?.hash;
-    const nextMeta: NewProjectModalMeta = { ...meta, query };
+    if (!isSlackUserAllowed(slackUserId)) {
+      return buildViewSubmissionErrorResponse({
+        callbackId,
+        message: "You are not authorized to run /new-project.",
+        meta,
+      });
+    }
 
-    // Acknowledge with a loading view, then search async and views.update.
-    schedule(async () => {
-      if (!viewId) return;
-      try {
-        const hits = await searchProjectSetupContacts(query);
-        if (hits.length === 0) {
-          await updateSlackModal({
-            viewId,
-            hash,
-            view: buildSearchModal({
-              prefill: query,
-              meta: nextMeta,
-              errorText: `No GoHighLevel contacts matched “${query}”. Try another name.`,
-            }),
-          });
+    if (callbackId === NEW_PROJECT_CALLBACK_SEARCH) {
+      const query = readInputValue(payload.view, "customer_name", "customer_name_input");
+      if (!query) {
+        return buildViewSubmissionErrorResponse({
+          callbackId,
+          message: "Enter a customer name to search.",
+          meta,
+        });
+      }
+
+      const viewId = payload.view?.id;
+      const nextMeta: NewProjectModalMeta = { ...meta, query };
+
+      // Acknowledge with a loading view, then search async and views.update (no hash).
+      schedule(async () => {
+        console.info("[new-project] search.async.start", {
+          viewId: viewId ?? null,
+          slackUserId,
+          callbackId,
+        });
+        if (!viewId) {
+          console.warn("[new-project] search.async.skip_no_view_id", { slackUserId });
           return;
         }
-        await updateSlackModal({
-          viewId,
-          hash,
-          view: buildPickModal({ meta: nextMeta, hits }),
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Search failed";
-        await updateSlackModal({
-          viewId,
-          hash,
-          view: buildSearchModal({
-            prefill: query,
-            meta: nextMeta,
-            errorText: message,
-          }),
-        }).catch(() => undefined);
-      }
-    });
+        try {
+          const hits = await searchProjectSetupContacts(query);
+          if (hits.length === 0) {
+            await updateSlackModal({
+              viewId,
+              // Omit hash — loading-view ack already changed it.
+              view: buildSearchModal({
+                prefill: query,
+                meta: nextMeta,
+                errorText: `No GoHighLevel contacts matched “${query}”. Try another name.`,
+              }),
+            });
+            console.info("[new-project] search.async.done", {
+              viewId,
+              slackUserId,
+              hitCount: 0,
+            });
+            return;
+          }
+          await updateSlackModal({
+            viewId,
+            view: buildPickModal({ meta: nextMeta, hits }),
+          });
+          console.info("[new-project] search.async.done", {
+            viewId,
+            slackUserId,
+            hitCount: hits.length,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Search failed";
+          console.error("[new-project] search.async.error", {
+            viewId,
+            slackUserId,
+            message,
+          });
+          try {
+            await updateSlackModal({
+              viewId,
+              view: buildSearchModal({
+                prefill: query,
+                meta: nextMeta,
+                errorText: message,
+              }),
+            });
+          } catch (updateError) {
+            console.error("[new-project] search.async.update_failed", updateError);
+          }
+        }
+      });
 
-    return {
-      response_action: "update",
-      view: buildLoadingModal({
-        meta: nextMeta,
-        message: `Searching GoHighLevel for “${query}”…`,
-      }),
-    };
-  }
-
-  if (callbackId === NEW_PROJECT_CALLBACK_PICK) {
-    const contactId = readInputValue(payload.view, "contact_pick", "contact_pick_input");
-    if (!contactId) {
       return {
-        response_action: "errors",
-        errors: { contact_pick: "Select a customer to continue." },
+        response_action: "update",
+        view: buildLoadingModal({
+          meta: nextMeta,
+          step: 1,
+          message: `Searching GoHighLevel for “${query}”…`,
+        }),
       };
     }
 
-    const viewId = payload.view?.id;
-    const hash = payload.view?.hash;
-    const nextMeta: NewProjectModalMeta = { ...meta, contactId };
+    if (callbackId === NEW_PROJECT_CALLBACK_PICK) {
+      const contactId = readInputValue(payload.view, "contact_pick", "contact_pick_input");
+      if (!contactId) {
+        return buildViewSubmissionErrorResponse({
+          callbackId,
+          message: "Select a customer to continue.",
+          meta,
+        });
+      }
 
-    schedule(async () => {
-      if (!viewId) return;
-      try {
-        const contact = await loadProjectSetupContactSnapshot(contactId);
-        const preview = await buildProjectSetupPreview({ contact });
-        await updateSlackModal({
-          viewId,
-          hash,
-          view: buildConfirmModal({
-            meta: nextMeta,
-            contactName: contact.name ?? "Customer",
-            email: contact.email,
-            phone: contact.phone,
-            address: contact.address,
-            salesRep: preview.salesRep,
+      const viewId = payload.view?.id;
+      const nextMeta: NewProjectModalMeta = { ...meta, contactId };
+
+      schedule(async () => {
+        console.info("[new-project] pick.async.start", {
+          viewId: viewId ?? null,
+          slackUserId,
+          callbackId,
+        });
+        if (!viewId) {
+          console.warn("[new-project] pick.async.skip_no_view_id", { slackUserId });
+          return;
+        }
+        try {
+          const contact = await loadProjectSetupContactSnapshot(contactId);
+          const preview = await buildProjectSetupPreview({ contact });
+          await updateSlackModal({
+            viewId,
+            // Omit hash — loading-view ack already changed it.
+            view: buildConfirmModal({
+              meta: nextMeta,
+              contactName: contact.name ?? "Customer",
+              email: contact.email,
+              phone: contact.phone,
+              address: contact.address,
+              salesRep: preview.salesRep,
+              projectNumber: preview.projectNumber!,
+              folderName: preview.folderName,
+              charterName: preview.charterName,
+              slackChannelName: preview.slackChannelName,
+              inviteLabel: preview.inviteLabel,
+              fpPaidDate: preview.fpPaidDate,
+            }),
+          });
+          console.info("[new-project] pick.async.done", { viewId, slackUserId });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to load contact";
+          console.error("[new-project] pick.async.error", {
+            viewId,
+            slackUserId,
+            message,
+          });
+          try {
+            await updateSlackModal({
+              viewId,
+              view: buildSearchModal({
+                prefill: meta.query,
+                meta,
+                errorText: message,
+              }),
+            });
+          } catch (updateError) {
+            console.error("[new-project] pick.async.update_failed", updateError);
+          }
+        }
+      });
+
+      return {
+        response_action: "update",
+        view: buildLoadingModal({
+          meta: nextMeta,
+          step: 2,
+          message: "Loading customer details…",
+        }),
+      };
+    }
+
+    if (callbackId === NEW_PROJECT_CALLBACK_CONFIRM) {
+      const contactId = meta.contactId;
+      if (!contactId) {
+        return buildViewSubmissionErrorResponse({
+          callbackId,
+          message: "Session expired — run /new-project again.",
+          meta,
+        });
+      }
+
+      schedule(async () => {
+        console.info("[new-project] confirm.async.start", { slackUserId, callbackId });
+        try {
+          const writesEnabled = await googleWritesEnabled();
+          if (!writesEnabled) {
+            await dmUser(
+              slackUserId,
+              "Google write scopes are not connected yet. Reconnect Google at /admin/connectors/google, then try again.",
+            );
+            console.info("[new-project] confirm.async.done", {
+              slackUserId,
+              outcome: "writes_disabled",
+            });
+            return;
+          }
+          if (!slackProvisioningEnabled()) {
+            await dmUser(
+              slackUserId,
+              "Slack provisioning is not configured (ENABLE_SLACK_INTEGRATION / bot token). Ask an admin to check Slack setup.",
+            );
+            console.info("[new-project] confirm.async.done", {
+              slackUserId,
+              outcome: "slack_disabled",
+            });
+            return;
+          }
+
+          const contact = await loadProjectSetupContactSnapshot(contactId);
+          const preview = await buildProjectSetupPreview({ contact });
+          const initiatedBy = await resolveInitiatorUserId(slackUserId, slackTeamId);
+
+          const { run } = await createProjectSetupRun({
+            initiatedBy,
+            triggerChannel: "slack",
+            slackInitiatorId: slackUserId,
+            dryRun: false,
+            ghlContactId: contact.id,
+            contactSnapshot: contact,
+            salesRep: preview.salesRep || "Unknown",
             projectNumber: preview.projectNumber!,
+            projectLastName: preview.projectLastName,
             folderName: preview.folderName,
             charterName: preview.charterName,
             slackChannelName: preview.slackChannelName,
-            inviteLabel: preview.inviteLabel,
             fpPaidDate: preview.fpPaidDate,
-          }),
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unable to load contact";
-        await updateSlackModal({
-          viewId,
-          hash,
-          view: buildSearchModal({
-            prefill: meta.query,
-            meta,
-            errorText: message,
-          }),
-        }).catch(() => undefined);
-      }
-    });
+          });
 
-    return {
-      response_action: "update",
-      view: buildLoadingModal({
-        meta: nextMeta,
-        message: "Loading customer details…",
-      }),
-    };
-  }
+          await enqueueProjectSetupRun(run.id);
 
-  if (callbackId === NEW_PROJECT_CALLBACK_CONFIRM) {
-    const contactId = meta.contactId;
-    if (!contactId) {
-      return {
-        response_action: "errors",
-        errors: {},
-      };
+          const runUrl = `${getPublicAppBaseUrl()}/projects/setup/${run.id}`;
+          await dmUser(
+            slackUserId,
+            `Started live project setup for *${contact.name ?? preview.projectLastName}* (${preview.projectNumber}).\nTrack progress: ${runUrl}`,
+          );
+          console.info("[new-project] confirm.async.done", {
+            slackUserId,
+            runId: run.id,
+            outcome: "enqueued",
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to start project setup";
+          console.error("[new-project] confirm.async.error", { slackUserId, message });
+          await dmUser(slackUserId, `Could not start project setup: ${message}`).catch(
+            () => undefined,
+          );
+        }
+      });
+
+      return { response_action: "clear" };
     }
 
-    schedule(async () => {
-      try {
-        const writesEnabled = await googleWritesEnabled();
-        if (!writesEnabled) {
-          await dmUser(
-            slackUserId,
-            "Google write scopes are not connected yet. Reconnect Google at /admin/connectors/google, then try again.",
-          );
-          return;
-        }
-        if (!slackProvisioningEnabled()) {
-          await dmUser(
-            slackUserId,
-            "Slack provisioning is not configured (ENABLE_SLACK_INTEGRATION / bot token). Ask an admin to check Slack setup.",
-          );
-          return;
-        }
-
-        const contact = await loadProjectSetupContactSnapshot(contactId);
-        const preview = await buildProjectSetupPreview({ contact });
-        const initiatedBy = await resolveInitiatorUserId(slackUserId, slackTeamId);
-
-        const { run } = await createProjectSetupRun({
-          initiatedBy,
-          triggerChannel: "slack",
-          slackInitiatorId: slackUserId,
-          dryRun: false,
-          ghlContactId: contact.id,
-          contactSnapshot: contact,
-          salesRep: preview.salesRep || "Unknown",
-          projectNumber: preview.projectNumber!,
-          projectLastName: preview.projectLastName,
-          folderName: preview.folderName,
-          charterName: preview.charterName,
-          slackChannelName: preview.slackChannelName,
-          fpPaidDate: preview.fpPaidDate,
-        });
-
-        await enqueueProjectSetupRun(run.id);
-
-        const runUrl = `${getPublicAppBaseUrl()}/projects/setup/${run.id}`;
-        await dmUser(
-          slackUserId,
-          `Started live project setup for *${contact.name ?? preview.projectLastName}* (${preview.projectNumber}).\nTrack progress: ${runUrl}`,
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unable to start project setup";
-        await dmUser(slackUserId, `Could not start project setup: ${message}`).catch(
-          () => undefined,
-        );
-      }
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unexpected_error";
+    console.error("[new-project] view_submission.unhandled", {
+      callbackId: callbackId ?? null,
+      slackUserId: slackUserIdHint ?? null,
+      viewState: summarizeViewState(payload.view),
+      message,
     });
-
-    return { response_action: "clear" };
+    return buildViewSubmissionErrorResponse({
+      callbackId,
+      message: "Something went wrong — try /new-project again.",
+      meta: decodeModalMeta(payload.view?.private_metadata),
+    });
   }
-
-  return { ok: true };
 }
 
 async function dmUser(slackUserId: string, text: string): Promise<void> {

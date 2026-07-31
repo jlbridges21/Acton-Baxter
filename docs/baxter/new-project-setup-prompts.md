@@ -127,6 +127,50 @@ Prompt 2 shipped and passed a live Google test. Observed issues folded into this
 
 Manual steps after: create the `/new-project` slash command in the Slack app config pointing at `/api/slack/commands/new-project`; enable Interactivity with URL `/api/slack/interactions`; verify Project Charter List row format on a live test; flip test mode off when ready to invite the full standing list.
 
+Status: Prompt 3 shipped (migration `032_project_setup_slack.sql`). Web app flow confirmed fully working end to end — do not modify it. Live-test bug found: after searching for a customer in the `/new-project` modal, Slack shows "We had some trouble connecting. Try again?" — classic symptom of a `view_submission` response missing Slack's 3-second budget (GHL search + serverless cold start) or an unhandled exception producing a non-conforming response. Fix below (Prompt 3b) targets Slack interactivity code only.
+
+---
+
+## Prompt 3b — Fix `/new-project` modal: view_submission response reliability
+
+You are working in the Acton ADU Baxter repo (Next.js App Router + Supabase + Vercel). Read `AGENTS.md` first. The web app `/projects/setup` flow is fully live-tested and working — **do not modify anything under `src/app/(app)`/`/projects/setup`, `src/lib/project-setup/` step execution, or the Google-side code.** This prompt only touches Slack interactivity for `/new-project`.
+
+### Symptom
+
+In Slack, `/new-project` opens the modal correctly. Typing a customer name and submitting the search step returns Slack's generic client-side error "We had some trouble connecting. Try again?" — clicking "Try again" repeats the same failure. This is Slack's standard message when a `view_submission` HTTP response is late, non-200, or not a valid `{ response_action, view }` / empty-body ack. It is not a GHL or business-logic error message from our own code (those would render inside the modal, not as this generic banner).
+
+### Diagnose first
+
+1. Read the current implementation of `src/app/api/slack/interactions/route.ts` and whatever handles `view_submission` for the `/new-project` flow (search step, contact-selection step, confirm step) end to end.
+2. Confirm exactly how the interaction payload is parsed. Slack sends interactive payloads as `application/x-www-form-urlencoded` with a single field named `payload` containing a JSON string — NOT a raw JSON body. Verify `verifySlackRequest` gets the true raw body for signature checking, and that the handler correctly extracts and `JSON.parse`s the `payload` form field afterward (not `request.json()` directly). This is the single most common cause of this exact failure and must be checked first.
+3. Check whether the search step calls GoHighLevel (or does other I/O) synchronously in the code path that must return the `view_submission` HTTP response. Time it under realistic conditions (cold start included). If it can plausibly exceed ~2.5 seconds, that is the root cause even if parsing is correct.
+4. Check Vercel logs filtered specifically to `POST /api/slack/interactions` and `POST /api/slack/commands/new-project` around the time of a reproduction (the `Invalid cron secret` error you may see in the same log window is from the unrelated `/api/internal/process-jobs` cron endpoint — ignore it for this diagnosis; note it separately below). Look for thrown exceptions, timeouts, or a response that isn't valid JSON.
+5. Confirm every code path through the `view_submission` handler — including error paths (GHL search throws, zero results, GHL misconfigured) — returns a valid Slack response and never lets an exception escape unhandled to a 500 or a hung response.
+
+### Fix
+
+Implement whichever of these applies based on your diagnosis (implement all that are actually broken; do not restructure working parts):
+
+1. **Payload parsing:** if the handler isn't correctly extracting the URL-encoded `payload` field, fix it. Add a small shared parser used by both the interactions route and (if needed) the command route, with a unit test covering the real Slack form-encoded shape.
+2. **3-second budget for the search step:** do not perform the GHL search synchronously inside the `view_submission` response path if it risks exceeding the budget. Use the pattern already established elsewhere in this repo for async Slack work (the job queue + `views.update` after processing, mirroring how `slack_baxter_reply` jobs work): respond to the `view_submission` immediately — either an empty 200 ack, or `response_action: "update"` with a lightweight "Searching…" view — then run the GHL search in a background job and call `views.update` (using the `view_id`/`hash` from the original payload) with the real results once it completes. Apply the same non-blocking pattern to any other step in this modal flow that performs I/O (run creation/enqueue on final submit), even if today's timing happens to work, so this class of bug can't recur under load or cold starts.
+3. **Exhaustive error handling:** wrap the entire `view_submission` handler so any thrown error (GHL down, malformed contact data, Supabase error) still returns a valid, on-time Slack response — either `response_action: "errors"` with a field-level message the user can read in the modal ("Couldn't search GoHighLevel right now — try again"), or a pushed `views.update` showing the error, matching the async pattern above. The generic "trouble connecting" banner must never be the failure mode for a handled error.
+4. **Guided flow polish:** since responses may now arrive asynchronously via `views.update`, make sure the user always sees a clear state — searching, results found, no results (with a way to search again, not a dead end), confirm screen, submitting, success/failure — so the experience matches "guided through the whole setup" even with the async round trip.
+
+### Test
+
+- Unit tests: form-encoded payload parsing (real Slack shapes, `view_submission`, `block_actions`); the search step under a simulated slow GHL response confirming the HTTP response to Slack still returns well within budget while the real update happens via `views.update`; every handled-error path returns a valid Slack response shape; happy path (search → select → confirm → submit) still creates the run correctly and matches the already-working web app run creation logic (reuse it, don't duplicate it).
+- Run `npm run format && npm run lint && npm run typecheck && npm run test` and fix what you broke. Confirm you have not changed any file under the web app project-setup UI or the Google-side step execution.
+
+### Report manual setup steps
+
+End your reply with a checklist: redeploy; run `/new-project` in Slack end to end (search with a slow-ish GHL response if you can simulate it, confirm no "trouble connecting" error, confirm the modal updates through every state to a completed run); confirm the web app flow is untouched and still works. Separately, flag as a follow-up (not fixed in this prompt unless trivial): Vercel logs show `Invalid cron secret` on `/api/internal/process-jobs` — verify the `CRON_SECRET` env var in Vercel matches what the Vercel Cron configuration (or any external pinger) sends; this is unrelated to the Slack fix but is a real misconfiguration worth resolving separately.
+
+---
+
+## Prompt 3 follow-up — Fix Slack slash command "trouble connecting" error
+
+Status (Aug 2026): Web flow (`/projects/setup`) confirmed working end to end. Slack `/new-project` modal fails after the customer-name search step with Slack's native "We had some trouble connecting. Try again?" — this is Slack's client-side message for an interaction (`view_submission` / `block_actions`) that didn't receive a valid response within Slack's ~3 second window, or received a malformed one. Prime suspect: the GHL contact search runs synchronously inside the `view_submission` handler and Slack times the modal update out before it returns. Do not touch `/projects/setup` or any shared step-runner/Google code — Slack-surface fix only.
+
 ---
 
 ## Prompt 3 — Slack execution, `/new-project` command, charter list, fixes
