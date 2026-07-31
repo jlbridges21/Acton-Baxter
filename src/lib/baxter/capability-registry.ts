@@ -306,9 +306,9 @@ export function buildBaxterCapabilityCatalog(
       key: "project_setup",
       name: projectSetupTool?.name ?? "New Project Setup",
       shortDescription:
-        "Prepare new-project setup runs (dry-run) from GoHighLevel customer records for human confirmation",
+        "Prepare new-project setup from GoHighLevel customer records (Master Project Log, Drive folder, and charter when Google writes are enabled; Slack still pending)",
       detailedDescription:
-        "Search GoHighLevel for a customer, confirm project details, and launch a dry-run that allocates the next Master Project Log number and records the planned Drive/Sheets/Slack actions. No external mutations yet (Prompts 2–3).",
+        "Search GoHighLevel for a customer, confirm project details, and run project setup. When Google write scopes are connected, Baxter appends the Master Project Log row and creates the Drive folder + charter. Slack channel steps remain dry-run until Prompt 3.",
       category: "process",
       audience: ["employee", "admin"],
       rolesAllowed: ["user", "admin", "super_admin", "*"],
@@ -323,7 +323,8 @@ export function buildBaxterCapabilityCatalog(
         "Run dry-run project setup",
       ],
       limitations: [
-        "Dry-run only — does not create Drive folders, Sheets rows, or Slack channels yet",
+        "Slack channel create/invite/kickoff not live yet (Prompt 3)",
+        "Requires Google reconnect with Drive + Sheets write scopes",
       ],
       helpTopics: ["new project setup", "project number", "feasibility package"],
       synonyms: ["project setup", "new project", "master project log", "feasibility"],

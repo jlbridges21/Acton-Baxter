@@ -9,18 +9,26 @@ import {
   updateProjectSetupStep,
 } from "@/lib/project-setup/store";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
-/** Kick / resume a run (durable job + after()). */
+/** Kick / resume a run (durable job + after()). Admin or initiator may retry failed runs. */
 export async function POST(_request: Request, context: { params: Promise<{ runId: string }> }) {
   try {
-    await requireActiveUser();
+    const user = await requireActiveUser();
     const { runId } = await context.params;
     const run = await getProjectSetupRun(runId);
     if (!run) {
       throw new AppError("Project setup run not found", {
         code: "NOT_FOUND",
         statusCode: 404,
+      });
+    }
+
+    const isAdmin = user.profile.role === "admin" || user.profile.role === "super_admin";
+    if (run.status === "failed" && !isAdmin && run.initiatedBy !== user.id) {
+      throw new AppError("Only the initiator or an admin can retry this run.", {
+        code: "AUTHORIZATION_ERROR",
+        statusCode: 403,
       });
     }
 

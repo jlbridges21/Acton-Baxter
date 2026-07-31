@@ -1,11 +1,26 @@
 import "server-only";
 
 import type { ProjectSetupStepDefinition, ProjectSetupStepResult } from "./types";
-import { computeNextProjectNumberFromColumnA, parseProjectNumber } from "./project-number";
+import {
+  columnAContainsProjectNumber,
+  computeNextProjectNumberFromColumnA,
+  formatFpPaidDateForSheet,
+  parseProjectNumber,
+  twoDigitYearFromDate,
+} from "./project-number";
 import { readSheetColumnA } from "./sheets";
-import { isProjectNumberInUse, updateProjectSetupRun } from "./store";
+import { isProjectNumberInUse, updateProjectSetupRun, updateProjectSetupStep } from "./store";
 import { resolveInviteMemberEmails } from "./names";
 import { googleWritesEnabled, slackProvisioningEnabled } from "./capabilities";
+import {
+  appendSheetRow,
+  copyFile,
+  findChildByName,
+  getDriveFileMeta,
+  readSheetColumn,
+} from "@/lib/connectors/google/writes";
+import { copyTemplateFolderTree } from "./folder-copy";
+import { GOOGLE_SHEET_MIME } from "@/lib/connectors/google/types";
 
 async function executeAllocateProjectNumber(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
@@ -36,7 +51,8 @@ async function executeAllocateProjectNumber(
     spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
     tabName: ctx.settings.masterLogTabName,
   });
-  const computed = computeNextProjectNumberFromColumnA(values);
+  const referenceYear = twoDigitYearFromDate(ctx.run.fpPaidDate);
+  const computed = computeNextProjectNumberFromColumnA(values, { referenceYear });
   const inUse = await isProjectNumberInUse(computed.nextNumber, ctx.run.id);
   if (inUse) {
     throw new Error(
@@ -52,6 +68,8 @@ async function executeAllocateProjectNumber(
       source: "master_project_log",
       sourceValue: computed.sourceValue,
       sourceRowIndex: computed.sourceRowIndex,
+      rolledOver: computed.rolledOver,
+      referenceYear,
       spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
       tabName: ctx.settings.masterLogTabName,
       dryRun: ctx.run.dryRun,
@@ -71,59 +89,236 @@ function dryRunPlan(title: string, planned: Record<string, unknown>): ProjectSet
   };
 }
 
+function streetAddressFromSnapshot(snapshot: {
+  address: string | null;
+  city: string | null;
+}): string {
+  const address = snapshot.address?.trim() ?? "";
+  if (!address) return "";
+  const city = snapshot.city?.trim();
+  if (city && address.toLowerCase().includes(city.toLowerCase())) {
+    // Prefer the part before the city when address is a full formatted string.
+    const idx = address.toLowerCase().indexOf(city.toLowerCase());
+    if (idx > 0) {
+      return address
+        .slice(0, idx)
+        .replace(/[,\s]+$/, "")
+        .trim();
+    }
+  }
+  return address;
+}
+
 async function executeAppendMasterLogRow(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
 ): Promise<ProjectSetupStepResult> {
   const projectNumber =
     (ctx.priorOutputs.allocate_project_number?.projectNumber as string | undefined) ||
     ctx.run.projectNumber;
+  if (!projectNumber) {
+    throw new Error("Project number is missing — allocate it before appending the Master Log row.");
+  }
+
+  const row = {
+    projectNumber,
+    lastName: ctx.run.projectLastName ?? "",
+    salesRep: ctx.run.salesRep ?? "",
+    fpPaidDate: formatFpPaidDateForSheet(ctx.run.fpPaidDate),
+    customerName: ctx.run.contactSnapshot.name ?? "",
+    street: streetAddressFromSnapshot(ctx.run.contactSnapshot),
+    city: ctx.run.contactSnapshot.city ?? "",
+    postalCode: ctx.run.contactSnapshot.postalCode ?? "",
+    jurisdiction: ctx.run.contactSnapshot.city ?? "",
+  };
+
   const planned = {
     spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
     tabName: ctx.settings.masterLogTabName,
-    row: {
-      projectNumber,
-      customerName: ctx.run.contactSnapshot.name,
-      lastName: ctx.run.projectLastName,
-      salesRep: ctx.run.salesRep,
-      fpPaidDate: ctx.run.fpPaidDate,
-      address: ctx.run.contactSnapshot.address,
-      city: ctx.run.contactSnapshot.city,
-      postalCode: ctx.run.contactSnapshot.postalCode,
-    },
+    columns: "A–I",
+    row,
   };
-  if (!googleWritesEnabled() || ctx.run.dryRun) {
+
+  if (!(await googleWritesEnabled()) || ctx.run.dryRun) {
     return dryRunPlan("Append Master Project Log row", planned);
   }
-  throw new Error("Google write executor not enabled yet (Prompt 2).");
+
+  const columnA = await readSheetColumn({
+    spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+    tabName: ctx.settings.masterLogTabName,
+    column: "A",
+  });
+  if (columnAContainsProjectNumber(columnA, projectNumber)) {
+    return {
+      outputJson: {
+        mode: "live",
+        alreadyPresent: true,
+        projectNumber,
+        spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+        tabName: ctx.settings.masterLogTabName,
+        executed: true,
+        note: "Project number already present in column A — skipped append (idempotent resume).",
+      },
+    };
+  }
+
+  const values = [
+    row.projectNumber,
+    row.lastName,
+    row.salesRep,
+    row.fpPaidDate,
+    row.customerName,
+    row.street,
+    row.city,
+    row.postalCode,
+    row.jurisdiction,
+  ];
+
+  const appended = await appendSheetRow({
+    spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+    tabName: ctx.settings.masterLogTabName,
+    values,
+  });
+
+  return {
+    outputJson: {
+      mode: "live",
+      alreadyPresent: false,
+      projectNumber,
+      spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+      tabName: ctx.settings.masterLogTabName,
+      updatedRange: appended.updatedRange,
+      updatedRows: appended.updatedRows,
+      values,
+      executed: true,
+    },
+  };
 }
 
 async function executeCopyTemplateFolder(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
 ): Promise<ProjectSetupStepResult> {
+  const folderName = ctx.run.folderName;
+  if (!folderName) {
+    throw new Error("Folder name is missing on this run.");
+  }
+
   const planned = {
     templateFolderId: ctx.settings.templateFolderId,
     destinationParentId: ctx.settings.projectsParentFolderId,
-    folderName: ctx.run.folderName,
+    folderName,
   };
-  if (!googleWritesEnabled() || ctx.run.dryRun) {
+
+  if (!(await googleWritesEnabled()) || ctx.run.dryRun) {
     return dryRunPlan("Copy project template folder", planned);
   }
-  throw new Error("Google write executor not enabled yet (Prompt 2).");
+
+  const priorId =
+    typeof ctx.partialOutput.destinationFolderId === "string"
+      ? ctx.partialOutput.destinationFolderId
+      : null;
+
+  const result = await copyTemplateFolderTree({
+    templateFolderId: ctx.settings.templateFolderId,
+    projectsParentFolderId: ctx.settings.projectsParentFolderId,
+    folderName,
+    priorDestinationFolderId: priorId,
+    onProgress: async (progress) => {
+      await updateProjectSetupStep(ctx.stepId, {
+        outputJson: {
+          mode: "live",
+          ...progress,
+          inProgress: true,
+        },
+      });
+    },
+  });
+
+  return {
+    outputJson: {
+      mode: "live",
+      executed: true,
+      destinationFolderId: result.destinationFolderId,
+      webViewLink: result.destinationFolderLink,
+      copiedFiles: result.copiedFiles,
+      createdFolders: result.createdFolders,
+      skipped: result.skipped,
+      verification: result.verification,
+    },
+  };
 }
 
 async function executeCopyCharterSpreadsheet(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
 ): Promise<ProjectSetupStepResult> {
+  const charterName = ctx.run.charterName;
+  if (!charterName) {
+    throw new Error("Charter name is missing on this run.");
+  }
+
+  const destinationFolderId =
+    (ctx.priorOutputs.copy_template_folder?.destinationFolderId as string | undefined) ||
+    (typeof ctx.partialOutput.destinationFolderId === "string"
+      ? ctx.partialOutput.destinationFolderId
+      : null);
+
   const planned = {
     sourceSpreadsheetId: ctx.settings.masterCharterSpreadsheetId,
-    charterName: ctx.run.charterName,
-    destinationParentId: ctx.settings.projectsParentFolderId,
-    note: "Charter copy lands in the new project folder once folder creation is live.",
+    charterName,
+    destinationFolderId,
+    note: "All tabs retained, including Master Project Log.",
   };
-  if (!googleWritesEnabled() || ctx.run.dryRun) {
-    return dryRunPlan("Copy project charter spreadsheet", planned);
+
+  if (!(await googleWritesEnabled()) || ctx.run.dryRun) {
+    return dryRunPlan("Copy project charter spreadsheet", {
+      ...planned,
+      destinationParentId: ctx.settings.projectsParentFolderId,
+    });
   }
-  throw new Error("Google write executor not enabled yet (Prompt 2).");
+
+  if (!destinationFolderId) {
+    throw new Error(
+      "Project folder id is missing — complete the template folder copy before copying the charter.",
+    );
+  }
+
+  const existing = await findChildByName(destinationFolderId, charterName);
+  if (existing) {
+    const meta =
+      existing.mimeType === GOOGLE_SHEET_MIME
+        ? existing
+        : await getDriveFileMeta(existing.id).catch(() => existing);
+    return {
+      outputJson: {
+        mode: "live",
+        alreadyPresent: true,
+        executed: true,
+        fileId: meta.id,
+        webViewLink: meta.webViewLink ?? null,
+        charterName,
+        destinationFolderId,
+        note: "Charter already present in the project folder — skipped copy (idempotent resume).",
+      },
+    };
+  }
+
+  const copied = await copyFile({
+    fileId: ctx.settings.masterCharterSpreadsheetId,
+    name: charterName,
+    parentId: destinationFolderId,
+  });
+
+  return {
+    outputJson: {
+      mode: "live",
+      alreadyPresent: false,
+      executed: true,
+      fileId: copied.id,
+      webViewLink: copied.webViewLink ?? null,
+      charterName,
+      destinationFolderId,
+      note: "All tabs retained, including Master Project Log.",
+    },
+  };
 }
 
 async function executeCreateSlackChannel(
@@ -137,6 +332,7 @@ async function executeCreateSlackChannel(
     memberLabel: members.label,
   };
   if (!slackProvisioningEnabled() || ctx.run.dryRun) {
+    // Slack stays dry-run until Prompt 3 (slackProvisioningEnabled is always false today).
     return dryRunPlan("Create Slack channel and invite members", planned);
   }
   throw new Error("Slack provisioning executor not enabled yet (Prompt 3).");
@@ -145,6 +341,10 @@ async function executeCreateSlackChannel(
 async function executePostKickoffMessage(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
 ): Promise<ProjectSetupStepResult> {
+  const folderLink =
+    (ctx.priorOutputs.copy_template_folder?.webViewLink as string | undefined) ?? null;
+  const charterLink =
+    (ctx.priorOutputs.copy_charter_spreadsheet?.webViewLink as string | undefined) ?? null;
   const planned = {
     channelName: ctx.run.slackChannelName,
     messagePreview: [
@@ -152,8 +352,9 @@ async function executePostKickoffMessage(
       `Customer: ${ctx.run.contactSnapshot.name ?? "—"}`,
       `Sales rep: ${ctx.run.salesRep ?? "—"}`,
       `FP paid: ${ctx.run.fpPaidDate ?? "—"}`,
-      `Folder: ${ctx.run.folderName}`,
-      `Charter: ${ctx.run.charterName}`,
+      `Folder: ${ctx.run.folderName}${folderLink ? ` (${folderLink})` : ""}`,
+      `Charter: ${ctx.run.charterName}${charterLink ? ` (${charterLink})` : ""}`,
+      "Setting up BuilderTrend now.",
     ].join("\n"),
   };
   if (!slackProvisioningEnabled() || ctx.run.dryRun) {

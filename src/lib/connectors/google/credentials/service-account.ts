@@ -4,10 +4,11 @@ import { createSign } from "node:crypto";
 import { getEnv } from "@/lib/env";
 import { GoogleConfigError, GoogleConnectorError } from "../errors";
 import { isPrivateKeyFormatValid, normalizePrivateKey } from "../auth-helpers";
-import type {
-  GoogleCredentialHealth,
-  GoogleCredentialProvider,
-  GoogleConnectorIdentity,
+import {
+  GOOGLE_API_SCOPES,
+  type GoogleCredentialHealth,
+  type GoogleCredentialProvider,
+  type GoogleConnectorIdentity,
 } from "./types";
 
 function base64Url(input: Buffer | string): string {
@@ -95,11 +96,7 @@ export class ServiceAccountCredentialProvider implements GoogleCredentialProvide
     const claim = base64Url(
       JSON.stringify({
         iss: env.GOOGLE_CLIENT_EMAIL,
-        scope: [
-          "https://www.googleapis.com/auth/drive.readonly",
-          "https://www.googleapis.com/auth/documents.readonly",
-          "https://www.googleapis.com/auth/spreadsheets.readonly",
-        ].join(" "),
+        scope: GOOGLE_API_SCOPES.join(" "),
         aud: "https://oauth2.googleapis.com/token",
         iat: now,
         exp: now + 3600,

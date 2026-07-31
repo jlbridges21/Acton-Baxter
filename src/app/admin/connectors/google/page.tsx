@@ -26,6 +26,8 @@ export default async function AdminGoogleConnectorPage({
         initialConfig={overview.config}
         initialAuthenticated={overview.authenticated}
         initialManagerHealth={overview.managerHealth}
+        initialAccessMode={overview.accessMode}
+        initialWritesEnabled={overview.writesEnabled}
         oauthNotice={{
           success: pick("oauth_success") === "1",
           connectedAs: pick("connected_as") ?? null,

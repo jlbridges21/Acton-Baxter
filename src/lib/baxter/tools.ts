@@ -47,7 +47,7 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     key: "project-setup",
     name: "New Project Setup",
     description:
-      "Prepare a new-project setup run (dry-run) from a GoHighLevel customer for human confirmation.",
+      "Set up a new project from a GoHighLevel customer: Master Project Log, Drive folder, and charter (Slack still pending).",
     href: "/projects/setup",
     createHref: "/projects/setup",
     enabled: true,

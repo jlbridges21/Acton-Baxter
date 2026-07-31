@@ -85,15 +85,14 @@
   - Configuration UI for monitored pipelines, quiet hours, delivery modes
   - `/admin/baxter/monitoring` interface
 - **New Project Setup Prompt 1: Foundation + dry-run** — done (migration **031**)
-  - Settings singleton, runs/steps tables, unique active project numbers
-  - Resumable step runner on `project_setup` job type
-  - Real next number from Master Project Log (Sheets read-only); steps 2–6 dry-run plans only
-  - Web UI `/projects/setup` + admin `/admin/project-setup`
-  - Guide: `docs/project-setup.md`
+- **New Project Setup Prompt 2: Google writes** — done
+  - OAuth scopes upgraded to full `drive` + `spreadsheets` (Docs stay read-only)
+  - Real Master Project Log append, recursive template folder copy, charter copy
+  - Year rollover on project numbers; resumable idempotent Google steps
+  - Guide: `docs/project-setup.md`, OAuth: `docs/google-workspace-oauth-setup.md`
 
 ## Future
 
-- **New Project Setup Prompt 2:** Google write scopes + real Drive/Sheets executors
 - **New Project Setup Prompt 3:** Slack channel provisioning + `/new-project` slash command
 - GoHighLevel: message send / calendar book (future initiative)
 - Domo sync

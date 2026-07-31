@@ -63,7 +63,9 @@ Preferred:
 - App name: Baxter
 - Support email: `baxter@actonadu.com` (or an authorized admin)
 - Authorized domain: `actonadu.com`
-- Scopes: read-only Drive, Docs, Sheets + basic identity (openid/email/profile)
+- Scopes: **Drive** (`drive`) + **Docs** (`documents.readonly`) + **Sheets** (`spreadsheets`) + basic identity (openid/email/profile)
+  - Full Drive/Sheets scopes enable new-project setup writes (Master Project Log append, folder/charter copy).
+  - Knowledge sync continues to work; full scopes also satisfy read features (a reconnect is required if the connection still only has `*.readonly`).
 
 If Internal is unavailable:
 
@@ -158,11 +160,13 @@ Technical diagnostics (credential tests, dry-run, repair) live under **Connectio
 | `invalid_grant`          | Revoked/expired refresh         | Reconnect Google Workspace                                |
 | Personal Gmail rejected  | Allowlist                       | Use `baxter@actonadu.com`                                 |
 
-## Scopes (read-only)
+## Scopes
 
 - `openid` / `email` / `profile` — identify and display the connected account
-- `https://www.googleapis.com/auth/drive.readonly` — browse and export/download
+- `https://www.googleapis.com/auth/drive` — browse/export for Knowledge sync **and** create project folders/files
 - `https://www.googleapis.com/auth/documents.readonly` — Docs export
-- `https://www.googleapis.com/auth/spreadsheets.readonly` — Sheets values
+- `https://www.googleapis.com/auth/spreadsheets` — Sheets values for Knowledge sync **and** Master Project Log appends
 
-Baxter does **not** request Drive write, sharing changes, Gmail, Calendar, or Workspace admin scopes.
+Older connections may still list `drive.readonly` / `spreadsheets.readonly`. Those satisfy Knowledge read features, but **project setup writes require a reconnect** so the connection’s `granted_scopes` include the full Drive + Sheets scopes. After reconnect, the Google connector admin page should show **read-write**.
+
+Baxter does **not** request Gmail, Calendar, or Workspace admin scopes.

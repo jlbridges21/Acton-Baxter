@@ -129,6 +129,10 @@ export type ProjectSetupStepContext = {
   settings: ProjectSetupSettings;
   /** Previously completed step outputs keyed by step_key. */
   priorOutputs: Record<string, Record<string, unknown>>;
+  /** Current step row id — used to persist mid-step progress for resume. */
+  stepId: string;
+  /** Existing output_json on this step (partial progress from a prior failed attempt). */
+  partialOutput: Record<string, unknown>;
 };
 
 export type ProjectSetupStepResult = {

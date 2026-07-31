@@ -28,10 +28,21 @@ type RunRow = {
   slackChannelName: string | null;
   salesRep: string | null;
   error: string | null;
+  initiatedBy: string | null;
   contactSnapshot: { name?: string | null };
 };
 
-export function ProjectSetupRunClient({ runId }: { runId: string }) {
+function asLink(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith("http") ? value : null;
+}
+
+export function ProjectSetupRunClient({
+  runId,
+  canRetry = true,
+}: {
+  runId: string;
+  canRetry?: boolean;
+}) {
   const [run, setRun] = useState<RunRow | null>(null);
   const [steps, setSteps] = useState<StepRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -65,8 +76,11 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
 
         if (
           payload.run &&
-          (payload.run.status === "confirmed" || payload.run.status === "failed")
+          (payload.run.status === "confirmed" || (payload.run.status === "failed" && !canRetry))
         ) {
+          // Auto-kick only for first start; failed retries are explicit.
+        }
+        if (payload.run && payload.run.status === "confirmed") {
           void kick();
         }
       } catch (err) {
@@ -82,7 +96,7 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [runId]);
+  }, [runId, canRetry]);
 
   async function handleRetry() {
     setRetrying(true);
@@ -102,9 +116,20 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
 
   const failed = run?.status === "failed";
   const complete = run?.status === "complete";
+  const folderStep = steps.find((s) => s.stepKey === "copy_template_folder");
+  const charterStep = steps.find((s) => s.stepKey === "copy_charter_spreadsheet");
+  const folderLink = asLink(folderStep?.outputJson?.webViewLink);
+  const charterLink = asLink(charterStep?.outputJson?.webViewLink);
+  const verification = folderStep?.outputJson?.verification as
+    | {
+        source?: { folders?: number; files?: number };
+        destination?: { folders?: number; files?: number };
+      }
+    | undefined;
   const plannedSteps = steps.filter(
     (s) => s.outputJson?.mode === "dry_run" || s.outputJson?.planned,
   );
+  const liveOutputs = steps.filter((s) => s.outputJson?.mode === "live" && s.status === "complete");
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -121,23 +146,61 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
                 {failed
                   ? "Project setup failed"
                   : complete
-                    ? "Dry-run complete"
+                    ? run?.dryRun
+                      ? "Dry-run complete"
+                      : "Project setup complete"
                     : "Running project setup"}
               </CardTitle>
               {run?.dryRun ? <Badge tone="amber">Dry-run</Badge> : null}
             </div>
             <CardDescription className="mt-2">
               {complete
-                ? "No external systems were touched. The recorded plan below is what Prompts 2 and 3 will execute for real."
+                ? run?.dryRun
+                  ? "No external systems were touched. The recorded plan below is what live execution would do."
+                  : "Google steps finished. Slack channel creation remains planned until Prompt 3."
                 : failed
-                  ? "A step failed. You can retry — completed steps will not re-run."
-                  : "Allocating the project number and recording the dry-run plan for each later step."}
+                  ? "A step failed. Retry resumes from the first incomplete step — completed Google work is not repeated."
+                  : "Working through project number, Master Log, Drive folder, and charter…"}
             </CardDescription>
             {run ? (
               <p className="mt-2 text-sm text-[var(--acton-muted)]">
                 {run.contactSnapshot?.name ?? "Customer"} · {run.projectNumber ?? "—"} ·{" "}
                 {run.salesRep ?? "—"}
               </p>
+            ) : null}
+            {complete && (folderLink || charterLink) ? (
+              <ul className="mt-3 space-y-1 text-sm">
+                {folderLink ? (
+                  <li>
+                    <a
+                      href={folderLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                    >
+                      Open project folder
+                    </a>
+                  </li>
+                ) : null}
+                {charterLink ? (
+                  <li>
+                    <a
+                      href={charterLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                    >
+                      Open project charter
+                    </a>
+                  </li>
+                ) : null}
+                {verification?.source && verification?.destination ? (
+                  <li className="text-[var(--acton-muted)]">
+                    Verified {verification.destination.folders} folders /{" "}
+                    {verification.destination.files} files (matched template)
+                  </li>
+                ) : null}
+              </ul>
             ) : null}
           </div>
         </div>
@@ -156,6 +219,27 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
                 <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
                 <p className="text-xs text-[var(--acton-muted)] capitalize">{step.status}</p>
                 {step.error ? <p className="mt-1 text-xs text-red-700">{step.error}</p> : null}
+                {step.stepKey === "copy_template_folder" && asLink(step.outputJson.webViewLink) ? (
+                  <a
+                    href={String(step.outputJson.webViewLink)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-xs font-semibold text-[var(--acton-navy)] underline"
+                  >
+                    Folder link
+                  </a>
+                ) : null}
+                {step.stepKey === "copy_charter_spreadsheet" &&
+                asLink(step.outputJson.webViewLink) ? (
+                  <a
+                    href={String(step.outputJson.webViewLink)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-xs font-semibold text-[var(--acton-navy)] underline"
+                  >
+                    Charter link
+                  </a>
+                ) : null}
               </div>
             </li>
           ))}
@@ -167,7 +251,7 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
           </p>
         ) : null}
 
-        {failed ? (
+        {failed && canRetry ? (
           <div className="mt-4">
             <Button onClick={() => void handleRetry()} disabled={retrying}>
               {retrying ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
@@ -185,6 +269,25 @@ export function ProjectSetupRunClient({ runId }: { runId: string }) {
           </Link>
         </div>
       </Card>
+
+      {complete && liveOutputs.length > 0 ? (
+        <Card>
+          <CardTitle>Live results</CardTitle>
+          <div className="mt-4 space-y-3">
+            {liveOutputs.map((step) => (
+              <div
+                key={step.id}
+                className="rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-3"
+              >
+                <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
+                <pre className="mt-2 overflow-x-auto text-xs whitespace-pre-wrap text-[var(--acton-muted)]">
+                  {JSON.stringify(step.outputJson, null, 2)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       {complete && plannedSteps.length > 0 ? (
         <Card>

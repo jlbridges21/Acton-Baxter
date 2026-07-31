@@ -172,6 +172,8 @@ export function GoogleConnectorClient({
   initialConfig,
   initialAuthenticated,
   initialManagerHealth,
+  initialAccessMode = "unknown",
+  initialWritesEnabled = false,
   oauthNotice,
 }: {
   initialHealth: ConnectorHealth;
@@ -179,6 +181,8 @@ export function GoogleConnectorClient({
   initialConfig: GoogleConfig;
   initialAuthenticated: boolean;
   initialManagerHealth: ManagerHealth;
+  initialAccessMode?: "read_only" | "read_write" | "unknown";
+  initialWritesEnabled?: boolean;
   oauthNotice?: {
     success?: boolean;
     connectedAs?: string | null;
@@ -192,6 +196,8 @@ export function GoogleConnectorClient({
   const [config, setConfig] = useState(initialConfig);
   const [authenticated, setAuthenticated] = useState(initialAuthenticated);
   const [managerHealth] = useState(initialManagerHealth);
+  const [accessMode] = useState(initialAccessMode);
+  const [writesEnabled] = useState(initialWritesEnabled);
   const [panel, setPanel] = useState<Panel>("browser");
   const [sharedDrives, setSharedDrives] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingDrives, setLoadingDrives] = useState(false);
@@ -762,6 +768,22 @@ export function GoogleConnectorClient({
               {syncedStats.failed > 0 ? ` · ${syncedStats.failed} need attention` : ""}
             </p>
           ) : null}
+          {writesEnabled || accessMode === "read_write" ? (
+            <p className="mt-2 text-sm font-semibold text-emerald-800">
+              Access: read-write (project setup can create Drive folders and Sheets rows)
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-amber-900">
+              Access: read-only.{" "}
+              <a
+                href="/api/admin/connectors/google/oauth/start?consent=1"
+                className="font-semibold underline"
+              >
+                Reconnect to enable writes
+              </a>{" "}
+              for new-project setup (Drive + Sheets).
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={busy === "sync"} onClick={() => void syncChanges()}>
@@ -837,7 +859,9 @@ export function GoogleConnectorClient({
             </div>
             <div>
               <dt className="text-[var(--acton-muted)]">Access</dt>
-              <dd className="font-semibold">Read-only</dd>
+              <dd className="font-semibold">
+                {writesEnabled || accessMode === "read_write" ? "Read-write" : "Read-only"}
+              </dd>
             </div>
             <div>
               <dt className="text-[var(--acton-muted)]">Active Drive</dt>

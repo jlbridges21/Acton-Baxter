@@ -11,8 +11,13 @@ import { isGhlConfigured } from "@/lib/connectors/ghl/config";
 import type { ProjectSetupContactSnapshot } from "./types";
 import { buildDerivedProjectNames, resolveInviteMemberEmails } from "./names";
 import { getProjectSetupSettings } from "./store";
-import { computeNextProjectNumberFromColumnA, parseProjectNumber } from "./project-number";
+import {
+  computeNextProjectNumberFromColumnA,
+  parseProjectNumber,
+  twoDigitYearFromDate,
+} from "./project-number";
 import { readSheetColumnA } from "./sheets";
+import { googleWritesEnabled } from "./capabilities";
 
 export type ProjectSetupSearchHit = {
   id: string;
@@ -84,18 +89,23 @@ export async function loadProjectSetupContactSnapshot(
   };
 }
 
-export async function computeLiveNextProjectNumber(): Promise<{
+export async function computeLiveNextProjectNumber(options?: {
+  fpPaidDate?: string | null;
+}): Promise<{
   nextNumber: string;
   sourceValue: string;
   sourceRowIndex: number;
   tabName: string;
+  rolledOver: boolean;
 }> {
   const settings = await getProjectSetupSettings();
   const values = await readSheetColumnA({
     spreadsheetId: settings.masterCharterSpreadsheetId,
     tabName: settings.masterLogTabName,
   });
-  const computed = computeNextProjectNumberFromColumnA(values);
+  const computed = computeNextProjectNumberFromColumnA(values, {
+    referenceYear: twoDigitYearFromDate(options?.fpPaidDate),
+  });
   return {
     ...computed,
     tabName: settings.masterLogTabName,
@@ -110,16 +120,18 @@ export async function buildProjectSetupPreview(input: {
   lastNameOverride?: string | null;
 }) {
   const settings = await getProjectSetupSettings();
+  const writesEnabled = await googleWritesEnabled();
   let projectNumber = input.projectNumber?.trim().toUpperCase() || null;
   let numberSource: "override" | "live" = "override";
   let numberEvidence: Record<string, unknown> | null = null;
+  const fpPaidDate = input.fpPaidDate || new Date().toISOString().slice(0, 10);
 
   if (projectNumber) {
     if (!parseProjectNumber(projectNumber)) {
       throw new Error(`Invalid project number "${projectNumber}". Expected format like L01-26017.`);
     }
   } else {
-    const live = await computeLiveNextProjectNumber();
+    const live = await computeLiveNextProjectNumber({ fpPaidDate });
     projectNumber = live.nextNumber;
     numberSource = "live";
     numberEvidence = live;
@@ -140,7 +152,7 @@ export async function buildProjectSetupPreview(input: {
   return {
     contact: input.contact,
     salesRep: input.salesRep?.trim() || input.contact.assignedUserName || "",
-    fpPaidDate: input.fpPaidDate || new Date().toISOString().slice(0, 10),
+    fpPaidDate,
     jurisdiction: input.contact.city,
     projectNumber,
     numberSource,
@@ -149,7 +161,9 @@ export async function buildProjectSetupPreview(input: {
     inviteEmails: members.emails,
     inviteLabel: members.label,
     testMode: members.testMode,
-    dryRun: true,
+    googleWritesEnabled: writesEnabled,
+    /** Default dry-run when writes are off; when writes are on, UI starts unchecked. */
+    dryRunDefault: !writesEnabled,
     settings: {
       testMode: settings.testMode,
       masterLogTabName: settings.masterLogTabName,

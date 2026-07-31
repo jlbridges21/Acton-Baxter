@@ -72,14 +72,27 @@ describe("Prompt 2 — Google Workspace OAuth foundations", () => {
     ).toBe(true);
   });
 
-  it("requires read-only Drive Docs Sheets scopes", () => {
+  it("accepts full Drive/Sheets write scopes (and still satisfies read)", () => {
     expect(requiredScopesGranted([...GOOGLE_OAUTH_SCOPES])).toBe(true);
     expect(requiredScopesGranted(["email", "openid"])).toBe(false);
-    expect(GOOGLE_OAUTH_SCOPES.join(" ")).toContain("drive.readonly");
-    expect(GOOGLE_OAUTH_SCOPES.join(" ")).not.toContain("drive.file");
+    expect(GOOGLE_OAUTH_SCOPES.join(" ")).toContain("auth/drive");
+    expect(GOOGLE_OAUTH_SCOPES.join(" ")).not.toContain("drive.readonly");
+    expect(GOOGLE_OAUTH_SCOPES.join(" ")).toContain("auth/spreadsheets");
+    expect(GOOGLE_OAUTH_SCOPES.join(" ")).not.toContain("spreadsheets.readonly");
+    // Legacy read-only connection still validates as having required read scopes
+    expect(
+      requiredScopesGranted([
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/documents.readonly",
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+      ]),
+    ).toBe(true);
   });
 
-  it("builds OAuth authorize URL with offline access and safe scopes", () => {
+  it("builds OAuth authorize URL with offline access and write scopes", () => {
     const url = new URL(googleOAuthAuthorizationUrl("state-abc", true));
     expect(url.origin).toBe("https://accounts.google.com");
     expect(url.searchParams.get("access_type")).toBe("offline");
@@ -89,9 +102,11 @@ describe("Prompt 2 — Google Workspace OAuth foundations", () => {
       "/api/admin/connectors/google/oauth/callback",
     );
     const scope = url.searchParams.get("scope") ?? "";
-    expect(scope).toContain("drive.readonly");
+    expect(scope).toContain("auth/drive");
+    expect(scope).not.toContain("drive.readonly");
     expect(scope).toContain("documents.readonly");
-    expect(scope).toContain("spreadsheets.readonly");
+    expect(scope).toContain("auth/spreadsheets");
+    expect(scope).not.toContain("spreadsheets.readonly");
   });
 
   it("defaults auth mode to workspace_oauth", () => {

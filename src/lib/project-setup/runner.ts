@@ -78,6 +78,8 @@ export async function runProjectSetupJob(runId: string): Promise<{
         run: currentRun,
         settings,
         priorOutputs,
+        stepId: stepRow.id,
+        partialOutput: stepRow.outputJson ?? {},
       });
       const finishedAt = new Date().toISOString();
       await updateProjectSetupStep(stepRow.id, {

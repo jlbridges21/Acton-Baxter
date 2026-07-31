@@ -44,10 +44,15 @@ type Preview = {
   inviteEmails: string[];
   inviteLabel: string;
   testMode: boolean;
-  dryRun: boolean;
+  googleWritesEnabled?: boolean;
+  dryRunDefault?: boolean;
 };
 
-export function ProjectSetupClient() {
+export function ProjectSetupClient({
+  googleWritesEnabled = false,
+}: {
+  googleWritesEnabled?: boolean;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -62,6 +67,7 @@ export function ProjectSetupClient() {
   const [fpPaidDate, setFpPaidDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [projectNumber, setProjectNumber] = useState("");
   const [lastName, setLastName] = useState("");
+  const [dryRun, setDryRun] = useState(!googleWritesEnabled);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -127,6 +133,7 @@ export function ProjectSetupClient() {
       setFpPaidDate(next.fpPaidDate);
       setProjectNumber(next.projectNumber);
       setLastName(next.projectLastName);
+      setDryRun(next.dryRunDefault ?? !googleWritesEnabled);
     } catch (err) {
       setPreview(null);
       setPreviewError(err instanceof Error ? err.message : "Unable to load contact");
@@ -149,6 +156,7 @@ export function ProjectSetupClient() {
           projectNumber: projectNumber.trim().toUpperCase(),
           projectLastName: lastName.trim(),
           fpPaidDate,
+          dryRun: googleWritesEnabled ? dryRun : true,
           contactSnapshot: preview.contact,
         }),
       });
@@ -244,13 +252,34 @@ export function ProjectSetupClient() {
         <Card className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle>Confirm project setup</CardTitle>
-            <Badge tone="amber">Dry-run</Badge>
+            {(dryRun || !googleWritesEnabled) && <Badge tone="amber">Dry-run</Badge>}
             {preview.testMode ? <Badge tone="blue">Test mode</Badge> : null}
           </div>
           <CardDescription>
-            Review details below. This run records the plan only — Drive, Sheets, Slack, and GHL are
-            not modified.
+            {googleWritesEnabled && !dryRun
+              ? "This run will append the Master Project Log row and create the Drive folder and charter. Slack steps stay planned only until Prompt 3."
+              : "Review details below. This run records the plan only — Drive, Sheets, Slack, and GHL are not modified (or dry-run is checked)."}
           </CardDescription>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={!googleWritesEnabled ? true : dryRun}
+              disabled={!googleWritesEnabled}
+              onChange={(e) => setDryRun(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-[var(--acton-navy)]">
+                Dry run (plan only, no changes)
+              </span>
+              {!googleWritesEnabled ? (
+                <span className="mt-0.5 block text-[var(--acton-muted)]">
+                  Required until Google is reconnected with write scopes.
+                </span>
+              ) : null}
+            </span>
+          </label>
 
           <dl className="grid gap-3 text-sm sm:grid-cols-2">
             <Field label="Full name" value={preview.contact.name} />

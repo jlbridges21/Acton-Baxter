@@ -7,9 +7,10 @@ import { buildDerivedProjectNames } from "@/lib/project-setup/names";
 import { createProjectSetupRun, isProjectNumberInUse } from "@/lib/project-setup/store";
 import { loadProjectSetupContactSnapshot } from "@/lib/project-setup/service";
 import { enqueueProjectSetupRun } from "@/lib/project-setup/enqueue";
+import { googleWritesEnabled } from "@/lib/project-setup/capabilities";
 import type { ProjectSetupContactSnapshot } from "@/lib/project-setup/types";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
@@ -22,6 +23,8 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const parsed = createProjectSetupRunSchema.parse(body);
+    const writesEnabled = await googleWritesEnabled();
+    const dryRun = writesEnabled ? Boolean(parsed.dryRun) : true;
 
     const inUse = await isProjectNumberInUse(parsed.projectNumber);
     if (inUse) {
@@ -59,7 +62,7 @@ export async function POST(request: Request) {
     const { run } = await createProjectSetupRun({
       initiatedBy: user.id,
       triggerChannel: "web",
-      dryRun: true,
+      dryRun,
       ghlContactId: parsed.ghlContactId,
       contactSnapshot,
       salesRep: parsed.salesRep.trim(),

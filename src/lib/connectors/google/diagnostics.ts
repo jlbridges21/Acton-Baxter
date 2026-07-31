@@ -19,14 +19,27 @@ import { searchApprovedKnowledge } from "@/lib/knowledge/queries";
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
 import { resolveGoogleCredentialProvider } from "./credentials/resolve";
 import { getGoogleAuthMode, isGoogleOAuthConfigured } from "./oauth-config";
+import { resolveGoogleAccessMode, type GoogleAccessMode } from "./credentials/types";
+import { getActiveGoogleConnectionPublic } from "./connections";
+import { googleWritesEnabled } from "@/lib/project-setup/capabilities";
 
 function getGoogleConnector() {
   return new GoogleWorkspaceConnector();
 }
 
+function accessLabel(mode: GoogleAccessMode): string {
+  if (mode === "read_write") return "Read-write Google Drive, Docs (read), and Sheets";
+  if (mode === "read_only") return "Read-only Google Drive, Docs, and Sheets";
+  return "Google Drive, Docs, and Sheets (scope status unknown)";
+}
+
 export async function testGoogleAuthentication() {
   const mode = getGoogleAuthMode();
   const status = getGoogleCredentialStatus();
+  const connection = await getActiveGoogleConnectionPublic().catch(() => null);
+  const accessMode = resolveGoogleAccessMode(connection?.granted_scopes ?? []);
+  const writes = await googleWritesEnabled().catch(() => false);
+  const effectiveMode: GoogleAccessMode = writes ? "read_write" : accessMode;
 
   try {
     const provider = await resolveGoogleCredentialProvider();
@@ -42,7 +55,9 @@ export async function testGoogleAuthentication() {
       driveAccess: health.ok ? "available" : "unknown",
       docsAccess: health.ok ? "available" : "unknown",
       sheetsAccess: health.ok ? "available" : "unknown",
-      access: "Read-only Google Drive, Docs, and Sheets",
+      accessMode: effectiveMode,
+      access: accessLabel(effectiveMode),
+      writesEnabled: writes,
       serviceAccountWarning:
         provider.mode === "service_account" ? status.serviceAccountExternalWarning : null,
     };
@@ -61,7 +76,9 @@ export async function testGoogleAuthentication() {
       driveAccess: "unavailable",
       docsAccess: "unavailable",
       sheetsAccess: "unavailable",
-      access: "Read-only Google Drive, Docs, and Sheets",
+      accessMode: effectiveMode,
+      access: accessLabel(effectiveMode),
+      writesEnabled: false,
       oauthConfigured: isGoogleOAuthConfigured(),
       guidance:
         mode === "workspace_oauth"
@@ -69,6 +86,7 @@ export async function testGoogleAuthentication() {
               "Click Connect Google Workspace and sign in as baxter@actonadu.com.",
               "Ensure GOOGLE_OAUTH_* and GOOGLE_TOKEN_ENCRYPTION_KEY are set in Vercel.",
               "Enable Drive, Docs, and Sheets APIs in Google Cloud Console.",
+              "Reconnect after scope upgrades to grant Drive/Sheets write access for project setup.",
             ]
           : [
               "Verify GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY.",
@@ -374,6 +392,8 @@ export async function getGoogleAdminOverview() {
     authenticated: auth.pass,
     authCode: auth.code,
     authResult: auth,
+    accessMode: auth.accessMode ?? "unknown",
+    writesEnabled: Boolean(auth.writesEnabled),
   };
 }
 

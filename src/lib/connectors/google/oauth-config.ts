@@ -1,7 +1,11 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
-import { GOOGLE_OAUTH_SCOPES, type GoogleAuthMode } from "./credentials/types";
+import {
+  GOOGLE_OAUTH_SCOPES,
+  requiredScopesGranted as scopesSatisfied,
+  type GoogleAuthMode,
+} from "./credentials/types";
 import { isGoogleTokenEncryptionConfigured } from "@/lib/security/secret-box";
 
 export type GoogleOAuthEnv = {
@@ -144,11 +148,5 @@ export function isGoogleAccountAllowed(input: {
 }
 
 export function requiredScopesGranted(granted: string[]): boolean {
-  const set = new Set(granted.map((s) => s.trim()));
-  const required = [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/documents.readonly",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-  ];
-  return required.every((scope) => set.has(scope));
+  return scopesSatisfied(granted);
 }

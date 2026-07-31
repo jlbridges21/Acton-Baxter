@@ -30,6 +30,15 @@ vi.mock("@/lib/project-setup/sheets", () => ({
   readSheetColumnA: vi.fn(async () => [["L01-26017"]]),
 }));
 
+vi.mock("@/lib/project-setup/capabilities", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/project-setup/capabilities")>();
+  return {
+    ...actual,
+    googleWritesEnabled: vi.fn(async () => false),
+    slackProvisioningEnabled: () => false,
+  };
+});
+
 beforeEach(() => {
   process.env.E2E_TEST_AUTH_BYPASS = "true";
   process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
@@ -48,6 +57,8 @@ describe("project number parse / increment", () => {
       raw: "L01-26017",
       prefix: "L01",
       numeric: 26017,
+      year: 26,
+      seq: 17,
     });
     expect(incrementProjectNumber("L01-26017")).toBe("L01-26018");
   });
@@ -60,16 +71,25 @@ describe("project number parse / increment", () => {
   });
 
   it("computes next from column A and fails clearly on bad last cell", () => {
-    const ok = computeNextProjectNumberFromColumnA([["L01-26016"], ["L01-26017"], [""]]);
+    const ok = computeNextProjectNumberFromColumnA([["L01-26016"], ["L01-26017"], [""]], {
+      referenceYear: 26,
+    });
     expect(ok).toEqual({
       nextNumber: "L01-26018",
       sourceValue: "L01-26017",
       sourceRowIndex: 2,
+      rolledOver: false,
     });
     expect(() => computeNextProjectNumberFromColumnA([["not-a-number"]])).toThrow(
       /not in the expected format/,
     );
     expect(() => computeNextProjectNumberFromColumnA([[], [""]])).toThrow(/empty/);
+  });
+
+  it("rolls over year when FP paid year is newer", () => {
+    const next = computeNextProjectNumberFromColumnA([["L01-26017"]], { referenceYear: 27 });
+    expect(next.nextNumber).toBe("L01-27001");
+    expect(next.rolledOver).toBe(true);
   });
 
   it("finds last non-empty column A value", () => {
@@ -141,9 +161,12 @@ describe("test-mode member resolution + settings validation", () => {
 });
 
 describe("capabilities gates", () => {
-  it("keeps Google writes and Slack provisioning off", () => {
-    expect(googleWritesEnabled()).toBe(false);
+  it("keeps Slack provisioning off", () => {
     expect(slackProvisioningEnabled()).toBe(false);
+  });
+
+  it("googleWritesEnabled is async and mocked off in these tests", async () => {
+    expect(await googleWritesEnabled()).toBe(false);
   });
 });
 
