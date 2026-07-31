@@ -1,5 +1,6 @@
 import "server-only";
 
+import { getEnv } from "@/lib/env";
 import { getActiveGoogleConnection } from "@/lib/connectors/google/connections";
 import { getGoogleAuthMode } from "@/lib/connectors/google/oauth-config";
 import { hasGoogleWriteScopes } from "@/lib/connectors/google/credentials/types";
@@ -27,7 +28,17 @@ export function googleWritesEnabledFromScopes(granted: string[]): boolean {
   return hasGoogleWriteScopes(granted);
 }
 
-/** Prompt 3 will flip this when Slack channel provisioning scopes are live. */
+/**
+ * True when Slack integration is configured for channel provisioning
+ * (ENABLE_SLACK_INTEGRATION + bot token). Scopes are already installed on the app.
+ */
 export function slackProvisioningEnabled(): boolean {
-  return false;
+  try {
+    const env = getEnv();
+    return Boolean(env.ENABLE_SLACK_INTEGRATION && env.SLACK_BOT_TOKEN?.trim());
+  } catch {
+    return Boolean(
+      process.env.ENABLE_SLACK_INTEGRATION === "true" && process.env.SLACK_BOT_TOKEN?.trim(),
+    );
+  }
 }

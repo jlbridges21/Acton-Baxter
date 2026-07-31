@@ -117,6 +117,32 @@ export async function readSheetColumn(input: {
   }
 }
 
+/** Read a sheet range with optional FORMULA render (for hyperlink idempotency checks). */
+export async function readSheetValues(input: {
+  spreadsheetId: string;
+  tabName: string;
+  /** e.g. A:Z — defaults to the whole tab used columns. */
+  rangeA1?: string;
+  valueRenderOption?: "FORMATTED_VALUE" | "FORMULA" | "UNFORMATTED_VALUE";
+}): Promise<string[][]> {
+  const tab = input.tabName.replace(/'/g, "''");
+  const a1 = input.rangeA1 ?? "A:Z";
+  const range = encodeURIComponent(`'${tab}'!${a1}`);
+  const render = input.valueRenderOption ?? "FORMULA";
+  try {
+    const valuesData = await withGoogleRetry(() =>
+      googleFetch<{ values?: string[][] }>(
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(input.spreadsheetId)}/values/${range}?valueRenderOption=${encodeURIComponent(render)}&majorDimension=ROWS`,
+      ),
+    );
+    return (valuesData.values ?? []).map((row) => row.map((cell) => String(cell ?? "")));
+  } catch (error) {
+    throw await toEmployeeGoogleError(error, {
+      resourceLabel: `the "${input.tabName}" tab`,
+    });
+  }
+}
+
 export async function appendSheetRow(input: {
   spreadsheetId: string;
   tabName: string;

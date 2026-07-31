@@ -18,9 +18,18 @@ import {
   findChildByName,
   getDriveFileMeta,
   readSheetColumn,
+  readSheetValues,
 } from "@/lib/connectors/google/writes";
 import { copyTemplateFolderTree } from "./folder-copy";
 import { GOOGLE_SHEET_MIME } from "@/lib/connectors/google/types";
+import { buildCharterListRowValues, charterListAlreadyHasCharter } from "./charter-list";
+import { postSlackMessage } from "@/lib/slack/client";
+import {
+  createPublicSlackChannel,
+  inviteUsersToSlackChannel,
+  lookupSlackUserByEmail,
+  type SlackInviteResult,
+} from "@/lib/slack/provisioning";
 
 async function executeAllocateProjectNumber(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
@@ -31,11 +40,14 @@ async function executeAllocateProjectNumber(
     if (!parsed) {
       throw new Error(`Project number "${override}" is not valid. Use the format like L01-26017.`);
     }
-    const inUse = await isProjectNumberInUse(parsed.raw, ctx.run.id);
-    if (inUse) {
-      throw new Error(
-        `Project number ${parsed.raw} is already assigned to another active setup run.`,
-      );
+    // Dry runs never reserve — uniqueness only against live runs.
+    if (!ctx.run.dryRun) {
+      const inUse = await isProjectNumberInUse(parsed.raw, ctx.run.id);
+      if (inUse) {
+        throw new Error(
+          `Project number ${parsed.raw} is already assigned to another active setup run.`,
+        );
+      }
     }
     await updateProjectSetupRun(ctx.run.id, { projectNumber: parsed.raw });
     return {
@@ -43,6 +55,7 @@ async function executeAllocateProjectNumber(
         projectNumber: parsed.raw,
         source: "user_override",
         dryRun: ctx.run.dryRun,
+        reservesNumber: !ctx.run.dryRun,
       },
     };
   }
@@ -53,11 +66,13 @@ async function executeAllocateProjectNumber(
   });
   const referenceYear = twoDigitYearFromDate(ctx.run.fpPaidDate);
   const computed = computeNextProjectNumberFromColumnA(values, { referenceYear });
-  const inUse = await isProjectNumberInUse(computed.nextNumber, ctx.run.id);
-  if (inUse) {
-    throw new Error(
-      `Computed next project number ${computed.nextNumber} is already in use by another active run. Enter a different number on the confirm screen.`,
-    );
+  if (!ctx.run.dryRun) {
+    const inUse = await isProjectNumberInUse(computed.nextNumber, ctx.run.id);
+    if (inUse) {
+      throw new Error(
+        `Computed next project number ${computed.nextNumber} is already in use by another active run. Enter a different number on the confirm screen.`,
+      );
+    }
   }
 
   await updateProjectSetupRun(ctx.run.id, { projectNumber: computed.nextNumber });
@@ -73,12 +88,14 @@ async function executeAllocateProjectNumber(
       spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
       tabName: ctx.settings.masterLogTabName,
       dryRun: ctx.run.dryRun,
+      reservesNumber: !ctx.run.dryRun,
     },
   };
 }
 
 function dryRunPlan(title: string, planned: Record<string, unknown>): ProjectSetupStepResult {
   return {
+    status: "planned",
     outputJson: {
       mode: "dry_run",
       title,
@@ -97,7 +114,6 @@ function streetAddressFromSnapshot(snapshot: {
   if (!address) return "";
   const city = snapshot.city?.trim();
   if (city && address.toLowerCase().includes(city.toLowerCase())) {
-    // Prefer the part before the city when address is a full formatted string.
     const idx = address.toLowerCase().indexOf(city.toLowerCase());
     if (idx > 0) {
       return address
@@ -202,10 +218,14 @@ async function executeCopyTemplateFolder(
     throw new Error("Folder name is missing on this run.");
   }
 
+  const excludeFileIds = [ctx.settings.masterCharterSpreadsheetId].filter(Boolean);
+
   const planned = {
     templateFolderId: ctx.settings.templateFolderId,
     destinationParentId: ctx.settings.projectsParentFolderId,
     folderName,
+    excludeFileIds,
+    note: "Project Charter Master spreadsheet is excluded from the folder copy.",
   };
 
   if (!(await googleWritesEnabled()) || ctx.run.dryRun) {
@@ -222,6 +242,7 @@ async function executeCopyTemplateFolder(
     projectsParentFolderId: ctx.settings.projectsParentFolderId,
     folderName,
     priorDestinationFolderId: priorId,
+    excludeFileIds,
     onProgress: async (progress) => {
       await updateProjectSetupStep(ctx.stepId, {
         outputJson: {
@@ -242,6 +263,7 @@ async function executeCopyTemplateFolder(
       copiedFiles: result.copiedFiles,
       createdFolders: result.createdFolders,
       skipped: result.skipped,
+      excluded: result.excluded,
       verification: result.verification,
     },
   };
@@ -321,21 +343,200 @@ async function executeCopyCharterSpreadsheet(
   };
 }
 
+async function executeAppendCharterListRow(
+  ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
+): Promise<ProjectSetupStepResult> {
+  const charterName = ctx.run.charterName ?? "";
+  const charterOut = ctx.priorOutputs.copy_charter_spreadsheet ?? {};
+  const fileId = (charterOut.fileId as string | undefined) ?? null;
+  const webViewLink = (charterOut.webViewLink as string | undefined) ?? null;
+
+  const planned = {
+    spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+    tabName: ctx.settings.charterListTabName,
+    charterName,
+    fileId,
+    webViewLink,
+    values: webViewLink
+      ? buildCharterListRowValues({ charterName, webViewLink })
+      : ["(charter link pending)"],
+  };
+
+  if (!(await googleWritesEnabled()) || ctx.run.dryRun) {
+    return dryRunPlan("Append Project Charter List row", planned);
+  }
+
+  if (!webViewLink) {
+    throw new Error(
+      "Charter webViewLink is missing — complete the charter copy before appending the Project Charter List row.",
+    );
+  }
+
+  const existingRows = await readSheetValues({
+    spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+    tabName: ctx.settings.charterListTabName,
+    rangeA1: "A:Z",
+    valueRenderOption: "FORMULA",
+  });
+  if (charterListAlreadyHasCharter(existingRows, { fileId, webViewLink })) {
+    return {
+      outputJson: {
+        mode: "live",
+        alreadyPresent: true,
+        executed: true,
+        spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+        tabName: ctx.settings.charterListTabName,
+        fileId,
+        webViewLink,
+        note: "Charter already listed — skipped append (idempotent resume).",
+      },
+    };
+  }
+
+  const values = buildCharterListRowValues({ charterName, webViewLink });
+  const appended = await appendSheetRow({
+    spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+    tabName: ctx.settings.charterListTabName,
+    values,
+    rangeHint: `'${ctx.settings.charterListTabName.replace(/'/g, "''")}'!A:A`,
+  });
+
+  return {
+    outputJson: {
+      mode: "live",
+      alreadyPresent: false,
+      executed: true,
+      spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
+      tabName: ctx.settings.charterListTabName,
+      updatedRange: appended.updatedRange,
+      values,
+      fileId,
+      webViewLink,
+    },
+  };
+}
+
+export function buildKickoffMessageText(input: {
+  projectNumber: string | null;
+  projectLastName: string | null;
+  folderName: string | null;
+  charterName: string | null;
+  folderLink: string | null;
+  charterLink: string | null;
+}): string {
+  const number = input.projectNumber ?? "—";
+  const lastName = input.projectLastName ?? "—";
+  const folderLabel = input.folderName ?? `${number} ${lastName}`;
+  const charterLabel = input.charterName ?? `${lastName} Project Charter`;
+  const folderLine = input.folderLink
+    ? `• G-Drive: <${input.folderLink}|${folderLabel}>`
+    : `• G-Drive: ${folderLabel}`;
+  const charterLine = input.charterLink
+    ? `• Project Charter: <${input.charterLink}|${charterLabel}>`
+    : `• Project Charter: ${charterLabel}`;
+  return [
+    `New project ${number} — ${lastName}`,
+    folderLine,
+    charterLine,
+    "• Setting up BuilderTrend now.",
+  ].join("\n");
+}
+
 async function executeCreateSlackChannel(
   ctx: Parameters<ProjectSetupStepDefinition["execute"]>[0],
 ): Promise<ProjectSetupStepResult> {
   const members = resolveInviteMemberEmails(ctx.settings);
+  const channelName = ctx.run.slackChannelName;
+  if (!channelName) {
+    throw new Error("Slack channel name is missing on this run.");
+  }
+
   const planned = {
-    channelName: ctx.run.slackChannelName,
+    channelName,
     inviteEmails: members.emails,
     testMode: members.testMode,
     memberLabel: members.label,
+    isPrivate: false,
   };
+
   if (!slackProvisioningEnabled() || ctx.run.dryRun) {
-    // Slack stays dry-run until Prompt 3 (slackProvisioningEnabled is always false today).
     return dryRunPlan("Create Slack channel and invite members", planned);
   }
-  throw new Error("Slack provisioning executor not enabled yet (Prompt 3).");
+
+  // Idempotent resume: reuse channel created earlier in this run.
+  const priorChannelId =
+    typeof ctx.partialOutput.channelId === "string" ? ctx.partialOutput.channelId : null;
+
+  let channelId = priorChannelId;
+  if (!channelId) {
+    const created = await createPublicSlackChannel(channelName);
+    if (created.alreadyExistsError) {
+      throw new Error(
+        `Slack channel #${channelName} already exists (name_taken). This can also happen if an archived channel still holds that name. Rename or archive/delete the existing channel, then retry — Baxter will not post into a channel this run did not create.`,
+      );
+    }
+    channelId = created.channelId;
+    await updateProjectSetupStep(ctx.stepId, {
+      outputJson: {
+        mode: "live",
+        channelId,
+        channelName,
+        inProgress: true,
+      },
+    });
+  }
+
+  const inviteResults: SlackInviteResult[] = [];
+  const userIds: string[] = [];
+  const emailsByUserId: Record<string, string> = {};
+
+  for (const email of members.emails) {
+    const looked = await lookupSlackUserByEmail(email);
+    if ("notFound" in looked) {
+      inviteResults.push({
+        email,
+        status: "not_found",
+        warning: `${email} was not found in the Slack workspace`,
+      });
+      continue;
+    }
+    if ("error" in looked) {
+      inviteResults.push({
+        email,
+        status: "failed",
+        warning: `${email}: ${looked.error}`,
+      });
+      continue;
+    }
+    userIds.push(looked.userId);
+    emailsByUserId[looked.userId] = email;
+  }
+
+  const invite = await inviteUsersToSlackChannel({
+    channelId,
+    userIds,
+    emailsByUserId,
+  });
+  inviteResults.push(...invite.results);
+
+  if (invite.successCount === 0 && members.emails.length > 0) {
+    throw new Error(
+      `Created #${channelName} but could not invite any members (${members.emails.join(", ")}). Check that those emails exist in Slack, then retry — the existing channel will be reused.`,
+    );
+  }
+
+  return {
+    outputJson: {
+      mode: "live",
+      executed: true,
+      channelId,
+      channelName,
+      testMode: members.testMode,
+      inviteEmails: members.emails,
+      inviteResults,
+      inviteSuccessCount: invite.successCount,
+    },
+  };
 }
 
 async function executePostKickoffMessage(
@@ -345,22 +546,61 @@ async function executePostKickoffMessage(
     (ctx.priorOutputs.copy_template_folder?.webViewLink as string | undefined) ?? null;
   const charterLink =
     (ctx.priorOutputs.copy_charter_spreadsheet?.webViewLink as string | undefined) ?? null;
+  const channelId =
+    (ctx.priorOutputs.create_slack_channel?.channelId as string | undefined) ?? null;
+
+  const text = buildKickoffMessageText({
+    projectNumber: ctx.run.projectNumber,
+    projectLastName: ctx.run.projectLastName,
+    folderName: ctx.run.folderName,
+    charterName: ctx.run.charterName,
+    folderLink,
+    charterLink,
+  });
+
   const planned = {
     channelName: ctx.run.slackChannelName,
-    messagePreview: [
-      `New project ${ctx.run.projectNumber} — ${ctx.run.projectLastName}`,
-      `Customer: ${ctx.run.contactSnapshot.name ?? "—"}`,
-      `Sales rep: ${ctx.run.salesRep ?? "—"}`,
-      `FP paid: ${ctx.run.fpPaidDate ?? "—"}`,
-      `Folder: ${ctx.run.folderName}${folderLink ? ` (${folderLink})` : ""}`,
-      `Charter: ${ctx.run.charterName}${charterLink ? ` (${charterLink})` : ""}`,
-      "Setting up BuilderTrend now.",
-    ].join("\n"),
+    channelId,
+    messagePreview: text,
   };
+
   if (!slackProvisioningEnabled() || ctx.run.dryRun) {
     return dryRunPlan("Post Slack kickoff message", planned);
   }
-  throw new Error("Slack provisioning executor not enabled yet (Prompt 3).");
+
+  const priorTs =
+    typeof ctx.partialOutput.messageTs === "string" ? ctx.partialOutput.messageTs : null;
+  if (priorTs) {
+    return {
+      outputJson: {
+        mode: "live",
+        executed: true,
+        alreadyPresent: true,
+        channelId,
+        messageTs: priorTs,
+        text,
+        note: "Kickoff message already posted — skipped repost (idempotent resume).",
+      },
+    };
+  }
+
+  if (!channelId) {
+    throw new Error(
+      "Slack channel id is missing — complete channel creation before posting the kickoff message.",
+    );
+  }
+
+  const posted = await postSlackMessage({ channel: channelId, text });
+  return {
+    outputJson: {
+      mode: "live",
+      executed: true,
+      alreadyPresent: false,
+      channelId,
+      messageTs: posted.ts ?? null,
+      text,
+    },
+  };
 }
 
 export const PROJECT_SETUP_STEPS: ProjectSetupStepDefinition[] = [
@@ -389,15 +629,21 @@ export const PROJECT_SETUP_STEPS: ProjectSetupStepDefinition[] = [
     execute: executeCopyCharterSpreadsheet,
   },
   {
+    key: "append_charter_list_row",
+    title: "Append Project Charter List row",
+    orderIndex: 4,
+    execute: executeAppendCharterListRow,
+  },
+  {
     key: "create_slack_channel",
     title: "Create Slack channel",
-    orderIndex: 4,
+    orderIndex: 5,
     execute: executeCreateSlackChannel,
   },
   {
     key: "post_kickoff_message",
     title: "Post kickoff message",
-    orderIndex: 5,
+    orderIndex: 6,
     execute: executePostKickoffMessage,
   },
 ];

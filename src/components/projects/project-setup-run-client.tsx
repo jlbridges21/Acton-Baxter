@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, Circle, LoaderCircle, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, ClipboardList, LoaderCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { formatProjectSetupStepStatus } from "@/lib/project-setup/step-status";
 
 type StepRow = {
   id: string;
@@ -74,12 +75,6 @@ export function ProjectSetupRunClient({
         setSteps(payload.steps ?? []);
         setError(payload.run?.error ?? null);
 
-        if (
-          payload.run &&
-          (payload.run.status === "confirmed" || (payload.run.status === "failed" && !canRetry))
-        ) {
-          // Auto-kick only for first start; failed retries are explicit.
-        }
         if (payload.run && payload.run.status === "confirmed") {
           void kick();
         }
@@ -118,16 +113,20 @@ export function ProjectSetupRunClient({
   const complete = run?.status === "complete";
   const folderStep = steps.find((s) => s.stepKey === "copy_template_folder");
   const charterStep = steps.find((s) => s.stepKey === "copy_charter_spreadsheet");
+  const slackStep = steps.find((s) => s.stepKey === "create_slack_channel");
   const folderLink = asLink(folderStep?.outputJson?.webViewLink);
   const charterLink = asLink(charterStep?.outputJson?.webViewLink);
+  const channelId =
+    typeof slackStep?.outputJson?.channelId === "string" ? slackStep.outputJson.channelId : null;
   const verification = folderStep?.outputJson?.verification as
     | {
         source?: { folders?: number; files?: number };
         destination?: { folders?: number; files?: number };
+        expectedDestination?: { folders?: number; files?: number };
       }
     | undefined;
   const plannedSteps = steps.filter(
-    (s) => s.outputJson?.mode === "dry_run" || s.outputJson?.planned,
+    (s) => s.status === "planned" || s.outputJson?.mode === "dry_run",
   );
   const liveOutputs = steps.filter((s) => s.outputJson?.mode === "live" && s.status === "complete");
 
@@ -156,11 +155,11 @@ export function ProjectSetupRunClient({
             <CardDescription className="mt-2">
               {complete
                 ? run?.dryRun
-                  ? "No external systems were touched. The recorded plan below is what live execution would do."
-                  : "Google steps finished. Slack channel creation remains planned until Prompt 3."
+                  ? "No external systems were touched. Planned steps below are informational only — the project number was not reserved."
+                  : "Google and Slack steps finished (or were planned when a gate was off)."
                 : failed
-                  ? "A step failed. Retry resumes from the first incomplete step — completed Google work is not repeated."
-                  : "Working through project number, Master Log, Drive folder, and charter…"}
+                  ? "A step failed. Retry resumes from the first incomplete step — completed work is not repeated."
+                  : "Working through project number, Master Log, Drive folder, charter, Slack…"}
             </CardDescription>
             {run ? (
               <p className="mt-2 text-sm text-[var(--acton-muted)]">
@@ -168,7 +167,7 @@ export function ProjectSetupRunClient({
                 {run.salesRep ?? "—"}
               </p>
             ) : null}
-            {complete && (folderLink || charterLink) ? (
+            {complete && (folderLink || charterLink || channelId) ? (
               <ul className="mt-3 space-y-1 text-sm">
                 {folderLink ? (
                   <li>
@@ -194,10 +193,18 @@ export function ProjectSetupRunClient({
                     </a>
                   </li>
                 ) : null}
-                {verification?.source && verification?.destination ? (
+                {channelId ? (
+                  <li className="text-[var(--acton-muted)]">
+                    Slack channel created (#{run?.slackChannelName ?? channelId})
+                  </li>
+                ) : null}
+                {verification?.destination ? (
                   <li className="text-[var(--acton-muted)]">
                     Verified {verification.destination.folders} folders /{" "}
-                    {verification.destination.files} files (matched template)
+                    {verification.destination.files} files
+                    {verification.expectedDestination
+                      ? ` (expected ${verification.expectedDestination.files} files after exclusions)`
+                      : ""}
                   </li>
                 ) : null}
               </ul>
@@ -217,7 +224,9 @@ export function ProjectSetupRunClient({
               <StepIcon status={step.status} />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
-                <p className="text-xs text-[var(--acton-muted)] capitalize">{step.status}</p>
+                <p className="text-xs text-[var(--acton-muted)]">
+                  {formatProjectSetupStepStatus(step.status)}
+                </p>
                 {step.error ? <p className="mt-1 text-xs text-red-700">{step.error}</p> : null}
                 {step.stepKey === "copy_template_folder" && asLink(step.outputJson.webViewLink) ? (
                   <a
@@ -318,6 +327,9 @@ export function ProjectSetupRunClient({
 function StepIcon({ status }: { status: string }) {
   if (status === "complete" || status === "skipped") {
     return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-700" />;
+  }
+  if (status === "planned") {
+    return <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />;
   }
   if (status === "failed") {
     return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />;

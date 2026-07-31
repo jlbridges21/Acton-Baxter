@@ -39,6 +39,10 @@ vi.mock("@/lib/project-setup/capabilities", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/project-setup/notify-slack", () => ({
+  notifyProjectSetupSlackInitiator: vi.fn(async () => undefined),
+}));
+
 beforeEach(() => {
   process.env.E2E_TEST_AUTH_BYPASS = "true";
   process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
@@ -161,7 +165,7 @@ describe("test-mode member resolution + settings validation", () => {
 });
 
 describe("capabilities gates", () => {
-  it("keeps Slack provisioning off", () => {
+  it("exposes slackProvisioningEnabled from env (mocked off here)", () => {
     expect(slackProvisioningEnabled()).toBe(false);
   });
 
@@ -171,17 +175,17 @@ describe("capabilities gates", () => {
 });
 
 describe("step runner resume + idempotency", () => {
-  it("nextPendingStep skips complete steps", () => {
+  it("nextPendingStep skips complete and planned steps", () => {
     expect(
       nextPendingStep([
         { stepKey: "allocate_project_number", orderIndex: 0, status: "complete" },
-        { stepKey: "append_master_log_row", orderIndex: 1, status: "failed" },
-        { stepKey: "copy_template_folder", orderIndex: 2, status: "pending" },
+        { stepKey: "append_master_log_row", orderIndex: 1, status: "planned" },
+        { stepKey: "copy_template_folder", orderIndex: 2, status: "failed" },
       ]),
-    ).toBe("append_master_log_row");
+    ).toBe("copy_template_folder");
   });
 
-  it("runs dry-run end-to-end and resumes without re-executing complete steps", async () => {
+  it("runs dry-run end-to-end with planned (not complete) gated steps and does not reserve numbers", async () => {
     const contact = {
       id: "c1",
       name: "Pat Example",
@@ -211,14 +215,20 @@ describe("step runner resume + idempotency", () => {
       dryRun: true,
     });
 
-    expect(await isProjectNumberInUse("L01-26099")).toBe(true);
+    // Dry runs never reserve the number.
+    expect(await isProjectNumberInUse("L01-26099")).toBe(false);
 
     const first = await runProjectSetupJob(run.id);
     expect(first.status).toBe("complete");
     expect(first.completedSteps).toBe(PROJECT_SETUP_STEPS.length);
 
     const steps = await getProjectSetupSteps(run.id);
-    expect(steps.every((s) => s.status === "complete")).toBe(true);
+    const allocate = steps.find((s) => s.stepKey === "allocate_project_number");
+    expect(allocate?.status).toBe("complete");
+    expect(allocate?.outputJson.reservesNumber).toBe(false);
+
+    const gated = steps.filter((s) => s.stepKey !== "allocate_project_number");
+    expect(gated.every((s) => s.status === "planned")).toBe(true);
     const slackStep = steps.find((s) => s.stepKey === "create_slack_channel");
     expect(slackStep?.outputJson.planned).toMatchObject({
       channelName: "l01-26099-example",
@@ -226,7 +236,24 @@ describe("step runner resume + idempotency", () => {
     });
     expect(slackStep?.outputJson.executed).toBe(false);
 
-    // Mark last step pending again and ensure earlier steps stay complete on resume.
+    // Live run can still allocate the same number.
+    const { run: liveRun } = await createProjectSetupRun({
+      initiatedBy: "user-1",
+      ghlContactId: "c2",
+      contactSnapshot: contact,
+      salesRep: "Jesse Soares",
+      projectNumber: "L01-26099",
+      projectLastName: "Example",
+      folderName: "L01-26099 Example",
+      charterName: "Example Project Charter",
+      slackChannelName: "l01-26099-example",
+      fpPaidDate: "2026-07-31",
+      dryRun: false,
+    });
+    expect(liveRun.projectNumber).toBe("L01-26099");
+    expect(await isProjectNumberInUse("L01-26099")).toBe(true);
+
+    // Mark last step pending again and ensure earlier steps stay terminal on resume.
     const last = steps[steps.length - 1]!;
     await updateProjectSetupStep(last.id, { status: "pending", outputJson: {}, finishedAt: null });
     await updateProjectSetupRun(run.id, { status: "confirmed", finishedAt: null });
@@ -234,12 +261,10 @@ describe("step runner resume + idempotency", () => {
     const second = await runProjectSetupJob(run.id);
     expect(second.status).toBe("complete");
     const after = await getProjectSetupSteps(run.id);
-    expect(after.filter((s) => s.status === "complete")).toHaveLength(PROJECT_SETUP_STEPS.length);
-    // First step still has allocate output (not wiped)
     expect(after[0]?.outputJson.projectNumber).toBe("L01-26099");
   });
 
-  it("rejects uniqueness conflicts for active numbers", async () => {
+  it("rejects uniqueness conflicts for live active numbers only", async () => {
     const base = {
       initiatedBy: "user-1",
       ghlContactId: "c1",
@@ -264,10 +289,56 @@ describe("step runner resume + idempotency", () => {
       charterName: "B Project Charter",
       slackChannelName: "l01-26100-b",
       fpPaidDate: "2026-07-31",
+      dryRun: false,
     };
     await createProjectSetupRun(base);
     await expect(createProjectSetupRun({ ...base, ghlContactId: "c2" })).rejects.toThrow(
       /already in use/,
     );
+  });
+
+  it("backfills missing step rows for older runs", async () => {
+    const { ensureProjectSetupStepRows } = await import("@/lib/project-setup/store");
+    const { run } = await createProjectSetupRun({
+      initiatedBy: "user-1",
+      ghlContactId: "c1",
+      contactSnapshot: {
+        id: "c1",
+        name: "A",
+        firstName: "A",
+        lastName: "B",
+        email: null,
+        phone: null,
+        address: null,
+        city: null,
+        state: null,
+        postalCode: null,
+        assignedUserId: null,
+        assignedUserName: null,
+      },
+      salesRep: "Rep",
+      projectNumber: "L01-26101",
+      projectLastName: "B",
+      folderName: "L01-26101 B",
+      charterName: "B Project Charter",
+      slackChannelName: "l01-26101-b",
+      fpPaidDate: "2026-07-31",
+      dryRun: true,
+    });
+
+    // Simulate a pre-Prompt-3 run missing append_charter_list_row.
+    const steps = await getProjectSetupSteps(run.id);
+    const without = steps.filter((s) => s.stepKey !== "append_charter_list_row");
+    const memory = (
+      globalThis as {
+        __actonProjectSetupMemory?: { steps: Map<string, typeof without> };
+      }
+    ).__actonProjectSetupMemory;
+    memory?.steps.set(run.id, without);
+
+    const ensured = await ensureProjectSetupStepRows(run.id);
+    expect(ensured.find((s) => s.stepKey === "append_charter_list_row")?.status).toBe("pending");
+    expect(ensured).toHaveLength(PROJECT_SETUP_STEPS.length);
+    expect(ensured.find((s) => s.stepKey === "create_slack_channel")?.orderIndex).toBe(5);
   });
 });

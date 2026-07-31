@@ -19,6 +19,7 @@ type SettingsForm = {
   projectsParentFolderId: string;
   masterCharterSpreadsheetId: string;
   masterLogTabName: string;
+  charterListTabName: string;
 };
 
 function toForm(settings: ProjectSetupSettings): SettingsForm {
@@ -30,6 +31,7 @@ function toForm(settings: ProjectSetupSettings): SettingsForm {
     projectsParentFolderId: settings.projectsParentFolderId,
     masterCharterSpreadsheetId: settings.masterCharterSpreadsheetId,
     masterLogTabName: settings.masterLogTabName,
+    charterListTabName: settings.charterListTabName,
   };
 }
 
@@ -82,7 +84,7 @@ export function ProjectSetupAdminClient({
           <CardTitle>Project setup settings</CardTitle>
           <CardDescription className="mt-2">
             Standing Slack invite list, test mode, and Google IDs for the Master Project Log /
-            template folder. Prompt 1 runs dry-run only — leave test mode ON until Prompt 3.
+            template folder. Leave test mode ON until you are ready for full standing invites.
           </CardDescription>
         </div>
 
@@ -143,6 +145,13 @@ export function ProjectSetupAdminClient({
               onChange={(e) => setSettings({ ...settings, masterLogTabName: e.target.value })}
             />
           </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">Project Charter List tab name</span>
+            <Input
+              value={settings.charterListTabName}
+              onChange={(e) => setSettings({ ...settings, charterListTabName: e.target.value })}
+            />
+          </label>
         </div>
 
         {error ? (
@@ -160,7 +169,7 @@ export function ProjectSetupAdminClient({
 
       <Card>
         <CardTitle>Recent runs</CardTitle>
-        <CardDescription className="mt-2">Latest project setup dry-runs.</CardDescription>
+        <CardDescription className="mt-2">Latest project setup runs.</CardDescription>
         {runs.length === 0 ? (
           <p className="mt-3 text-sm text-[var(--acton-muted)]">No runs yet.</p>
         ) : (

@@ -10,6 +10,7 @@ export const projectSetupSettingsPatchSchema = z.object({
   projectsParentFolderId: z.string().min(1).optional(),
   masterCharterSpreadsheetId: z.string().min(1).optional(),
   masterLogTabName: z.string().min(1).optional(),
+  charterListTabName: z.string().min(1).optional(),
 });
 
 export type ProjectSetupSettingsWarnings = {

@@ -18,6 +18,8 @@ Baxter is Acton ADU’s internal AI assistant. In Slack it:
 | **Q&A (channels)**    | `@Baxter <question>` in an allowed channel; replies appear **in a thread**                                 |
 | **Clear context**     | Send `/clear` in a DM or thread — starts a fresh conversation (plain text; no slash-command config needed) |
 | **Property Research** | `/property [address]` — same research as the web tool; returns a login-protected link (no PDF in Slack)    |
+| **New project setup** | `/new-project [customer name]` — search GHL, confirm, run live Master Log / Drive / Slack kickoff          |
+| **Help**              | Send `/help` — capability summary                                                                          |
 | **Clear / Help**      | `/clear`, `/help` — also available as plain-text commands in DMs                                           |
 | **Slack recall**      | `/recall [query]` — explicit live Slack search (same pipeline as conversational recall)                    |
 | **PEM NEAT**          | `/pem` — opens Baxter’s web PEM NEAT tool (transcripts are too long for Slack)                             |
@@ -60,20 +62,21 @@ Before you begin, confirm all of the following:
 
 The canonical manifest lives at `docs/slack-app-manifest.yaml`. After creating the app, confirm these values match Slack app settings:
 
-| Setting                 | Value                                                            |
-| ----------------------- | ---------------------------------------------------------------- |
-| App name                | Baxter                                                           |
-| Slash commands          | `/property`, `/clear`, `/help`, `/recall`, `/pem`                |
-| Events request URL      | `https://acton-baxter.vercel.app/api/slack/events`               |
-| `/property` request URL | `https://acton-baxter.vercel.app/api/slack/commands/property`    |
-| `/clear` request URL    | `https://acton-baxter.vercel.app/api/slack/commands/clear`       |
-| `/help` request URL     | `https://acton-baxter.vercel.app/api/slack/commands/help`        |
-| `/recall` request URL   | `https://acton-baxter.vercel.app/api/slack/commands/recall`      |
-| `/pem` request URL      | `https://acton-baxter.vercel.app/api/slack/commands/pem`         |
-| Interactivity URL       | `https://acton-baxter.vercel.app/api/slack/interactions`         |
-| Bot events              | `app_mention`, `message.im`                                      |
-| Socket Mode             | **Disabled**                                                     |
-| Interactivity           | **Enabled** (optional; reserved for future interactive payloads) |
+| Setting                 | Value                                                             |
+| ----------------------- | ----------------------------------------------------------------- |
+| App name                | Baxter                                                            |
+| Slash commands          | `/property`, `/clear`, `/help`, `/recall`, `/pem`, `/new-project` |
+| Events request URL      | `https://acton-baxter.vercel.app/api/slack/events`                |
+| `/property` request URL | `https://acton-baxter.vercel.app/api/slack/commands/property`     |
+| `/clear` request URL    | `https://acton-baxter.vercel.app/api/slack/commands/clear`        |
+| `/help` request URL     | `https://acton-baxter.vercel.app/api/slack/commands/help`         |
+| `/recall` request URL   | `https://acton-baxter.vercel.app/api/slack/commands/recall`       |
+| `/pem` request URL      | `https://acton-baxter.vercel.app/api/slack/commands/pem`          |
+| `/new-project` URL      | `https://acton-baxter.vercel.app/api/slack/commands/new-project`  |
+| Interactivity URL       | `https://acton-baxter.vercel.app/api/slack/interactions`          |
+| Bot events              | `app_mention`, `message.im`                                       |
+| Socket Mode             | **Disabled**                                                      |
+| Interactivity           | **Enabled** (required for `/new-project` modals)                  |
 
 If you change scopes or events later, update the manifest file, re-import it, and **reinstall** the app (section 10).
 
@@ -275,13 +278,14 @@ Slack retries failed deliveries. Baxter deduplicates via `slack_event_receipts` 
 
 Configured in the manifest (`docs/slack-app-manifest.yaml`):
 
-| Command     | Request URL                                                   | Usage hint  | Description               |
-| ----------- | ------------------------------------------------------------- | ----------- | ------------------------- |
-| `/property` | `https://acton-baxter.vercel.app/api/slack/commands/property` | `[address]` | Property Research         |
-| `/clear`    | `https://acton-baxter.vercel.app/api/slack/commands/clear`    | _(none)_    | Reset Baxter conversation |
-| `/help`     | `https://acton-baxter.vercel.app/api/slack/commands/help`     | _(none)_    | Capabilities and examples |
-| `/recall`   | `https://acton-baxter.vercel.app/api/slack/commands/recall`   | `[query]`   | Live Slack history search |
-| `/pem`      | `https://acton-baxter.vercel.app/api/slack/commands/pem`      | _(none)_    | Open Baxter PEM NEAT tool |
+| Command        | Request URL                                                      | Usage hint        | Description               |
+| -------------- | ---------------------------------------------------------------- | ----------------- | ------------------------- |
+| `/property`    | `https://acton-baxter.vercel.app/api/slack/commands/property`    | `[address]`       | Property Research         |
+| `/clear`       | `https://acton-baxter.vercel.app/api/slack/commands/clear`       | _(none)_          | Reset Baxter conversation |
+| `/help`        | `https://acton-baxter.vercel.app/api/slack/commands/help`        | _(none)_          | Capabilities and examples |
+| `/recall`      | `https://acton-baxter.vercel.app/api/slack/commands/recall`      | `[query]`         | Live Slack history search |
+| `/pem`         | `https://acton-baxter.vercel.app/api/slack/commands/pem`         | _(none)_          | Open Baxter PEM NEAT tool |
+| `/new-project` | `https://acton-baxter.vercel.app/api/slack/commands/new-project` | `[customer name]` | New project setup modal   |
 
 ### `/property`
 
@@ -305,7 +309,17 @@ Full Partnership Evaluation Meeting transcripts are typically far longer than Sl
 2. Primary button: **Open PEM NEAT Tool** → `https://acton-baxter.vercel.app/pem-neats/new`
 3. Secondary button: **View Existing PEM NEATs** → `https://acton-baxter.vercel.app/pem-neats`
 4. **Slack Search OAuth is not required for `/pem`.** No Baxter user mapping is required for the handoff itself (web login applies when opening the tool).
-5. Interactivity is **not** required for `/pem` (no modal). The interactions URL may remain configured for future features.
+5. Interactivity is **not** required for `/pem` (no modal).
+
+### `/new-project`
+
+Example: `/new-project Lisa Wright`
+
+1. Opens a modal (uses `trigger_id` within Slack’s 3s window). Customer name is prefilled when provided.
+2. Search → pick up to 5 GHL matches → confirm (sales rep, next project number, folder/charter/channel names, invite list respecting test mode).
+3. Final submit starts a **live** setup (`trigger_channel: slack`), DMs the initiator a run link, and DMs outcome on completion/failure.
+4. Requires Interactivity request URL `https://acton-baxter.vercel.app/api/slack/interactions`.
+5. Restricted by `SLACK_ALLOWED_USER_IDS` when that allowlist is set.
 
 ### Verify slash auth matrix
 

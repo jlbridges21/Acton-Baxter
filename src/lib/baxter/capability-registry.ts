@@ -306,9 +306,9 @@ export function buildBaxterCapabilityCatalog(
       key: "project_setup",
       name: projectSetupTool?.name ?? "New Project Setup",
       shortDescription:
-        "Prepare new-project setup from GoHighLevel customer records (Master Project Log, Drive folder, and charter when Google writes are enabled; Slack still pending)",
+        "Run confirmed new-project setup end to end (Master Log row, project folder, charter, charter list, Slack channel + kickoff) after human confirmation, from the web app or /new-project in Slack",
       detailedDescription:
-        "Search GoHighLevel for a customer, confirm project details, and run project setup. When Google write scopes are connected, Baxter appends the Master Project Log row and creates the Drive folder + charter. Slack channel steps remain dry-run until Prompt 3.",
+        "Search GoHighLevel for a customer, confirm project details, and run project setup from the web app or /new-project in Slack. When Google write scopes are connected, Baxter appends the Master Project Log + Project Charter List rows and creates the Drive folder + charter. When Slack provisioning is enabled, Baxter creates a public channel, invites members (respecting test mode), and posts the kickoff message.",
       category: "process",
       audience: ["employee", "admin"],
       rolesAllowed: ["user", "admin", "super_admin", "*"],
@@ -320,13 +320,15 @@ export function buildBaxterCapabilityCatalog(
       supportedActions: [
         "Search GHL contacts",
         "Confirm project details",
-        "Run dry-run project setup",
+        "Run live or dry-run project setup",
+        "/new-project in Slack",
       ],
       limitations: [
-        "Slack channel create/invite/kickoff not live yet (Prompt 3)",
-        "Requires Google reconnect with Drive + Sheets write scopes",
+        "Google steps require Drive + Sheets write scopes (reconnect if read-only)",
+        "Slack channel steps require ENABLE_SLACK_INTEGRATION + bot token",
+        "Test mode limits Slack invites to the configured test member list",
       ],
-      helpTopics: ["new project setup", "project number", "feasibility package"],
+      helpTopics: ["new project setup", "project number", "feasibility package", "/new-project"],
       synonyms: ["project setup", "new project", "master project log", "feasibility"],
       sourceOfTruth: "baxter_tools",
     },

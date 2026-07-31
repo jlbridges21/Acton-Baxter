@@ -3,6 +3,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
 import {
+  DEFAULT_CHARTER_LIST_TAB_NAME,
   DEFAULT_MASTER_CHARTER_SPREADSHEET_ID,
   DEFAULT_MASTER_LOG_TAB_NAME,
   DEFAULT_PROJECTS_PARENT_FOLDER_ID,
@@ -29,6 +30,7 @@ type SettingsRow = {
   projects_parent_folder_id: string;
   master_charter_spreadsheet_id: string;
   master_log_tab_name: string;
+  charter_list_tab_name?: string | null;
   updated_by: string | null;
   updated_at: string;
   created_at: string;
@@ -40,6 +42,7 @@ type RunRow = {
   dry_run: boolean;
   initiated_by: string | null;
   trigger_channel: "web" | "slack";
+  slack_initiator_id?: string | null;
   ghl_contact_id: string | null;
   contact_snapshot_json: ProjectSetupContactSnapshot | Record<string, unknown>;
   sales_rep: string | null;
@@ -100,6 +103,7 @@ function defaultSettings(): ProjectSetupSettings {
     projectsParentFolderId: DEFAULT_PROJECTS_PARENT_FOLDER_ID,
     masterCharterSpreadsheetId: DEFAULT_MASTER_CHARTER_SPREADSHEET_ID,
     masterLogTabName: DEFAULT_MASTER_LOG_TAB_NAME,
+    charterListTabName: DEFAULT_CHARTER_LIST_TAB_NAME,
     updatedBy: null,
     updatedAt: now,
     createdAt: now,
@@ -135,6 +139,7 @@ function mapSettings(row: SettingsRow): ProjectSetupSettings {
     projectsParentFolderId: row.projects_parent_folder_id,
     masterCharterSpreadsheetId: row.master_charter_spreadsheet_id,
     masterLogTabName: row.master_log_tab_name || DEFAULT_MASTER_LOG_TAB_NAME,
+    charterListTabName: row.charter_list_tab_name?.trim() || DEFAULT_CHARTER_LIST_TAB_NAME,
     updatedBy: row.updated_by,
     updatedAt: row.updated_at,
     createdAt: row.created_at,
@@ -149,6 +154,7 @@ function mapRun(row: RunRow): ProjectSetupRun {
     dryRun: Boolean(row.dry_run),
     initiatedBy: row.initiated_by,
     triggerChannel: row.trigger_channel,
+    slackInitiatorId: row.slack_initiator_id ?? null,
     ghlContactId: row.ghl_contact_id,
     contactSnapshot: {
       id: snap.id ?? row.ghl_contact_id ?? "",
@@ -216,6 +222,7 @@ export async function getProjectSetupSettings(): Promise<ProjectSetupSettings> {
       projects_parent_folder_id: seeded.projectsParentFolderId,
       master_charter_spreadsheet_id: seeded.masterCharterSpreadsheetId,
       master_log_tab_name: seeded.masterLogTabName,
+      charter_list_tab_name: seeded.charterListTabName,
     });
     return seeded;
   }
@@ -231,6 +238,7 @@ export async function updateProjectSetupSettings(
     projectsParentFolderId: string;
     masterCharterSpreadsheetId: string;
     masterLogTabName: string;
+    charterListTabName: string;
   }>,
   updatedBy: string | null,
 ): Promise<ProjectSetupSettings> {
@@ -249,6 +257,7 @@ export async function updateProjectSetupSettings(
     masterCharterSpreadsheetId:
       patch.masterCharterSpreadsheetId?.trim() || current.masterCharterSpreadsheetId,
     masterLogTabName: patch.masterLogTabName?.trim() || current.masterLogTabName,
+    charterListTabName: patch.charterListTabName?.trim() || current.charterListTabName,
     updatedBy,
     updatedAt: new Date().toISOString(),
   };
@@ -270,6 +279,7 @@ export async function updateProjectSetupSettings(
       projects_parent_folder_id: next.projectsParentFolderId,
       master_charter_spreadsheet_id: next.masterCharterSpreadsheetId,
       master_log_tab_name: next.masterLogTabName,
+      charter_list_tab_name: next.charterListTabName,
       updated_by: updatedBy,
       updated_at: next.updatedAt,
     })
@@ -279,6 +289,10 @@ export async function updateProjectSetupSettings(
   return mapSettings(data as SettingsRow);
 }
 
+/**
+ * True when a LIVE (non-dry-run) run in a non-failed/non-cancelled status holds this number.
+ * Dry-run recorded numbers are informational only and never reserve.
+ */
 export async function isProjectNumberInUse(
   projectNumber: string,
   excludeRunId?: string,
@@ -287,6 +301,7 @@ export async function isProjectNumberInUse(
   if (usesMemoryStore()) {
     for (const run of getMemory().runs.values()) {
       if (excludeRunId && run.id === excludeRunId) continue;
+      if (run.dryRun) continue;
       if (
         run.projectNumber?.toUpperCase() === normalized &&
         run.status !== "failed" &&
@@ -303,6 +318,7 @@ export async function isProjectNumberInUse(
     .from("project_setup_runs")
     .select("id")
     .eq("project_number", normalized)
+    .eq("dry_run", false)
     .not("status", "in", "(failed,cancelled)")
     .limit(1);
   if (excludeRunId) query = query.neq("id", excludeRunId);
@@ -314,6 +330,7 @@ export async function isProjectNumberInUse(
 export async function createProjectSetupRun(input: {
   initiatedBy: string;
   triggerChannel?: "web" | "slack";
+  slackInitiatorId?: string | null;
   dryRun?: boolean;
   ghlContactId: string;
   contactSnapshot: ProjectSetupContactSnapshot;
@@ -326,7 +343,9 @@ export async function createProjectSetupRun(input: {
   fpPaidDate: string;
 }): Promise<{ run: ProjectSetupRun; steps: ProjectSetupStep[] }> {
   const projectNumber = input.projectNumber.trim().toUpperCase();
-  if (await isProjectNumberInUse(projectNumber)) {
+  const dryRun = input.dryRun ?? true;
+  // Only live runs reserve numbers — dry runs skip uniqueness against other dry runs.
+  if (!dryRun && (await isProjectNumberInUse(projectNumber))) {
     throw new Error(
       `Project number ${projectNumber} is already in use by another active setup run.`,
     );
@@ -337,9 +356,10 @@ export async function createProjectSetupRun(input: {
   const run: ProjectSetupRun = {
     id: runId,
     status: "confirmed",
-    dryRun: input.dryRun ?? true,
+    dryRun,
     initiatedBy: input.initiatedBy,
     triggerChannel: input.triggerChannel ?? "web",
+    slackInitiatorId: input.slackInitiatorId ?? null,
     ghlContactId: input.ghlContactId,
     contactSnapshot: input.contactSnapshot,
     salesRep: input.salesRep,
@@ -383,6 +403,7 @@ export async function createProjectSetupRun(input: {
     dry_run: run.dryRun,
     initiated_by: run.initiatedBy,
     trigger_channel: run.triggerChannel,
+    slack_initiator_id: run.slackInitiatorId,
     ghl_contact_id: run.ghlContactId,
     contact_snapshot_json: run.contactSnapshot,
     sales_rep: run.salesRep,
@@ -415,6 +436,77 @@ export async function createProjectSetupRun(input: {
   if (stepsError) throw stepsError;
 
   return { run, steps };
+}
+
+/**
+ * Insert any step keys missing from an older run (e.g. after Prompt 3 added
+ * append_charter_list_row) and sync order_index to the current definition order.
+ */
+export async function ensureProjectSetupStepRows(runId: string): Promise<ProjectSetupStep[]> {
+  const existing = await getProjectSetupSteps(runId);
+  const byKey = new Map(existing.map((s) => [s.stepKey, s]));
+  const now = new Date().toISOString();
+  const toInsert: ProjectSetupStep[] = [];
+  const orderFixes: Array<{ id: string; orderIndex: number }> = [];
+
+  for (let index = 0; index < PROJECT_SETUP_STEP_KEYS.length; index += 1) {
+    const key = PROJECT_SETUP_STEP_KEYS[index]!;
+    const row = byKey.get(key);
+    if (!row) {
+      toInsert.push({
+        id: crypto.randomUUID(),
+        runId,
+        stepKey: key,
+        orderIndex: index,
+        status: "pending",
+        outputJson: {},
+        error: null,
+        startedAt: null,
+        finishedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      continue;
+    }
+    if (row.orderIndex !== index) {
+      orderFixes.push({ id: row.id, orderIndex: index });
+    }
+  }
+
+  if (usesMemoryStore()) {
+    const next = [...existing];
+    for (const fix of orderFixes) {
+      const idx = next.findIndex((s) => s.id === fix.id);
+      if (idx >= 0) next[idx] = { ...next[idx]!, orderIndex: fix.orderIndex, updatedAt: now };
+    }
+    next.push(...toInsert);
+    getMemory().steps.set(runId, next);
+    return getProjectSetupSteps(runId);
+  }
+
+  const supabase = createServiceClient();
+  if (toInsert.length > 0) {
+    const { error } = await supabase.from("project_setup_steps").insert(
+      toInsert.map((s) => ({
+        id: s.id,
+        run_id: s.runId,
+        step_key: s.stepKey,
+        order_index: s.orderIndex,
+        status: s.status,
+        output_json: {},
+      })),
+    );
+    if (error) throw error;
+  }
+  for (const fix of orderFixes) {
+    const { error } = await supabase
+      .from("project_setup_steps")
+      .update({ order_index: fix.orderIndex, updated_at: now })
+      .eq("id", fix.id);
+    if (error) throw error;
+  }
+
+  return getProjectSetupSteps(runId);
 }
 
 export async function getProjectSetupRun(runId: string): Promise<ProjectSetupRun | null> {

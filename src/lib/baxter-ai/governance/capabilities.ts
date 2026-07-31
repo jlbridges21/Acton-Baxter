@@ -18,7 +18,7 @@ export const BAXTER_CURRENT_CAPABILITIES = [
   "Cite approved Acton sources for company-specific answers",
   "Generate and review PEM NEATs; answer questions about completed PEMs",
   "Help with Property Research navigation and prior reports",
-  "Prepare new-project setup from GoHighLevel customer records (Master Project Log row, Drive folder, and charter when Google write scopes are connected; Slack channel provisioning still pending)",
+  "Run confirmed new-project setup end to end (Master Log row, project folder, charter, charter list, Slack channel + kickoff) after human confirmation, from the web app or /new-project in Slack — when Google write scopes and Slack provisioning are both enabled; otherwise Google and/or Slack steps stay planned-only",
   "Help with general explanations, drafting, and summarization",
   "Draft customer-facing copy only when requested, clearly marked for human review",
 ] as const;

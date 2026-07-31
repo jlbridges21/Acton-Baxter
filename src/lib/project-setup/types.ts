@@ -18,6 +18,8 @@ export const PROJECT_SETUP_STEP_STATUSES = [
   "complete",
   "failed",
   "skipped",
+  /** Recorded a plan only — never display as "complete" on a live run. */
+  "planned",
 ] as const;
 export type ProjectSetupStepStatus = (typeof PROJECT_SETUP_STEP_STATUSES)[number];
 
@@ -26,6 +28,7 @@ export const PROJECT_SETUP_STEP_KEYS = [
   "append_master_log_row",
   "copy_template_folder",
   "copy_charter_spreadsheet",
+  "append_charter_list_row",
   "create_slack_channel",
   "post_kickoff_message",
 ] as const;
@@ -58,6 +61,7 @@ export const DEFAULT_TEMPLATE_FOLDER_ID = "1AJ6Czh9rJB04bJhNhChCl8E2AvCSFDIJ";
 export const DEFAULT_PROJECTS_PARENT_FOLDER_ID = "150O10sPk_V2guH_Tqrx1AKNJyqsom0dv";
 export const DEFAULT_MASTER_CHARTER_SPREADSHEET_ID = "1_REzrzFc7vREVxqceI47soA4HWa3u-H9Y961UeQ6u6k";
 export const DEFAULT_MASTER_LOG_TAB_NAME = "Master Project Log";
+export const DEFAULT_CHARTER_LIST_TAB_NAME = "Project Charter List";
 
 export type ProjectSetupContactSnapshot = {
   id: string;
@@ -83,6 +87,7 @@ export type ProjectSetupSettings = {
   projectsParentFolderId: string;
   masterCharterSpreadsheetId: string;
   masterLogTabName: string;
+  charterListTabName: string;
   updatedBy: string | null;
   updatedAt: string;
   createdAt: string;
@@ -94,6 +99,8 @@ export type ProjectSetupRun = {
   dryRun: boolean;
   initiatedBy: string | null;
   triggerChannel: "web" | "slack";
+  /** Slack user id when started via /new-project — used for outcome DMs. */
+  slackInitiatorId: string | null;
   ghlContactId: string | null;
   contactSnapshot: ProjectSetupContactSnapshot;
   salesRep: string | null;
@@ -137,6 +144,8 @@ export type ProjectSetupStepContext = {
 
 export type ProjectSetupStepResult = {
   outputJson: Record<string, unknown>;
+  /** Defaults to complete. Use planned when only a dry-run / gated plan was recorded. */
+  status?: "complete" | "planned";
 };
 
 export type ProjectSetupStepDefinition = {

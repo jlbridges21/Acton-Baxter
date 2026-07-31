@@ -90,10 +90,14 @@
   - Real Master Project Log append, recursive template folder copy, charter copy
   - Year rollover on project numbers; resumable idempotent Google steps
   - Guide: `docs/project-setup.md`, OAuth: `docs/google-workspace-oauth-setup.md`
+- **New Project Setup Prompt 3** (migration `032_project_setup_slack.sql`)
+  - Dry runs no longer reserve project numbers; gated steps use `planned` status
+  - Exclude Project Charter Master from folder copy; append Project Charter List row
+  - Real Slack public channel + invites (test mode) + kickoff message
+  - `/new-project` slash command + interactivity modals; initiator DMs on outcome
 
 ## Future
 
-- **New Project Setup Prompt 3:** Slack channel provisioning + `/new-project` slash command
 - GoHighLevel: message send / calendar book (future initiative)
 - Domo sync
 

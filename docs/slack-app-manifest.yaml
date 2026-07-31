@@ -34,6 +34,11 @@ features:
       description: Open Baxter’s Partnership Evaluation Meeting NEAT tool
       usage_hint: ""
       should_escape: false
+    - command: /new-project
+      url: https://acton-baxter.vercel.app/api/slack/commands/new-project
+      description: Start new-project setup from a GoHighLevel customer
+      usage_hint: "[customer name]"
+      should_escape: false
 oauth_config:
   redirect_urls:
     - https://acton-baxter.vercel.app/api/slack/search/oauth/callback
@@ -46,6 +51,10 @@ oauth_config:
       - im:history
       # Required — slash commands
       - commands
+      # Project setup — public channel create + invites (already on live app)
+      - channels:manage
+      - channels:write.invites
+      - users:read.email
       # Admin UX — resolve human-readable user names (users.info)
       - users:read
       - users.profile:read

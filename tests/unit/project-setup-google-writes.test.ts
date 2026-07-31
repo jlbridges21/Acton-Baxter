@@ -158,6 +158,7 @@ describe("append idempotency helpers", () => {
         dryRun: false,
         initiatedBy: "u1",
         triggerChannel: "web" as const,
+        slackInitiatorId: null,
         ghlContactId: "c1",
         contactSnapshot: {
           id: "c1",
@@ -195,6 +196,7 @@ describe("append idempotency helpers", () => {
         projectsParentFolderId: "parent",
         masterCharterSpreadsheetId: "sheet",
         masterLogTabName: "Master Project Log",
+        charterListTabName: "Project Charter List",
         updatedBy: null,
         updatedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),
@@ -288,6 +290,7 @@ describe("recursive folder copy", () => {
     });
     expect(first.destinationFolderId).toBe("dest-root");
     expect(first.skipped).toHaveLength(1);
+    expect(first.excluded).toHaveLength(0);
     expect(first.verification.match).toBe(true);
     expect(copyFile).toHaveBeenCalledTimes(2);
 
@@ -328,6 +331,49 @@ describe("recursive folder copy", () => {
     expect(createFolder).not.toHaveBeenCalled();
     expect(copyFile).toHaveBeenCalledTimes(1);
     expect(resumed.copiedFiles).toBe(1);
+  });
+
+  it("excludes master charter by file id and adjusts verification math", async () => {
+    const { copyTemplateFolderTree } = await import("@/lib/project-setup/folder-copy");
+    const { GOOGLE_FOLDER_MIME } = await import("@/lib/connectors/google/types");
+    findChildByName.mockResolvedValue(null);
+    createFolder.mockResolvedValue({
+      id: "dest-root",
+      name: "L01-26018 Example",
+      mimeType: GOOGLE_FOLDER_MIME,
+      webViewLink: "https://drive.google.com/dest",
+    });
+    listChildren
+      .mockResolvedValueOnce([
+        {
+          id: "master-charter",
+          name: "Project Charter Master",
+          mimeType: "application/vnd.google-apps.spreadsheet",
+        },
+        { id: "src-file", name: "readme.txt", mimeType: "text/plain" },
+      ])
+      .mockResolvedValueOnce([]);
+    copyFile.mockResolvedValue({
+      id: "copied-readme",
+      name: "readme.txt",
+      mimeType: "text/plain",
+    });
+    countDriveTree
+      .mockResolvedValueOnce({ folders: 0, files: 2, shortcuts: 0 })
+      .mockResolvedValueOnce({ folders: 0, files: 1, shortcuts: 0 });
+
+    const result = await copyTemplateFolderTree({
+      templateFolderId: "tmpl",
+      projectsParentFolderId: "parent",
+      folderName: "L01-26018 Example",
+      excludeFileIds: ["master-charter"],
+    });
+    expect(result.excluded).toEqual([
+      expect.objectContaining({ id: "master-charter", reason: "master_charter_spreadsheet" }),
+    ]);
+    expect(result.verification.expectedDestination.files).toBe(1);
+    expect(result.verification.excludedFileCount).toBe(1);
+    expect(copyFile).toHaveBeenCalledTimes(1);
   });
 
   it("fails loudly on unexpected existing destination folder", async () => {
@@ -394,6 +440,7 @@ describe("charter copy idempotency", () => {
         dryRun: false,
         initiatedBy: "u1",
         triggerChannel: "web",
+        slackInitiatorId: null,
         ghlContactId: "c1",
         contactSnapshot: {
           id: "c1",
@@ -431,6 +478,7 @@ describe("charter copy idempotency", () => {
         projectsParentFolderId: "parent",
         masterCharterSpreadsheetId: "master",
         masterLogTabName: "Master Project Log",
+        charterListTabName: "Project Charter List",
         updatedBy: null,
         updatedAt: new Date().toISOString(),
         createdAt: new Date().toISOString(),

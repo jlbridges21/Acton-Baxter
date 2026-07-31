@@ -2,6 +2,7 @@ import "server-only";
 
 import { PROJECT_SETUP_STEPS } from "./steps";
 import {
+  ensureProjectSetupStepRows,
   getProjectSetupRun,
   getProjectSetupSettings,
   getProjectSetupSteps,
@@ -9,10 +10,14 @@ import {
   updateProjectSetupStep,
 } from "./store";
 import type { ProjectSetupStep } from "./types";
+import { notifyProjectSetupSlackInitiator } from "./notify-slack";
+import { formatProjectSetupStepStatus } from "./step-status";
+
+export { formatProjectSetupStepStatus };
 
 /**
- * Execute a project setup run, resuming from the first non-complete step.
- * Completed steps are never re-executed (idempotent resume).
+ * Execute a project setup run, resuming from the first non-terminal step.
+ * Completed and planned steps are never re-executed (idempotent resume).
  */
 export async function runProjectSetupJob(runId: string): Promise<{
   status: "complete" | "failed";
@@ -37,30 +42,39 @@ export async function runProjectSetupJob(runId: string): Promise<{
   });
 
   const settings = await getProjectSetupSettings();
-  let steps = await getProjectSetupSteps(runId);
+  let steps = await ensureProjectSetupStepRows(runId);
   const priorOutputs: Record<string, Record<string, unknown>> = {};
   for (const step of steps) {
-    if (step.status === "complete") {
+    if (step.status === "complete" || step.status === "planned") {
       priorOutputs[step.stepKey] = step.outputJson;
     }
   }
 
-  let completedSteps = steps.filter((s) => s.status === "complete").length;
+  let completedSteps = steps.filter(
+    (s) => s.status === "complete" || s.status === "planned" || s.status === "skipped",
+  ).length;
 
   for (const definition of PROJECT_SETUP_STEPS) {
     steps = await getProjectSetupSteps(runId);
     const stepRow = steps.find((s) => s.stepKey === definition.key);
     if (!stepRow) {
+      // ensureProjectSetupStepRows should have inserted it — fail loudly if still missing.
       await failRun(runId, `Missing step row for ${definition.key}`);
-      return {
-        status: "failed",
+      const result = {
+        status: "failed" as const,
         completedSteps,
         failedStepKey: definition.key,
         error: `Missing step row for ${definition.key}`,
       };
+      await notifyProjectSetupSlackInitiator(runId, result);
+      return result;
     }
 
-    if (stepRow.status === "complete" || stepRow.status === "skipped") {
+    if (
+      stepRow.status === "complete" ||
+      stepRow.status === "skipped" ||
+      stepRow.status === "planned"
+    ) {
       priorOutputs[definition.key] = stepRow.outputJson;
       continue;
     }
@@ -82,8 +96,9 @@ export async function runProjectSetupJob(runId: string): Promise<{
         partialOutput: stepRow.outputJson ?? {},
       });
       const finishedAt = new Date().toISOString();
+      const stepStatus = result.status === "planned" ? "planned" : "complete";
       await updateProjectSetupStep(stepRow.id, {
-        status: "complete",
+        status: stepStatus,
         outputJson: result.outputJson,
         finishedAt,
         error: null,
@@ -98,12 +113,14 @@ export async function runProjectSetupJob(runId: string): Promise<{
         finishedAt: new Date().toISOString(),
       });
       await failRun(runId, message);
-      return {
-        status: "failed",
+      const result = {
+        status: "failed" as const,
         completedSteps,
         failedStepKey: definition.key,
         error: message,
       };
+      await notifyProjectSetupSlackInitiator(runId, result);
+      return result;
     }
   }
 
@@ -113,7 +130,9 @@ export async function runProjectSetupJob(runId: string): Promise<{
     error: null,
   });
 
-  return { status: "complete", completedSteps };
+  const result = { status: "complete" as const, completedSteps };
+  await notifyProjectSetupSlackInitiator(runId, result);
+  return result;
 }
 
 async function failRun(runId: string, error: string): Promise<void> {
@@ -130,7 +149,7 @@ export function nextPendingStep(
 ): string | null {
   const ordered = [...steps].sort((a, b) => a.orderIndex - b.orderIndex);
   for (const step of ordered) {
-    if (step.status !== "complete" && step.status !== "skipped") {
+    if (step.status !== "complete" && step.status !== "skipped" && step.status !== "planned") {
       return step.stepKey;
     }
   }
