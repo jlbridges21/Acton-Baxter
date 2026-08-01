@@ -770,7 +770,7 @@ export function GoogleConnectorClient({
           ) : null}
           {writesEnabled || accessMode === "read_write" ? (
             <p className="mt-2 text-sm font-semibold text-emerald-800">
-              Access: read-write (project setup can create Drive folders and Sheets rows)
+              Access: read-write
             </p>
           ) : (
             <p className="mt-2 text-sm text-amber-900">

@@ -39,7 +39,6 @@ export function baxterHelpText(channel: "web" | "slack"): string {
     "• Official Acton answers cite Sources when they use approved knowledge or PEM NEATs",
     "",
     "Slack Search (live — only conversations your Slack account can access):",
-    "• What did Kevin say about Gwen?",
     "• What is the latest on the RACI matrix?",
     "• What happened in #sales yesterday?",
     "• When did we decide to change the PEM process?",
@@ -54,11 +53,8 @@ export function baxterHelpText(channel: "web" | "slack"): string {
       "GoHighLevel (live CRM):",
       `• What stage is ${DEMO_CUSTOMER_NAME} in?`,
       "• Who owns the Doe opportunity?",
-      "• When is the next appointment?",
       "• What did this lead last say?",
-      "• Show open opportunities without an owner",
       `• Move ${DEMO_CUSTOMER_NAME} to Project Findings Complete (authorized users — confirmation required)`,
-      "• I will not send texts or book calendars through chat yet",
     );
   }
 
