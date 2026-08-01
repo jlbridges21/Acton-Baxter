@@ -12,6 +12,13 @@ import {
 export const runtime = "nodejs";
 
 /**
+ * Covers Slack ack + after() search/pick work (GHL ~8s + Slack views.update headroom).
+ * Pro/Enterprise: up to 60s+ is fine. Hobby clamps to ~10s — overall search deadline
+ * would be tight there; this project already uses 300s routes, so Pro is assumed.
+ */
+export const maxDuration = 60;
+
+/**
  * Slack interactivity endpoint — view_submission for /new-project modals.
  * Request URL: https://acton-baxter.vercel.app/api/slack/interactions
  *
@@ -51,10 +58,12 @@ export async function POST(request: Request) {
       ) {
         try {
           const response = await handleNewProjectViewSubmission(payload, (work) => {
-            after(() => {
-              void work().catch((error) => {
+            after(async () => {
+              try {
+                await work();
+              } catch (error) {
                 console.error("[slack/interactions] new-project async failed", error);
-              });
+              }
             });
           });
           console.info("[slack/interactions] view_submission.responded", {
