@@ -60,8 +60,9 @@ oauth_config:
       - users.profile:read
       # Admin UX — resolve public channel names (conversations.info)
       - channels:read
-      # Processing indicator — add/remove 👀 on the user’s triggering message
+      # Processing indicator + thumbs feedback reactions on Baxter replies
       - reactions:write
+      - reactions:read
       # Slack Search — public + private (bot-member) history + Real-time Search
       - search:read.public
       - search:read.users
@@ -93,6 +94,9 @@ settings:
     bot_events:
       - app_mention
       - message.im
+      # Thumbs feedback on Baxter Q&A replies (+ monitoring already handles finding reactions)
+      - reaction_added
+      - reaction_removed
   interactivity:
     is_enabled: true
     request_url: https://acton-baxter.vercel.app/api/slack/interactions

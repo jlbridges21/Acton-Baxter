@@ -95,6 +95,11 @@
   - Exclude Project Charter Master from folder copy; append Project Charter List row
   - Real Slack public channel + invites (test mode) + kickoff message
   - `/new-project` slash command + interactivity modals; initiator DMs on outcome
+- **Slack thumbs feedback** (migration `033_baxter_slack_feedback.sql`)
+  - Persist Slack `channel`/`ts` on Baxter answer messages for reaction lookup
+  - 👍/👎 reactions upsert into `baxter_message_feedback` (Slack actors without fake profiles)
+  - Negative path: ephemeral “Tell us more” → modal comment (via interactions `trigger_id`)
+  - `/admin/baxter/feedback` filterable All/Positive/Negative list across web + Slack
 
 ## Future
 

@@ -330,6 +330,32 @@ export async function updateBaxterConversationMetadata(
   await patchConversationMetadata(conversationId, metadata);
 }
 
+/** Service/admin lookup — no ownership check. */
+export async function getConversationById(
+  conversationId: string,
+): Promise<BaxterConversation | null> {
+  const mem = getMemory().conversations.get(conversationId);
+  if (mem) return mem;
+  if (shouldUseMemoryStore()) return null;
+
+  try {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("baxter_conversations")
+      .select("*")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (error) {
+      if (isMissingTableError(error)) return getMemory().conversations.get(conversationId) ?? null;
+      throw error;
+    }
+    return (data as BaxterConversation | null) ?? null;
+  } catch (error) {
+    if (isMissingTableError(error)) return getMemory().conversations.get(conversationId) ?? null;
+    throw error;
+  }
+}
+
 export async function getConversationForUser(
   conversationId: string,
   userId: string,
@@ -426,6 +452,8 @@ export async function appendUserMessage(input: {
     confidence: null,
     model_provider: null,
     model_name: null,
+    slack_channel_id: null,
+    slack_message_ts: null,
     input_tokens: null,
     output_tokens: null,
     latency_ms: null,
@@ -467,11 +495,113 @@ export async function appendAssistantMessage(input: {
     error_code: input.errorCode ?? null,
     created_at: nowIso(),
     metadata: { sources: input.sources },
+    slack_channel_id: null,
+    slack_message_ts: null,
   };
   await persistMessage(message);
   await persistMessageSources(message.id, input.conversationId, input.sourceEntryIds);
   await touchConversation(input.conversationId, message.created_at);
   return message;
+}
+
+/**
+ * Attach the Slack channel + message ts of a posted Baxter reply so reactions
+ * can resolve back to this assistant message.
+ */
+export async function attachSlackMessageRef(input: {
+  messageId: string;
+  slackChannelId: string;
+  slackMessageTs: string;
+}): Promise<void> {
+  const channelId = input.slackChannelId.trim();
+  const messageTs = input.slackMessageTs.trim();
+  if (!input.messageId || !channelId || !messageTs) return;
+
+  // Memory path: update any in-process message matching the id.
+  for (const [conversationId, list] of getMemory().messages.entries()) {
+    const idx = list.findIndex((m) => m.id === input.messageId);
+    if (idx >= 0) {
+      const next = [...list];
+      next[idx] = {
+        ...next[idx]!,
+        slack_channel_id: channelId,
+        slack_message_ts: messageTs,
+      };
+      getMemory().messages.set(conversationId, next);
+      if (shouldPersistInMemory(conversationId)) return;
+      break;
+    }
+  }
+
+  if (shouldUseMemoryStore()) {
+    return;
+  }
+
+  try {
+    const supabase = createServiceClient();
+    const { error } = await supabase
+      .from("baxter_messages")
+      .update({
+        slack_channel_id: channelId,
+        slack_message_ts: messageTs,
+      })
+      .eq("id", input.messageId);
+    if (error) {
+      if (isMissingTableError(error) || isMissingColumnError(error)) return;
+      throw error;
+    }
+  } catch (error) {
+    if (isMissingTableError(error) || isMissingColumnError(error)) return;
+    throw error;
+  }
+}
+
+/** Resolve a Slack reaction target to a Baxter assistant message, if any. */
+export async function findAssistantMessageBySlackRef(input: {
+  slackChannelId: string;
+  slackMessageTs: string;
+}): Promise<BaxterMessage | null> {
+  const channelId = input.slackChannelId.trim();
+  const messageTs = input.slackMessageTs.trim();
+  if (!channelId || !messageTs) return null;
+
+  for (const list of getMemory().messages.values()) {
+    const hit = list.find(
+      (m) =>
+        m.role === "assistant" &&
+        m.slack_channel_id === channelId &&
+        m.slack_message_ts === messageTs,
+    );
+    if (hit) return hit;
+  }
+
+  if (shouldUseMemoryStore()) return null;
+
+  try {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("baxter_messages")
+      .select("*")
+      .eq("slack_channel_id", channelId)
+      .eq("slack_message_ts", messageTs)
+      .eq("role", "assistant")
+      .maybeSingle();
+    if (error) {
+      if (isMissingTableError(error) || isMissingColumnError(error)) return null;
+      throw error;
+    }
+    return (data as BaxterMessage | null) ?? null;
+  } catch (error) {
+    if (isMissingTableError(error) || isMissingColumnError(error)) return null;
+    throw error;
+  }
+}
+
+function isMissingColumnError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const message = "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+  return code === "42703" || /column .* does not exist/i.test(message);
 }
 
 async function persistMessage(message: BaxterMessage) {
@@ -497,6 +627,8 @@ async function persistMessage(message: BaxterMessage) {
     latency_ms: message.latency_ms,
     error_code: message.error_code,
     metadata: message.metadata,
+    slack_channel_id: message.slack_channel_id ?? null,
+    slack_message_ts: message.slack_message_ts ?? null,
   });
 
   if (error) {

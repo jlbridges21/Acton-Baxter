@@ -66,7 +66,7 @@ Errors use stable `BAXTER_OPENAI_*` codes; metrics tracked for launch readiness.
 
 ## Feedback (Prompt 5C)
 
-Web chat exposes 👍 / 👎 on assistant messages (`POST /api/baxter/feedback`). Stored in `baxter_message_feedback` (migration 010). Admins review at `/admin/baxter/feedback`. No hidden prompts stored.
+Web chat exposes 👍 / 👎 on assistant messages (`POST /api/baxter/feedback`). Slack users can react 👍 / 👎 on Baxter’s posted answers (migration `033` stores Slack `channel`/`ts` on assistant messages and allows nullable `user_id` with `slack_user_id`). Both channels land in `baxter_message_feedback`. Admins review a filterable list at `/admin/baxter/feedback`. No hidden prompts stored.
 
 ## Launch readiness (Prompt 5C)
 

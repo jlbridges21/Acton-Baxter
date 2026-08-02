@@ -9,6 +9,10 @@ import {
   handleNewProjectViewSubmission,
 } from "@/lib/project-setup/new-project-ack";
 
+/** Callback / action ids — keep as literals so the heavy feedback module stays dynamic. */
+const BAXTER_FEEDBACK_TELL_MORE_ACTION = "baxter_feedback_tell_more";
+const BAXTER_FEEDBACK_COMMENT_CALLBACK = "baxter_feedback_comment";
+
 export const runtime = "nodejs";
 
 /**
@@ -48,8 +52,48 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    // Baxter negative-feedback button — open modal while trigger_id is still valid.
+    // Dynamic import keeps the new-project ack cold path free of feedback/DB graph.
+    if (payload.type === "block_actions") {
+      const actionId = payload.actions?.[0]?.action_id;
+      if (actionId === BAXTER_FEEDBACK_TELL_MORE_ACTION) {
+        try {
+          const { handleBaxterFeedbackBlockActions } =
+            await import("@/lib/slack/feedback-interactions");
+          await handleBaxterFeedbackBlockActions(payload);
+        } catch (error) {
+          console.error("[slack/interactions] feedback block_actions failed", {
+            elapsedMs: Date.now() - requestStartedAt,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     if (payload.type === "view_submission") {
       const callbackId = payload.view?.callback_id ?? "";
+
+      if (callbackId === BAXTER_FEEDBACK_COMMENT_CALLBACK) {
+        try {
+          const { handleBaxterFeedbackViewSubmission } =
+            await import("@/lib/slack/feedback-interactions");
+          const response = await handleBaxterFeedbackViewSubmission(payload);
+          return NextResponse.json(response ?? {});
+        } catch (error) {
+          console.error("[slack/interactions] feedback view_submission failed", {
+            elapsedMs: Date.now() - requestStartedAt,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return NextResponse.json({
+            response_action: "errors",
+            errors: {
+              what_went_wrong: "Could not save feedback — please try again.",
+            },
+          });
+        }
+      }
+
       if (
         callbackId.startsWith("project_setup_") ||
         callbackId === "project_setup_search" ||

@@ -39,6 +39,14 @@ export type SlackPostMessageInput = {
   threadTs?: string;
 };
 
+export type SlackPostEphemeralInput = {
+  channel: string;
+  user: string;
+  text: string;
+  blocks?: unknown[];
+  threadTs?: string;
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -140,6 +148,82 @@ export async function postSlackMessage(
 
   throw new SlackClientError(
     lastError ? `Slack API error: ${lastError}` : "Slack API request failed",
+    {
+      statusCode: lastStatus,
+      slackError: lastError,
+      baxterCode: mapSlackApiErrorToCode(lastError),
+      retryAfterSeconds: lastRetryAfter,
+    },
+  );
+}
+
+/**
+ * Post an ephemeral message visible only to one user in a channel.
+ * Same retry/error style as postSlackMessage.
+ */
+export async function postEphemeralSlackMessage(
+  input: SlackPostEphemeralInput,
+): Promise<{ ok: true; ts?: string }> {
+  const env = getEnv();
+  if (!env.SLACK_BOT_TOKEN) {
+    throw new SlackClientError("SLACK_BOT_TOKEN is not configured", {
+      statusCode: 500,
+      baxterCode: SLACK_ERROR_CODES.MISCONFIGURED,
+    });
+  }
+
+  const maxAttempts = 3;
+  let lastError: string | null = null;
+  let lastStatus = 502;
+  let lastRetryAfter: number | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetch("https://slack.com/api/chat.postEphemeral", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        channel: input.channel,
+        user: input.user,
+        text: input.text,
+        ...(input.blocks ? { blocks: input.blocks } : {}),
+        ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
+      }),
+    });
+
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfter = retryAfterHeader ? Number(retryAfterHeader) : null;
+    const data = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      message_ts?: string;
+    } | null;
+
+    if (response.status === 429 || data?.error === "ratelimited") {
+      lastError = "ratelimited";
+      lastStatus = 429;
+      lastRetryAfter = Number.isFinite(retryAfter) ? retryAfter : 3;
+      if (attempt < maxAttempts) {
+        await sleep(Math.min(Math.max(lastRetryAfter ?? 2, 1), 10) * 1000);
+        continue;
+      }
+      break;
+    }
+
+    if (!response.ok || !data?.ok) {
+      lastError = data?.error ?? "request_failed";
+      lastStatus = response.status;
+      lastRetryAfter = null;
+      break;
+    }
+
+    return { ok: true, ts: data.message_ts };
+  }
+
+  throw new SlackClientError(
+    lastError ? `Slack API error: ${lastError}` : "Slack ephemeral request failed",
     {
       statusCode: lastStatus,
       slackError: lastError,

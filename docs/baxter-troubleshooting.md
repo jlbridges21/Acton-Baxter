@@ -149,7 +149,7 @@ Never displays secret values (only Yes/No).
 
 **Launch readiness:** `/admin/baxter/launch-readiness` — overall pilot/rollout status.
 
-**Feedback:** `/admin/baxter/feedback` — recent negative web chat ratings.
+**Feedback:** `/admin/baxter/feedback` — filterable web + Slack thumbs feedback (All / Positive / Negative).
 
 ---
 

@@ -20,6 +20,7 @@ Run each file in Supabase SQL Editor, in order:
 - [ ] `008_google_sync_and_slack_events.sql`
 - [ ] `009_slack_production.sql` — `slack_event_receipts`, `slack_baxter_reply` job type
 - [ ] `010_baxter_feedback.sql` — web chat thumbs feedback
+- [ ] `033_baxter_slack_feedback.sql` — Slack reaction feedback + message refs
 - [ ] `011_google_knowledge_manager.sql` — Google selections / synced files / sync runs
 - [ ] `012_knowledge_uploads.sql` — uploads table, `knowledge-uploads` bucket, citation FK SET NULL
 
@@ -130,7 +131,10 @@ Additional database tasks:
 - [ ] `APP_BASE_URL` matches production HTTPS URL
 - [ ] Baxter Dashboard chat on `/` works for authenticated employees
 - [ ] Thumbs feedback on web chat answers works (`POST /api/baxter/feedback`)
-- [ ] Admin feedback review at `/admin/baxter/feedback`
+- [ ] Slack Event Subscriptions include `reaction_added` / `reaction_removed` (scopes already granted)
+- [ ] Slack 👍 on a Baxter answer appears on `/admin/baxter/feedback` (no modal)
+- [ ] Slack 👎 opens ephemeral → modal; comment lands on the same feedback row
+- [ ] Admin feedback review at `/admin/baxter/feedback` (All / Positive / Negative)
 - [ ] Property Research: `/reports/new` with live keys when ready
 - [ ] `ENABLE_MOCK_RESEARCH=false` and `ALLOW_MOCK_FALLBACK=false` for live research
 - [ ] ATTOM / RentCast tested at `/admin/provider-test` (when using live research)

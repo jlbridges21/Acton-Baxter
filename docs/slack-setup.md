@@ -254,12 +254,16 @@ The route `/admin/slack` remains available.
 
 4. Wait for Slack to verify the URL (green checkmark). Baxter responds to `url_verification` when `SLACK_SIGNING_SECRET` is configured.
 
-### Subscribed bot events (only these two)
+### Subscribed bot events
 
-| Event         | Behavior                                                |
-| ------------- | ------------------------------------------------------- |
-| `app_mention` | `@Baxter` in an allowed channel → reply **in a thread** |
-| `message.im`  | DM to Baxter → reply in the DM                          |
+| Event              | Behavior                                                          |
+| ------------------ | ----------------------------------------------------------------- |
+| `app_mention`      | `@Baxter` in an allowed channel → reply **in a thread**           |
+| `message.im`       | DM to Baxter → reply in the DM                                    |
+| `reaction_added`   | 👍/👎 on a Baxter Q&A reply → feedback (also monitoring findings) |
+| `reaction_removed` | Removing 👍/👎 clears that user’s feedback row for that answer    |
+
+> After adding `reaction_added` / `reaction_removed` under **Event Subscriptions → Subscribe to bot events**, save the page. Slack may ask you to reinstall the app for the new event subscription (scopes `reactions:read` / `reactions:write` are already granted on the live app — this reinstall is for events, not new OAuth scopes).
 
 ### How interactions work
 
@@ -479,10 +483,11 @@ Run in Supabase SQL Editor (after migrations 001–008):
 supabase/migrations/009_slack_production.sql
 ```
 
-Also run migration **010** for web feedback:
+Also run migration **010** for web feedback and **033** for Slack reaction feedback:
 
 ```
 supabase/migrations/010_baxter_feedback.sql
+supabase/migrations/033_baxter_slack_feedback.sql
 ```
 
 Migration 009:

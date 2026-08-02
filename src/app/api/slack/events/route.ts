@@ -90,6 +90,7 @@ export async function POST(request: Request) {
         const reaction = (event as { reaction?: string }).reaction;
         const user = event.user;
 
+        // Monitoring findings take priority when the reacted message is a finding post.
         if (channel && ts) {
           const finding = await findBySlackMessage(channel, ts);
           if (finding) {
@@ -100,6 +101,23 @@ export async function POST(request: Request) {
             });
             return jsonOk({ ok: true });
           }
+        }
+
+        // Baxter Q&A thumbs feedback — separate from handleBaxterSlackEvent / shouldIgnoreSlackEvent.
+        const { handleBaxterFeedbackReaction } = await import("@/lib/slack/feedback-reactions");
+        const feedbackResult = await handleBaxterFeedbackReaction({
+          event: event as {
+            type?: string;
+            user?: string;
+            bot_id?: string;
+            reaction?: string;
+            item?: { type?: string; channel?: string; ts?: string };
+            team?: string;
+          },
+          teamId,
+        });
+        if (feedbackResult.handled && feedbackResult.outcome !== "ignored") {
+          return jsonOk({ ok: true, feedback: feedbackResult.outcome });
         }
 
         return jsonOk({ ok: true, ignored: true, code: SLACK_ERROR_CODES.EVENT_UNSUPPORTED });

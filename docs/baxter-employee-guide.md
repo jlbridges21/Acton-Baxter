@@ -26,7 +26,7 @@ Baxter is Acton ADU’s internal AI teammate. It helps employees with company pr
 - “What happens next for Jane?” (live CRM stage + approved process docs)
 - “Move Jane Doe to Project Findings Complete.” (authorized users only — Baxter previews, then requires **confirm**)
 
-Use **👍 / 👎** on Baxter’s answers to send lightweight feedback to admins.
+Use **👍 / 👎** on Baxter’s answers (web chat buttons, or emoji reactions in Slack) to send lightweight feedback to admins. On Slack, 👎 may ask a short follow-up about what went wrong.
 
 ### GoHighLevel (when connected)
 

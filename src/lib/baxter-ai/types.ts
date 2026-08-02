@@ -145,4 +145,8 @@ export type BaxterMessage = {
   error_code: string | null;
   created_at: string;
   metadata: Record<string, unknown>;
+  /** Slack channel of the posted assistant reply (null for web). */
+  slack_channel_id?: string | null;
+  /** Slack message ts of the posted assistant reply (null for web). */
+  slack_message_ts?: string | null;
 };

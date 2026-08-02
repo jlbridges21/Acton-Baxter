@@ -1,6 +1,7 @@
 import "server-only";
 
 import { answerBaxterQuestion } from "@/lib/baxter-ai/answer";
+import { attachSlackMessageRef } from "@/lib/baxter-ai/conversations";
 import { enqueueJob, patchJobMetadata } from "@/lib/jobs/queue";
 import {
   getSlackRuntimeConfig,
@@ -470,13 +471,24 @@ export async function handleBaxterSlackEvent(
     }
 
     const segments = buildSlackReplySegments(result);
+    let attachedSlackRef = false;
     for (const segment of segments) {
-      await postSlackMessage({
+      const posted = await postSlackMessage({
         channel: channelId,
         ...(replyThreadTs ? { threadTs: replyThreadTs } : {}),
         text: segment.text,
         blocks: segment.blocks,
       });
+      // Map the primary answer segment to the assistant message so 👍/👎 can resolve.
+      // Empty-mention prompts and error scaffolding are intentionally not mapped.
+      if (!attachedSlackRef && result.messageId && posted.ts) {
+        await attachSlackMessageRef({
+          messageId: result.messageId,
+          slackChannelId: channelId,
+          slackMessageTs: posted.ts,
+        });
+        attachedSlackRef = true;
+      }
     }
 
     if (eventId) {
