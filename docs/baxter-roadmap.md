@@ -100,6 +100,9 @@
   - 👍/👎 reactions upsert into `baxter_message_feedback` (Slack actors without fake profiles)
   - Negative path: ephemeral “Tell us more” → modal comment (via interactions `trigger_id`)
   - `/admin/baxter/feedback` filterable All/Positive/Negative list across web + Slack
+- **Feedback reporting dashboard** (migration `034_baxter_messages_role_created_idx.sql`)
+  - Date-range presets (Pacific Time) + custom, rating + sort, URL-bookmarkable filters
+  - Inquiry totals / positive / negative / no-feedback rates + channel breakdown
 
 ## Future
 
