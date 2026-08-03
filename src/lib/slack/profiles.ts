@@ -402,7 +402,7 @@ export async function resolveSlackUserProfile(input: {
         (user.real_name as string | undefined)?.trim() ||
         null,
       username: (user.name as string | undefined)?.trim() || null,
-      email: null,
+      email: (profile.email as string | undefined)?.trim() || null,
       avatar_url: (profile.image_48 as string | undefined) || null,
       is_bot: Boolean(user.is_bot),
       is_deleted: Boolean(user.deleted),

@@ -4,7 +4,7 @@ import { AdminUsersClient } from "@/components/admin/admin-users-client";
 import { isAdminRole } from "@/lib/auth/roles";
 import { isSuperAdmin } from "@/lib/auth/super-admin";
 import { requireActiveUser } from "@/lib/auth/session";
-import { listDepartments } from "@/lib/org/departments";
+import { listDepartments, listDistinctDepartmentLabels } from "@/lib/org/departments";
 import { getReportStore } from "@/lib/research/report-store";
 import { createServiceClient } from "@/lib/supabase/admin";
 
@@ -14,9 +14,10 @@ export default async function AdminUsersPage() {
     redirect("/dashboard");
   }
 
-  const [profiles, departments] = await Promise.all([
+  const [profiles, departments, departmentSuggestions] = await Promise.all([
     getReportStore().listProfiles(),
     listDepartments({ includeInactive: true }),
+    listDistinctDepartmentLabels(),
   ]);
 
   const departmentNameById = new Map(departments.map((d) => [d.id, d.name]));
@@ -39,8 +40,13 @@ export default async function AdminUsersPage() {
   const enriched = profiles.map((profile) => ({
     ...profile,
     email: emailById.get(profile.id) ?? null,
+    department:
+      profile.department?.trim() ||
+      profile.department_name ||
+      (profile.department_id ? (departmentNameById.get(profile.department_id) ?? null) : null),
     department_name:
       profile.department_name ??
+      profile.department?.trim() ??
       (profile.department_id ? (departmentNameById.get(profile.department_id) ?? null) : null),
   }));
 
@@ -49,6 +55,7 @@ export default async function AdminUsersPage() {
       <AdminUsersClient
         initialProfiles={enriched}
         initialDepartments={departments}
+        departmentSuggestions={departmentSuggestions}
         viewerEmail={user.email}
         viewerIsSuperAdmin={isSuperAdmin(user)}
       />

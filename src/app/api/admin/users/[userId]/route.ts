@@ -5,12 +5,13 @@ import { AppError, ValidationError } from "@/lib/errors";
 import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
 import { isSuperAdmin, BOOTSTRAP_SUPER_ADMIN_EMAIL } from "@/lib/auth/super-admin";
-import { assignUserDepartment } from "@/lib/org/departments";
+import { assignUserDepartment, assignUserDepartmentLabel } from "@/lib/org/departments";
 import type { UserRole } from "@/lib/research/types";
 
 const updateUserSchema = z.object({
   role: z.enum(["new_user", "user", "admin", "super_admin"]).optional(),
   departmentId: z.string().uuid().nullable().optional(),
+  department: z.string().max(120).nullable().optional(),
 });
 
 type RouteContext = {
@@ -31,8 +32,12 @@ export async function PATCH(request: Request, context: RouteContext) {
       throw new ValidationError(parsed.error.issues[0]?.message ?? "Invalid request");
     }
 
-    if (parsed.data.role === undefined && parsed.data.departmentId === undefined) {
-      throw new ValidationError("Provide role and/or departmentId");
+    if (
+      parsed.data.role === undefined &&
+      parsed.data.departmentId === undefined &&
+      parsed.data.department === undefined
+    ) {
+      throw new ValidationError("Provide role, departmentId, and/or department");
     }
 
     const adminIsSuperAdmin = isSuperAdmin(admin);
@@ -74,6 +79,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     if (parsed.data.departmentId !== undefined) {
       profile = await assignUserDepartment(userId, parsed.data.departmentId);
+    }
+
+    if (parsed.data.department !== undefined) {
+      profile = await assignUserDepartmentLabel(userId, parsed.data.department);
     }
 
     return jsonOk({ profile });

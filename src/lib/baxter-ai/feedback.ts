@@ -8,7 +8,6 @@ import {
   getConversationById,
   getConversationForUser,
   listMessagesForConversation,
-  listRecentConversations,
 } from "@/lib/baxter-ai/conversations";
 import { pickSlackDisplayName, slackUserFallbackLabel } from "@/lib/slack/display-names";
 import type { BaxterFeedbackChannel, BaxterFeedbackRating } from "./feedback-types";
@@ -76,6 +75,11 @@ function getMemory(): MemoryState {
 
 export function resetBaxterFeedbackMemoryForTests() {
   globalMemory.__baxterFeedbackMemory = { feedback: new Map() };
+}
+
+/** Test/admin helper: all in-memory feedback rows. */
+export function getFeedbackMemoryRowsForTests(): BaxterMessageFeedback[] {
+  return Array.from(getMemory().feedback.values());
 }
 
 function shouldUseMemory(): boolean {
@@ -593,117 +597,100 @@ export async function getBaxterInquiryCount(range: DateRangeBounds): Promise<{
   total: number;
   byChannel: { web: number; slack: number };
 }> {
-  if (shouldUseMemory()) {
-    const convs = await listRecentConversations(10_000);
-    let web = 0;
-    let slack = 0;
-    for (const conv of convs) {
-      const messages = await listMessagesForConversation(conv.id);
-      for (const m of messages) {
-        if (m.role !== "assistant") continue;
-        if (!inDateRange(m.created_at, range)) continue;
-        if (conv.channel === "slack") slack += 1;
-        else web += 1;
-      }
-    }
-    return { total: web + slack, byChannel: { web, slack } };
-  }
-
-  const supabase = createServiceClient();
-
-  async function countForChannel(channel: "web" | "slack" | null): Promise<number> {
-    let query =
-      channel == null
-        ? supabase
-            .from("baxter_messages")
-            .select("*", { count: "exact", head: true })
-            .eq("role", "assistant")
-        : supabase
-            .from("baxter_messages")
-            .select("id, baxter_conversations!inner(channel)", { count: "exact", head: true })
-            .eq("role", "assistant")
-            .eq("baxter_conversations.channel", channel);
-    query = applyCreatedAtRange(query, range);
-    const { count, error } = await query;
-    if (error) throw error;
-    return count ?? 0;
-  }
-
-  try {
-    const [web, slack] = await Promise.all([countForChannel("web"), countForChannel("slack")]);
-    return { total: web + slack, byChannel: { web, slack } };
-  } catch {
-    // Join filter may fail on older schemas — fall back to total only.
-    const total = await countForChannel(null);
-    return { total, byChannel: { web: 0, slack: 0 } };
-  }
+  const { listInquiriesForAdmin } = await import("./feedback-inquiries");
+  const listed = await listInquiriesForAdmin({
+    range,
+    channel: "all",
+    rating: "all",
+    limit: 1,
+    offset: 0,
+  });
+  return {
+    total: listed.totalInquiries,
+    byChannel: listed.channelBreakdown,
+  };
 }
 
 export type FeedbackDashboardResult = {
   totalInquiries: number;
-  /** Feedback rows rated up in range (not distinct messages — multiple raters possible). */
+  /** Distinct inquiries whose summarized rating is positive. */
   positiveCount: number;
-  /** Feedback rows rated down in range (not distinct messages). */
+  /** Distinct inquiries whose summarized rating is negative (down wins over mixed). */
   negativeCount: number;
-  /**
-   * Approximation of unanswered ratings: inquiries minus rating rows.
-   * Can understate when one message has multiple raters; floored at 0.
-   */
+  /** Distinct inquiries with no feedback rows. */
   noFeedbackCount: number;
-  rows: BaxterAdminFeedbackRow[];
+  rows: import("./feedback-inquiries").BaxterInquiryAdminRow[];
   totalMatchingRows: number;
   channelBreakdown: { web: number; slack: number };
   range: DateRangeBounds;
+  askerOptions: import("./feedback-inquiries").FeedbackAskerOption[];
+  departmentOptions: string[];
 };
 
 export async function getFeedbackDashboard(input?: {
-  rating?: "all" | BaxterFeedbackRating;
+  rating?: "all" | "positive" | "negative" | "none";
+  channel?: "all" | "web" | "slack";
+  askerKey?: string | null;
+  department?: string | null;
   limit?: number;
   offset?: number;
   range?: DateRangeBounds | null;
   sort?: FeedbackSortDirection;
 }): Promise<FeedbackDashboardResult> {
   const range: DateRangeBounds = input?.range ?? { start: null, end: null };
-  const [listed, inquiries] = await Promise.all([
-    listFeedbackForAdmin({
+  const { listInquiriesForAdmin, listFeedbackAskerOptions, listFeedbackDepartmentOptions } =
+    await import("./feedback-inquiries");
+
+  const [listed, askerOptions, departmentOptions] = await Promise.all([
+    listInquiriesForAdmin({
       rating: input?.rating ?? "all",
+      channel: input?.channel ?? "all",
+      askerKey: input?.askerKey,
+      department: input?.department,
       limit: input?.limit,
       offset: input?.offset,
       range,
       sort: input?.sort ?? "newest",
     }),
-    getBaxterInquiryCount(range),
+    listFeedbackAskerOptions(),
+    listFeedbackDepartmentOptions(),
   ]);
 
-  // Counts are rating-rows (consistent with existing admin summary), not distinct messages.
-  const positiveCount = listed.positiveCount;
-  const negativeCount = listed.negativeCount;
-  const noFeedbackCount = Math.max(inquiries.total - positiveCount - negativeCount, 0);
-
   return {
-    totalInquiries: inquiries.total,
-    positiveCount,
-    negativeCount,
-    noFeedbackCount,
+    totalInquiries: listed.totalInquiries,
+    positiveCount: listed.positiveCount,
+    negativeCount: listed.negativeCount,
+    noFeedbackCount: listed.noFeedbackCount,
     rows: listed.rows,
     totalMatchingRows: listed.totalMatching,
-    channelBreakdown: inquiries.byChannel,
+    channelBreakdown: listed.channelBreakdown,
     range,
+    askerOptions,
+    departmentOptions,
   };
 }
 
 export async function getFeedbackAdminSummary() {
-  const listed = await listFeedbackForAdmin({ rating: "down", limit: 20, offset: 0 });
+  const dashboard = await getFeedbackDashboard({
+    rating: "negative",
+    limit: 20,
+    offset: 0,
+    range: { start: null, end: null },
+  });
   return {
-    positiveCount: listed.positiveCount,
-    negativeCount: listed.negativeCount,
-    recentNegative: listed.rows.map((r) => ({
-      id: r.id,
-      rating: r.rating,
+    positiveCount: dashboard.positiveCount,
+    negativeCount: dashboard.negativeCount,
+    recentNegative: dashboard.rows.map((r) => ({
+      id: r.messageId,
+      rating: "down" as const,
       createdAt: r.createdAt,
       messageId: r.messageId,
       conversationId: r.conversationId,
-      comment: r.comment,
+      comment:
+        r.feedbackEntries
+          .map((e) => e.comment)
+          .filter(Boolean)
+          .join("\n\n") || null,
       questionExcerpt: r.questionExcerpt,
       answerExcerpt: r.answerExcerpt,
       answerMode: r.answerMode,

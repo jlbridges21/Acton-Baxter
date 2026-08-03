@@ -103,6 +103,11 @@
 - **Feedback reporting dashboard** (migration `034_baxter_messages_role_created_idx.sql`)
   - Date-range presets (Pacific Time) + custom, rating + sort, URL-bookmarkable filters
   - Inquiry totals / positive / negative / no-feedback rates + channel breakdown
+- **Inquiry-based feedback list** (migration `035_profiles_department.sql`)
+  - List every Baxter answer (not only rated); status Positive / Negative / No feedback
+  - Counts are inquiry-based (`positive + negative + noFeedback === totalInquiries`)
+  - Filters: channel, asked-by (typeahead), department; collapsible Filters panel
+  - Free-text `profiles.department` editable on `/admin/users` with datalist suggestions
 
 ## Future
 

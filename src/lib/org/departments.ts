@@ -276,15 +276,21 @@ export async function assignUserDepartment(
       ...existing,
       department_id: departmentId,
       department_name: departmentName,
+      department: departmentName,
       updated_at: nowIso(),
     };
     return store.ensureProfile(updated);
   }
 
   const supabase = createServiceClient();
+  let departmentName: string | null = null;
+  if (departmentId) {
+    const department = await getDepartmentById(departmentId);
+    departmentName = department?.name ?? null;
+  }
   const { data, error } = await supabase
     .from("profiles")
-    .update({ department_id: departmentId })
+    .update({ department_id: departmentId, department: departmentName })
     .eq("id", profileId)
     .select("*, departments(name)")
     .single();
@@ -297,10 +303,99 @@ export async function assignUserDepartment(
     full_name: String(row.full_name),
     role: row.role as Profile["role"],
     department_id: (row.department_id as string | null) ?? null,
-    department_name: row.departments?.name ?? null,
+    department_name: row.departments?.name ?? (row.department as string | null) ?? null,
+    department: (row.department as string | null) ?? row.departments?.name ?? null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
   };
+}
+
+/**
+ * Set free-text department label (migration 035). When the label matches an
+ * active department catalog name, also set department_id.
+ */
+export async function assignUserDepartmentLabel(
+  profileId: string,
+  label: string | null,
+): Promise<Profile> {
+  const trimmed = label?.trim() || null;
+  let departmentId: string | null = null;
+  if (trimmed) {
+    const all = await listDepartments({ includeInactive: false });
+    const match = all.find((d) => d.name.toLowerCase() === trimmed.toLowerCase());
+    if (match) departmentId = match.id;
+  }
+
+  if (shouldUseMemoryStore()) {
+    const store = getReportStore();
+    const existing = await store.getProfile(profileId);
+    if (!existing) throw new Error("Profile not found");
+    const updated: Profile = {
+      ...existing,
+      department: trimmed,
+      department_id: departmentId ?? (trimmed ? existing.department_id : null),
+      department_name: trimmed,
+      updated_at: nowIso(),
+    };
+    if (!trimmed) {
+      updated.department_id = null;
+      updated.department_name = null;
+    } else if (departmentId) {
+      updated.department_id = departmentId;
+    }
+    return store.ensureProfile(updated);
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({
+      department: trimmed,
+      department_id: trimmed ? departmentId : null,
+    })
+    .eq("id", profileId)
+    .select("*, departments(name)")
+    .single();
+  if (error) throw new Error(error.message);
+
+  const row = data as Record<string, unknown> & { departments?: { name?: string } | null };
+  return {
+    id: String(row.id),
+    full_name: String(row.full_name),
+    role: row.role as Profile["role"],
+    department_id: (row.department_id as string | null) ?? null,
+    department_name: row.departments?.name ?? (row.department as string | null) ?? null,
+    department: (row.department as string | null) ?? row.departments?.name ?? null,
+    created_at: String(row.created_at),
+    updated_at: String(row.updated_at),
+  };
+}
+
+/** Distinct department labels already in use (catalog names + free-text). */
+export async function listDistinctDepartmentLabels(): Promise<string[]> {
+  const catalog = await listDepartments({ includeInactive: true });
+  const names = new Set(catalog.map((d) => d.name.trim()).filter(Boolean));
+
+  if (shouldUseMemoryStore()) {
+    const profiles = await getReportStore().listProfiles();
+    for (const p of profiles) {
+      const label = (p.department ?? p.department_name)?.trim();
+      if (label) names.add(label);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }
+
+  try {
+    const supabase = createServiceClient();
+    const { data } = await supabase.from("profiles").select("department, department_id");
+    for (const row of data ?? []) {
+      const text = (row.department as string | null)?.trim();
+      if (text) names.add(text);
+    }
+  } catch {
+    // ignore
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
 export function resetMemoryDepartmentsForTests(): void {

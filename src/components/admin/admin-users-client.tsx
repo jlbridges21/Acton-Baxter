@@ -15,16 +15,19 @@ const ASSIGNABLE_ROLES: UserRole[] = ["new_user", "user", "admin", "super_admin"
 export function AdminUsersClient({
   initialProfiles,
   initialDepartments,
+  departmentSuggestions,
   viewerEmail,
   viewerIsSuperAdmin,
 }: {
   initialProfiles: ProfileWithEmail[];
   initialDepartments: Department[];
+  departmentSuggestions: string[];
   viewerEmail: string;
   viewerIsSuperAdmin: boolean;
 }) {
   const [profiles, setProfiles] = useState(initialProfiles);
   const [departments] = useState(initialDepartments);
+  const [suggestions] = useState(departmentSuggestions);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -32,6 +35,7 @@ export function AdminUsersClient({
   const departmentNameById = new Map(departments.map((d) => [d.id, d.name]));
 
   function departmentLabel(profile: ProfileWithEmail): string {
+    if (profile.department?.trim()) return profile.department.trim();
     if (profile.department_name) return profile.department_name;
     if (profile.department_id) {
       return departmentNameById.get(profile.department_id) ?? "Unknown";
@@ -41,7 +45,7 @@ export function AdminUsersClient({
 
   async function updateUser(
     userId: string,
-    patch: { role?: UserRole; departmentId?: string | null },
+    patch: { role?: UserRole; departmentId?: string | null; department?: string | null },
   ) {
     setBusyId(userId);
     setError(null);
@@ -65,8 +69,15 @@ export function AdminUsersClient({
             ? {
                 ...payload.profile!,
                 email: profile.email ?? null,
+                department:
+                  payload.profile!.department ??
+                  payload.profile!.department_name ??
+                  (payload.profile!.department_id
+                    ? (departmentNameById.get(payload.profile!.department_id) ?? null)
+                    : null),
                 department_name:
                   payload.profile!.department_name ??
+                  payload.profile!.department ??
                   (payload.profile!.department_id
                     ? (departmentNameById.get(payload.profile!.department_id) ?? null)
                     : null),
@@ -76,7 +87,7 @@ export function AdminUsersClient({
       );
       if (patch.role) {
         setMessage(`Role updated to ${ROLE_LABELS[patch.role]}.`);
-      } else if (patch.departmentId !== undefined) {
+      } else if (patch.department !== undefined || patch.departmentId !== undefined) {
         setMessage("Department updated.");
       }
     } catch (err) {
@@ -123,27 +134,35 @@ export function AdminUsersClient({
   }
 
   function renderDepartmentSelect(profile: ProfileWithEmail) {
+    const listId = `dept-suggest-${profile.id}`;
+    const current = departmentLabel(profile) === "—" ? "" : departmentLabel(profile);
     return (
-      <select
-        className="rounded-md border border-[var(--acton-border)] bg-white px-2 py-1 text-sm"
-        value={profile.department_id ?? ""}
-        disabled={busyId === profile.id}
-        onChange={(event) => {
-          const departmentId = event.target.value || null;
-          if (departmentId !== (profile.department_id ?? "")) {
-            void updateUser(profile.id, { departmentId });
-          }
-        }}
-      >
-        <option value="">No department</option>
-        {departments
-          .filter((d) => d.is_active)
-          .map((department) => (
-            <option key={department.id} value={department.id}>
-              {department.name}
-            </option>
+      <div className="flex min-w-[10rem] flex-col gap-1">
+        <input
+          list={listId}
+          className="rounded-md border border-[var(--acton-border)] bg-white px-2 py-1 text-sm"
+          defaultValue={current}
+          key={`${profile.id}:${current}`}
+          disabled={busyId === profile.id}
+          placeholder="Department"
+          onBlur={(event) => {
+            const next = event.target.value.trim();
+            const prev = current.trim();
+            if (next === prev) return;
+            void updateUser(profile.id, { department: next || null });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <datalist id={listId}>
+          {suggestions.map((name) => (
+            <option key={name} value={name} />
           ))}
-      </select>
+        </datalist>
+      </div>
     );
   }
 

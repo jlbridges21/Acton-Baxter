@@ -16,6 +16,8 @@ export type Profile = {
   role: UserRole;
   department_id?: string | null;
   department_name?: string | null;
+  /** Free-text department label (migration 035); used by feedback reporting. */
+  department?: string | null;
   created_at: string;
   updated_at: string;
 };
