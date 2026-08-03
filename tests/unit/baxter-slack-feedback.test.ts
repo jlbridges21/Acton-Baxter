@@ -165,6 +165,12 @@ describe("slack feedback upsert", () => {
     });
     expect(down).toMatchObject({ handled: true, outcome: "down" });
     expect(postEphemeralSlackMessage).toHaveBeenCalledTimes(1);
+    // Must not pass the reacted reply's ts as thread_ts (Slack hides/rejects that).
+    expect(postEphemeralSlackMessage.mock.calls[0]?.[0]).toMatchObject({
+      channel: channelId,
+      user: "U_REACTOR",
+    });
+    expect(postEphemeralSlackMessage.mock.calls[0]?.[0]).not.toHaveProperty("threadTs");
 
     const listed = await listFeedbackForAdmin({ rating: "all", limit: 50 });
     const forMessage = listed.rows.filter((r) => r.messageId === assistant.id);
@@ -299,6 +305,37 @@ describe("feedback actor constraint", () => {
     expect(() => assertFeedbackActor({ userId: "user-1" })).not.toThrow();
     expect(() => assertFeedbackActor({})).toThrow(ValidationError);
     expect(() => assertFeedbackActor({ userId: null, slackUserId: null })).toThrow(ValidationError);
+  });
+});
+
+describe("ephemeral failure handling", () => {
+  it("treats Slack ok:false as a logged failure, not silent success", async () => {
+    const { channelId, messageTs } = await seedSlackAnswer();
+    postEphemeralSlackMessage.mockResolvedValue({
+      ok: false,
+      error: "invalid_thread_ts",
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await handleBaxterFeedbackReaction({
+      teamId: "T1",
+      event: {
+        type: "reaction_added",
+        user: "U_REACTOR",
+        reaction: "-1",
+        item: { channel: channelId, ts: messageTs },
+      },
+    });
+
+    expect(result).toMatchObject({ handled: true, outcome: "down" });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[slack.feedback.ephemeral_failed]",
+      expect.objectContaining({
+        channelId,
+        error: "invalid_thread_ts",
+      }),
+    );
+    errorSpy.mockRestore();
   });
 });
 

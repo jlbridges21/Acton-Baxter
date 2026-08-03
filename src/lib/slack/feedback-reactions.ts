@@ -113,22 +113,27 @@ export async function handleBaxterFeedbackReaction(input: {
   }
 
   // Negative: ephemeral prompt → button → modal (trigger_id only available on click).
-  try {
-    await postEphemeralSlackMessage({
-      channel,
-      user: slackUserId,
-      threadTs: messageTs,
-      text: "Thanks for the feedback — want to tell us more?",
-      blocks: buildNegativeFeedbackEphemeralBlocks({
-        feedbackId: feedback.id,
-        messageId: message.id,
-        conversationId: message.conversation_id,
-      }),
+  // Do NOT pass thread_ts = reacted message ts: channel answers are thread *replies*,
+  // and Slack rejects/hides ephemerals when thread_ts is a reply (use parent, or omit).
+  // Omitting thread_ts posts a channel/DM-visible ephemeral the reactor can see.
+  const ephemeral = await postEphemeralSlackMessage({
+    channel,
+    user: slackUserId,
+    text: "Thanks for the feedback — want to tell us more?",
+    blocks: buildNegativeFeedbackEphemeralBlocks({
+      feedbackId: feedback.id,
+      messageId: message.id,
+      conversationId: message.conversation_id,
+    }),
+  });
+  if (!ephemeral.ok) {
+    // Match eyes-reaction convention: structured error code, never silent.
+    console.error("[slack.feedback.ephemeral_failed]", {
+      channelId: channel,
+      error: ephemeral.error ?? null,
     });
-  } catch (error) {
-    console.error("[slack.feedback.reaction.ephemeral_failed]", {
-      message: error instanceof Error ? error.message : String(error),
-    });
+  } else {
+    console.info("[slack.feedback.ephemeral_ok]", { channelId: channel });
   }
 
   console.info("[slack.feedback.reaction.recorded]", { rating: "down" });
