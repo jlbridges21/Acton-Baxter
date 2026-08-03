@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { CheckCircle2, Circle, ClipboardList, LoaderCircle, XCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { AsyncRunProgress, type AsyncRunStep } from "@/components/ui/async-run-progress";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { useAsyncRunStatus } from "@/hooks/use-async-run-status";
 import { formatProjectSetupStepStatus } from "@/lib/project-setup/step-status";
+import { summarizeProjectSetupStepOutput } from "@/lib/project-setup/step-output-summary";
 
 type StepRow = {
   id: string;
@@ -33,77 +33,167 @@ type RunRow = {
   contactSnapshot: { name?: string | null };
 };
 
-function asLink(value: unknown): string | null {
-  return typeof value === "string" && value.startsWith("http") ? value : null;
+type SetupStatusPayload = {
+  run?: RunRow;
+  steps?: StepRow[];
+};
+
+function mapStepStatus(status: string): AsyncRunStep["status"] {
+  if (status === "complete") return "complete";
+  if (status === "failed") return "failed";
+  if (status === "running") return "running";
+  if (status === "skipped") return "skipped";
+  if (status === "planned") return "planned";
+  return "pending";
+}
+
+function StepDetail({ step }: { step: StepRow }): ReactNode {
+  if (!step.outputJson || Object.keys(step.outputJson).length === 0) {
+    return (
+      <p className="text-xs text-[var(--acton-muted)]">
+        {formatProjectSetupStepStatus(step.status)}
+      </p>
+    );
+  }
+  const summary = summarizeProjectSetupStepOutput(step.stepKey, step.outputJson);
+  return (
+    <div className="space-y-1">
+      <p>{summary.headline}</p>
+      {summary.notes.map((note) => (
+        <p key={note}>{note}</p>
+      ))}
+      {summary.links.length > 0 ? (
+        <ul className="space-y-0.5">
+          {summary.links.map((link) => (
+            <li key={link.href + link.label}>
+              <a
+                href={link.href}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+              >
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function FriendlyResultsCard({
+  title,
+  description,
+  steps,
+  isAdmin,
+}: {
+  title: string;
+  description?: ReactNode;
+  steps: StepRow[];
+  isAdmin: boolean;
+}) {
+  return (
+    <Card>
+      <CardTitle>{title}</CardTitle>
+      {description ? <CardDescription className="mt-2">{description}</CardDescription> : null}
+      <div className="mt-4 space-y-3">
+        {steps.map((step) => {
+          const summary = summarizeProjectSetupStepOutput(step.stepKey, step.outputJson);
+          return (
+            <div
+              key={step.id}
+              className="rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-3"
+            >
+              <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
+              <p className="mt-1 text-sm text-[var(--acton-muted)]">{summary.headline}</p>
+              {summary.notes.map((note) => (
+                <p key={note} className="mt-1 text-xs text-[var(--acton-muted)]">
+                  {note}
+                </p>
+              ))}
+              {summary.links.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-sm">
+                  {summary.links.map((link) => (
+                    <li key={link.href + link.label}>
+                      <a
+                        href={link.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                      >
+                        {link.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {isAdmin ? (
+                <details className="mt-2 text-xs text-[var(--acton-muted)]">
+                  <summary className="cursor-pointer font-semibold text-[var(--acton-navy)]">
+                    Technical details (admin)
+                  </summary>
+                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(summary.raw, null, 2)}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
 }
 
 export function ProjectSetupRunClient({
   runId,
   canRetry = true,
+  isAdmin = false,
 }: {
   runId: string;
   canRetry?: boolean;
+  isAdmin?: boolean;
 }) {
-  const [run, setRun] = useState<RunRow | null>(null);
-  const [steps, setSteps] = useState<StepRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const kicked = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    let kicked = false;
-
-    async function kick() {
-      if (kicked) return;
-      kicked = true;
-      void fetch(`/api/projects/setup/${runId}/run`, { method: "POST" });
-    }
-
-    async function poll() {
-      try {
-        const response = await fetch(`/api/projects/setup/${runId}`);
-        const payload = (await response.json()) as {
-          run?: RunRow;
-          steps?: StepRow[];
-          error?: { message?: string };
-        };
-        if (!response.ok) {
-          throw new Error(payload.error?.message ?? "Unable to load run");
-        }
-        if (cancelled) return;
-        setRun(payload.run ?? null);
-        setSteps(payload.steps ?? []);
-        setError(payload.run?.error ?? null);
-
-        if (payload.run && payload.run.status === "confirmed") {
-          void kick();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Unable to load run");
-        }
+  const onData = useCallback(
+    (payload: SetupStatusPayload) => {
+      if (payload.run?.status === "confirmed" && !kicked.current) {
+        kicked.current = true;
+        void fetch(`/api/projects/setup/${runId}/run`, { method: "POST" });
       }
-    }
+    },
+    [runId],
+  );
 
-    void poll();
-    const interval = setInterval(() => void poll(), 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [runId, canRetry]);
+  const { data, error, isTimedOut, refresh, resumePolling } = useAsyncRunStatus<SetupStatusPayload>(
+    {
+      url: `/api/projects/setup/${runId}`,
+      isTerminal: (p) => p.run?.status === "complete" || p.run?.status === "failed",
+      onData,
+    },
+  );
+
+  const run = data?.run ?? null;
+  const steps = data?.steps ?? [];
 
   async function handleRetry() {
     setRetrying(true);
-    setError(null);
+    setRetryError(null);
+    kicked.current = false;
     try {
       const response = await fetch(`/api/projects/setup/${runId}/run`, { method: "POST" });
       const payload = (await response.json()) as { error?: { message?: string } };
       if (!response.ok) {
         throw new Error(payload.error?.message ?? "Retry failed");
       }
+      resumePolling();
+      await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Retry failed");
+      setRetryError(err instanceof Error ? err.message : "Retry failed");
     } finally {
       setRetrying(false);
     }
@@ -111,233 +201,134 @@ export function ProjectSetupRunClient({
 
   const failed = run?.status === "failed";
   const complete = run?.status === "complete";
-  const folderStep = steps.find((s) => s.stepKey === "copy_template_folder");
-  const charterStep = steps.find((s) => s.stepKey === "copy_charter_spreadsheet");
-  const slackStep = steps.find((s) => s.stepKey === "create_slack_channel");
-  const folderLink = asLink(folderStep?.outputJson?.webViewLink);
-  const charterLink = asLink(charterStep?.outputJson?.webViewLink);
-  const channelId =
-    typeof slackStep?.outputJson?.channelId === "string" ? slackStep.outputJson.channelId : null;
-  const verification = folderStep?.outputJson?.verification as
-    | {
-        source?: { folders?: number; files?: number };
-        destination?: { folders?: number; files?: number };
-        expectedDestination?: { folders?: number; files?: number };
-      }
-    | undefined;
+  const runStatus = isTimedOut
+    ? "timed_out"
+    : failed
+      ? "failed"
+      : complete
+        ? "complete"
+        : "running";
+
+  const progressSteps: AsyncRunStep[] = steps.map((step) => ({
+    key: step.id,
+    label: step.title,
+    status: mapStepStatus(step.status),
+    detail:
+      step.status === "complete" ||
+      step.status === "planned" ||
+      step.status === "skipped" ||
+      (step.outputJson && Object.keys(step.outputJson).length > 0) ? (
+        <StepDetail step={step} />
+      ) : (
+        <span>{formatProjectSetupStepStatus(step.status)}</span>
+      ),
+    error: step.error,
+  }));
+
   const plannedSteps = steps.filter(
     (s) => s.status === "planned" || s.outputJson?.mode === "dry_run",
   );
   const liveOutputs = steps.filter((s) => s.outputJson?.mode === "live" && s.status === "complete");
 
+  const friendlyError =
+    retryError ??
+    (failed
+      ? (run?.error ?? "A step failed. Retry resumes from the first incomplete step.")
+      : error);
+
   return (
     <div className="mx-auto max-w-2xl space-y-4">
-      <Card>
-        <div className="flex items-start gap-3">
-          {!failed && !complete ? (
-            <LoaderCircle className="mt-1 h-5 w-5 animate-spin text-[var(--acton-navy)]" />
-          ) : null}
-          {complete ? <CheckCircle2 className="mt-1 h-5 w-5 text-green-700" /> : null}
-          {failed ? <XCircle className="mt-1 h-5 w-5 text-red-700" /> : null}
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <CardTitle>
-                {failed
-                  ? "Project setup failed"
-                  : complete
-                    ? run?.dryRun
-                      ? "Dry-run complete"
-                      : "Project setup complete"
-                    : "Running project setup"}
-              </CardTitle>
-              {run?.dryRun ? <Badge tone="amber">Dry-run</Badge> : null}
+      <AsyncRunProgress
+        title={
+          failed
+            ? "Project setup failed"
+            : complete
+              ? run?.dryRun
+                ? "Dry-run complete"
+                : "Project setup complete"
+              : "Running project setup"
+        }
+        description={
+          complete
+            ? run?.dryRun
+              ? "No external systems were touched. Planned steps below are informational only — the project number was not reserved."
+              : "Google and Slack steps finished (or were planned when a gate was off)."
+            : failed
+              ? "A step failed. Retry resumes from the first incomplete step — completed work is not repeated."
+              : "Working through project number, Master Log, Drive folder, charter, Slack…"
+        }
+        headerAside={run?.dryRun ? <Badge tone="amber">Dry-run</Badge> : null}
+        steps={progressSteps}
+        runStatus={runStatus}
+        friendlyError={friendlyError}
+        isAdmin={isAdmin}
+        adminTechnicalDetails={
+          failed || run?.error ? (
+            <div className="space-y-2">
+              {run?.error ? <p>Run error: {run.error}</p> : null}
+              <pre className="overflow-x-auto whitespace-pre-wrap">
+                {JSON.stringify(
+                  {
+                    runStatus: run?.status,
+                    steps: steps.map((s) => ({
+                      key: s.stepKey,
+                      status: s.status,
+                      error: s.error,
+                      outputJson: s.outputJson,
+                    })),
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
             </div>
-            <CardDescription className="mt-2">
-              {complete
-                ? run?.dryRun
-                  ? "No external systems were touched. Planned steps below are informational only — the project number was not reserved."
-                  : "Google and Slack steps finished (or were planned when a gate was off)."
-                : failed
-                  ? "A step failed. Retry resumes from the first incomplete step — completed work is not repeated."
-                  : "Working through project number, Master Log, Drive folder, charter, Slack…"}
-            </CardDescription>
+          ) : null
+        }
+        retryAction={
+          failed && canRetry
+            ? {
+                label: "Retry from failed step",
+                onClick: () => void handleRetry(),
+                loading: retrying,
+              }
+            : undefined
+        }
+        onManualRefresh={() => void refresh()}
+        footer={
+          <div className="space-y-3">
             {run ? (
-              <p className="mt-2 text-sm text-[var(--acton-muted)]">
+              <p className="text-sm text-[var(--acton-muted)]">
                 {run.contactSnapshot?.name ?? "Customer"} · {run.projectNumber ?? "—"} ·{" "}
                 {run.salesRep ?? "—"}
               </p>
             ) : null}
-            {complete && (folderLink || charterLink || channelId) ? (
-              <ul className="mt-3 space-y-1 text-sm">
-                {folderLink ? (
-                  <li>
-                    <a
-                      href={folderLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-                    >
-                      Open project folder
-                    </a>
-                  </li>
-                ) : null}
-                {charterLink ? (
-                  <li>
-                    <a
-                      href={charterLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-                    >
-                      Open project charter
-                    </a>
-                  </li>
-                ) : null}
-                {channelId ? (
-                  <li className="text-[var(--acton-muted)]">
-                    Slack channel created (#{run?.slackChannelName ?? channelId})
-                  </li>
-                ) : null}
-                {verification?.destination ? (
-                  <li className="text-[var(--acton-muted)]">
-                    Verified {verification.destination.folders} folders /{" "}
-                    {verification.destination.files} files
-                    {verification.expectedDestination
-                      ? ` (expected ${verification.expectedDestination.files} files after exclusions)`
-                      : ""}
-                  </li>
-                ) : null}
-              </ul>
-            ) : null}
-          </div>
-        </div>
-
-        <ol className="mt-6 space-y-3">
-          {steps.map((step) => (
-            <li
-              key={step.id}
-              className={cn(
-                "flex gap-3 rounded-md border border-[var(--acton-border)] px-3 py-2",
-                step.status === "running" && "bg-[var(--acton-gray-50)]",
-              )}
+            <Link
+              href="/projects/setup"
+              className="text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
             >
-              <StepIcon status={step.status} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
-                <p className="text-xs text-[var(--acton-muted)]">
-                  {formatProjectSetupStepStatus(step.status)}
-                </p>
-                {step.error ? <p className="mt-1 text-xs text-red-700">{step.error}</p> : null}
-                {step.stepKey === "copy_template_folder" && asLink(step.outputJson.webViewLink) ? (
-                  <a
-                    href={String(step.outputJson.webViewLink)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-block text-xs font-semibold text-[var(--acton-navy)] underline"
-                  >
-                    Folder link
-                  </a>
-                ) : null}
-                {step.stepKey === "copy_charter_spreadsheet" &&
-                asLink(step.outputJson.webViewLink) ? (
-                  <a
-                    href={String(step.outputJson.webViewLink)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-block text-xs font-semibold text-[var(--acton-navy)] underline"
-                  >
-                    Charter link
-                  </a>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ol>
-
-        {error ? (
-          <p className="mt-4 text-sm text-red-700" role="alert">
-            {error}
-          </p>
-        ) : null}
-
-        {failed && canRetry ? (
-          <div className="mt-4">
-            <Button onClick={() => void handleRetry()} disabled={retrying}>
-              {retrying ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-              Retry from failed step
-            </Button>
+              ← Start another setup
+            </Link>
           </div>
-        ) : null}
-
-        <div className="mt-4">
-          <Link
-            href="/projects/setup"
-            className="text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
-          >
-            ← Start another setup
-          </Link>
-        </div>
-      </Card>
+        }
+      />
 
       {complete && liveOutputs.length > 0 ? (
-        <Card>
-          <CardTitle>Live results</CardTitle>
-          <div className="mt-4 space-y-3">
-            {liveOutputs.map((step) => (
-              <div
-                key={step.id}
-                className="rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-3"
-              >
-                <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
-                <pre className="mt-2 overflow-x-auto text-xs whitespace-pre-wrap text-[var(--acton-muted)]">
-                  {JSON.stringify(step.outputJson, null, 2)}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </Card>
+        <FriendlyResultsCard title="Live results" steps={liveOutputs} isAdmin={isAdmin} />
       ) : null}
 
       {complete && plannedSteps.length > 0 ? (
-        <Card>
-          <CardTitle>Recorded plan</CardTitle>
-          <CardDescription className="mt-2">
-            Folder <strong>{run?.folderName}</strong>, charter <strong>{run?.charterName}</strong>,
-            Slack <strong>#{run?.slackChannelName}</strong>
-          </CardDescription>
-          <div className="mt-4 space-y-3">
-            {plannedSteps.map((step) => (
-              <div
-                key={step.id}
-                className="rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-3"
-              >
-                <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
-                <pre className="mt-2 overflow-x-auto text-xs whitespace-pre-wrap text-[var(--acton-muted)]">
-                  {JSON.stringify(step.outputJson.planned ?? step.outputJson, null, 2)}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </Card>
+        <FriendlyResultsCard
+          title="Recorded plan"
+          description={
+            <>
+              Folder <strong>{run?.folderName}</strong>, charter <strong>{run?.charterName}</strong>
+              , Slack <strong>#{run?.slackChannelName}</strong>
+            </>
+          }
+          steps={plannedSteps}
+          isAdmin={isAdmin}
+        />
       ) : null}
     </div>
   );
-}
-
-function StepIcon({ status }: { status: string }) {
-  if (status === "complete" || status === "skipped") {
-    return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-700" />;
-  }
-  if (status === "planned") {
-    return <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />;
-  }
-  if (status === "failed") {
-    return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />;
-  }
-  if (status === "running") {
-    return (
-      <LoaderCircle className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[var(--acton-navy)]" />
-    );
-  }
-  return <Circle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--acton-muted)]" />;
 }

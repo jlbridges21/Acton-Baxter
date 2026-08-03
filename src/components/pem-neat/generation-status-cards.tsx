@@ -1,8 +1,6 @@
 "use client";
 
-import { Card, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { AsyncRunProgress, type AsyncRunStep } from "@/components/ui/async-run-progress";
 
 const PROGRESS_STEPS = [
   { key: "queued", label: "Reading transcript" },
@@ -36,7 +34,7 @@ function stepState(
   stage: string | null | undefined,
   stepKey: string,
   failedStage?: string | null,
-): "done" | "active" | "pending" | "failed" {
+): AsyncRunStep["status"] {
   const order = PROGRESS_STEPS.map((s) => s.key);
   const failedStep = failedStage ? mapStageToStep(failedStage) : null;
   if (failedStep === stepKey) return "failed";
@@ -48,56 +46,23 @@ function stepState(
   if (currentIdx < 0) return "pending";
   if (failedStep) {
     const failedIdx = order.indexOf(failedStep as (typeof order)[number]);
-    if (stepIdx < failedIdx) return "done";
+    if (stepIdx < failedIdx) return "complete";
     if (stepIdx > failedIdx) return "pending";
   }
-  if (stepIdx < currentIdx) return "done";
-  if (stepIdx === currentIdx) return "active";
+  if (stepIdx < currentIdx) return "complete";
+  if (stepIdx === currentIdx) return "running";
   return "pending";
 }
 
-function ProgressList({
-  generationStage,
-  failedStage,
-}: {
-  generationStage?: string | null;
-  failedStage?: string | null;
-}) {
-  return (
-    <ol className="mt-4 space-y-2 text-sm">
-      {PROGRESS_STEPS.map((step) => {
-        const state = stepState(generationStage, step.key, failedStage);
-        return (
-          <li key={step.key} className="flex items-start gap-2">
-            <span
-              className={cn(
-                "mt-0.5 w-4 shrink-0 font-semibold",
-                state === "failed" ? "text-red-700" : "text-[var(--acton-navy)]",
-              )}
-            >
-              {state === "done" ? "✓" : state === "failed" ? "✗" : state === "active" ? "●" : "○"}
-            </span>
-            <span
-              className={
-                state === "pending"
-                  ? "text-[var(--acton-muted)]"
-                  : state === "failed"
-                    ? "font-medium text-red-800"
-                    : "text-[var(--acton-navy)]"
-              }
-            >
-              {step.label}
-              {state === "failed"
-                ? " — Failed"
-                : state === "pending" && failedStage
-                  ? " — Waiting"
-                  : ""}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
+export function buildPemNeatProgressSteps(
+  generationStage?: string | null,
+  failedStage?: string | null,
+): AsyncRunStep[] {
+  return PROGRESS_STEPS.map((step) => ({
+    key: step.key,
+    label: step.label,
+    status: stepState(generationStage, step.key, failedStage),
+  }));
 }
 
 export function GenerationFailedCard({
@@ -106,11 +71,17 @@ export function GenerationFailedCard({
   onRetry,
   adminDetails,
   generationStage,
+  isAdmin = false,
+  isTimedOut = false,
+  onManualRefresh,
 }: {
   errorMessage: string | null;
   retrying: boolean;
   onRetry: () => void;
   generationStage?: string | null;
+  isAdmin?: boolean;
+  isTimedOut?: boolean;
+  onManualRefresh?: () => void;
   adminDetails?: {
     failedStage?: string | null;
     errorCode?: string | null;
@@ -119,78 +90,82 @@ export function GenerationFailedCard({
     validationIssues?: string[];
   } | null;
 }) {
+  const showAdmin = Boolean(isAdmin && adminDetails);
+
   return (
-    <Card className="border-red-200 bg-red-50">
-      <CardTitle className="text-red-900">Unable to complete PEM analysis</CardTitle>
-      <p className="mt-2 text-sm text-red-800">
-        {errorMessage ??
-          "Baxter couldn't safely finish this NEAT. Your transcript is saved and can be retried."}
-      </p>
-      <ProgressList
-        generationStage={generationStage ?? adminDetails?.failedStage}
-        failedStage={adminDetails?.failedStage}
-      />
-      {adminDetails?.errorCode ? (
-        <div className="mt-3 rounded-md border border-red-200 bg-white/70 p-3 text-xs text-red-900">
-          <p className="font-semibold">Admin diagnostics</p>
-          <p className="mt-1">Error: {adminDetails.errorCode}</p>
-          {adminDetails.failedStage ? (
-            <p>Failed during: {String(adminDetails.failedStage)}</p>
-          ) : null}
-          {adminDetails.modelName ? <p>Model: {adminDetails.modelName}</p> : null}
-          {adminDetails.validationIssues?.length ? (
-            <div className="mt-2">
-              <p className="font-semibold">Validation</p>
-              <ul className="mt-1 space-y-0.5">
-                {adminDetails.validationIssues.map((issue, i) => (
-                  <li key={`${issue}-${i}`}>• {issue}</li>
+    <AsyncRunProgress
+      className="border-red-200 bg-red-50"
+      title="Unable to complete PEM analysis"
+      description={
+        errorMessage ??
+        "Baxter couldn't safely finish this NEAT. Your transcript is saved and can be retried."
+      }
+      steps={buildPemNeatProgressSteps(
+        generationStage ?? adminDetails?.failedStage,
+        adminDetails?.failedStage,
+      )}
+      runStatus={isTimedOut ? "timed_out" : "failed"}
+      friendlyError={null}
+      isAdmin={showAdmin}
+      adminTechnicalDetails={
+        showAdmin ? (
+          <div className="space-y-2">
+            {adminDetails?.errorCode ? <p>Error: {adminDetails.errorCode}</p> : null}
+            {adminDetails?.failedStage ? (
+              <p>Failed during: {String(adminDetails.failedStage)}</p>
+            ) : null}
+            {adminDetails?.modelName ? <p>Model: {adminDetails.modelName}</p> : null}
+            {adminDetails?.validationIssues?.length ? (
+              <div>
+                <p className="font-semibold">Validation</p>
+                <ul className="mt-1 space-y-0.5">
+                  {adminDetails.validationIssues.map((issue, i) => (
+                    <li key={`${issue}-${i}`}>• {issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {adminDetails?.stages?.length ? (
+              <ul className="space-y-0.5">
+                {adminDetails.stages.map((s, i) => (
+                  <li key={`${String(s.name)}-${i}`}>
+                    {String(s.name)}: {String(s.status)}
+                  </li>
                 ))}
               </ul>
-            </div>
-          ) : null}
-          {adminDetails.stages?.length ? (
-            <ul className="mt-2 space-y-0.5">
-              {adminDetails.stages.map((s, i) => (
-                <li key={`${String(s.name)}-${i}`}>
-                  {String(s.name)}: {String(s.status)}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
-      <Button
-        type="button"
-        variant="primary"
-        className={cn("mt-4")}
-        onClick={onRetry}
-        disabled={retrying}
-      >
-        {retrying
-          ? "Retrying…"
-          : adminDetails?.failedStage === "assessment"
-            ? "Retry Assessment"
-            : "Retry Analysis"}
-      </Button>
-    </Card>
+            ) : null}
+          </div>
+        ) : null
+      }
+      retryAction={{
+        label: adminDetails?.failedStage === "assessment" ? "Retry Assessment" : "Retry Analysis",
+        onClick: onRetry,
+        loading: retrying,
+      }}
+      onManualRefresh={onManualRefresh}
+    />
   );
 }
 
 export function GeneratingCard({
   label = "Analyzing Partnership Evaluation Meeting…",
   generationStage,
+  isTimedOut = false,
+  onManualRefresh,
 }: {
   label?: string;
   generationStage?: string | null;
+  isTimedOut?: boolean;
+  onManualRefresh?: () => void;
 }) {
   return (
-    <Card className="border-[var(--acton-yellow)] bg-[var(--acton-gray-50)]">
-      <CardTitle>{label}</CardTitle>
-      <p className="mt-2 text-sm text-[var(--acton-muted)]">
-        Baxter is carefully analyzing this PEM. High-quality analysis can take several minutes — you
-        can leave this page and return later.
-      </p>
-      <ProgressList generationStage={generationStage} />
-    </Card>
+    <AsyncRunProgress
+      className="border-[var(--acton-yellow)] bg-[var(--acton-gray-50)]"
+      title={label}
+      description="Baxter is carefully analyzing this PEM. High-quality analysis can take several minutes — you can leave this page and return later."
+      steps={buildPemNeatProgressSteps(generationStage)}
+      runStatus={isTimedOut ? "timed_out" : "running"}
+      onManualRefresh={onManualRefresh}
+    />
   );
 }

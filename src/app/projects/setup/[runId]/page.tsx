@@ -12,11 +12,8 @@ export default async function ProjectSetupRunPage({
   const user = await requireActiveUser();
   const { runId } = await params;
   const run = await getProjectSetupRun(runId).catch(() => null);
-  const canRetry =
-    !run ||
-    isAdminRole(user.profile.role) ||
-    run.initiatedBy === user.id ||
-    run.status !== "failed";
+  const isAdmin = isAdminRole(user.profile.role);
+  const canRetry = !run || isAdmin || run.initiatedBy === user.id || run.status !== "failed";
 
   return (
     <AppShell user={user}>
@@ -26,7 +23,7 @@ export default async function ProjectSetupRunPage({
           Live checklist for this run. Completed steps are skipped on retry.
         </p>
       </div>
-      <ProjectSetupRunClient runId={runId} canRetry={canRetry} />
+      <ProjectSetupRunClient runId={runId} canRetry={canRetry} isAdmin={isAdmin} />
     </AppShell>
   );
 }

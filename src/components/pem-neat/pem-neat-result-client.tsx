@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   OutcomeBadge,
   QualificationBadge,
 } from "@/components/pem-neat/pem-neat-formatters";
+import { useAsyncRunStatus } from "@/hooks/use-async-run-status";
 import { cn } from "@/lib/utils";
 import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
 import type { PemNeatGenerationRow, PemNeatRecord } from "@/lib/pem-neat/types";
@@ -32,6 +33,19 @@ import type { BuildertrendFields, PemNeatStructuredResult } from "@/lib/pem-neat
 import { buildertrendFieldsSchema } from "@/lib/pem-neat/schemas";
 
 type Tab = "neat" | "buildertrend";
+
+type PemStatusPayload = {
+  status?: string;
+  generationStage?: string | null;
+  lastErrorCode?: string | null;
+  modelName?: string | null;
+  adminDiagnostics?: {
+    stages?: Array<{ name?: unknown; status?: unknown }>;
+    finalErrorCode?: string | null;
+    finalErrorStage?: string | null;
+    validationIssues?: string[];
+  } | null;
+};
 
 function isStructuredResult(value: unknown): value is PemNeatStructuredResult {
   return Boolean(
@@ -95,49 +109,31 @@ export function PemNeatResultClient({
       Boolean(item.current_generation_transcript_hash) &&
       item.transcript_hash !== item.current_generation_transcript_hash);
 
-  useEffect(() => {
-    if (item.status !== "generating") return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const response = await fetch(`/api/pem-neats/${item.id}/status`);
-        if (!response.ok || cancelled) return;
-        const data = (await response.json()) as {
-          status?: string;
-          generationStage?: string | null;
-          lastErrorCode?: string | null;
-          modelName?: string | null;
-          adminDiagnostics?: {
-            stages?: Array<{ name?: unknown; status?: unknown }>;
-            finalErrorCode?: string | null;
-            finalErrorStage?: string | null;
-            validationIssues?: string[];
-          } | null;
-        };
-        if (data.generationStage) setGenerationStage(data.generationStage);
-        if (data.adminDiagnostics) {
-          setAdminDiag({
-            failedStage: data.adminDiagnostics.finalErrorStage,
-            errorCode: data.adminDiagnostics.finalErrorCode ?? data.lastErrorCode,
-            modelName: data.modelName,
-            stages: data.adminDiagnostics.stages,
-            validationIssues: data.adminDiagnostics.validationIssues,
-          });
-        }
-        if (data.status && data.status !== "generating") {
-          router.refresh();
-        }
-      } catch {
-        // ignore transient poll errors
+  const onStatusData = useCallback(
+    (data: PemStatusPayload) => {
+      if (data.generationStage) setGenerationStage(data.generationStage);
+      if (data.adminDiagnostics) {
+        setAdminDiag({
+          failedStage: data.adminDiagnostics.finalErrorStage,
+          errorCode: data.adminDiagnostics.finalErrorCode ?? data.lastErrorCode,
+          modelName: data.modelName,
+          stages: data.adminDiagnostics.stages,
+          validationIssues: data.adminDiagnostics.validationIssues,
+        });
       }
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), 4000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [item.id, item.status, router]);
+      if (data.status && data.status !== "generating") {
+        router.refresh();
+      }
+    },
+    [router],
+  );
+
+  const { isTimedOut, refresh, resumePolling } = useAsyncRunStatus<PemStatusPayload>({
+    url: `/api/pem-neats/${item.id}/status`,
+    enabled: item.status === "generating",
+    isTerminal: (data) => Boolean(data.status && data.status !== "generating"),
+    onData: onStatusData,
+  });
 
   const followUpEmailCopy = result
     ? [
@@ -155,8 +151,9 @@ export function PemNeatResultClient({
       throw new Error(data.error?.message ?? "Generation failed");
     }
     setGenerationStage("queued");
+    resumePolling();
     router.refresh();
-  }, [item.id, router]);
+  }, [item.id, resumePolling, router]);
 
   async function onRegenerate() {
     setRegenerating(true);
@@ -326,7 +323,13 @@ export function PemNeatResultClient({
         </Card>
       ) : null}
 
-      {isGenerating ? <GeneratingCard generationStage={generationStage} /> : null}
+      {isGenerating ? (
+        <GeneratingCard
+          generationStage={generationStage}
+          isTimedOut={isTimedOut}
+          onManualRefresh={() => void refresh()}
+        />
+      ) : null}
 
       {showFailed ? (
         <GenerationFailedCard
@@ -334,6 +337,7 @@ export function PemNeatResultClient({
           retrying={retrying}
           onRetry={onRetry}
           generationStage={generationStage ?? item.generation_stage}
+          isAdmin={isAdmin}
           adminDetails={
             isAdmin
               ? (adminDiag ?? {

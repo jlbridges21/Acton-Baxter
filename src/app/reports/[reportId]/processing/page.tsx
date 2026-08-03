@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { ProcessingClient } from "@/components/reports/processing-client";
 import { requireActiveUser } from "@/lib/auth/session";
+import { isAdminRole } from "@/lib/auth/roles";
 import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
 
@@ -22,7 +23,7 @@ export default async function ProcessingPage({ params }: PageProps) {
 
   return (
     <AppShell user={user}>
-      <ProcessingClient reportId={reportId} />
+      <ProcessingClient reportId={reportId} isAdmin={isAdminRole(user.profile.role)} />
     </AppShell>
   );
 }
