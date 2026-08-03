@@ -108,6 +108,10 @@
   - Counts are inquiry-based (`positive + negative + noFeedback === totalInquiries`)
   - Filters: channel, asked-by (typeahead), department; collapsible Filters panel
   - Free-text `profiles.department` editable on `/admin/users` with datalist suggestions
+- **Evidence-source registry** (`src/lib/baxter-ai/evidence-registry/`)
+  - Entity-resolution step + confidence-ordered GHL / PEM / Rulebook arbitration
+  - Soft-miss (GHL “not found”) no longer hard-stops before PEM; conversation-entity arbitration for follow-ups
+  - Knowledge Base remains post-registry fallback (`context.ts`)
 
 ## Future
 

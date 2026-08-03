@@ -42,11 +42,7 @@ import {
   CLEAR_RESPONSE_WEB,
   parseChatCommand,
 } from "./commands";
-import {
-  handleGhlPendingConfirmation,
-  handleGhlWriteProposal,
-  retrieveGhlLiveEvidence,
-} from "./ghl-runtime";
+import { handleGhlPendingConfirmation, handleGhlWriteProposal } from "./ghl-runtime";
 import { shouldSkipSlackForGhlContactField } from "./ghl-intent";
 import { createServiceClient } from "@/lib/supabase/admin";
 import type { Profile } from "@/lib/research/db-types";
@@ -63,13 +59,8 @@ import {
   resolveConceptFollowUp,
   resolveRetryQuestion,
 } from "@/lib/baxter/concept-vocabulary";
-import { retrievePemEvidence } from "@/lib/baxter-data/pem-neats";
 import { pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-neats/intent";
-import { writePemConversationState } from "@/lib/baxter-data/pem-neats/conversation-state";
-import {
-  readGhlConversationState,
-  writeGhlConversationState,
-} from "@/lib/baxter-data/ghl/conversation-state";
+import { runEvidenceRegistry } from "@/lib/baxter-ai/evidence-registry";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
 import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
@@ -482,237 +473,77 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   const evidence = await retrieveBaxterEvidence(routingQuestion, historyEarly);
   let contextItems = evidence.contextItems;
 
-  // Merge live GoHighLevel operational evidence when the question is CRM-related.
-  let ghlEvidence: Awaited<ReturnType<typeof retrieveGhlLiveEvidence>> | null = null;
-  if (isGhlConfigured()) {
-    const activeGhl = readGhlConversationState(conversation.metadata ?? {});
-    ghlEvidence = await retrieveGhlLiveEvidence(routingQuestion, { activeGhl }).catch(() => null);
-    if (ghlEvidence?.diagnostics) {
-      logBaxterDiagnostic("ghlEvidence", {
-        code: "GHL_ENTITY_RESOLUTION",
-        route: "answerBaxterQuestion",
-        conversationId: conversation.id,
-        safeMessage: JSON.stringify(ghlEvidence.diagnostics),
-      });
-    }
-    if (ghlEvidence?.nextConversationState) {
-      const nextGhlMeta = writeGhlConversationState(
-        conversation.metadata ?? {},
-        ghlEvidence.nextConversationState,
-      );
-      conversation.metadata = nextGhlMeta;
-      await updateBaxterConversationMetadata(conversation.id, nextGhlMeta).catch(() => undefined);
-    }
-    if (ghlEvidence?.ambiguityWarning) {
-      const message = await appendAssistantMessage({
-        conversationId: conversation.id,
-        content: ghlEvidence.ambiguityWarning,
-        insufficientKnowledge: false,
-        confidence: "medium",
-        modelProvider: "ghl-resolve",
-        modelName: "entity-resolution",
-        sources: [],
-        sourceEntryIds: [],
-      });
-      return toPublicAnswer({
-        conversationId: conversation.id,
-        messageId: message.id,
-        answer: ghlEvidence.ambiguityWarning,
-        sources: [],
-        confidence: "medium",
-        insufficientKnowledge: false,
-        answerMode: "clarification",
-      });
-    }
-    if (ghlEvidence?.items.length) {
-      const renumbered = ghlEvidence.items.map((item, index) => ({
-        ...item,
-        number: index + 1,
-      }));
-      const kbOffset = renumbered.length;
-      const kbItems = contextItems.map((item, index) => ({
-        ...item,
-        number: kbOffset + index + 1,
-      }));
-      contextItems = [...renumbered, ...kbItems].slice(0, 8);
-    }
-
-    // Deterministic contact-field / conversation answers — no Slack/LLM guessing.
-    if (ghlEvidence?.deterministicAnswer) {
-      const hasItems = ghlEvidence.items.length > 0;
-      const isConversationLookup = ghlEvidence.intent?.intent === "conversation_lookup";
-      const isCrmLookup =
-        ghlEvidence.intent?.intent === "contact_lookup" ||
-        ghlEvidence.intent?.intent === "opportunity_lookup" ||
-        ghlEvidence.intent?.intent === "conversation_lookup";
-      if (hasItems || isConversationLookup || isCrmLookup) {
-        const sources = ghlEvidence.items.map((item) => contextItemToSourceReference(item));
-        const message = await appendAssistantMessage({
-          conversationId: conversation.id,
-          content: ghlEvidence.deterministicAnswer,
-          insufficientKnowledge: !hasItems,
-          confidence: hasItems ? "high" : "medium",
-          modelProvider: "ghl-resolve",
-          modelName: isConversationLookup
-            ? "deterministic-conversation"
-            : ghlEvidence.intent?.intent === "opportunity_lookup"
-              ? "deterministic-opportunity"
-              : "deterministic-contact-field",
-          sources,
-          sourceEntryIds: sources.map((s, index) => ({
-            id: s.knowledgeEntryId || ghlEvidence!.items[index]!.id,
-            relevanceScore: 100,
-            order: index + 1,
-          })),
-        });
-        return toPublicAnswer({
-          conversationId: conversation.id,
-          messageId: message.id,
-          answer: ghlEvidence.deterministicAnswer,
-          sources,
-          confidence: hasItems ? "high" : "medium",
-          insufficientKnowledge: !hasItems,
-          answerMode: hasItems ? "grounded" : "clarification",
-        });
-      }
-    }
-  }
-
-  // Merge Process Rulebook evidence for responsibility/process questions.
-  const { retrieveRulebookEvidence } = await import("@/lib/rulebook");
-  const rulebookEvidence = await retrieveRulebookEvidence(routingQuestion).catch(() => []);
-  if (rulebookEvidence.length > 0) {
-    const currentOffset = contextItems.length;
-    const rulebookItems = rulebookEvidence.map((item, index) => ({
-      ...item,
-      number: currentOffset + index + 1,
-    }));
-    contextItems = [...contextItems, ...rulebookItems].slice(0, 8);
-  }
-
-  // Merge completed PEM NEAT structured evidence (first-class; not Knowledge Base text).
-  const pemEvidence = await retrievePemEvidence({
+  // Confidence-ordered evidence registry (GHL / PEM / Rulebook). Soft misses do not
+  // hard-stop; KB remains the post-registry fallback below.
+  const registry = await runEvidenceRegistry({
     question: routingQuestion,
     history: historyEarly,
+    conversationMetadata: conversation.metadata ?? {},
     role: profile?.role ?? null,
     channel: input.channel,
-    conversationMetadata: conversation.metadata ?? {},
-  }).catch(() => ({
-    items: [] as Awaited<ReturnType<typeof retrievePemEvidence>>["items"],
-    clarification: null as string | null,
-    staleWarning: null as string | null,
-    deterministicAnswer: null as string | null,
-    answerMode: "none" as const,
-    diagnostics: {
-      detectedProspect: null,
-      candidateCount: 0,
-      resolvedPemId: null,
-      resolvedPemTitle: null,
-      requestedFields: [],
-      inheritedFromConversation: false,
-      explicitOverride: false,
-      answerMode: "none" as const,
-      pemLookupSkipped: false,
-      pemSkipReason: null,
-      matchedProspect: null,
-    },
-    nextConversationState: null,
-  }));
+    ghlConfigured: isGhlConfigured(),
+  });
 
-  if (pemEvidence.nextConversationState) {
-    const nextMeta = writePemConversationState(
-      conversation.metadata ?? {},
-      pemEvidence.nextConversationState,
+  if (registry.conversationMetadata) {
+    conversation.metadata = registry.conversationMetadata;
+    await updateBaxterConversationMetadata(conversation.id, registry.conversationMetadata).catch(
+      () => undefined,
     );
-    conversation.metadata = nextMeta;
-    await updateBaxterConversationMetadata(conversation.id, nextMeta).catch(() => undefined);
   }
 
-  if (pemEvidence.diagnostics.answerMode !== "none" || pemEvidence.diagnostics.pemLookupSkipped) {
-    logBaxterDiagnostic("pemEvidence", {
-      code: "PEM_RESOLUTION",
+  if (registry.diagnostics.tried.length > 0) {
+    logBaxterDiagnostic("evidenceRegistry", {
+      code: "EVIDENCE_REGISTRY",
       route: "answerBaxterQuestion",
       conversationId: conversation.id,
       safeMessage: JSON.stringify({
-        detectedProspect: pemEvidence.diagnostics.detectedProspect,
-        candidateCount: pemEvidence.diagnostics.candidateCount,
-        resolvedPemId: pemEvidence.diagnostics.resolvedPemId,
-        resolvedPemTitle: pemEvidence.diagnostics.resolvedPemTitle,
-        requestedFields: pemEvidence.diagnostics.requestedFields,
-        inheritedFromConversation: pemEvidence.diagnostics.inheritedFromConversation,
-        explicitOverride: pemEvidence.diagnostics.explicitOverride,
-        answerMode: pemEvidence.diagnostics.answerMode,
-        pemLookupSkipped: pemEvidence.diagnostics.pemLookupSkipped,
-        pemSkipReason: pemEvidence.diagnostics.pemSkipReason,
-        matchedProspect: pemEvidence.diagnostics.matchedProspect,
+        preferredSource: registry.diagnostics.preferredSource,
+        extractedName: registry.diagnostics.entity.extractedName,
+        ambiguous: registry.diagnostics.entity.ambiguousAcrossTypes,
+        tried: registry.diagnostics.tried,
       }),
     });
   }
 
-  if (pemEvidence.clarification) {
+  if (registry.earlyAnswer) {
+    const early = registry.earlyAnswer;
+    const sources = early.sources.map((item) => contextItemToSourceReference(item));
     const message = await appendAssistantMessage({
       conversationId: conversation.id,
-      content: pemEvidence.clarification,
-      insufficientKnowledge: false,
-      confidence: "medium",
-      modelProvider: "pem-neats",
-      modelName: "entity-resolution",
-      sources: [],
-      sourceEntryIds: [],
+      content: early.answer,
+      insufficientKnowledge: early.insufficientKnowledge,
+      confidence: early.confidence,
+      modelProvider: early.modelProvider,
+      modelName: early.modelName,
+      sources,
+      sourceEntryIds: sources.map((s, index) => ({
+        id: s.knowledgeEntryId || early.sources[index]?.id || `registry-${index}`,
+        relevanceScore: 100,
+        order: index + 1,
+      })),
     });
     return toPublicAnswer({
       conversationId: conversation.id,
       messageId: message.id,
-      answer: pemEvidence.clarification,
-      sources: [],
-      confidence: "medium",
-      insufficientKnowledge: false,
-      answerMode: "clarification",
+      answer: early.answer,
+      sources,
+      confidence: early.confidence,
+      insufficientKnowledge: early.insufficientKnowledge,
+      answerMode: early.answerMode,
     });
   }
 
-  // Prefer deterministic structured PEM answers (no LLM field guessing).
-  if (pemEvidence.deterministicAnswer && pemEvidence.items.length > 0) {
-    const item = { ...pemEvidence.items[0]!, number: 1 };
-    const sources = [contextItemToSourceReference(item)];
-    const message = await appendAssistantMessage({
-      conversationId: conversation.id,
-      content: pemEvidence.deterministicAnswer,
-      insufficientKnowledge: false,
-      confidence: pemEvidence.answerMode === "not_determinable" ? "medium" : "high",
-      modelProvider: "pem-neats",
-      modelName: "deterministic-structured",
-      sources,
-      sourceEntryIds: [
-        {
-          id: item.id,
-          relevanceScore: item.relevanceScore,
-          order: 1,
-        },
-      ],
-    });
-    return toPublicAnswer({
-      conversationId: conversation.id,
-      messageId: message.id,
-      answer: pemEvidence.deterministicAnswer,
-      sources,
-      confidence: pemEvidence.answerMode === "not_determinable" ? "medium" : "high",
-      insufficientKnowledge: false,
-      answerMode: "grounded",
-    });
-  }
-
-  if (pemEvidence.items.length > 0) {
-    const renumbered = pemEvidence.items.map((item, index) => ({
+  if (registry.contextItems.length > 0) {
+    const renumbered = registry.contextItems.map((item, index) => ({
       ...item,
       number: index + 1,
     }));
     const offset = renumbered.length;
-    const rest = contextItems.map((item, index) => ({
+    const kbItems = contextItems.map((item, index) => ({
       ...item,
       number: offset + index + 1,
     }));
-    contextItems = [...renumbered, ...rest].slice(0, 8);
+    contextItems = [...renumbered, ...kbItems].slice(0, 8);
   }
 
   // Concept definitions: if Knowledge missed, fall back to capability/PEM governing copy.
