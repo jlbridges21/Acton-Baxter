@@ -7,7 +7,7 @@ import type { BaxterContextItem, BaxterHistoryMessage } from "@/lib/baxter-ai/ty
 import type { EntityResolutionResult } from "./entity-resolution";
 import type { PreferredEntitySource } from "./conversation-arbitration";
 
-export type EvidenceSourceKey = "ghl" | "rulebook" | "pem_neat";
+export type EvidenceSourceKey = "ghl" | "rulebook" | "pem_neat" | "customer_dossier";
 
 export type EvidenceSourceHandleInput = {
   question: string;

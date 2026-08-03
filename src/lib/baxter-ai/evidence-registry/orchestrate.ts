@@ -15,6 +15,7 @@ import {
 import { ghlEvidenceSource } from "./sources/ghl";
 import { rulebookEvidenceSource } from "./sources/rulebook";
 import { pemEvidenceSource } from "./sources/pem";
+import { dossierEvidenceSource } from "./sources/dossier";
 import type {
   EvidenceSource,
   EvidenceSourceKey,
@@ -27,6 +28,7 @@ const DEFAULT_SOURCES: EvidenceSource[] = [
   ghlEvidenceSource,
   pemEvidenceSource,
   rulebookEvidenceSource,
+  dossierEvidenceSource,
 ];
 
 const SHORT_CIRCUIT_CONFIDENCE = 0.7;
@@ -36,6 +38,7 @@ function formatSourceAgnosticNotFound(tried: EvidenceSourceKey[], name: string |
     ghl: "GHL",
     pem_neat: "PEM",
     rulebook: "the Process Rulebook",
+    customer_dossier: "the customer dossier",
   };
   const unique = [...new Set(tried)];
   const named = name?.trim() || "that";
@@ -68,7 +71,13 @@ function toEarlyFromResult(
     answerMode:
       kind === "clarification" || result.items.length === 0 ? "clarification" : "grounded",
     modelProvider:
-      source === "ghl" ? "ghl-resolve" : source === "pem_neat" ? "pem-neats" : "rulebook",
+      source === "ghl"
+        ? "ghl-resolve"
+        : source === "pem_neat"
+          ? "pem-neats"
+          : source === "customer_dossier"
+            ? "customer-dossier"
+            : "rulebook",
     modelName:
       kind === "clarification"
         ? "entity-resolution"
@@ -76,7 +85,9 @@ function toEarlyFromResult(
           ? "deterministic-crm"
           : source === "pem_neat"
             ? "deterministic-structured"
-            : "rulebook-evidence",
+            : source === "customer_dossier"
+              ? "deterministic-dossier"
+              : "rulebook-evidence",
     winningSource: source,
   };
 }

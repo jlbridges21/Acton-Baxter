@@ -11,6 +11,7 @@ const EMPLOYEE_NAV = [
   "Property Research",
   "PEM NEAT",
   "New Project Setup",
+  "Customer Dossier",
   "Knowledge Center",
   "Integrations",
   "Settings",
@@ -35,12 +36,13 @@ describe("getAppNavLinksForRole", () => {
     expect(superAdminLabels).toContain("Diagnostics");
   });
 
-  it("gives the standard user role a persistent 7-item primary nav on every page", () => {
+  it("gives the standard user role a persistent 8-item primary nav on every page", () => {
     for (const pathname of [
       "/",
       "/dashboard",
       "/pem-neats",
       "/reports/abc",
+      "/customers/lookup",
       "/knowledge",
       "/settings",
     ]) {
@@ -70,6 +72,7 @@ describe("getAdminNavSections", () => {
       "Property Research",
       "PEM NEAT",
       "New Project Setup",
+      "Customer Dossier",
       "Knowledge Center",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([

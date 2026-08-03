@@ -67,7 +67,7 @@ export function AppNav({
     );
   }
 
-  const desktopPrimary = links.slice(0, isAdmin ? 5 : 7);
+  const desktopPrimary = links.slice(0, isAdmin ? 5 : 8);
 
   return (
     <header className="border-b border-[var(--acton-border)] bg-white print:hidden">

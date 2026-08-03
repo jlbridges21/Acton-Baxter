@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Cloud, ClipboardList, FolderKanban, House } from "lucide-react";
+import { BookOpen, Cloud, ClipboardList, FolderKanban, House, UsersRound } from "lucide-react";
 
 export type BaxterTool = {
   key: string;
@@ -55,6 +55,18 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     ctaLabel: "Start project setup",
     aliases: ["project setup", "new project", "feasibility package", "project number"],
   },
+  {
+    key: "customer-dossier",
+    name: "Customer Dossier",
+    description:
+      "See everything Baxter already knows about one customer across GoHighLevel, PEM NEAT, and Project Setup — read-only.",
+    href: "/customers/lookup",
+    createHref: "/customers/lookup",
+    enabled: true,
+    icon: UsersRound,
+    ctaLabel: "Open Customer Dossier",
+    aliases: ["customer dossier", "dossier", "customer profile", "full picture"],
+  },
 ];
 
 /** Admin-only platform cards (not employee tools). */
@@ -89,7 +101,13 @@ export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTo
 }
 
 export type NavContext =
-  "platform" | "property-research" | "pem-neat" | "project-setup" | "knowledge" | "platform-admin";
+  | "platform"
+  | "property-research"
+  | "pem-neat"
+  | "project-setup"
+  | "customer-dossier"
+  | "knowledge"
+  | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
   if (pathname.startsWith("/admin/knowledge")) {
@@ -104,6 +122,9 @@ export function getNavContext(pathname: string): NavContext {
   }
   if (pathname.startsWith("/projects/setup")) {
     return "project-setup";
+  }
+  if (pathname.startsWith("/customers")) {
+    return "customer-dossier";
   }
   return "platform";
 }

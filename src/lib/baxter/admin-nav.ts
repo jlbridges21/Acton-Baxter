@@ -15,6 +15,7 @@ import {
   Settings,
   Stethoscope,
   Users,
+  UsersRound,
 } from "lucide-react";
 import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
 
@@ -57,6 +58,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "New Project Setup",
       icon: FolderKanban,
       match: (pathname) => pathname.startsWith("/projects/setup"),
+    },
+    {
+      href: "/customers/lookup",
+      label: "Customer Dossier",
+      icon: UsersRound,
+      match: (pathname) => pathname.startsWith("/customers"),
     },
     {
       href: "/admin/knowledge",

@@ -6,6 +6,7 @@ import {
   Plug,
   Search,
   Settings,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,7 +26,7 @@ export type AppNavLink = {
 
 /**
  * Persistent primary nav for the standard app-access role (`user`).
- * Always the same 7 items — not context-scoped by pathname.
+ * Always the same 8 items — not context-scoped by pathname.
  */
 export function getEmployeeNavLinks(): AppNavLink[] {
   return [
@@ -52,6 +53,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "New Project Setup",
       icon: FolderKanban,
       match: (pathname) => pathname.startsWith("/projects/setup"),
+    },
+    {
+      href: "/customers/lookup",
+      label: "Customer Dossier",
+      icon: UsersRound,
+      match: (pathname) => pathname.startsWith("/customers"),
     },
     {
       href: "/knowledge",
