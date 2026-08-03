@@ -1,107 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import {
-  ClipboardList,
-  FolderKanban,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  PlusCircle,
-  Search,
-  X,
-} from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/branding/company-logo";
 import { Button } from "@/components/ui/button";
-import { getNavContext, type NavContext } from "@/lib/baxter/tools";
-import { getAdminNavLinks } from "@/lib/baxter/admin-nav";
+import { isAdminRole } from "@/lib/auth/roles";
+import { getAppNavLinksForRole } from "@/lib/baxter/app-nav-links";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
-
-type NavLink = {
-  href: string;
-  label: string;
-  icon: typeof LayoutDashboard;
-  match?: (pathname: string) => boolean;
-};
-
-function employeeLinks(context: NavContext): NavLink[] {
-  const home: NavLink = {
-    href: "/",
-    label: "Baxter Dashboard",
-    icon: LayoutDashboard,
-    match: (pathname) => pathname === "/",
-  };
-
-  if (context === "property-research") {
-    return [
-      home,
-      {
-        href: "/dashboard",
-        label: "Overview",
-        icon: Search,
-        match: (pathname) => pathname === "/dashboard",
-      },
-      {
-        href: "/reports/new",
-        label: "New Research",
-        icon: PlusCircle,
-        match: (pathname) => pathname === "/reports/new",
-      },
-    ];
-  }
-
-  if (context === "pem-neat") {
-    return [
-      home,
-      {
-        href: "/pem-neats",
-        label: "PEM NEATs",
-        icon: ClipboardList,
-        match: (pathname) => pathname.startsWith("/pem-neats"),
-      },
-      {
-        href: "/pem-neats/new",
-        label: "Add PEM NEAT",
-        icon: PlusCircle,
-        match: (pathname) => pathname === "/pem-neats/new",
-      },
-    ];
-  }
-
-  if (context === "project-setup") {
-    return [
-      home,
-      {
-        href: "/projects/setup",
-        label: "New Project Setup",
-        icon: FolderKanban,
-        match: (pathname) => pathname.startsWith("/projects/setup"),
-      },
-    ];
-  }
-
-  return [home];
-}
-
-function accountLinks(): NavLink[] {
-  return [
-    {
-      href: "/settings/integrations",
-      label: "Integrations",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/settings/"),
-    },
-  ];
-}
-
-/** Full admin menu — always available so Users and tools are never hidden. */
-function adminLinks(): NavLink[] {
-  return getAdminNavLinks();
-}
 
 export function AppNav({
   userName,
@@ -122,9 +31,8 @@ export function AppNav({
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isAdmin = userRole === "admin";
-  const context = getNavContext(pathname);
-  const links = isAdmin ? adminLinks() : [...employeeLinks(context), ...accountLinks()];
+  const isAdmin = isAdminRole(userRole);
+  const links = getAppNavLinksForRole(userRole, pathname);
 
   async function handleLogout() {
     try {
