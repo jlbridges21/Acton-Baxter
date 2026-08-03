@@ -1,15 +1,20 @@
 import {
+  BookOpen,
   ClipboardList,
   FolderKanban,
   LayoutDashboard,
-  PlusCircle,
+  Plug,
   Search,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 
-import { isAdminRole } from "@/lib/auth/roles";
-import { getAdminNavLinks } from "@/lib/baxter/admin-nav";
-import { getNavContext, type NavContext } from "@/lib/baxter/tools";
+import { isAdminRole, isAppAccessRole } from "@/lib/auth/roles";
+import {
+  getAdminNavLinks,
+  getAdminNavSections,
+  type AdminNavSection,
+} from "@/lib/baxter/admin-nav";
 
 export type AppNavLink = {
   href: string;
@@ -18,80 +23,73 @@ export type AppNavLink = {
   match?: (pathname: string) => boolean;
 };
 
-function employeeLinks(context: NavContext): AppNavLink[] {
-  const home: AppNavLink = {
-    href: "/",
-    label: "Baxter Dashboard",
-    icon: LayoutDashboard,
-    match: (pathname) => pathname === "/",
-  };
-
-  if (context === "property-research") {
-    return [
-      home,
-      {
-        href: "/dashboard",
-        label: "Overview",
-        icon: Search,
-        match: (pathname) => pathname === "/dashboard",
-      },
-      {
-        href: "/reports/new",
-        label: "New Research",
-        icon: PlusCircle,
-        match: (pathname) => pathname === "/reports/new",
-      },
-    ];
-  }
-
-  if (context === "pem-neat") {
-    return [
-      home,
-      {
-        href: "/pem-neats",
-        label: "PEM NEATs",
-        icon: ClipboardList,
-        match: (pathname) => pathname.startsWith("/pem-neats"),
-      },
-      {
-        href: "/pem-neats/new",
-        label: "Add PEM NEAT",
-        icon: PlusCircle,
-        match: (pathname) => pathname === "/pem-neats/new",
-      },
-    ];
-  }
-
-  if (context === "project-setup") {
-    return [
-      home,
-      {
-        href: "/projects/setup",
-        label: "New Project Setup",
-        icon: FolderKanban,
-        match: (pathname) => pathname.startsWith("/projects/setup"),
-      },
-    ];
-  }
-
-  return [home];
-}
-
-function accountLinks(): AppNavLink[] {
+/**
+ * Persistent primary nav for the standard app-access role (`user`).
+ * Always the same 7 items — not context-scoped by pathname.
+ */
+export function getEmployeeNavLinks(): AppNavLink[] {
   return [
+    {
+      href: "/",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+      match: (pathname) => pathname === "/",
+    },
+    {
+      href: "/dashboard",
+      label: "Property Research",
+      icon: Search,
+      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+    },
+    {
+      href: "/pem-neats",
+      label: "PEM NEAT",
+      icon: ClipboardList,
+      match: (pathname) => pathname.startsWith("/pem-neats"),
+    },
+    {
+      href: "/projects/setup",
+      label: "New Project Setup",
+      icon: FolderKanban,
+      match: (pathname) => pathname.startsWith("/projects/setup"),
+    },
+    {
+      href: "/knowledge",
+      label: "Knowledge Center",
+      icon: BookOpen,
+      match: (pathname) => pathname.startsWith("/knowledge"),
+    },
     {
       href: "/settings/integrations",
       label: "Integrations",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/settings/"),
+      icon: Plug,
+      match: (pathname) => pathname.startsWith("/settings/integrations"),
+    },
+    {
+      href: "/settings",
+      label: "Settings",
+      icon: Settings,
+      match: (pathname) => pathname === "/settings" || pathname.startsWith("/settings/account"),
     },
   ];
 }
 
 /** Resolve visible nav links for a role — shared by AppNav and unit tests. */
-export function getAppNavLinksForRole(userRole: string, pathname = "/"): AppNavLink[] {
+export function getAppNavLinksForRole(userRole: string, _pathname = "/"): AppNavLink[] {
   if (isAdminRole(userRole)) {
     return getAdminNavLinks();
   }
-  return [...employeeLinks(getNavContext(pathname)), ...accountLinks()];
+  if (!isAppAccessRole(userRole)) {
+    return [];
+  }
+  return getEmployeeNavLinks();
 }
+
+export function getAppNavSectionsForRole(userRole: string): AdminNavSection[] | null {
+  if (isAdminRole(userRole)) {
+    return getAdminNavSections();
+  }
+  return null;
+}
+
+export { getAdminNavSections };

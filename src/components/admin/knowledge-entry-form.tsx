@@ -11,9 +11,12 @@ import type { KnowledgeEntry } from "@/lib/knowledge/types";
 export function KnowledgeEntryForm({
   mode,
   initial,
+  variant = "admin",
 }: {
   mode: "create" | "edit";
   initial?: KnowledgeEntry | null;
+  /** User variant posts to /api/knowledge (draft-only) and omits approve. */
+  variant?: "admin" | "user";
 }) {
   const router = useRouter();
   const [title, setTitle] = useState(initial?.title ?? "");
@@ -44,6 +47,7 @@ export function KnowledgeEntryForm({
     setSubmitting(true);
     setError(null);
     try {
+      const isUserVariant = variant === "user";
       const payload = {
         title,
         content,
@@ -53,12 +57,13 @@ export function KnowledgeEntryForm({
         source_name: sourceName || (mode === "create" ? "Manual entry" : null),
         source_type: initial?.source_type ?? "manual",
         source_url: sourceUrl || null,
-        visibility,
-        status: nextStatus,
+        visibility: isUserVariant ? "internal" : visibility,
+        status: isUserVariant ? "draft" : nextStatus,
         change_note: changeNote || null,
       };
+      const createUrl = isUserVariant ? "/api/knowledge" : "/api/admin/knowledge";
       const response = await fetch(
-        mode === "create" ? "/api/admin/knowledge" : `/api/admin/knowledge/${initial!.id}`,
+        mode === "create" ? createUrl : `/api/admin/knowledge/${initial!.id}`,
         {
           method: mode === "create" ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },
@@ -72,7 +77,9 @@ export function KnowledgeEntryForm({
       if (!response.ok || !body.entry) {
         throw new Error(body.error?.message ?? "Unable to save knowledge entry");
       }
-      router.push(`/admin/knowledge/${body.entry.id}`);
+      router.push(
+        isUserVariant ? `/knowledge/${body.entry.id}` : `/admin/knowledge/${body.entry.id}`,
+      );
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save");
@@ -85,7 +92,9 @@ export function KnowledgeEntryForm({
     <Card className="max-w-3xl">
       <CardTitle>{mode === "create" ? "New knowledge entry" : "Edit knowledge entry"}</CardTitle>
       <CardDescription className="mt-2">
-        Only a title and content are required. Everything else is optional.
+        {variant === "user"
+          ? "Submit a draft for admin review. Only approved entries are used by Baxter."
+          : "Only a title and content are required. Everything else is optional."}
       </CardDescription>
       {showApprovedEditNotice ? (
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
@@ -291,16 +300,18 @@ export function KnowledgeEntryForm({
         {error ? <p className="text-sm text-red-700">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={submitting}>
-            {submitting ? "Saving…" : "Save as draft"}
+            {submitting ? "Saving…" : variant === "user" ? "Submit draft" : "Save as draft"}
           </Button>
-          <Button
-            type="button"
-            variant="accent"
-            disabled={submitting}
-            onClick={() => void submit("approved")}
-          >
-            Approve and publish
-          </Button>
+          {variant === "admin" ? (
+            <Button
+              type="button"
+              variant="accent"
+              disabled={submitting}
+              onClick={() => void submit("approved")}
+            >
+              Approve and publish
+            </Button>
+          ) : null}
         </div>
       </form>
     </Card>

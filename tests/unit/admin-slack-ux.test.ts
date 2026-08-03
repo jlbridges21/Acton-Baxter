@@ -11,18 +11,20 @@ import {
 import { getAdminNavLinks } from "@/lib/baxter/admin-nav";
 
 describe("admin nav cleanup", () => {
-  it("links Integrations to /admin/connectors and removes Uploads + Google Workspace + Slack top-level", () => {
+  it("labels org connectors as Connectors (not Integrations) and keeps Slack under Connectors", () => {
     const links = getAdminNavLinks();
     expect(links.some((l) => l.label === "Uploads")).toBe(false);
     expect(links.some((l) => l.href === "/admin/knowledge/upload")).toBe(false);
     expect(links.some((l) => l.label === "Google Workspace")).toBe(false);
-    expect(links.some((l) => l.label === "Slack")).toBe(false);
-    expect(links.some((l) => l.href === "/admin/slack")).toBe(false);
+    expect(links.some((l) => l.label === "Integrations")).toBe(false);
 
-    const integrations = links.find((l) => l.label === "Integrations");
-    expect(integrations?.href).toBe("/admin/connectors");
-    expect(integrations?.match?.("/admin/connectors")).toBe(true);
-    expect(integrations?.match?.("/admin/connectors/google")).toBe(true);
+    const connectors = links.find((l) => l.label === "Connectors");
+    expect(connectors?.href).toBe("/admin/connectors");
+    expect(connectors?.match?.("/admin/connectors")).toBe(true);
+    expect(connectors?.match?.("/admin/connectors/google")).toBe(true);
+
+    const slack = links.find((l) => l.label === "Slack");
+    expect(slack?.href).toBe("/admin/slack");
   });
 
   it("keeps /admin/slack as a valid admin route (not removed from product)", async () => {

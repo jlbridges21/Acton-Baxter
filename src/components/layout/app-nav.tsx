@@ -8,7 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { CompanyLogo } from "@/components/branding/company-logo";
 import { Button } from "@/components/ui/button";
 import { isAdminRole } from "@/lib/auth/roles";
-import { getAppNavLinksForRole } from "@/lib/baxter/app-nav-links";
+import { getAppNavLinksForRole, getAppNavSectionsForRole } from "@/lib/baxter/app-nav-links";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
@@ -33,6 +33,7 @@ export function AppNav({
   const [mobileOpen, setMobileOpen] = useState(false);
   const isAdmin = isAdminRole(userRole);
   const links = getAppNavLinksForRole(userRole, pathname);
+  const sections = getAppNavSectionsForRole(userRole);
 
   async function handleLogout() {
     try {
@@ -45,30 +46,28 @@ export function AppNav({
     router.refresh();
   }
 
-  const navItems = (
-    <>
-      {links.map((link) => {
-        const Icon = link.icon;
-        const active = link.match ? link.match(pathname) : pathname === link.href;
-        return (
-          <Link
-            key={`${link.href}-${link.label}`}
-            href={link.href}
-            onClick={() => setMobileOpen(false)}
-            className={cn(
-              "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
-              active
-                ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
-                : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
-            )}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            {link.label}
-          </Link>
-        );
-      })}
-    </>
-  );
+  function renderLink(link: (typeof links)[number], keyPrefix: string, onNavigate?: () => void) {
+    const Icon = link.icon;
+    const active = link.match ? link.match(pathname) : pathname === link.href;
+    return (
+      <Link
+        key={`${keyPrefix}-${link.href}-${link.label}`}
+        href={link.href}
+        onClick={onNavigate}
+        className={cn(
+          "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
+          active
+            ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
+            : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
+        )}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        {link.label}
+      </Link>
+    );
+  }
+
+  const desktopPrimary = links.slice(0, isAdmin ? 5 : 7);
 
   return (
     <header className="border-b border-[var(--acton-border)] bg-white print:hidden">
@@ -81,27 +80,8 @@ export function AppNav({
             productLabel="Baxter"
             alt={logoAlt}
           />
-          {/* Desktop: show a compact primary set; full list remains in the menu */}
           <nav className="hidden items-center gap-1 lg:flex">
-            {links.slice(0, 6).map((link) => {
-              const Icon = link.icon;
-              const active = link.match ? link.match(pathname) : pathname === link.href;
-              return (
-                <Link
-                  key={`desktop-${link.href}-${link.label}`}
-                  href={link.href}
-                  className={cn(
-                    "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
-                    active
-                      ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
-                      : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  {link.label}
-                </Link>
-              );
-            })}
+            {desktopPrimary.map((link) => renderLink(link, "desktop"))}
           </nav>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
@@ -132,10 +112,25 @@ export function AppNav({
       </div>
       {mobileOpen ? (
         <nav className="flex max-h-[70vh] flex-col gap-1 overflow-y-auto border-t border-[var(--acton-border)] px-4 py-3">
-          <p className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-[var(--acton-muted)] uppercase">
-            {isAdmin ? "Admin menu" : "Menu"}
-          </p>
-          {navItems}
+          {sections ? (
+            sections.map((section) => (
+              <div key={section.id} className="mb-2">
+                <p className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-[var(--acton-muted)] uppercase">
+                  {section.label}
+                </p>
+                {section.links.map((link) =>
+                  renderLink(link, `menu-${section.id}`, () => setMobileOpen(false)),
+                )}
+              </div>
+            ))
+          ) : (
+            <>
+              <p className="px-3 pb-1 text-[11px] font-semibold tracking-wider text-[var(--acton-muted)] uppercase">
+                Menu
+              </p>
+              {links.map((link) => renderLink(link, "menu", () => setMobileOpen(false)))}
+            </>
+          )}
         </nav>
       ) : null}
     </header>

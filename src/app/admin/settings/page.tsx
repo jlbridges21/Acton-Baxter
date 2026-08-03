@@ -111,6 +111,46 @@ export default async function BaxterSettingsPage() {
         </section>
 
         <section className="space-y-3">
+          <h2 className="text-lg font-semibold text-[var(--acton-navy)]">People &amp; branding</h2>
+          <Card>
+            <ul className="space-y-2 text-sm">
+              <li>
+                <Link
+                  href="/admin/users"
+                  className="font-semibold text-[var(--acton-navy)] underline"
+                >
+                  Users
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/admin/branding"
+                  className="font-semibold text-[var(--acton-navy)] underline"
+                >
+                  Branding
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/admin/project-setup"
+                  className="font-semibold text-[var(--acton-navy)] underline"
+                >
+                  Project Setup Settings
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/admin/baxter/feedback"
+                  className="font-semibold text-[var(--acton-navy)] underline"
+                >
+                  Feedback
+                </Link>
+              </li>
+            </ul>
+          </Card>
+        </section>
+
+        <section className="space-y-3">
           <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Knowledge</h2>
           <Card>
             <CardTitle>Knowledge Settings</CardTitle>
@@ -138,7 +178,7 @@ export default async function BaxterSettingsPage() {
                 href="/admin/connectors"
                 className="text-sm font-semibold text-[var(--acton-navy)] underline"
               >
-                Open Integrations →
+                Open Connectors →
               </Link>
             </div>
           </Card>

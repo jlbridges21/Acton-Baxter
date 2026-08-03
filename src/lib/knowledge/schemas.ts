@@ -83,4 +83,6 @@ export const knowledgeListQuerySchema = z.object({
 });
 
 export type KnowledgeEntryWriteInput = z.infer<typeof knowledgeEntryWriteSchema>;
+/** Pre-parse / caller-facing shape (defaults not yet applied). */
+export type KnowledgeEntryWritePayload = z.input<typeof knowledgeEntryWriteSchema>;
 export type KnowledgeSourceWriteInput = z.infer<typeof knowledgeSourceWriteSchema>;

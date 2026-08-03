@@ -11,6 +11,7 @@ import {
   Cloud,
   FileWarning,
   FileUp,
+  Library,
   Settings,
   Shield,
   Activity,
@@ -29,6 +30,7 @@ export type KnowledgeCenterView =
   | "approved"
   | "archived"
   | "failed"
+  | "sources"
   | "settings"
   | "health"
   | "rulebook"
@@ -73,6 +75,12 @@ const NAV_ALL: Array<{
     label: "Failed Imports",
     href: "/admin/knowledge?view=failed",
     icon: FileWarning,
+  },
+  {
+    view: "sources",
+    label: "Sources",
+    href: "/admin/knowledge/sources",
+    icon: Library,
   },
   {
     view: "health",
@@ -122,6 +130,9 @@ export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeC
     }
     if (item.href.startsWith("/admin/knowledge/settings")) {
       return pathname.startsWith("/admin/knowledge/settings");
+    }
+    if (item.href.startsWith("/admin/knowledge/sources")) {
+      return pathname.startsWith("/admin/knowledge/sources");
     }
     if (item.href.startsWith("/admin/baxter/rulebook")) {
       return pathname.startsWith("/admin/baxter/rulebook");

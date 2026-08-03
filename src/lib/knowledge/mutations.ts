@@ -69,3 +69,43 @@ export async function adminDeleteKnowledgeSource(role: string, id: string) {
   assertCanManageKnowledge(role);
   return deleteKnowledgeSource(id);
 }
+
+/**
+ * Non-admin knowledge create: status is always forced to draft server-side,
+ * regardless of any status in the submitted payload. Visibility is forced to internal.
+ */
+export async function userCreateKnowledgeDraft(
+  userId: string,
+  input: {
+    title: string;
+    content: string;
+    summary?: string | null;
+    category?: string | null;
+    tags?: string[] | string;
+    source_name?: string | null;
+    source_type?: KnowledgeEntryWriteInput["source_type"];
+    source_url?: string | null;
+    /** Ignored — always forced to internal. */
+    visibility?: KnowledgeEntryWriteInput["visibility"];
+    /** Ignored — always forced to draft. */
+    status?: KnowledgeEntryWriteInput["status"];
+    change_note?: string | null;
+  },
+) {
+  return createKnowledgeEntry(
+    {
+      title: input.title,
+      content: input.content,
+      summary: input.summary ?? null,
+      category: input.category ?? undefined,
+      tags: input.tags,
+      source_name: input.source_name ?? null,
+      source_type: input.source_type ?? "manual",
+      source_url: input.source_url ?? null,
+      change_note: input.change_note ?? null,
+      status: "draft",
+      visibility: "internal",
+    } satisfies KnowledgeEntryWriteInput,
+    userId,
+  );
+}

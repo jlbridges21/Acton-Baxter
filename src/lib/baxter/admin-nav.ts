@@ -8,10 +8,12 @@ import {
   FolderKanban,
   LayoutDashboard,
   MessageSquare,
+  MessageCircle,
   Palette,
   Rocket,
   Search,
   Settings,
+  Stethoscope,
   Users,
 } from "lucide-react";
 import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
@@ -23,9 +25,15 @@ export type AdminNavLink = {
   match?: (pathname: string) => boolean;
 };
 
-/** Shared admin nav definition — used by AppNav and unit tests. */
-export function getAdminNavLinks(): AdminNavLink[] {
-  const links: AdminNavLink[] = [
+export type AdminNavSection = {
+  id: string;
+  label: string;
+  links: AdminNavLink[];
+};
+
+/** Grouped admin nav — used by AppNav. Flat list via getAdminNavLinks(). */
+export function getAdminNavSections(): AdminNavSection[] {
+  const tools: AdminNavLink[] = [
     {
       href: "/",
       label: "Dashboard",
@@ -39,38 +47,44 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
     },
     {
-      href: "/admin/knowledge",
-      label: "Knowledge Center",
-      icon: BookOpen,
-      match: (pathname) => pathname.startsWith("/admin/knowledge"),
-    },
-    {
-      href: "/admin/connectors",
-      label: "Integrations",
-      icon: Cloud,
-      match: (pathname) => pathname.startsWith("/admin/connectors"),
-    },
-    {
-      href: "/admin/project-setup",
-      label: "Project Setup",
-      icon: FolderKanban,
-      match: (pathname) => pathname.startsWith("/admin/project-setup"),
-    },
-    {
-      href: "/admin/users",
-      label: "Users",
-      icon: Users,
-      match: (pathname) => pathname.startsWith("/admin/users"),
-    },
-    {
       href: "/pem-neats",
       label: "PEM NEAT",
       icon: ClipboardList,
       match: (pathname) => pathname.startsWith("/pem-neats"),
     },
     {
+      href: "/projects/setup",
+      label: "New Project Setup",
+      icon: FolderKanban,
+      match: (pathname) => pathname.startsWith("/projects/setup"),
+    },
+    {
+      href: "/admin/knowledge",
+      label: "Knowledge Center",
+      icon: BookOpen,
+      match: (pathname) => pathname.startsWith("/admin/knowledge"),
+    },
+  ];
+
+  const connectors: AdminNavLink[] = [
+    {
+      href: "/admin/connectors",
+      label: "Connectors",
+      icon: Cloud,
+      match: (pathname) => pathname.startsWith("/admin/connectors"),
+    },
+    {
+      href: "/admin/slack",
+      label: "Slack",
+      icon: MessageCircle,
+      match: (pathname) => pathname.startsWith("/admin/slack"),
+    },
+  ];
+
+  const governance: AdminNavLink[] = [
+    {
       href: "/admin/baxter/governance",
-      label: "Baxter Governance",
+      label: "Governance",
       icon: Settings,
       match: (pathname) => pathname.startsWith("/admin/baxter/governance"),
     },
@@ -105,10 +119,31 @@ export function getAdminNavLinks(): AdminNavLink[] {
       match: (pathname) => pathname.startsWith("/admin/baxter/launch-readiness"),
     },
     {
+      href: "/admin/baxter/diagnostics",
+      label: "Diagnostics",
+      icon: Stethoscope,
+      match: (pathname) => pathname.startsWith("/admin/baxter/diagnostics"),
+    },
+  ];
+
+  const people: AdminNavLink[] = [
+    {
+      href: "/admin/users",
+      label: "Users",
+      icon: Users,
+      match: (pathname) => pathname.startsWith("/admin/users"),
+    },
+    {
       href: "/admin/branding",
       label: "Branding",
       icon: Palette,
       match: (pathname) => pathname.startsWith("/admin/branding"),
+    },
+    {
+      href: "/admin/project-setup",
+      label: "Project Setup Settings",
+      icon: FolderKanban,
+      match: (pathname) => pathname.startsWith("/admin/project-setup"),
     },
     {
       href: "/admin/settings",
@@ -119,6 +154,20 @@ export function getAdminNavLinks(): AdminNavLink[] {
     },
   ];
 
-  if (PROCESS_MONITORING_UI_ENABLED) return links;
-  return links.filter((link) => link.href !== "/admin/baxter/monitoring");
+  const filterMonitoring = (links: AdminNavLink[]) =>
+    PROCESS_MONITORING_UI_ENABLED
+      ? links
+      : links.filter((link) => link.href !== "/admin/baxter/monitoring");
+
+  return [
+    { id: "tools", label: "Tools", links: tools },
+    { id: "connectors", label: "Connectors", links: connectors },
+    { id: "governance", label: "AI Governance", links: filterMonitoring(governance) },
+    { id: "people", label: "People & Org", links: people },
+  ];
+}
+
+/** Flat admin nav (same links as sections) — used by tests and compact desktop strip. */
+export function getAdminNavLinks(): AdminNavLink[] {
+  return getAdminNavSections().flatMap((section) => section.links);
 }

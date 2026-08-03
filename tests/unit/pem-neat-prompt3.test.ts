@@ -24,11 +24,12 @@ Advisor: Great — I'll follow up after you speak with your spouse.
 `.repeat(3);
 
 describe("PEM NEAT Prompt 3 nav", () => {
-  it("replaces Diagnostics with PEM NEAT in admin nav", () => {
+  it("includes PEM NEAT and Diagnostics in the admin nav", () => {
     const links = getAdminNavLinks();
-    expect(links.some((l) => l.label === "Diagnostics")).toBe(false);
     const pem = links.find((l) => l.label === "PEM NEAT");
     expect(pem?.href).toBe("/pem-neats");
+    const diagnostics = links.find((l) => l.label === "Diagnostics");
+    expect(diagnostics?.href).toBe("/admin/baxter/diagnostics");
   });
 });
 
