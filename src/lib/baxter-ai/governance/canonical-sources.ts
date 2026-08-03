@@ -70,3 +70,33 @@ export function listCanonicalSources(): CanonicalSource[] {
 export function listRuntimeAlwaysStandards(): CanonicalSource[] {
   return listCanonicalSources().filter((s) => s.runtimeRole === "always" && s.id !== "runtime");
 }
+
+/**
+ * Match an upload/sync filename or title against non-citable canonical docs.
+ * Uses basename of the declared path and known title phrases — not loose substrings.
+ */
+export function matchNonCitableCanonicalSource(input: {
+  filename?: string | null;
+  title?: string | null;
+  path?: string | null;
+}): CanonicalSource | null {
+  const candidates = listCanonicalSources().filter((s) => !s.indexable || !s.citable);
+  const haystack = [input.filename, input.title, input.path]
+    .filter(Boolean)
+    .map((v) => String(v).trim().toLowerCase().replace(/\\/g, "/"));
+
+  for (const source of candidates) {
+    const basename = source.path.split("/").pop()?.toLowerCase() ?? "";
+    const titleLower = source.title.toLowerCase();
+    for (const h of haystack) {
+      const filePart = h.split("/").pop() ?? h;
+      if (basename && (filePart === basename || filePart.includes(basename.replace(/\.md$/, "")))) {
+        return source;
+      }
+      if (h === titleLower || h.includes(titleLower)) {
+        return source;
+      }
+    }
+  }
+  return null;
+}

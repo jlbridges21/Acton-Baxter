@@ -76,6 +76,20 @@ export async function importKnowledgeUpload(input: {
     );
   }
 
+  const { matchNonCitableCanonicalSource } =
+    await import("@/lib/baxter-ai/governance/canonical-sources");
+  const blocked = matchNonCitableCanonicalSource({
+    filename: input.filename,
+    title: input.title ?? preview.title,
+  });
+  if (blocked) {
+    throw new KnowledgeError(
+      `"${blocked.title}" is a non-citable Baxter governance/runtime document and cannot be indexed as Knowledge Base content. Keep it out of employee retrieval — it is already loaded as runtime standards.`,
+      KNOWLEDGE_ERROR_CODES.UPLOAD_PARSE_FAILED,
+      { statusCode: 422 },
+    );
+  }
+
   if ((!preview.content.trim() || preview.extractionStatus === "empty") && !input.allowEmpty) {
     throw new KnowledgeError(
       preview.warnings[0] ??

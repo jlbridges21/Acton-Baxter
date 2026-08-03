@@ -938,7 +938,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     contextItems.length === 0 &&
     !needsOpenAiForIdentityFollowUp(question)
   ) {
-    const answer = answerFromBaxterIdentity(question);
+    const answer = await answerFromBaxterIdentity(question);
     const message = await appendAssistantMessage({
       conversationId: conversation.id,
       content: answer,
@@ -1062,7 +1062,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     if (questionClass === "baxter_identity" && sources.length === 0) {
       answerMode = "identity";
       insufficientKnowledge = false;
-      if (!answerText) answerText = answerFromBaxterIdentity(question);
+      if (!answerText) answerText = await answerFromBaxterIdentity(question);
     } else if (
       forceSlack &&
       slackRuntime?.diagnostics.role === "primary" &&
@@ -1128,7 +1128,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     if (!answerText) {
       answerText =
         questionClass === "baxter_identity"
-          ? answerFromBaxterIdentity(question)
+          ? await answerFromBaxterIdentity(question)
           : INSUFFICIENT_KNOWLEDGE_ANSWER;
     }
 
@@ -1183,7 +1183,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
     // Identity fallback if OpenAI is down
     if (questionClass === "baxter_identity") {
-      const answer = answerFromBaxterIdentity(question);
+      const answer = await answerFromBaxterIdentity(question);
       const message = await appendAssistantMessage({
         conversationId: conversation.id,
         content: answer,

@@ -37,11 +37,11 @@ beforeEach(() => {
 });
 
 describe("unified capability claims", () => {
-  it("identity context and system-prompt block share the same registry-derived lines", () => {
+  it("identity context and system-prompt block share the same registry-derived lines", async () => {
     const claims = getClaimedCapabilitiesAndLimitations();
     const block = buildCapabilitiesBlock();
     const identity = buildBaxterIdentityContext();
-    const runtime = assembleBaxterRuntime({ includeJsonContract: false });
+    const runtime = await assembleBaxterRuntime({ includeJsonContract: false });
 
     for (const line of claims.capabilities) {
       expect(block).toContain(line);
@@ -108,8 +108,8 @@ describe("unified capability claims", () => {
     expect(derived.catalogKeys).toContain("test_widget");
   });
 
-  it("answerFromBaxterIdentity capability answer uses registry lines", () => {
-    const answer = answerFromBaxterIdentity("What can you do?");
+  it("answerFromBaxterIdentity capability answer uses registry lines", async () => {
+    const answer = await answerFromBaxterIdentity("What can you do?");
     const claims = getClaimedCapabilitiesAndLimitations();
     expect(answer).toContain(claims.capabilities[0]!);
     expect(answer).toMatch(/limitations/i);

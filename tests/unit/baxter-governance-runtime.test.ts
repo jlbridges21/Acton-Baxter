@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { resetEnvCacheForTests } from "@/lib/env";
 import {
   assembleBaxterRuntime,
   buildBaxterSystemPrompt,
@@ -8,6 +9,7 @@ import {
   isNonAuthoritativeGovernanceContent,
   BAXTER_RUNTIME_VERSION,
   getGovernanceAdminSummary,
+  resetGovernanceMemoryForTests,
 } from "@/lib/baxter-ai/governance";
 import {
   buildBaxterSystemPrompt as buildFromPrompts,
@@ -20,9 +22,19 @@ import {
   standingBehaviorChangeResponse,
 } from "@/lib/baxter-ai/identity";
 
+beforeEach(() => {
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service";
+  process.env.APP_BASE_URL = "https://example.com";
+  process.env.ENABLE_MOCK_RESEARCH = "true";
+  resetEnvCacheForTests();
+  resetGovernanceMemoryForTests();
+});
+
 describe("Baxter governance runtime", () => {
-  it("assembles a single authoritative runtime with version and culture", () => {
-    const runtime = assembleBaxterRuntime({ question: "Who is Baxter?" });
+  it("assembles a single authoritative runtime with version and culture", async () => {
+    const runtime = await assembleBaxterRuntime({ question: "Who is Baxter?" });
     expect(runtime.runtimeVersion).toBe(BAXTER_RUNTIME_VERSION);
     expect(runtime.systemPrompt).toMatch(/digital teammate/i);
     expect(runtime.systemPrompt).toMatch(/No Surprises/);
@@ -32,11 +44,11 @@ describe("Baxter governance runtime", () => {
     expect(runtime.loadedStandards.some((s) => /Culture/i.test(s))).toBe(true);
   });
 
-  it("includes value proposition only for sales/positioning questions", () => {
-    const ops = assembleBaxterRuntime({ question: "How many projects closed this year?" });
+  it("includes value proposition only for sales/positioning questions", async () => {
+    const ops = await assembleBaxterRuntime({ question: "How many projects closed this year?" });
     expect(ops.systemPrompt).not.toMatch(/Homeowners choose Acton for/i);
 
-    const sales = assembleBaxterRuntime({
+    const sales = await assembleBaxterRuntime({
       question: "What makes Acton different from a cheaper builder?",
     });
     expect(sales.systemPrompt).toMatch(/certainty throughout the process/i);
@@ -45,9 +57,9 @@ describe("Baxter governance runtime", () => {
     ).toBe(true);
   });
 
-  it("prompts.ts and assemble share the same system prompt path", () => {
+  it("prompts.ts and assemble share the same system prompt path", async () => {
     const q = "How much was Lori Harris?";
-    expect(buildFromPrompts(q)).toBe(buildBaxterSystemPrompt(q));
+    expect(await buildFromPrompts(q)).toBe(await buildBaxterSystemPrompt(q));
   });
 
   it("wraps evidence as data and resists injection content becoming instructions", () => {
@@ -107,8 +119,8 @@ describe("Baxter governance runtime", () => {
     expect(summary.openDecisions.length).toBeGreaterThan(0);
   });
 
-  it("does not claim unconnected Buildertrend live access in runtime", () => {
-    const prompt = buildBaxterSystemPrompt();
+  it("does not claim unconnected Buildertrend live access in runtime", async () => {
+    const prompt = await buildBaxterSystemPrompt();
     expect(prompt).toMatch(/No (live|direct) Builder[Tt]rend/i);
     expect(prompt).not.toMatch(/Buildertrend data is synced daily/i);
   });

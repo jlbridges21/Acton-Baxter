@@ -143,7 +143,7 @@ export class OpenAIBaxterProvider implements BaxterLLMProvider {
     const started = Date.now();
     let attempt = 0;
 
-    const systemPrompt = buildBaxterSystemPrompt(input.question);
+    const systemPrompt = await buildBaxterSystemPrompt(input.question);
     const userPrompt = buildBaxterUserPrompt(input);
 
     while (attempt <= MAX_TEMPORARY_RETRIES) {

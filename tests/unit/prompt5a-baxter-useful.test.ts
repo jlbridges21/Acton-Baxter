@@ -102,7 +102,7 @@ describe("Prompt 5A classification and identity", () => {
     expect(result.answerMode).toBe("identity");
     expect(result.answer.toLowerCase()).toContain("acton");
     expect(result.sources).toEqual([]);
-    expect(answerFromBaxterIdentity("What can you do?").toLowerCase()).toContain("help");
+    expect((await answerFromBaxterIdentity("What can you do?")).toLowerCase()).toContain("help");
   });
 
   it("bootstrap overview is idempotent", async () => {

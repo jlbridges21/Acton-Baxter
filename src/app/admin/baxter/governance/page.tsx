@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { isAdminRole } from "@/lib/auth/roles";
+import { GovernanceEditorClient } from "@/components/admin/governance-editor-client";
+import { isAdminRole, isSuperAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getGovernanceAdminSummary } from "@/lib/baxter-ai/governance";
 import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
@@ -25,32 +26,36 @@ export default async function BaxterGovernancePage() {
           </Link>
           <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Baxter Governance</h1>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Review the rules and safeguards that control how Baxter answers questions and uses
-            connected systems.
+            Edit runtime instruction wording through versioned drafts and domain approvals. Section
+            set and precedence order stay code-fixed.
           </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Card className="p-4">
-            <CardTitle>Runtime</CardTitle>
+            <CardTitle>Runtime architecture</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
               v{summary.runtimeVersion}
             </CardDescription>
+            <p className="mt-1 text-xs text-[var(--acton-muted)]">
+              Code/deploy version (BAXTER_RUNTIME_VERSION)
+            </p>
           </Card>
           <Card className="p-4">
-            <CardTitle>Governance</CardTitle>
+            <CardTitle>Governance doc</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
               v{summary.governanceVersion}
             </CardDescription>
+            <p className="mt-1 text-xs text-[var(--acton-muted)]">
+              Governance document version (change-control handbook)
+            </p>
           </Card>
         </div>
 
+        <GovernanceEditorClient isSuperAdmin={isSuperAdminRole(user.profile.role)} />
+
         <Card className="p-4">
           <CardTitle>Related configuration</CardTitle>
-          <CardDescription className="mt-1">
-            These tools define Acton process and proactive checks. They live in the Knowledge
-            Center.
-          </CardDescription>
           <ul className="mt-3 space-y-2 text-sm">
             <li>
               <Link
@@ -59,10 +64,6 @@ export default async function BaxterGovernancePage() {
               >
                 Process Rulebook
               </Link>
-              <span className="text-[var(--acton-muted)]">
-                {" "}
-                — stages, roles, RACI, and required data
-              </span>
             </li>
             {PROCESS_MONITORING_UI_ENABLED ? (
               <li>
@@ -72,10 +73,6 @@ export default async function BaxterGovernancePage() {
                 >
                   Process Monitoring
                 </Link>
-                <span className="text-[var(--acton-muted)]">
-                  {" "}
-                  — proactive GHL checks and findings
-                </span>
               </li>
             ) : null}
             <li>
@@ -85,23 +82,7 @@ export default async function BaxterGovernancePage() {
               >
                 Knowledge Settings
               </Link>
-              <span className="text-[var(--acton-muted)]"> — Knowledge Center configuration</span>
             </li>
-          </ul>
-        </Card>
-
-        <Card className="p-4">
-          <CardTitle>Canonical standards</CardTitle>
-          <ul className="mt-3 space-y-2 text-sm">
-            {summary.canonicalStandards.map((s) => (
-              <li key={s.path}>
-                <span className="font-semibold text-[var(--acton-navy)]">{s.title}</span>
-                <span className="text-[var(--acton-muted)]">
-                  {" "}
-                  · v{s.version} · {s.role}
-                </span>
-              </li>
-            ))}
           </ul>
         </Card>
 

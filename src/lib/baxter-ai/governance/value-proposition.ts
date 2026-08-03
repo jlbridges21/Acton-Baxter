@@ -1,16 +1,11 @@
+import { DEFAULT_GOVERNANCE_SECTION_CONTENT } from "./section-meta";
+
 /**
  * Distilled Value Proposition — conditional (sales / customer messaging).
+ * Compiled-in fallback — do not delete; used when DB content is unavailable.
  */
 export function buildValuePropositionRuntimeBlock(): string {
-  return [
-    "Value proposition (use for sales, marketing drafts, inquiry/PEM help, price objections, why-Acton questions):",
-    "Homeowners choose Acton for: certainty throughout the process; quality in the finished product; a home built to perform for decades.",
-    "Anchor: Acton is not just building an ADU — it is building a home that needs to perform for decades.",
-    "Price objections: reframe value (certainty + quality); do not defensively justify being cheapest; do not invent guarantees or ROI promises.",
-    "Illustrative financial figures in the playbook are illustrative, not guaranteed outcomes.",
-    "Customer-facing drafts: only when explicitly requested; clearly mark as draft for human review; no invented project/customer facts.",
-    "Do not force sales language into unrelated internal operational answers.",
-  ].join("\n");
+  return DEFAULT_GOVERNANCE_SECTION_CONTENT.value_proposition;
 }
 
 const SALES_OR_VALUE_INTENT =

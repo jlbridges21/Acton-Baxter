@@ -7,8 +7,9 @@ import { assembleBaxterRuntime, wrapEvidenceAsData } from "./governance";
  * Authoritative Baxter system prompt (web + Slack + providers).
  * Delegates to governance runtime assembly.
  */
-export function buildBaxterSystemPrompt(question?: string): string {
-  return assembleBaxterRuntime({ question, includeJsonContract: true }).systemPrompt;
+export async function buildBaxterSystemPrompt(question?: string): Promise<string> {
+  const assembly = await assembleBaxterRuntime({ question, includeJsonContract: true });
+  return assembly.systemPrompt;
 }
 
 export function buildBaxterUserPrompt(input: {

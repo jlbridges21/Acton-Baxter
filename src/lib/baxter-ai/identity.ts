@@ -1,12 +1,8 @@
-/**
- * Built-in Baxter identity — version-controlled minimum profile.
- * Permanent behavior lives in governance/runtime; this supports fast identity answers.
- * Capability claims come from the live registry (same source as the system prompt).
- */
 import {
   getClaimedCapabilitiesAndLimitations,
   type ClaimedCapabilities,
 } from "./governance/capabilities";
+import { loadActiveGovernanceContent } from "./governance/content-store";
 import { BAXTER_RUNTIME_VERSION } from "./governance/version";
 
 export const BAXTER_IDENTITY = {
@@ -47,10 +43,14 @@ export function buildBaxterIdentityContext(): string {
   ].join("\n");
 }
 
-export function answerFromBaxterIdentity(question: string): string {
+export async function answerFromBaxterIdentity(question: string): Promise<string> {
   const q = question.toLowerCase();
-  if (/what version|which version|runtime version/.test(q)) {
-    return `I’m running Baxter runtime v${BAXTER_RUNTIME_VERSION}.`;
+  if (/what version|which version|runtime version|governance (content )?version/.test(q)) {
+    const content = await loadActiveGovernanceContent();
+    const contentLabel = content.usedFallback
+      ? "compiled defaults (no active DB content)"
+      : `v${content.versionNumber}`;
+    return `I’m running Baxter runtime v${BAXTER_RUNTIME_VERSION} with governance content ${contentLabel}.`;
   }
   if (/what can you (do|help)|what do you (do|help)|capabilities|how (can|do) you help/.test(q)) {
     const claims = liveClaims();

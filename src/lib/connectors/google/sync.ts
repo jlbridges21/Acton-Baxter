@@ -392,6 +392,34 @@ export class GoogleWorkspaceConnector implements KnowledgeConnector {
           continue;
         }
 
+        const { matchNonCitableCanonicalSource } =
+          await import("@/lib/baxter-ai/governance/canonical-sources");
+        const blocked = matchNonCitableCanonicalSource({
+          filename: file.name,
+          title: parsed.title,
+          path: file.name,
+        });
+        if (blocked) {
+          result.skipped += 1;
+          console.warn(
+            `[google-sync] Skipping non-citable canonical source "${blocked.title}" (${file.name})`,
+          );
+          await upsertSyncedFile({
+            root_id: rootId,
+            google_file_id: file.id,
+            title: file.name,
+            mime_type: file.mimeType,
+            web_view_link: file.webViewLink ?? null,
+            sync_status: "unsupported",
+            selected_reason: reason,
+            selection_id: selection?.id ?? null,
+            content_hash: parsed.contentHash,
+            last_error_code: "BAXTER_CANONICAL_SOURCE_BLOCKED",
+            last_error_message_safe: `Blocked: ${blocked.title} is not indexable as Knowledge Base content`,
+          });
+          continue;
+        }
+
         // Preserve admin tags/category when updating
         const existing = findExistingByFileId(existingEntries, parsed.fileId);
         const preserveTags = existing?.tags && existing.tags.length > 0 ? existing.tags : tags;

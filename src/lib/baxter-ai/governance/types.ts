@@ -19,6 +19,9 @@ export type CanonicalSource = {
 export type BaxterRuntimeAssembly = {
   runtimeVersion: string;
   governanceVersion: string;
+  /** Active editable content version number (0 when using compiled fallback). */
+  contentVersionNumber: number;
+  usedCompiledFallback: boolean;
   systemPrompt: string;
   loadedStandards: string[];
   capabilitiesSummary: string[];

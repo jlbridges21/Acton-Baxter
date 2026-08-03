@@ -81,8 +81,8 @@ describe("Prompt 3 — Knowledge Center quality", () => {
     expect(retrieval.toLowerCase()).toContain("pem");
   });
 
-  it("uses teammate-style prompts and softer insufficient copy", () => {
-    const system = buildBaxterSystemPrompt();
+  it("uses teammate-style prompts and softer insufficient copy", async () => {
+    const system = await buildBaxterSystemPrompt();
     expect(system).toMatch(/digital teammate/i);
     expect(system).toMatch(/No Surprises/);
     expect(INSUFFICIENT_KNOWLEDGE_ANSWER).toMatch(/couldn.?t find an approved Acton source/i);

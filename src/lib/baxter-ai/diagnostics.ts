@@ -186,7 +186,7 @@ export async function getBaxterDiagnosticsSnapshot() {
   const openaiMetrics = getOpenAiMetricsSnapshot();
   const knowledgeHealth = await getKnowledgeHealthSummary();
   const governance = getGovernanceAdminSummary();
-  const runtime = assembleBaxterRuntime({ includeJsonContract: false });
+  const runtime = await assembleBaxterRuntime({ includeJsonContract: false });
 
   return {
     config: {
