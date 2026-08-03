@@ -418,6 +418,74 @@ describe("recursive folder copy", () => {
       }),
     ).rejects.toThrow(/verification failed/);
   });
+
+  it("re-checks by name before createFolder when listing missed a peer write", async () => {
+    const { copyTemplateFolderTree } = await import("@/lib/project-setup/folder-copy");
+    const { GOOGLE_FOLDER_MIME } = await import("@/lib/connectors/google/types");
+
+    findChildByName
+      .mockResolvedValueOnce(null) // top-level destination check
+      .mockResolvedValueOnce({
+        id: "peer-docs",
+        name: "Docs",
+        mimeType: GOOGLE_FOLDER_MIME,
+      }); // refresh before create for Docs
+
+    createFolder.mockResolvedValueOnce({
+      id: "dest-root",
+      name: "L01-26018 Example",
+      mimeType: GOOGLE_FOLDER_MIME,
+      webViewLink: "https://drive/x",
+    });
+
+    listChildren
+      .mockResolvedValueOnce([{ id: "src-sub", name: "Docs", mimeType: GOOGLE_FOLDER_MIME }])
+      .mockResolvedValueOnce([]) // dest listing empty (stale)
+      .mockResolvedValueOnce([]) // source Docs
+      .mockResolvedValueOnce([]); // dest Docs
+
+    countDriveTree
+      .mockResolvedValueOnce({ folders: 1, files: 0, shortcuts: 0 })
+      .mockResolvedValueOnce({ folders: 1, files: 0, shortcuts: 0 });
+
+    await copyTemplateFolderTree({
+      templateFolderId: "tmpl",
+      projectsParentFolderId: "parent",
+      folderName: "L01-26018 Example",
+    });
+
+    // Only the root folder should have been created — Docs came from findChildByName.
+    expect(createFolder).toHaveBeenCalledTimes(1);
+    expect(createFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "L01-26018 Example" }),
+    );
+  });
+
+  it("fails loudly when destination already has duplicate same-name children", async () => {
+    const { copyTemplateFolderTree } = await import("@/lib/project-setup/folder-copy");
+    const { GOOGLE_FOLDER_MIME } = await import("@/lib/connectors/google/types");
+
+    findChildByName.mockResolvedValue(null);
+    createFolder.mockResolvedValue({
+      id: "dest-root",
+      name: "L01-26018 Example",
+      mimeType: GOOGLE_FOLDER_MIME,
+    });
+    listChildren
+      .mockResolvedValueOnce([{ id: "src-a", name: "Docs", mimeType: GOOGLE_FOLDER_MIME }])
+      .mockResolvedValueOnce([
+        { id: "dup-1", name: "Docs", mimeType: GOOGLE_FOLDER_MIME },
+        { id: "dup-2", name: "Docs", mimeType: GOOGLE_FOLDER_MIME },
+      ]);
+
+    await expect(
+      copyTemplateFolderTree({
+        templateFolderId: "tmpl",
+        projectsParentFolderId: "parent",
+        folderName: "L01-26018 Example",
+      }),
+    ).rejects.toThrow(/duplicate children named "Docs"/);
+  });
 });
 
 describe("charter copy idempotency", () => {

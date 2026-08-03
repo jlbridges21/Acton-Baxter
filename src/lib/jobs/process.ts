@@ -147,7 +147,11 @@ async function processProjectSetup(job: ReportJob): Promise<void> {
     throw new Error("project_setup job requires metadata.projectSetupRunId");
   }
   const { runProjectSetupJob } = await import("@/lib/project-setup/runner");
-  const result = await runProjectSetupJob(runId);
+  const result = await runProjectSetupJob(runId, { jobId: job.id });
+  if (result.skippedBusy) {
+    // Another executor holds the run lock — do not mark this job complete.
+    throw new JobDeferredError("Project setup run is already executing");
+  }
   if (result.status === "failed") {
     throw new Error(result.error ?? "Project setup run failed");
   }

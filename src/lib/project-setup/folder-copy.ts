@@ -106,7 +106,16 @@ export async function copyTemplateFolderTree(input: {
       listChildren(sourceFolderId),
       listChildren(destFolderId),
     ]);
-    const destByName = new Map(destChildren.map((c) => [c.name, c]));
+    const destByName = new Map<string, (typeof destChildren)[number]>();
+    for (const child of destChildren) {
+      const prior = destByName.get(child.name);
+      if (prior) {
+        throw new Error(
+          `Destination folder already has duplicate children named "${child.name}" (ids ${prior.id} and ${child.id}). Resolve duplicates in Drive before retrying — Baxter will not guess which copy to keep.`,
+        );
+      }
+      destByName.set(child.name, child);
+    }
 
     for (const child of sourceChildren) {
       if (excludeIds.has(child.id)) {
@@ -126,10 +135,17 @@ export async function copyTemplateFolderTree(input: {
       if (child.mimeType === GOOGLE_FOLDER_MIME) {
         let destSub = destByName.get(child.name);
         if (!destSub) {
-          destSub = await createFolder({ name: child.name, parentId: destFolderId });
-          createdFolders += 1;
-          destByName.set(child.name, destSub);
-          await persist();
+          // Re-check by name before create — listing can lag briefly after a peer write.
+          const refreshed = await findChildByName(destFolderId, child.name);
+          if (refreshed) {
+            destSub = refreshed;
+            destByName.set(child.name, destSub);
+          } else {
+            destSub = await createFolder({ name: child.name, parentId: destFolderId });
+            createdFolders += 1;
+            destByName.set(child.name, destSub);
+            await persist();
+          }
         } else if (destSub.mimeType !== GOOGLE_FOLDER_MIME) {
           throw new Error(
             `Cannot mirror folder "${child.name}" — a non-folder with that name already exists in the destination.`,
@@ -142,6 +158,11 @@ export async function copyTemplateFolderTree(input: {
       const existingFile = destByName.get(child.name);
       if (existingFile) {
         continue; // already copied on a prior attempt
+      }
+      const refreshedFile = await findChildByName(destFolderId, child.name);
+      if (refreshedFile) {
+        destByName.set(child.name, refreshedFile);
+        continue;
       }
       const copied = await copyFile({
         fileId: child.id,

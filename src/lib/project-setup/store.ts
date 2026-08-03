@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "crypto";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
 import {
@@ -77,6 +78,8 @@ type MemoryState = {
   settings: ProjectSetupSettings;
   runs: Map<string, ProjectSetupRun>;
   steps: Map<string, ProjectSetupStep[]>;
+  /** Run-level execution leases (defense in depth vs job reclaim races). */
+  executionLocks: Map<string, { token: string; lockedAt: string }>;
 };
 
 const globalMemory = globalThis as typeof globalThis & {
@@ -116,7 +119,11 @@ function getMemory(): MemoryState {
       settings: defaultSettings(),
       runs: new Map(),
       steps: new Map(),
+      executionLocks: new Map(),
     };
+  }
+  if (!globalMemory.__actonProjectSetupMemory.executionLocks) {
+    globalMemory.__actonProjectSetupMemory.executionLocks = new Map();
   }
   return globalMemory.__actonProjectSetupMemory;
 }
@@ -126,6 +133,7 @@ export function resetProjectSetupMemoryForTests(): void {
     settings: defaultSettings(),
     runs: new Map(),
     steps: new Map(),
+    executionLocks: new Map(),
   };
 }
 
@@ -642,4 +650,110 @@ export async function updateProjectSetupStep(
     .single();
   if (error) throw error;
   return mapStep(data as StepRow);
+}
+
+/** Stale after 20 minutes — folder copy can exceed the job reclaim window. */
+export const PROJECT_SETUP_EXECUTION_LOCK_STALE_MS = 20 * 60_000;
+
+/**
+ * Conditional run-level lease (same pattern as claimNextJob). Only one executor
+ * may hold the lock; a second near-simultaneous caller gets acquired: false.
+ */
+export async function tryAcquireProjectSetupExecution(
+  runId: string,
+): Promise<{ acquired: boolean; token: string | null }> {
+  const token = randomUUID();
+  const now = new Date().toISOString();
+  const staleBefore = new Date(Date.now() - PROJECT_SETUP_EXECUTION_LOCK_STALE_MS).toISOString();
+
+  if (usesMemoryStore()) {
+    const locks = getMemory().executionLocks;
+    const existing = locks.get(runId);
+    if (existing && existing.lockedAt >= staleBefore) {
+      return { acquired: false, token: null };
+    }
+    locks.set(runId, { token, lockedAt: now });
+    return { acquired: true, token };
+  }
+
+  const supabase = createServiceClient();
+  const { data: row, error: readError } = await supabase
+    .from("project_setup_runs")
+    .select("id, execution_lock_token, execution_locked_at")
+    .eq("id", runId)
+    .maybeSingle();
+  if (readError) throw readError;
+  if (!row) throw new Error("Project setup run not found");
+
+  const lockedAt = typeof row.execution_locked_at === "string" ? row.execution_locked_at : null;
+  const heldToken =
+    typeof row.execution_lock_token === "string" && row.execution_lock_token.length > 0
+      ? row.execution_lock_token
+      : null;
+  const held = heldToken !== null && lockedAt !== null && lockedAt >= staleBefore;
+
+  if (held) {
+    return { acquired: false, token: null };
+  }
+
+  let query = supabase
+    .from("project_setup_runs")
+    .update({
+      execution_lock_token: token,
+      execution_locked_at: now,
+      updated_at: now,
+    })
+    .eq("id", runId);
+
+  if (heldToken) {
+    query = query.eq("execution_lock_token", heldToken);
+  } else {
+    query = query.is("execution_lock_token", null);
+  }
+
+  const { data: updated, error } = await query.select("id").maybeSingle();
+
+  if (error) throw error;
+  if (!updated) {
+    return { acquired: false, token: null };
+  }
+  return { acquired: true, token };
+}
+
+export async function heartbeatProjectSetupExecution(runId: string, token: string): Promise<void> {
+  const now = new Date().toISOString();
+  if (usesMemoryStore()) {
+    const existing = getMemory().executionLocks.get(runId);
+    if (!existing || existing.token !== token) return;
+    getMemory().executionLocks.set(runId, { token, lockedAt: now });
+    return;
+  }
+
+  const supabase = createServiceClient();
+  await supabase
+    .from("project_setup_runs")
+    .update({ execution_locked_at: now, updated_at: now })
+    .eq("id", runId)
+    .eq("execution_lock_token", token);
+}
+
+export async function releaseProjectSetupExecution(runId: string, token: string): Promise<void> {
+  const now = new Date().toISOString();
+  if (usesMemoryStore()) {
+    const existing = getMemory().executionLocks.get(runId);
+    if (!existing || existing.token !== token) return;
+    getMemory().executionLocks.delete(runId);
+    return;
+  }
+
+  const supabase = createServiceClient();
+  await supabase
+    .from("project_setup_runs")
+    .update({
+      execution_lock_token: null,
+      execution_locked_at: null,
+      updated_at: now,
+    })
+    .eq("id", runId)
+    .eq("execution_lock_token", token);
 }

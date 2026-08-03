@@ -8,6 +8,11 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { useAsyncRunStatus } from "@/hooks/use-async-run-status";
 import { formatProjectSetupStepStatus } from "@/lib/project-setup/step-status";
 import { summarizeProjectSetupStepOutput } from "@/lib/project-setup/step-output-summary";
+import {
+  MANUAL_RESOLVE_FIELDS,
+  type ManualResolveField,
+} from "@/lib/project-setup/manual-resolve-fields";
+import type { ProjectSetupStepKey } from "@/lib/project-setup/types";
 
 type StepRow = {
   id: string;
@@ -146,6 +151,119 @@ function FriendlyResultsCard({
   );
 }
 
+function resolveFieldsForStep(stepKey: string): ManualResolveField[] {
+  if (stepKey in MANUAL_RESOLVE_FIELDS) {
+    return MANUAL_RESOLVE_FIELDS[stepKey as ProjectSetupStepKey];
+  }
+  return [];
+}
+
+function AdminManualResolveCard({
+  runId,
+  step,
+  onResolved,
+}: {
+  runId: string;
+  step: StepRow;
+  onResolved: () => void;
+}) {
+  const fields = resolveFieldsForStep(step.stepKey);
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [outputs, setOutputs] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/projects/setup/${runId}/resolve-step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stepId: step.id, note, outputs }),
+      });
+      const payload = (await response.json()) as { error?: { message?: string } };
+      if (!response.ok) {
+        throw new Error(payload.error?.message ?? "Could not resolve step");
+      }
+      setOpen(false);
+      onResolved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not resolve step");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-3">
+      <p className="text-sm font-semibold text-[var(--acton-navy)]">{step.title}</p>
+      {step.error ? <p className="mt-1 text-xs text-[var(--acton-danger)]">{step.error}</p> : null}
+      {!open ? (
+        <button
+          type="button"
+          className="mt-2 text-sm font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+          onClick={() => setOpen(true)}
+        >
+          Mark step as manually resolved
+        </button>
+      ) : (
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-[var(--acton-muted)]">
+            Confirm what you verified in Drive/Slack/Sheets.{" "}
+            {fields.some((f) => f.required)
+              ? "Supply the real output values later steps need — do not leave them blank."
+              : "This step has no downstream dependents; a note is enough."}
+          </p>
+          {fields.map((field) => (
+            <label key={field.key} className="block space-y-1 text-sm">
+              <span className="font-medium text-[var(--acton-navy)]">
+                {field.label}
+                {field.required ? " *" : " (optional)"}
+              </span>
+              <input
+                className="w-full rounded border border-[var(--acton-border)] bg-white px-2 py-1.5 text-sm"
+                value={outputs[field.key] ?? ""}
+                onChange={(e) => setOutputs((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                placeholder={field.hint}
+              />
+            </label>
+          ))}
+          <label className="block space-y-1 text-sm">
+            <span className="font-medium text-[var(--acton-navy)]">Verification note *</span>
+            <textarea
+              className="w-full rounded border border-[var(--acton-border)] bg-white px-2 py-1.5 text-sm"
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. confirmed folder exists in Drive, manually removed duplicates, folder id is …"
+            />
+          </label>
+          {error ? <p className="text-xs text-[var(--acton-danger)]">{error}</p> : null}
+          <div className="flex gap-3">
+            <button
+              type="button"
+              disabled={submitting}
+              className="rounded bg-[var(--acton-navy)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60"
+              onClick={() => void submit()}
+            >
+              {submitting ? "Saving…" : "Resolve and resume"}
+            </button>
+            <button
+              type="button"
+              className="text-sm text-[var(--acton-muted)] underline-offset-2 hover:underline"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProjectSetupRunClient({
   runId,
   canRetry = true,
@@ -229,6 +347,7 @@ export function ProjectSetupRunClient({
     (s) => s.status === "planned" || s.outputJson?.mode === "dry_run",
   );
   const liveOutputs = steps.filter((s) => s.outputJson?.mode === "live" && s.status === "complete");
+  const failedSteps = steps.filter((s) => s.status === "failed");
 
   const friendlyError =
     retryError ??
@@ -311,6 +430,30 @@ export function ProjectSetupRunClient({
           </div>
         }
       />
+
+      {failed && isAdmin && failedSteps.length > 0 ? (
+        <Card>
+          <CardTitle>Admin: manual step resolution</CardTitle>
+          <CardDescription className="mt-2">
+            Use when the side effect already exists (or was cleaned up by hand) and retry would be
+            wrong. Required outputs are enforced for steps later steps depend on.
+          </CardDescription>
+          <div className="mt-4 space-y-3">
+            {failedSteps.map((step) => (
+              <AdminManualResolveCard
+                key={step.id}
+                runId={runId}
+                step={step}
+                onResolved={() => {
+                  kicked.current = false;
+                  resumePolling();
+                  void refresh();
+                }}
+              />
+            ))}
+          </div>
+        </Card>
+      ) : null}
 
       {complete && liveOutputs.length > 0 ? (
         <FriendlyResultsCard title="Live results" steps={liveOutputs} isAdmin={isAdmin} />

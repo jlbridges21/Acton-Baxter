@@ -1,11 +1,15 @@
 import "server-only";
 
+import { touchJobLock } from "@/lib/jobs/queue";
 import { PROJECT_SETUP_STEPS } from "./steps";
 import {
   ensureProjectSetupStepRows,
   getProjectSetupRun,
   getProjectSetupSettings,
   getProjectSetupSteps,
+  heartbeatProjectSetupExecution,
+  releaseProjectSetupExecution,
+  tryAcquireProjectSetupExecution,
   updateProjectSetupRun,
   updateProjectSetupStep,
 } from "./store";
@@ -15,16 +19,45 @@ import { formatProjectSetupStepStatus } from "./step-status";
 
 export { formatProjectSetupStepStatus };
 
-/**
- * Execute a project setup run, resuming from the first non-terminal step.
- * Completed and planned steps are never re-executed (idempotent resume).
- */
-export async function runProjectSetupJob(runId: string): Promise<{
+export type ProjectSetupJobResult = {
   status: "complete" | "failed";
   completedSteps: number;
   failedStepKey?: string;
   error?: string;
-}> {
+  /** True when another executor already holds the run lock — caller must not complete the job as success. */
+  skippedBusy?: boolean;
+};
+
+/**
+ * Execute a project setup run, resuming from the first non-terminal step.
+ * Completed and planned steps are never re-executed (idempotent resume).
+ *
+ * Concurrency: acquires a run-level lease (claimNextJob-style) so after() and cron
+ * cannot both execute steps even if job reclaim creates dual ownership.
+ */
+export async function runProjectSetupJob(
+  runId: string,
+  options?: { jobId?: string },
+): Promise<ProjectSetupJobResult> {
+  const lock = await tryAcquireProjectSetupExecution(runId);
+  if (!lock.acquired || !lock.token) {
+    return { status: "complete", completedSteps: 0, skippedBusy: true };
+  }
+
+  try {
+    return await executeProjectSetupSteps(runId, {
+      jobId: options?.jobId,
+      lockToken: lock.token,
+    });
+  } finally {
+    await releaseProjectSetupExecution(runId, lock.token);
+  }
+}
+
+async function executeProjectSetupSteps(
+  runId: string,
+  ctx: { jobId?: string; lockToken: string },
+): Promise<ProjectSetupJobResult> {
   const run = await getProjectSetupRun(runId);
   if (!run) throw new Error("Project setup run not found");
 
@@ -54,7 +87,15 @@ export async function runProjectSetupJob(runId: string): Promise<{
     (s) => s.status === "complete" || s.status === "planned" || s.status === "skipped",
   ).length;
 
+  async function heartbeat(): Promise<void> {
+    await heartbeatProjectSetupExecution(runId, ctx.lockToken);
+    if (ctx.jobId) {
+      await touchJobLock(ctx.jobId);
+    }
+  }
+
   for (const definition of PROJECT_SETUP_STEPS) {
+    await heartbeat();
     steps = await getProjectSetupSteps(runId);
     const stepRow = steps.find((s) => s.stepKey === definition.key);
     if (!stepRow) {

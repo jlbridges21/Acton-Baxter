@@ -238,6 +238,28 @@ export async function completeJob(jobId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Heartbeat a running job's lock so reclaimStaleRunningJobs does not re-queue long work. */
+export async function touchJobLock(jobId: string): Promise<void> {
+  const now = nowIso();
+  if (usesMemoryJobStore()) {
+    const job = getMemoryState().jobs.get(jobId);
+    if (!job || job.status !== "running") return;
+    getMemoryState().jobs.set(jobId, {
+      ...job,
+      lockedAt: now,
+      updatedAt: now,
+    });
+    return;
+  }
+
+  const supabase = createServiceClient();
+  await supabase
+    .from("report_jobs")
+    .update({ locked_at: now, updated_at: now })
+    .eq("id", jobId)
+    .eq("status", "running");
+}
+
 export async function failJob(
   jobId: string,
   errorMessage: string,
