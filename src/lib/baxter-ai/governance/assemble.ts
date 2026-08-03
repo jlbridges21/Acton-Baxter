@@ -1,5 +1,5 @@
 import { buildBrandRuntimeBlock } from "./brand";
-import { buildCapabilitiesBlock, BAXTER_CURRENT_CAPABILITIES } from "./capabilities";
+import { buildCapabilitiesBlock, getClaimedCapabilitiesAndLimitations } from "./capabilities";
 import { listRuntimeAlwaysStandards } from "./canonical-sources";
 import { buildCultureRuntimeBlock } from "./culture";
 import { buildEvidenceRuntimeBlock } from "./evidence";
@@ -77,7 +77,7 @@ export function assembleBaxterRuntime(
     governanceVersion: BAXTER_GOVERNANCE_VERSION,
     systemPrompt: sections.join("\n"),
     loadedStandards: listRuntimeAlwaysStandards().map((s) => s.title),
-    capabilitiesSummary: [...BAXTER_CURRENT_CAPABILITIES],
+    capabilitiesSummary: getClaimedCapabilitiesAndLimitations().capabilities,
   };
 }
 

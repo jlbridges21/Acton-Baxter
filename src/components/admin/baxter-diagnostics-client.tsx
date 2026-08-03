@@ -92,6 +92,30 @@ type Snapshot = {
     lastErrorCode: string | null;
     activeCount: number | null;
   };
+  rulebook?: {
+    hasActive: boolean;
+    activeVersion: string | null;
+    validationValid: boolean | null;
+    activatedAt: string | null;
+  };
+  monitoring?: {
+    uiEnabled: boolean;
+    enabled: boolean;
+    pilotChannelConfigured: boolean;
+    pilotChannelName: string | null;
+    lastRunStatus: string | null;
+    lastRunAt: string | null;
+    lastRunError: string | null;
+    openFindings: number | null;
+  };
+  projectSetup?: {
+    recentRunCount: number;
+    completeCount: number;
+    failedCount: number;
+    stuckCount: number;
+    lastStatus: string | null;
+    lastUpdatedAt: string | null;
+  };
   baxterAwareness?: {
     pemEvidenceProvider: string;
     completedPems: number | null;
@@ -416,6 +440,120 @@ export function BaxterDiagnosticsClient({ initial }: { initial: Snapshot }) {
             Test PEM AI
           </Button>
         </div>
+      </Card>
+
+      <Card>
+        <CardTitle>Process Rulebook</CardTitle>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-[var(--acton-muted)]">Active version</dt>
+            <dd>
+              <YesNo value={snapshot.rulebook?.hasActive ?? false} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Version</dt>
+            <dd>{snapshot.rulebook?.activeVersion ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Validation</dt>
+            <dd>
+              {snapshot.rulebook?.validationValid == null
+                ? "—"
+                : snapshot.rulebook.validationValid
+                  ? "Valid"
+                  : "Has errors"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Activated / updated</dt>
+            <dd>
+              {snapshot.rulebook?.activatedAt
+                ? new Date(snapshot.rulebook.activatedAt).toLocaleString()
+                : "—"}
+            </dd>
+          </div>
+        </dl>
+      </Card>
+
+      <Card>
+        <CardTitle>Process Monitoring</CardTitle>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-[var(--acton-muted)]">UI enabled</dt>
+            <dd>
+              <YesNo value={snapshot.monitoring?.uiEnabled ?? false} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Monitoring on</dt>
+            <dd>
+              <YesNo value={snapshot.monitoring?.enabled ?? false} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Pilot channel</dt>
+            <dd>
+              {snapshot.monitoring?.pilotChannelConfigured
+                ? (snapshot.monitoring.pilotChannelName ?? "configured")
+                : "Not set"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Open findings</dt>
+            <dd>{snapshot.monitoring?.openFindings ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last sweep status</dt>
+            <dd>{snapshot.monitoring?.lastRunStatus ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last sweep at</dt>
+            <dd>
+              {snapshot.monitoring?.lastRunAt
+                ? new Date(snapshot.monitoring.lastRunAt).toLocaleString()
+                : "—"}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-[var(--acton-muted)]">Last error</dt>
+            <dd>{snapshot.monitoring?.lastRunError ?? "—"}</dd>
+          </div>
+        </dl>
+      </Card>
+
+      <Card>
+        <CardTitle>Project Setup</CardTitle>
+        <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-[var(--acton-muted)]">Recent runs</dt>
+            <dd>{snapshot.projectSetup?.recentRunCount ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Complete / failed</dt>
+            <dd>
+              {snapshot.projectSetup
+                ? `${snapshot.projectSetup.completeCount} / ${snapshot.projectSetup.failedCount}`
+                : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Stuck running</dt>
+            <dd>{snapshot.projectSetup?.stuckCount ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-[var(--acton-muted)]">Last status</dt>
+            <dd>{snapshot.projectSetup?.lastStatus ?? "—"}</dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-[var(--acton-muted)]">Last updated</dt>
+            <dd>
+              {snapshot.projectSetup?.lastUpdatedAt
+                ? new Date(snapshot.projectSetup.lastUpdatedAt).toLocaleString()
+                : "—"}
+            </dd>
+          </div>
+        </dl>
       </Card>
 
       <Card>

@@ -29,6 +29,10 @@ import {
 } from "@/lib/baxter/capability-registry";
 import { isMonitoringCapabilityKnown } from "@/lib/baxter-ai/governance/capabilities";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { getActiveRulebook } from "@/lib/rulebook/versions";
+import { noteActiveRulebookPresence } from "@/lib/rulebook/capabilities";
+import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
+import { listProjectSetupRuns } from "@/lib/project-setup/store";
 
 export async function getBaxterDiagnosticsSnapshot() {
   const env = getEnv();
@@ -61,6 +65,92 @@ export async function getBaxterDiagnosticsSnapshot() {
   } catch {
     // memory/E2E — leave counts from pemNeat health
   }
+
+  const rulebook = await (async () => {
+    try {
+      const active = await getActiveRulebook();
+      noteActiveRulebookPresence(Boolean(active));
+      const report = active?.validation_report_json as { valid?: boolean } | null;
+      return {
+        hasActive: Boolean(active),
+        activeVersion: active ? String(active.version_number ?? active.id) : null,
+        validationValid: active ? report?.valid !== false : null,
+        activatedAt: active?.activated_at ?? active?.updated_at ?? null,
+      };
+    } catch {
+      noteActiveRulebookPresence(false);
+      return {
+        hasActive: false,
+        activeVersion: null,
+        validationValid: null,
+        activatedAt: null,
+      };
+    }
+  })();
+
+  const monitoring = await (async () => {
+    if (!PROCESS_MONITORING_UI_ENABLED) {
+      return {
+        uiEnabled: false,
+        enabled: false,
+        pilotChannelConfigured: false,
+        pilotChannelName: null as string | null,
+        lastRunStatus: null as string | null,
+        lastRunAt: null as string | null,
+        lastRunError: null as string | null,
+        openFindings: null as number | null,
+      };
+    }
+    try {
+      const { getMonitoringSettings } = await import("@/lib/monitoring/settings");
+      const { getMonitoringDashboardSummary } = await import("@/lib/monitoring/metrics");
+      const settings = await getMonitoringSettings();
+      const summary = await getMonitoringDashboardSummary();
+      return {
+        uiEnabled: true,
+        enabled: settings.enabled,
+        pilotChannelConfigured: Boolean(settings.pilot_slack_channel_id),
+        pilotChannelName: settings.pilot_slack_channel_name,
+        lastRunStatus: summary.lastRun?.status ?? null,
+        lastRunAt: summary.lastRun?.completed_at ?? summary.lastRun?.started_at ?? null,
+        lastRunError: summary.lastRun?.error_message ?? null,
+        openFindings: summary.openCount,
+      };
+    } catch (error) {
+      return {
+        uiEnabled: true,
+        enabled: false,
+        pilotChannelConfigured: false,
+        pilotChannelName: null,
+        lastRunStatus: null,
+        lastRunAt: null,
+        lastRunError: error instanceof Error ? error.message.slice(0, 160) : "load_failed",
+        openFindings: null,
+      };
+    }
+  })();
+
+  const projectSetup = await (async () => {
+    const runs = await listProjectSetupRuns(25).catch(() => []);
+    const stuckMs = 15 * 60_000;
+    const now = Date.now();
+    const stuck = runs.filter(
+      (r) =>
+        r.status === "running" &&
+        now - new Date(r.updatedAt || r.startedAt || r.createdAt).getTime() > stuckMs,
+    );
+    const finished = runs.filter((r) => r.status === "complete" || r.status === "failed");
+    const complete = finished.filter((r) => r.status === "complete").length;
+    const failed = finished.filter((r) => r.status === "failed").length;
+    return {
+      recentRunCount: runs.length,
+      completeCount: complete,
+      failedCount: failed,
+      stuckCount: stuck.length,
+      lastStatus: runs[0]?.status ?? null,
+      lastUpdatedAt: runs[0]?.updatedAt ?? null,
+    };
+  })();
 
   const entries = await listAllKnowledgeEntriesForRetrieval();
   const approvedInternal = entries.filter(
@@ -162,6 +252,9 @@ export async function getBaxterDiagnosticsSnapshot() {
       recentErrorCodes: Array.from(new Set(errorCodes)).slice(0, 10),
     },
     pemNeat,
+    rulebook,
+    monitoring,
+    projectSetup,
     baxterAwareness: {
       pemEvidenceProvider: pemNeat.databaseReady || pemNeat.activeCount != null ? "Ready" : "Error",
       completedPems,

@@ -6,6 +6,11 @@ import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getLaunchReadinessSnapshot } from "@/lib/baxter-ai/launch-readiness";
 
+function readinessLabel(value: string | undefined | null): string {
+  if (!value) return "—";
+  return value.replace(/_/g, " ");
+}
+
 export default async function LaunchReadinessPage() {
   const user = await requireActiveUser();
   if (!isAdminRole(user.profile.role)) redirect("/");
@@ -85,6 +90,88 @@ export default async function LaunchReadinessPage() {
               </li>
             </ul>
           </Card>
+          <Card>
+            <CardTitle>GoHighLevel</CardTitle>
+            {snapshot.ghl ? (
+              <ul className="mt-2 space-y-1 text-sm text-[var(--acton-muted)]">
+                <li>Enabled: {snapshot.ghl.enabled ? "Yes" : "No"}</li>
+                <li>Configured: {snapshot.ghl.configured ? "Yes" : "No"}</li>
+                <li>Status: {snapshot.ghl.status}</li>
+                <li>Readiness: {readinessLabel(snapshot.ghl.readiness)}</li>
+                <li>Auth mode: {snapshot.ghl.authMode ?? "—"}</li>
+                <li>Location: {snapshot.ghl.locationId ?? "—"}</li>
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-[var(--acton-muted)]">
+                GoHighLevel is not enabled in this environment.
+              </p>
+            )}
+          </Card>
+          <Card>
+            <CardTitle>PEM NEAT</CardTitle>
+            <ul className="mt-2 space-y-1 text-sm text-[var(--acton-muted)]">
+              <li>Status: {snapshot.pemNeat.status}</li>
+              <li>Database ready: {snapshot.pemNeat.databaseReady ? "Yes" : "No"}</li>
+              <li>AI ready: {snapshot.pemNeat.aiProviderReady ? "Yes" : "No"}</li>
+              <li>Completed: {snapshot.pemNeat.completedCount}</li>
+              <li>Failed: {snapshot.pemNeat.failedCount}</li>
+              <li>Stale / needs regen: {snapshot.pemNeat.staleCount}</li>
+              <li>Last generation: {snapshot.pemNeat.lastGenerationStatus ?? "—"}</li>
+              <li>Readiness: {readinessLabel(snapshot.pemNeat.readiness)}</li>
+            </ul>
+          </Card>
+          <Card>
+            <CardTitle>Process Rulebook</CardTitle>
+            <ul className="mt-2 space-y-1 text-sm text-[var(--acton-muted)]">
+              <li>Active version: {snapshot.rulebook.hasActive ? "Yes" : "No"}</li>
+              <li>Version: {snapshot.rulebook.activeVersion ?? "—"}</li>
+              <li>
+                Validation:{" "}
+                {snapshot.rulebook.validationValid == null
+                  ? "—"
+                  : snapshot.rulebook.validationValid
+                    ? "Valid"
+                    : "Has errors"}
+              </li>
+              <li>Readiness: {readinessLabel(snapshot.rulebook.readiness)}</li>
+            </ul>
+          </Card>
+          <Card>
+            <CardTitle>Process Monitoring</CardTitle>
+            <ul className="mt-2 space-y-1 text-sm text-[var(--acton-muted)]">
+              <li>UI enabled: {snapshot.monitoring.uiEnabled ? "Yes" : "No"}</li>
+              <li>Monitoring on: {snapshot.monitoring.enabled ? "Yes" : "No"}</li>
+              <li>
+                Pilot channel:{" "}
+                {snapshot.monitoring.pilotChannelConfigured
+                  ? (snapshot.monitoring.pilotChannelName ?? "configured")
+                  : "Not set"}
+              </li>
+              <li>Last sweep status: {snapshot.monitoring.lastRunStatus ?? "—"}</li>
+              <li>Last sweep at: {snapshot.monitoring.lastRunAt ?? "—"}</li>
+              <li>Last error: {snapshot.monitoring.lastRunError ?? "—"}</li>
+              <li>Readiness: {readinessLabel(snapshot.monitoring.readiness)}</li>
+            </ul>
+          </Card>
+          <Card>
+            <CardTitle>Project Setup</CardTitle>
+            <ul className="mt-2 space-y-1 text-sm text-[var(--acton-muted)]">
+              <li>Recent runs: {snapshot.projectSetup.recentRunCount}</li>
+              <li>
+                Complete / failed: {snapshot.projectSetup.completeCount}/
+                {snapshot.projectSetup.failedCount}
+              </li>
+              <li>Stuck running: {snapshot.projectSetup.stuckCount}</li>
+              <li>
+                Success rate:{" "}
+                {snapshot.projectSetup.successRate == null
+                  ? "—"
+                  : `${Math.round(snapshot.projectSetup.successRate * 100)}%`}
+              </li>
+              <li>Last status: {snapshot.projectSetup.lastStatus ?? "—"}</li>
+              <li>Readiness: {readinessLabel(snapshot.projectSetup.readiness)}</li>
+            </ul>
+          </Card>
         </div>
 
         <Card>
@@ -108,11 +195,26 @@ export default async function LaunchReadinessPage() {
             <Link className="underline-offset-2 hover:underline" href="/admin/connectors/google">
               Google connector
             </Link>
+            <Link className="underline-offset-2 hover:underline" href="/admin/connectors/ghl">
+              GoHighLevel
+            </Link>
             <Link className="underline-offset-2 hover:underline" href="/admin/slack">
               Slack diagnostics
             </Link>
             <Link className="underline-offset-2 hover:underline" href="/admin/knowledge">
               Knowledge Base
+            </Link>
+            <Link className="underline-offset-2 hover:underline" href="/pem-neats">
+              PEM NEATs
+            </Link>
+            <Link className="underline-offset-2 hover:underline" href="/admin/baxter/rulebook">
+              Process Rulebook
+            </Link>
+            <Link className="underline-offset-2 hover:underline" href="/admin/baxter/monitoring">
+              Process Monitoring
+            </Link>
+            <Link className="underline-offset-2 hover:underline" href="/admin/project-setup">
+              Project Setup
             </Link>
             <Link className="underline-offset-2 hover:underline" href="/admin/baxter/feedback">
               Feedback
