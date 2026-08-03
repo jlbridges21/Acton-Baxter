@@ -255,7 +255,51 @@ export async function dismissFalsePositive(id: string, slackUserId: string): Pro
 }
 
 /**
+ * Atomically claim an open finding for delivery (optimistic concurrency).
+ * Returns the claimed finding, or null if another worker already claimed it.
+ */
+export async function claimOpenFindingForDelivery(id: string): Promise<MonitoringFinding | null> {
+  const supabase = createServiceClient();
+
+  const { data, error } = await supabase
+    .from("monitoring_findings")
+    .update({ status: "delivering", updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "open")
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to claim finding for delivery: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapFinding(data);
+}
+
+/**
+ * Release a delivery claim so the finding can be retried (post failed / aborted).
+ */
+export async function releaseDeliveryClaim(id: string): Promise<void> {
+  const supabase = createServiceClient();
+
+  const { error } = await supabase
+    .from("monitoring_findings")
+    .update({ status: "open", updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "delivering");
+
+  if (error) {
+    throw new Error(`Failed to release delivery claim: ${error.message}`);
+  }
+}
+
+/**
  * Mark a finding as alerted with Slack refs.
+ * Accepts open or delivering (claim-then-post) so race-safe delivery can finalize.
  */
 export async function markAlerted(id: string, slackRef: SlackAlertRef): Promise<void> {
   const supabase = createServiceClient();
@@ -271,11 +315,33 @@ export async function markAlerted(id: string, slackRef: SlackAlertRef): Promise<
       slack_thread_ts: slackRef.threadTs || null,
     })
     .eq("id", id)
-    .eq("status", "open");
+    .in("status", ["open", "delivering"]);
 
   if (error) {
     throw new Error(`Failed to mark finding as alerted: ${error.message}`);
   }
+}
+
+/**
+ * Release abandoned delivery claims (e.g. worker crashed after claim, before Slack post).
+ * Only reclaim claims older than `olderThanMinutes` so concurrent deliveries are not disturbed.
+ */
+export async function reclaimAbandonedDeliveryClaims(olderThanMinutes = 10): Promise<number> {
+  const supabase = createServiceClient();
+  const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("monitoring_findings")
+    .update({ status: "open", updated_at: new Date().toISOString() })
+    .eq("status", "delivering")
+    .lt("updated_at", cutoff)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Failed to reclaim abandoned delivery claims: ${error.message}`);
+  }
+
+  return data?.length ?? 0;
 }
 
 /**

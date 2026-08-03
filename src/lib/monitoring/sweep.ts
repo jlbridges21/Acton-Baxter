@@ -13,6 +13,21 @@ export type RunMonitoringSweepOptions = {
 };
 
 /**
+ * Whether a completed sweep should enqueue baxter_alert_delivery.
+ * Covers both new/refreshed findings and escalation-only scheduled sweeps,
+ * without double-enqueueing.
+ */
+export function shouldEnqueueAlertDeliveryAfterSweep(input: {
+  enabled: boolean;
+  force?: boolean;
+  newFindings: number;
+  refreshedFindings: number;
+}): boolean {
+  const hasFindings = input.newFindings > 0 || input.refreshedFindings > 0;
+  return input.enabled && (!input.force || hasFindings);
+}
+
+/**
  * Run a monitoring sweep.
  * Incomplete GHL coverage → run status `partial` (never "all clear").
  */
@@ -160,15 +175,16 @@ export async function runMonitoringSweep(
       })
       .eq("id", runId);
 
-    if (settings.enabled && (newFindings > 0 || refreshedFindings > 0)) {
-      await enqueueJob({
-        reportId: null,
-        jobType: "baxter_alert_delivery",
-        metadata: { runId },
-      });
-    }
-
-    if (settings.enabled && !options.force) {
+    // Single enqueue: deliver new/refreshed findings, and on normal (non-force)
+    // sweeps also run so escalations can fire even when nothing new was detected.
+    if (
+      shouldEnqueueAlertDeliveryAfterSweep({
+        enabled: settings.enabled,
+        force: options.force,
+        newFindings,
+        refreshedFindings,
+      })
+    ) {
       await enqueueJob({
         reportId: null,
         jobType: "baxter_alert_delivery",

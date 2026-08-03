@@ -14,6 +14,7 @@ function mapSettingsRow(data: Record<string, unknown>): MonitoringSettings {
     quiet_hours_end: (data.quiet_hours_end as string | null) ?? null,
     delivery_mode: (data.delivery_mode as MonitoringSettings["delivery_mode"]) || "digest",
     escalation_window_minutes: Number(data.escalation_window_minutes) || 240,
+    sweep_interval_minutes: Number(data.sweep_interval_minutes) || 15,
     default_stale_days: Number(data.default_stale_days) || 3,
     monitored_pipeline_ids: (data.monitored_pipeline_ids as string[]) || [],
     check_configs: (data.check_configs as Record<string, CheckConfig>) || {},
@@ -62,6 +63,7 @@ export async function updateMonitoringSettings(
       | "quiet_hours_end"
       | "delivery_mode"
       | "escalation_window_minutes"
+      | "sweep_interval_minutes"
       | "default_stale_days"
       | "monitored_pipeline_ids"
       | "check_configs"

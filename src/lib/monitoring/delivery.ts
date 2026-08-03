@@ -2,7 +2,14 @@ import "server-only";
 
 import { postSlackMessage } from "@/lib/slack/client";
 import { getMonitoringSettings } from "./settings";
-import { listFindings, markAlerted, markEscalated } from "./findings";
+import {
+  listFindings,
+  markAlerted,
+  markEscalated,
+  claimOpenFindingForDelivery,
+  releaseDeliveryClaim,
+  reclaimAbandonedDeliveryClaims,
+} from "./findings";
 import { isInQuietHours } from "./quiet-hours";
 import {
   formatFindingAlertText,
@@ -10,7 +17,7 @@ import {
   formatDigestSummaryText,
   formatEscalationText,
 } from "./alerts";
-import type { MonitoringSettings } from "./types";
+import type { MonitoringFinding, MonitoringSettings } from "./types";
 
 /**
  * Deliver pending alerts (called by baxter_alert_delivery job).
@@ -36,35 +43,82 @@ export async function deliverPendingAlerts(): Promise<{
     return { delivered: 0, escalated: 0, skippedQuietHours: true };
   }
 
+  await reclaimAbandonedDeliveryClaims(10);
+
   const openFindings = await listFindings({ status: "open", limit: 100 });
-
-  if (openFindings.length === 0) {
-    return { delivered: 0, escalated: 0, skippedQuietHours: false };
-  }
-
   let delivered = 0;
 
-  if (settings.delivery_mode === "immediate") {
-    for (const finding of openFindings) {
-      const text = formatFindingAlertText(finding);
-      const blocks = formatFindingAlertBlocks(finding);
+  if (openFindings.length > 0) {
+    if (settings.delivery_mode === "immediate") {
+      delivered = await deliverImmediate(openFindings, settings.pilot_slack_channel_id);
+    } else {
+      delivered = await deliverDigest(openFindings, settings.pilot_slack_channel_id);
+    }
+  }
+
+  const escalated = await handleEscalations(settings);
+
+  return { delivered, escalated, skippedQuietHours: false };
+}
+
+async function deliverImmediate(
+  openFindings: MonitoringFinding[],
+  channelId: string,
+): Promise<number> {
+  let delivered = 0;
+
+  for (const finding of openFindings) {
+    const claimed = await claimOpenFindingForDelivery(finding.id);
+    if (!claimed) {
+      continue;
+    }
+
+    try {
+      const text = formatFindingAlertText(claimed);
+      const blocks = formatFindingAlertBlocks(claimed);
 
       const response = await postSlackMessage({
-        channel: settings.pilot_slack_channel_id,
+        channel: channelId,
         text,
         blocks,
       });
 
       if (response.ok && response.ts) {
-        await markAlerted(finding.id, {
-          channelId: settings.pilot_slack_channel_id,
+        // Root alert ts is the thread parent for later escalations.
+        await markAlerted(claimed.id, {
+          channelId,
           messageTs: response.ts,
+          threadTs: response.ts,
         });
         delivered += 1;
+      } else {
+        await releaseDeliveryClaim(claimed.id);
       }
+    } catch (error) {
+      await releaseDeliveryClaim(claimed.id);
+      throw error;
     }
-  } else {
-    const text = formatDigestSummaryText(openFindings);
+  }
+
+  return delivered;
+}
+
+async function deliverDigest(
+  openFindings: MonitoringFinding[],
+  channelId: string,
+): Promise<number> {
+  const claimed: MonitoringFinding[] = [];
+  for (const finding of openFindings) {
+    const next = await claimOpenFindingForDelivery(finding.id);
+    if (next) claimed.push(next);
+  }
+
+  if (claimed.length === 0) {
+    return 0;
+  }
+
+  try {
+    const text = formatDigestSummaryText(claimed);
     const blocks: unknown[] = [
       {
         type: "section",
@@ -78,7 +132,7 @@ export async function deliverPendingAlerts(): Promise<{
       },
     ];
 
-    for (const finding of openFindings.slice(0, 10)) {
+    for (const finding of claimed.slice(0, 10)) {
       blocks.push({
         type: "section",
         text: {
@@ -97,44 +151,52 @@ export async function deliverPendingAlerts(): Promise<{
       });
     }
 
-    if (openFindings.length > 10) {
+    if (claimed.length > 10) {
       blocks.push({
         type: "context",
         elements: [
           {
             type: "mrkdwn",
-            text: `...and ${openFindings.length - 10} more findings`,
+            text: `...and ${claimed.length - 10} more findings`,
           },
         ],
       });
     }
 
     const response = await postSlackMessage({
-      channel: settings.pilot_slack_channel_id,
+      channel: channelId,
       text,
       blocks,
     });
 
     if (response.ok && response.ts) {
-      for (const finding of openFindings) {
+      for (const finding of claimed) {
         await markAlerted(finding.id, {
-          channelId: settings.pilot_slack_channel_id,
+          channelId,
           messageTs: response.ts,
+          threadTs: response.ts,
         });
       }
-      delivered = openFindings.length;
+      return claimed.length;
     }
+
+    for (const finding of claimed) {
+      await releaseDeliveryClaim(finding.id);
+    }
+    return 0;
+  } catch (error) {
+    for (const finding of claimed) {
+      await releaseDeliveryClaim(finding.id);
+    }
+    throw error;
   }
-
-  const escalated = await handleEscalations(settings);
-
-  return { delivered, escalated, skippedQuietHours: false };
 }
 
 /**
  * Handle escalations for alerted findings past the escalation window.
+ * Exported for unit tests.
  */
-async function handleEscalations(settings: MonitoringSettings): Promise<number> {
+export async function handleEscalations(settings: MonitoringSettings): Promise<number> {
   const escalationCutoff = new Date(
     Date.now() - settings.escalation_window_minutes * 60 * 1000,
   ).toISOString();
@@ -156,7 +218,7 @@ async function handleEscalations(settings: MonitoringSettings): Promise<number> 
 
     await postSlackMessage({
       channel: finding.slack_channel_id,
-      threadTs: finding.slack_message_ts,
+      threadTs: finding.slack_thread_ts,
       text,
     });
 

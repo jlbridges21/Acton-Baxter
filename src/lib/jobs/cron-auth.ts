@@ -2,6 +2,7 @@ import "server-only";
 
 import { timingSafeEqual } from "node:crypto";
 import { getEnv } from "@/lib/env";
+import vercelConfig from "../../../vercel.json";
 
 /**
  * Canonical cron secret: CRON_SECRET (Vercel) with INTERNAL_CRON_SECRET as legacy alias.
@@ -68,15 +69,75 @@ export type CronDiagnostics = {
   canonicalVariable: "CRON_SECRET" | "INTERNAL_CRON_SECRET" | null;
   routeRegistered: boolean;
   schedule: string | null;
+  /** Human-readable interval derived from the real vercel.json cron expression. */
+  scheduleInterval: string | null;
   note: string;
 };
 
+type VercelCronEntry = { path?: string; schedule?: string };
+
+/**
+ * Read the process-jobs cron schedule from vercel.json (source of truth).
+ */
+export function getConfiguredCronSchedule(): {
+  schedule: string | null;
+  scheduleInterval: string | null;
+} {
+  const crons = (vercelConfig as { crons?: VercelCronEntry[] }).crons ?? [];
+  const entry = crons.find((c) => c.path === "/api/internal/process-jobs") ?? crons[0] ?? null;
+  const schedule = entry?.schedule?.trim() || null;
+  return {
+    schedule,
+    scheduleInterval: schedule ? describeCronInterval(schedule) : null,
+  };
+}
+
+/**
+ * Best-effort human-readable interval for common Vercel cron expressions.
+ */
+export function describeCronInterval(expression: string): string {
+  const parts = expression.trim().split(/\s+/);
+  if (parts.length < 5) return expression;
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+
+  const everyNMinutes = minute?.match(/^\*\/(\d+)$/);
+  if (everyNMinutes && hour === "*" && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    const n = Number(everyNMinutes[1]);
+    return n === 1 ? "every minute" : `every ${n} minutes`;
+  }
+
+  if (minute === "*" && hour === "*" && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    return "every minute";
+  }
+
+  const everyNHours = hour?.match(/^\*\/(\d+)$/);
+  if (minute === "0" && everyNHours && dayOfMonth === "*" && month === "*" && dayOfWeek === "*") {
+    const n = Number(everyNHours[1]);
+    return n === 1 ? "every hour" : `every ${n} hours`;
+  }
+
+  if (
+    /^\d+$/.test(minute ?? "") &&
+    /^\d+$/.test(hour ?? "") &&
+    dayOfMonth === "*" &&
+    month === "*" &&
+    dayOfWeek === "*"
+  ) {
+    return `daily at ${hour!.padStart(2, "0")}:${minute!.padStart(2, "0")} UTC`;
+  }
+
+  return expression;
+}
+
 export function getCronConfigDiagnostics(): CronDiagnostics {
+  const { schedule, scheduleInterval } = getConfiguredCronSchedule();
   return {
     cronSecretConfigured: isCronSecretConfigured(),
     canonicalVariable: getCanonicalCronSecretName(),
     routeRegistered: true,
-    schedule: "0 12 * * *",
-    note: "Vercel Cron calls /api/internal/process-jobs with Authorization: Bearer. Opening the URL in a browser returns 401 — that is expected. Use admin Run sync now for manual syncs. Hobby plans support at most one cron per day; Pro may use a more frequent schedule while GOOGLE_SYNC_INTERVAL_MINUTES controls due Google syncs.",
+    schedule,
+    scheduleInterval,
+    note: `Vercel Cron calls /api/internal/process-jobs on schedule "${schedule ?? "unset"}" (${scheduleInterval ?? "unknown interval"}) with Authorization: Bearer. Opening the URL in a browser returns 401 — that is expected. Use admin Run sync now for manual syncs. Monitoring sweeps and Google syncs apply their own interval/due checks inside each cron tick.`,
   };
 }

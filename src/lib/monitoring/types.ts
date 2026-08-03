@@ -7,6 +7,7 @@ import "server-only";
 
 export const FINDING_STATUSES = [
   "open",
+  "delivering",
   "alerted",
   "acknowledged",
   "resolved",
@@ -105,6 +106,8 @@ export type MonitoringSettings = {
   quiet_hours_end: string | null;
   delivery_mode: DeliveryMode;
   escalation_window_minutes: number;
+  /** Minutes between scheduled monitoring sweeps (admin-editable; default 15). */
+  sweep_interval_minutes: number;
   default_stale_days: number;
   monitored_pipeline_ids: string[];
   check_configs: Record<string, CheckConfig>;

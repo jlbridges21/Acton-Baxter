@@ -63,6 +63,7 @@ type MonitoringSettings = {
   timezone: string | null;
   delivery_mode: string;
   escalation_minutes: number;
+  sweep_interval_minutes: number;
   stale_opportunity_days: number;
   monitored_pipelines: string[];
   check_configs: Record<string, Record<string, unknown>>;
@@ -787,6 +788,25 @@ export function MonitoringClient() {
                           />
                           <p className="mt-1 text-xs text-[var(--acton-muted)]">
                             Minutes before escalating unacknowledged findings
+                          </p>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
+                            Sweep Interval Minutes
+                          </label>
+                          <input
+                            type="number"
+                            value={settings.sweep_interval_minutes ?? 15}
+                            onChange={(e) =>
+                              handleUpdateSettings({
+                                sweep_interval_minutes: parseInt(e.target.value),
+                              })
+                            }
+                            min="1"
+                            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                          />
+                          <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                            Minimum minutes between scheduled monitoring sweeps (default 15)
                           </p>
                         </div>
                         <div>

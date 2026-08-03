@@ -32,6 +32,7 @@ function toClientSettings(settings: {
   timezone: string;
   delivery_mode: string;
   escalation_window_minutes: number;
+  sweep_interval_minutes: number;
   default_stale_days: number;
   monitored_pipeline_ids: string[];
   check_configs: Record<string, Record<string, unknown>>;
@@ -44,6 +45,7 @@ function toClientSettings(settings: {
     timezone: settings.timezone,
     delivery_mode: settings.delivery_mode,
     escalation_minutes: settings.escalation_window_minutes,
+    sweep_interval_minutes: settings.sweep_interval_minutes,
     stale_opportunity_days: settings.default_stale_days,
     monitored_pipelines: settings.monitored_pipeline_ids,
     check_configs: settings.check_configs,
@@ -65,6 +67,9 @@ function fromClientSettingsPatch(patch: Record<string, unknown>) {
   if ("escalation_minutes" in patch) out.escalation_window_minutes = patch.escalation_minutes;
   if ("escalation_window_minutes" in patch) {
     out.escalation_window_minutes = patch.escalation_window_minutes;
+  }
+  if ("sweep_interval_minutes" in patch) {
+    out.sweep_interval_minutes = patch.sweep_interval_minutes;
   }
   if ("stale_opportunity_days" in patch) out.default_stale_days = patch.stale_opportunity_days;
   if ("default_stale_days" in patch) out.default_stale_days = patch.default_stale_days;
