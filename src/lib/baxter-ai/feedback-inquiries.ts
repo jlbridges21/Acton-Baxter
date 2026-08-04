@@ -37,8 +37,12 @@ export type BaxterInquiryAdminRow = {
   createdAt: string;
   channel: BaxterFeedbackChannel;
   summarizedRating: InquirySummarizedRating;
+  /** Truncated preview for the collapsed row (same length as before). */
   questionExcerpt: string;
   answerExcerpt: string;
+  /** Full question/answer for client-side "See more" expand. */
+  questionText: string;
+  answerText: string;
   askerKey: string;
   askerLabel: string;
   /** Null means Unassigned. */
@@ -58,13 +62,47 @@ export type FeedbackAskerOption = {
 export type InquiryListFilters = {
   rating?: "all" | InquirySummarizedRating;
   channel?: "all" | BaxterFeedbackChannel;
+  /**
+   * Multi-select asker keys (OR). Empty / omitted = no asker filter.
+   * `askerKey` is accepted as a single-value alias for back-compat.
+   */
+  askerKeys?: string[] | null;
   askerKey?: string | null;
+  /**
+   * Multi-select departments (OR, case-insensitive). Empty / omitted = no dept filter.
+   * `department` is accepted as a single-value alias for back-compat.
+   */
+  departments?: string[] | null;
   department?: string | null;
   range?: DateRangeBounds | null;
   sort?: FeedbackSortDirection;
   limit?: number;
   offset?: number;
 };
+
+/** Normalize single + multi asker inputs into a deduped list of non-empty keys. */
+export function normalizeAskerKeysFilter(input: {
+  askerKeys?: string[] | null;
+  askerKey?: string | null;
+}): string[] {
+  const fromMulti = (input.askerKeys ?? []).map((k) => k.trim()).filter(Boolean);
+  const fromSingle = input.askerKey?.trim();
+  const set = new Set<string>(fromMulti);
+  if (fromSingle) set.add(fromSingle);
+  return Array.from(set);
+}
+
+/** Normalize single + multi department inputs into a deduped list. */
+export function normalizeDepartmentsFilter(input: {
+  departments?: string[] | null;
+  department?: string | null;
+}): string[] {
+  const fromMulti = (input.departments ?? []).map((d) => d.trim()).filter(Boolean);
+  const fromSingle = input.department?.trim();
+  const set = new Set<string>(fromMulti);
+  if (fromSingle) set.add(fromSingle);
+  return Array.from(set);
+}
 
 function shouldUseMemory(): boolean {
   try {
@@ -408,14 +446,14 @@ async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow
       });
     }
 
-    // Question excerpt: prior user message
-    let questionExcerpt = "";
+    // Question: prior user message (full + truncated excerpt for collapsed UI)
+    let questionText = "";
     try {
       const messages = await listMessagesForConversation(item.conversationId);
       const userMsg = [...messages]
         .reverse()
         .find((m) => m.role === "user" && m.created_at <= item.createdAt);
-      questionExcerpt = (userMsg?.content ?? "").slice(0, 200);
+      questionText = userMsg?.content ?? "";
     } catch {
       // ignore
     }
@@ -424,6 +462,7 @@ async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow
       sources?: unknown[];
       answerMode?: string;
     };
+    const answerText = item.content;
 
     rows.push({
       messageId: item.messageId,
@@ -431,8 +470,10 @@ async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow
       createdAt: item.createdAt,
       channel: item.channel,
       summarizedRating,
-      questionExcerpt,
-      answerExcerpt: item.content.slice(0, 240),
+      questionExcerpt: questionText.slice(0, 200),
+      answerExcerpt: answerText.slice(0, 240),
+      questionText,
+      answerText,
       askerKey,
       askerLabel,
       department,
@@ -460,19 +501,27 @@ export async function listInquiriesForAdmin(input?: InquiryListFilters): Promise
   const sort = input?.sort ?? "newest";
   const limit = Math.min(Math.max(input?.limit ?? 50, 1), 100);
   const offset = Math.max(input?.offset ?? 0, 0);
-  const askerKey = input?.askerKey?.trim() || null;
-  const departmentFilter = input?.department?.trim() || null;
+  const askerKeys = normalizeAskerKeysFilter({
+    askerKeys: input?.askerKeys,
+    askerKey: input?.askerKey,
+  });
+  const departments = normalizeDepartmentsFilter({
+    departments: input?.departments,
+    department: input?.department,
+  });
+  const departmentSet = new Set(departments.map((d) => d.toLowerCase()));
 
   const raw = await loadRawInquiries({ range, channel });
   let enriched = await enrichInquiries(raw);
 
-  if (askerKey) {
-    enriched = enriched.filter((r) => r.askerKey === askerKey);
+  if (askerKeys.length > 0) {
+    const askerSet = new Set(askerKeys);
+    enriched = enriched.filter((r) => askerSet.has(r.askerKey));
   }
-  if (departmentFilter) {
-    // Specific department excludes Unassigned (null)
+  if (departments.length > 0) {
+    // Selected departments exclude Unassigned (null); match is case-insensitive OR.
     enriched = enriched.filter(
-      (r) => r.department != null && r.department.toLowerCase() === departmentFilter.toLowerCase(),
+      (r) => r.department != null && departmentSet.has(r.department.toLowerCase()),
     );
   }
 

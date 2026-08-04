@@ -3,9 +3,11 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import {
+  buildFeedbackFilterHref,
   FeedbackFiltersPanel,
   type FeedbackFiltersState,
 } from "@/components/admin/feedback-filters-panel";
+import { FeedbackInquiryCard } from "@/components/admin/feedback-inquiry-card";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import {
@@ -19,6 +21,23 @@ const PAGE_SIZE = 50;
 
 function paramString(raw: string | string[] | undefined): string | undefined {
   return typeof raw === "string" ? raw : undefined;
+}
+
+/** Collect repeated or single query params into a string array (deduped, non-empty). */
+function paramStringList(raw: string | string[] | undefined): string[] {
+  if (raw == null) return [];
+  const values = Array.isArray(raw) ? raw : [raw];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    for (const part of value.split(",")) {
+      const trimmed = part.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      out.push(trimmed);
+    }
+  }
+  return out;
 }
 
 function parseRating(raw: string | undefined): "all" | "positive" | "negative" | "none" {
@@ -36,33 +55,6 @@ function parseChannel(raw: string | undefined): "all" | "web" | "slack" {
 
 function parseSort(raw: string | undefined): FeedbackSortDirection {
   return raw === "oldest" ? "oldest" : "newest";
-}
-
-function buildHref(input: {
-  range: string;
-  rating: string;
-  channel: string;
-  sort: string;
-  asker?: string;
-  department?: string;
-  start?: string;
-  end?: string;
-  offset?: number;
-}): string {
-  const params = new URLSearchParams();
-  params.set("range", input.range);
-  if (input.rating !== "all") params.set("rating", input.rating);
-  if (input.channel !== "all") params.set("channel", input.channel);
-  if (input.sort !== "newest") params.set("sort", input.sort);
-  if (input.asker) params.set("asker", input.asker);
-  if (input.department) params.set("department", input.department);
-  if (input.range === "custom") {
-    if (input.start) params.set("start", input.start);
-    if (input.end) params.set("end", input.end);
-  }
-  if (input.offset && input.offset > 0) params.set("offset", String(input.offset));
-  const qs = params.toString();
-  return qs ? `/admin/baxter/feedback?${qs}` : "/admin/baxter/feedback";
 }
 
 function formatPct(numerator: number, denominator: number): string {
@@ -83,8 +75,8 @@ export default async function BaxterFeedbackAdminPage({
   const rating = parseRating(paramString(params.rating));
   const channel = parseChannel(paramString(params.channel));
   const sort = parseSort(paramString(params.sort));
-  const askerKey = paramString(params.asker) ?? "";
-  const department = paramString(params.department) ?? "";
+  const askerKeys = paramStringList(params.asker);
+  const departments = paramStringList(params.department);
   const customStart = paramString(params.start) ?? "";
   const customEnd = paramString(params.end) ?? "";
   const offsetRaw = Number(paramString(params.offset) ?? "0");
@@ -99,8 +91,8 @@ export default async function BaxterFeedbackAdminPage({
   const dashboard = await getFeedbackDashboard({
     rating,
     channel,
-    askerKey: askerKey || null,
-    department: department || null,
+    askerKeys,
+    departments,
     sort,
     range: rangeBounds,
     limit: PAGE_SIZE,
@@ -118,8 +110,8 @@ export default async function BaxterFeedbackAdminPage({
     rating,
     channel,
     sort,
-    askerKey,
-    department,
+    askerKeys,
+    departments,
     customStart,
     customEnd,
   };
@@ -207,82 +199,18 @@ export default async function BaxterFeedbackAdminPage({
           {dashboard.rows.length === 0 ? (
             <p className="text-sm text-[var(--acton-muted)]">No inquiries match this filter.</p>
           ) : (
-            dashboard.rows.map((row) => (
-              <Card key={row.messageId}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={
-                      row.summarizedRating === "positive"
-                        ? "rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800"
-                        : row.summarizedRating === "negative"
-                          ? "rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800"
-                          : "rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700"
-                    }
-                  >
-                    {row.summarizedRating === "positive"
-                      ? "Positive"
-                      : row.summarizedRating === "negative"
-                        ? "Negative"
-                        : "No feedback"}
-                  </span>
-                  <span className="rounded bg-[var(--acton-soft)] px-2 py-0.5 text-xs font-medium text-[var(--acton-navy)]">
-                    {row.channel === "slack" ? "Slack" : "Web"}
-                  </span>
-                  <CardDescription className="!mt-0">
-                    {new Date(row.createdAt).toLocaleString()} · Asked by {row.askerLabel}
-                    {row.department ? ` · ${row.department}` : " · Unassigned"}
-                  </CardDescription>
-                </div>
-                {row.questionExcerpt ? (
-                  <p className="mt-2 text-sm font-semibold text-[var(--acton-navy)]">
-                    Q: {row.questionExcerpt}
-                  </p>
-                ) : null}
-                {row.answerExcerpt ? (
-                  <p className="mt-1 text-sm text-[var(--acton-muted)]">A: {row.answerExcerpt}</p>
-                ) : null}
-                {row.feedbackEntries.length === 0 ? (
-                  <p className="mt-2 text-sm text-[var(--acton-muted)]">No feedback</p>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    {row.feedbackEntries.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="rounded-md border border-[var(--acton-border)] bg-[var(--acton-soft)]/40 px-3 py-2 text-sm"
-                      >
-                        <p className="font-medium text-[var(--acton-navy)]">
-                          {entry.rating === "up" ? "👍 Positive" : "👎 Negative"} ·{" "}
-                          {entry.commenterLabel}
-                          <span className="ml-2 text-xs font-normal text-[var(--acton-muted)]">
-                            {new Date(entry.createdAt).toLocaleString()}
-                          </span>
-                        </p>
-                        {entry.comment ? (
-                          <p className="mt-1 whitespace-pre-wrap text-[var(--acton-navy)]">
-                            {entry.comment}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <p className="mt-2 text-xs text-[var(--acton-muted)]">
-                  Mode: {row.answerMode ?? "—"} · Sources: {row.sourceCount}
-                  {row.errorCode ? ` · Error: ${row.errorCode}` : ""}
-                </p>
-              </Card>
-            ))
+            dashboard.rows.map((row) => <FeedbackInquiryCard key={row.messageId} row={row} />)
           )}
 
           {hasMore ? (
             <Link
-              href={buildHref({
+              href={buildFeedbackFilterHref({
                 range: rangePreset,
                 rating,
                 channel,
                 sort,
-                asker: askerKey,
-                department,
+                askerKeys,
+                departments,
                 start: customStart,
                 end: customEnd,
                 offset: nextOffset,

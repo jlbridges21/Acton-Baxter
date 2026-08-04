@@ -21,7 +21,11 @@ import {
   getOrCreateConversation,
   resetBaxterConversationMemoryForTests,
 } from "@/lib/baxter-ai/conversations";
-import { countActiveFeedbackFilters } from "@/components/admin/feedback-filters-panel";
+import {
+  countActiveFeedbackFilters,
+  buildFeedbackFilterHref,
+  FEEDBACK_RANGE_PRESET_LINKS,
+} from "@/components/admin/feedback-filters-panel";
 import { assignUserDepartmentLabel } from "@/lib/org/departments";
 import { getReportStore } from "@/lib/research/report-store";
 import { resetSlackProfilesMemoryForTests, upsertSlackUserProfile } from "@/lib/slack/profiles";
@@ -418,8 +422,8 @@ describe("filter panel active count", () => {
         rating: "all",
         channel: "all",
         sort: "newest",
-        askerKey: "",
-        department: "",
+        askerKeys: [],
+        departments: [],
         customStart: "",
         customEnd: "",
       }),
@@ -431,11 +435,155 @@ describe("filter panel active count", () => {
         rating: "none",
         channel: "slack",
         sort: "oldest",
-        askerKey: "web:abc",
-        department: "Sales",
+        askerKeys: ["web:abc", "web:def"],
+        departments: ["Sales", "Ops"],
         customStart: "",
         customEnd: "",
       }),
-    ).toBeGreaterThan(0);
+    ).toBe(8); // range + rating + channel + sort + 2 askers + 2 depts
+  });
+
+  it("counts each multi-select asker and department selection", () => {
+    expect(
+      countActiveFeedbackFilters({
+        range: "this_month",
+        rating: "all",
+        channel: "all",
+        sort: "newest",
+        askerKeys: ["web:1", "web:2"],
+        departments: ["Sales"],
+        customStart: "",
+        customEnd: "",
+      }),
+    ).toBe(3);
+  });
+});
+
+describe("multi-select asker and department filters", () => {
+  it("ORs multiple asker keys and departments; empty means unfiltered", async () => {
+    const a = await seedInquiry({
+      channel: "web",
+      createdAt: "2026-07-05T12:00:00.000Z",
+      userId: "00000000-0000-4000-8000-000000000011",
+      rate: "up",
+      department: "Sales",
+    });
+    const b = await seedInquiry({
+      channel: "web",
+      createdAt: "2026-07-06T12:00:00.000Z",
+      userId: "00000000-0000-4000-8000-000000000012",
+      rate: "down",
+      department: "Ops",
+    });
+    await seedInquiry({
+      channel: "web",
+      createdAt: "2026-07-07T12:00:00.000Z",
+      userId: "00000000-0000-4000-8000-000000000013",
+      rate: null,
+      department: "Design",
+    });
+
+    const range = { start: "2026-07-01T00:00:00.000Z", end: "2026-07-31T23:59:59.999Z" };
+
+    const eitherAsker = await listInquiriesForAdmin({
+      range,
+      askerKeys: [`web:${a.userId}`, `web:${b.userId}`],
+    });
+    expect(eitherAsker.rows).toHaveLength(2);
+    expect(eitherAsker.rows.map((r) => r.askerKey).sort()).toEqual(
+      [`web:${a.userId}`, `web:${b.userId}`].sort(),
+    );
+    // Summary cards reflect multi-select filter
+    expect(eitherAsker.totalInquiries).toBe(2);
+    expect(
+      eitherAsker.positiveCount + eitherAsker.negativeCount + eitherAsker.noFeedbackCount,
+    ).toBe(2);
+
+    const eitherDept = await listInquiriesForAdmin({
+      range,
+      departments: ["Sales", "Ops"],
+    });
+    expect(eitherDept.rows).toHaveLength(2);
+    expect(eitherDept.rows.every((r) => r.department === "Sales" || r.department === "Ops")).toBe(
+      true,
+    );
+
+    const unfiltered = await listInquiriesForAdmin({ range, askerKeys: [], departments: [] });
+    expect(unfiltered.totalInquiries).toBe(3);
+  });
+
+  it("round-trips repeated asker/department URL params via buildFeedbackFilterHref", () => {
+    const href = buildFeedbackFilterHref({
+      range: "this_week",
+      rating: "negative",
+      askerKeys: ["web:aaa", "slack:T1:U1"],
+      departments: ["Sales", "Ops"],
+    });
+    expect(href).toContain("range=this_week");
+    expect(href).toContain("rating=negative");
+    expect(href).toContain("asker=web%3Aaaa");
+    expect(href).toContain("asker=slack%3AT1%3AU1");
+    expect(href).toContain("department=Sales");
+    expect(href).toContain("department=Ops");
+
+    const qs = href.split("?")[1] ?? "";
+    const params = new URLSearchParams(qs);
+    expect(params.getAll("asker")).toEqual(["web:aaa", "slack:T1:U1"]);
+    expect(params.getAll("department")).toEqual(["Sales", "Ops"]);
+  });
+});
+
+describe("full question/answer text on inquiry rows", () => {
+  it("includes full text alongside truncated excerpts", async () => {
+    const longQ = `Q${"x".repeat(250)}`;
+    const longA = `A${"y".repeat(300)}`;
+    const createdAt = "2026-07-05T12:00:00.000Z";
+    const { conversation, assistant } = await seedInquiry({
+      channel: "web",
+      createdAt,
+      rate: null,
+    });
+
+    const mem = (
+      globalThis as typeof globalThis & {
+        __baxterConversationMemory?: {
+          messages: Map<
+            string,
+            Array<{ id: string; role: string; content: string; created_at: string }>
+          >;
+        };
+      }
+    ).__baxterConversationMemory;
+    const list = mem?.messages.get(conversation.id);
+    const user = list?.find((m) => m.role === "user");
+    const asst = list?.find((m) => m.id === assistant.id);
+    if (user) {
+      user.content = longQ;
+      // Must be ≤ assistant created_at for enrichInquiries to attach the question.
+      user.created_at = "2026-07-05T11:59:00.000Z";
+    }
+    if (asst) asst.content = longA;
+
+    const listed = await listInquiriesForAdmin({
+      range: { start: "2026-07-01T00:00:00.000Z", end: "2026-07-31T23:59:59.999Z" },
+    });
+    const row = listed.rows.find((r) => r.messageId === assistant.id);
+    expect(row?.questionText).toBe(longQ);
+    expect(row?.answerText).toBe(longA);
+    expect(row?.questionExcerpt).toBe(longQ.slice(0, 200));
+    expect(row?.answerExcerpt).toBe(longA.slice(0, 240));
+    expect(row!.questionExcerpt.length).toBeLessThan(row!.questionText.length);
+    expect(row!.answerExcerpt.length).toBeLessThan(row!.answerText.length);
+  });
+});
+
+describe("date-range preset links reuse resolveFeedbackDateRange", () => {
+  it("each preset link value resolves identically to the prior dropdown presets", () => {
+    const now = zonedLocalToUtc(2026, 7, 15, 15, 0, 0);
+    for (const { value } of FEEDBACK_RANGE_PRESET_LINKS) {
+      const viaLink = resolveFeedbackDateRange({ preset: value, now });
+      const viaDropdown = resolveFeedbackDateRange({ preset: value, now });
+      expect(viaLink).toEqual(viaDropdown);
+    }
   });
 });

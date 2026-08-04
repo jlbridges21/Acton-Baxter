@@ -655,7 +655,11 @@ export type FeedbackDashboardResult = {
 export async function getFeedbackDashboard(input?: {
   rating?: "all" | "positive" | "negative" | "none";
   channel?: "all" | "web" | "slack";
+  /** Multi-select asker keys (OR). Prefer over askerKey. */
+  askerKeys?: string[] | null;
   askerKey?: string | null;
+  /** Multi-select departments (OR). Prefer over department. */
+  departments?: string[] | null;
   department?: string | null;
   limit?: number;
   offset?: number;
@@ -670,7 +674,9 @@ export async function getFeedbackDashboard(input?: {
     listInquiriesForAdmin({
       rating: input?.rating ?? "all",
       channel: input?.channel ?? "all",
+      askerKeys: input?.askerKeys,
       askerKey: input?.askerKey,
+      departments: input?.departments,
       department: input?.department,
       limit: input?.limit,
       offset: input?.offset,
