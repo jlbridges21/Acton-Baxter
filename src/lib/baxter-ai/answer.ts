@@ -601,6 +601,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     channel: input.channel,
     ghlConfigured: isGhlConfigured(),
     semantic,
+    userId: input.userId,
+    externalUserId: input.externalUserId ?? null,
+    slackTeamId: input.slackTeamId ?? null,
   });
 
   if (registry.conversationMetadata) {

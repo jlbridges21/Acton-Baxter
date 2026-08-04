@@ -9,6 +9,10 @@ import { readGhlConversationState } from "@/lib/baxter-data/ghl/conversation-sta
 import { isSemanticRoutingConfident } from "@/lib/baxter-ai/semantic-question-classification";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
 import { isPlausibleCrmEntityCandidate, isBaxterMetaHowtoQuestion } from "../entity-plausibility";
+import {
+  appendProjectSlackActivityToGhlAnswer,
+  isProjectFlavoredGhlQuestion,
+} from "@/lib/baxter-ai/ghl-project-slack-enrichment";
 
 const GHL_NOT_FOUND =
   /couldn['’]t find a (?:matching )?ghl contact|couldn['’]t find a matching gohighlevel contact/i;
@@ -134,13 +138,32 @@ export const ghlEvidenceSource: EvidenceSource = {
       };
     }
 
-    const answer = ghlEvidence.deterministicAnswer ?? null;
+    let answer = ghlEvidence.deterministicAnswer ?? null;
     const hasItems = ghlEvidence.items.length > 0;
     const intent = ghlEvidence.intent?.intent;
     const isCrmLookup =
       intent === "contact_lookup" ||
       intent === "opportunity_lookup" ||
       intent === "conversation_lookup";
+
+    const contactId = ghlEvidence.diagnostics?.selectedContactId ?? null;
+    if (
+      answer &&
+      contactId &&
+      !isSoftMissAnswer(answer) &&
+      isProjectFlavoredGhlQuestion(input.question)
+    ) {
+      answer = await appendProjectSlackActivityToGhlAnswer({
+        ghlAnswer: answer,
+        question: input.question,
+        ghlContactId: contactId,
+        requester: {
+          baxterUserId: input.userId ?? null,
+          slackUserId: input.externalUserId ?? null,
+          slackTeamId: input.slackTeamId ?? null,
+        },
+      }).catch(() => answer);
+    }
 
     // Soft miss: not found — let other plausible sources try (unless exclusive GHL ask).
     if (isSoftMissAnswer(answer) && !hasItems) {

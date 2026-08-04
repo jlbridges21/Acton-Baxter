@@ -18,6 +18,10 @@ export type EvidenceSourceHandleInput = {
   role?: string | null;
   channel?: "web" | "slack";
   ghlConfigured: boolean;
+  /** Baxter profile id — used for per-user Slack Search authorization (not routing). */
+  userId?: string | null;
+  externalUserId?: string | null;
+  slackTeamId?: string | null;
 };
 
 export type EvidenceSourceResolveInput = EvidenceSourceHandleInput & {

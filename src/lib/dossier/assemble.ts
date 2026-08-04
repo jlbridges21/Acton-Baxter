@@ -14,7 +14,7 @@ import {
 import { canAccessPemEvidence, pemNeatPath } from "@/lib/baxter-data/pem-neats/evidence";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
 import { listProjectSetupRuns, getProjectSetupSteps } from "@/lib/project-setup/store";
-import type { ProjectSetupRun, ProjectSetupStep } from "@/lib/project-setup/types";
+import type { ProjectSetupRun } from "@/lib/project-setup/types";
 import { listFindings } from "@/lib/monitoring/findings";
 import type { MonitoringFinding } from "@/lib/monitoring/types";
 import type {
@@ -27,10 +27,10 @@ import type {
   DossierProjectSetupSection,
 } from "./types";
 import { GHL_PROJECT_TYPE_CONSIDERING_LABEL, resolveCustomFieldValueByLabel } from "./ghl-fields";
-
-function asHttpLink(value: unknown): string | null {
-  return typeof value === "string" && value.startsWith("http") ? value : null;
-}
+import {
+  loadProjectSetupLinksForRun,
+  mapProjectSetupRunForDossier,
+} from "./project-setup-for-contact";
 
 function dossierPagePath(input: {
   contactId: string | null;
@@ -113,45 +113,6 @@ function mapGhlSection(graph: GhlEntityGraph): DossierGhlSection {
     ambiguous: false,
     clarificationMessage: null,
     error: null,
-  };
-}
-
-async function loadProjectSetupLinks(
-  runId: string,
-): Promise<Pick<DossierProjectSetupRun, "folderLink" | "charterLink" | "slackChannelId">> {
-  try {
-    const steps = await getProjectSetupSteps(runId);
-    const byKey = new Map(steps.map((s: ProjectSetupStep) => [s.stepKey, s]));
-    const folder = byKey.get("copy_template_folder");
-    const charter = byKey.get("copy_charter_spreadsheet");
-    const slack = byKey.get("create_slack_channel");
-    return {
-      folderLink: asHttpLink(folder?.outputJson?.webViewLink),
-      charterLink: asHttpLink(charter?.outputJson?.webViewLink),
-      slackChannelId:
-        typeof slack?.outputJson?.channelId === "string" ? slack.outputJson.channelId : null,
-    };
-  } catch {
-    return { folderLink: null, charterLink: null, slackChannelId: null };
-  }
-}
-
-function mapSetupRun(
-  run: ProjectSetupRun,
-  links: Pick<DossierProjectSetupRun, "folderLink" | "charterLink" | "slackChannelId">,
-): DossierProjectSetupRun {
-  return {
-    id: run.id,
-    status: run.status,
-    projectNumber: run.projectNumber,
-    dryRun: run.dryRun,
-    folderName: run.folderName,
-    charterName: run.charterName,
-    slackChannelName: run.slackChannelName,
-    folderLink: links.folderLink,
-    charterLink: links.charterLink,
-    slackChannelId: links.slackChannelId,
-    href: `/projects/setup/${run.id}`,
   };
 }
 
@@ -294,6 +255,7 @@ export async function assembleCustomerDossier(
   try {
     const allRuns = await listSetupRuns(100);
     const matched = allRuns.filter((run) => {
+      // Exact GHL contact id — same rule as listProjectSetupRunsForGhlContact.
       if (ghlContactId && run.ghlContactId === ghlContactId) return true;
       if (!matchName) return false;
       const synthetic: PemProspectIndexEntry[] = [];
@@ -331,10 +293,24 @@ export async function assembleCustomerDossier(
     const byId = new Map<string, ProjectSetupRun>();
     for (const run of matched) byId.set(run.id, run);
 
+    const getSteps = deps.getSetupSteps ?? getProjectSetupSteps;
     const runs: DossierProjectSetupRun[] = [];
     for (const run of byId.values()) {
-      const links = await loadProjectSetupLinks(run.id);
-      runs.push(mapSetupRun(run, links));
+      const links = await loadProjectSetupLinksForRun(run.id, getSteps);
+      const mapped = mapProjectSetupRunForDossier(run, links);
+      runs.push({
+        id: mapped.id,
+        status: mapped.status,
+        projectNumber: mapped.projectNumber,
+        dryRun: mapped.dryRun,
+        folderName: mapped.folderName,
+        charterName: mapped.charterName,
+        slackChannelName: mapped.slackChannelName,
+        folderLink: mapped.folderLink,
+        charterLink: mapped.charterLink,
+        slackChannelId: mapped.slackChannelId,
+        href: mapped.href,
+      });
     }
 
     projectSetup = {

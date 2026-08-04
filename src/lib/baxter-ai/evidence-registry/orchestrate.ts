@@ -129,6 +129,10 @@ export async function runEvidenceRegistry(input: {
   semantic?: SemanticQuestionClassification | null;
   /** Options when semantic is not precomputed — used for tests / standalone registry calls. */
   semanticOptions?: ClassifyQuestionSemanticallyOptions & { skipSemantic?: boolean };
+  /** Baxter user id for per-user integrations (e.g. Slack Search on GHL project answers). */
+  userId?: string | null;
+  externalUserId?: string | null;
+  slackTeamId?: string | null;
 }): Promise<RegistryRunResult> {
   let metadata: Record<string, unknown> = { ...(input.conversationMetadata ?? {}) };
   const history = input.history ?? [];
@@ -172,6 +176,9 @@ export async function runEvidenceRegistry(input: {
     role: input.role,
     channel: input.channel,
     ghlConfigured: input.ghlConfigured,
+    userId: input.userId ?? null,
+    externalUserId: input.externalUserId ?? null,
+    slackTeamId: input.slackTeamId ?? null,
   };
 
   // Capability / procedural / conversational — bypass entity-lookup sources entirely.
