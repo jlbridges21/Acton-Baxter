@@ -40,8 +40,11 @@ export function KnowledgeEntryForm({
 
   const showApprovedEditNotice = mode === "edit" && initial?.status === "approved";
   const isGoogleManaged =
-    initial?.source_type === "Google Drive" ||
-    Boolean((initial?.metadata as { googleManaged?: boolean } | undefined)?.googleManaged);
+    Boolean((initial?.metadata as { googleManaged?: boolean } | undefined)?.googleManaged) &&
+    !(initial?.metadata as { oneTimeDriveIngest?: boolean } | undefined)?.oneTimeDriveIngest;
+  const isOneTimeDriveIngest = Boolean(
+    (initial?.metadata as { oneTimeDriveIngest?: boolean } | undefined)?.oneTimeDriveIngest,
+  );
 
   async function submit(nextStatus?: "draft" | "approved") {
     setSubmitting(true);
@@ -106,6 +109,12 @@ export function KnowledgeEntryForm({
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           Content is controlled by Google Drive. Prefer editing the original Google file, then sync.
           Tags and category can still be adjusted here.
+        </p>
+      ) : null}
+      {isOneTimeDriveIngest ? (
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          This draft was imported as a one-time Google Drive snapshot. It is not registered in the
+          recurring Drive sync — approving it publishes this snapshot only.
         </p>
       ) : null}
 

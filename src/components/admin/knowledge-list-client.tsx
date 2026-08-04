@@ -64,9 +64,13 @@ function isFailedImport(entry: KnowledgeEntry) {
 }
 
 function isGoogleManaged(entry: KnowledgeEntry) {
+  const meta = entry.metadata as
+    { googleManaged?: boolean; oneTimeDriveIngest?: boolean } | undefined;
+  // One-time user Drive imports are drafts, not recurring sync-managed entries.
+  if (meta?.oneTimeDriveIngest) return false;
   return (
-    entry.source_type === "Google Drive" ||
-    Boolean((entry.metadata as { googleManaged?: boolean } | undefined)?.googleManaged)
+    Boolean(meta?.googleManaged) ||
+    (entry.source_type === "Google Drive" && meta?.googleManaged !== false)
   );
 }
 

@@ -415,6 +415,22 @@ export async function patchJobMetadata(
     .eq("id", jobId);
 }
 
+/** Read a job by id (any status). Used for async ingest status polling. */
+export async function getJobById(jobId: string): Promise<ReportJob | null> {
+  if (usesMemoryJobStore()) {
+    return getMemoryState().jobs.get(jobId) ?? null;
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("report_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return mapRow(data as JobRow);
+}
+
 export function resetMemoryJobsForTests() {
   globalMemory.__actonJobsMemory = { jobs: new Map() };
 }

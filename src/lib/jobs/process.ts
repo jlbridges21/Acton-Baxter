@@ -157,6 +157,11 @@ async function processProjectSetup(job: ReportJob): Promise<void> {
   }
 }
 
+async function processKnowledgeDriveIngest(job: ReportJob): Promise<void> {
+  const { runKnowledgeDriveIngestJob } = await import("@/lib/knowledge/user-drive-ingest");
+  await runKnowledgeDriveIngestJob(job.id);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -177,6 +182,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processPemNeatGenerate(job);
     } else if (job.jobType === "project_setup") {
       await processProjectSetup(job);
+    } else if (job.jobType === "knowledge_drive_ingest") {
+      await processKnowledgeDriveIngest(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }
