@@ -115,7 +115,7 @@ describe("incident Q2 — information about named project attempts real sources"
             tried.push("ghl");
             return {
               items: [],
-              deterministicAnswer: "I couldn’t find katie liniger project in GHL.",
+              deterministicAnswer: "I couldn’t find katie liniger in GHL.",
               confidence: 0.1,
               softMiss: true,
             };
@@ -139,6 +139,7 @@ describe("incident Q2 — information about named project attempts real sources"
     expect(tried).toContain("ghl");
     expect(tried).toContain("pem_neat");
     expect(registry.diagnostics.entity.skipEntityLookup).toBe(false);
+    expect(registry.diagnostics.entity.extractedName?.toLowerCase()).toBe("katie liniger");
     expect(registry.earlyAnswer?.answer ?? "").not.toMatch(
       /New Project Setup|walk the team through/i,
     );

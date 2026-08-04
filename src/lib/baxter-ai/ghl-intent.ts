@@ -9,6 +9,8 @@ import {
   detectRequestedGhlFields,
   primaryRequestedField,
 } from "@/lib/baxter-data/ghl/field-aliases";
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
+import { isPlausibleCrmEntityCandidate } from "@/lib/baxter-ai/evidence-registry/entity-plausibility";
 
 export type GhlIntentType =
   | "contact_lookup" // "Who is John Smith?" / "Find contact for jane@example.com"
@@ -119,6 +121,11 @@ const LOOKUP_PATTERNS = [
   /what\s+city\s+is\s+(.+?)\s+in\b/i,
   /what\s+(?:email|phone(?:\s+number)?|address)\s+(?:do\s+we\s+have\s+)?(?:for|of)\s+(.+)/i,
   /contact\s+info(?:rmation)?\s+for\s+(.+)/i,
+  /\b(?:give|get|show|tell)\s+(?:me\s+)?(?:more\s+)?(?:information|info|details)\s+(?:about|on|for)\s+(?:the\s+)?(.+)/i,
+  /\b(?:information|info|details)\s+(?:about|on|for)\s+(?:the\s+)?(.+)/i,
+  // Leading CRM descriptors: require ≥2 name tokens (avoid "customer story" / "customer center")
+  /\b(?:the\s+)?(?:customer|contact|client|lead)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){1,3})\b/i,
+  /\b(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){1,3})\s+(?:account|record|file)\b/i,
   // Explicit GHL / CRM search phrasing
   new RegExp(
     String.raw`(?:search|look\s*up|find|get|check)\s+(?:in\s+)?(?:ghl|gohighlevel|crm|go\s*high\s*level)\s+(?:for\s+)?(.+?)(?:'s)?\s+(?:${CONTACT_FIELD})`,
@@ -143,7 +150,9 @@ const LOOKUP_PATTERNS = [
 const OPPORTUNITY_PATTERNS = [
   /(?:opportunity|deal|project)\s+(?:for|with)\s+(.+)/i,
   /(?:status|stage)\s+of\s+(?:the\s+)?(.+?)\s+(?:opportunity|deal|project)/i,
-  /(.+?)(?:'s|\s+)?(?:opportunity|deal|project)/i,
+  // Prefer a short proper-name capture immediately before opportunity|deal|project
+  // (avoids swallowing "give me information about the …").
+  /\b(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\s+(?:opportunity|deal|project)\b/i,
   /opportunities?\s+(?:in|at)\s+(.+?)\s+stage/i,
 ];
 
@@ -248,18 +257,16 @@ function isExplicitGhlMention(question: string): boolean {
 function cleanExtractedName(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   let name = stripContactNamePossessive(raw);
-  // Drop CRM / opportunity noise from capture groups ("the Denis Kornilov opportunity")
+  // Drop CRM / system tokens from capture groups before shared noise normalization
   name = name
-    .replace(/^(the|a|an)\s+/i, "")
     .replace(/\b(in\s+)?(ghl|gohighlevel|crm|go\s*high\s*level)\b/gi, "")
-    .replace(/\b(opportunity|deal|project|pipeline|stage)\b/gi, "")
     .replace(
       /\b(full\s+)?(street\s+|home\s+|mailing\s+)?address|phone(\s+number)?|e-?mail(\s+address)?|city|zip|postal|tags?|owner\b/gi,
       "",
     )
-    .replace(/[?.,!:;]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
+  name = normalizeEntitySearchName(name) ?? "";
   if (!name || name.length < 2) return undefined;
   // Reject pronouns / stopwords — follow-ups inherit active entity in the query plan
   if (/^(his|her|their|him|them|he|she|they|it|this|that)\b/i.test(name)) {
@@ -466,12 +473,17 @@ export function detectGhlIntent(question: string): GhlIntentDetection {
             explicitGhl,
           };
         }
+        const cleaned = cleanExtractedName(match[1]);
+        // Skip how-to fragments glued onto "… project" ("to create a new project").
+        if (!cleaned || !isPlausibleCrmEntityCandidate(cleaned)) {
+          continue;
+        }
         return {
           intent: "opportunity_lookup",
           confidence: 0.85,
           entities: {
-            opportunityName: cleanExtractedName(match[1]),
-            contactName: cleanExtractedName(match[1]),
+            opportunityName: cleaned,
+            contactName: cleaned,
             requestedField: "stage",
           },
           isWriteIntent: false,

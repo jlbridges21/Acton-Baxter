@@ -11,8 +11,10 @@ import {
   type GhlRequestedField,
 } from "./field-aliases";
 import { detectGhlIntent, type GhlIntentType } from "@/lib/baxter-ai/ghl-intent";
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
 import { isGhlConversationLookupQuestion } from "./conversation-intent";
 import type { GhlConversationContext } from "./conversation-state";
+import { isPlausibleCrmEntityCandidate } from "@/lib/baxter-ai/evidence-registry/entity-plausibility";
 
 function normalizeQuestion(question: string): string {
   return question
@@ -41,11 +43,7 @@ export type GhlQueryPlan = {
 };
 
 function stripOpportunityNoise(name: string): string {
-  return name
-    .replace(/^(the|a|an)\s+/i, "")
-    .replace(/\b(opportunity|deal|project|pipeline|stage)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeEntitySearchName(name) ?? name.trim();
 }
 
 /**
@@ -54,6 +52,8 @@ function stripOpportunityNoise(name: string): string {
 export function buildGhlQueryPlan(input: {
   question: string;
   activeGhl?: GhlConversationContext | null;
+  /** Cleaned name from semantic / registry extraction — used when regex plan name is weak. */
+  entityNameHint?: string | null;
 }): GhlQueryPlan {
   const question = normalizeQuestion(input.question);
   const intent = detectGhlIntent(question);
@@ -71,9 +71,25 @@ export function buildGhlQueryPlan(input: {
 
   if (entityName) {
     entityName = stripOpportunityNoise(entityName);
-    if (isPronounOrStopwordName(entityName)) {
+    if (isPronounOrStopwordName(entityName) || !isPlausibleCrmEntityCandidate(entityName)) {
       entityName = null;
       explicitNewEntity = false;
+    }
+  }
+
+  const hint = normalizeEntitySearchName(input.entityNameHint);
+  if (hint && isPlausibleCrmEntityCandidate(hint)) {
+    if (!entityName || !isPlausibleCrmEntityCandidate(entityName)) {
+      entityName = hint;
+      explicitNewEntity = true;
+      resolutionMethod = "entity_name_hint";
+    } else if (
+      hint.toLowerCase() !== entityName.toLowerCase() &&
+      hint.length <= entityName.length
+    ) {
+      // Prefer the shorter cleaned hint when both are plausible (drops residual noise).
+      entityName = hint;
+      resolutionMethod = "entity_name_hint";
     }
   }
 

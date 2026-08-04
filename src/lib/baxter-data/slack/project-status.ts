@@ -3,6 +3,8 @@
  * Distinct from PEM prospect intelligence and generic Slack topic search.
  */
 
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
+
 const PROJECT_NUMBER_RE = /\b([A-Za-z]\d{2}-\d{4,6})\b/gi;
 
 const STRUCTURAL_STOP = new Set([
@@ -92,23 +94,25 @@ export function extractProjectNumbers(question: string): string[] {
 
 /**
  * Extract homeowner / job slug candidates from phrasing like:
- * "the McAdams project", "update on McAdams", "McAdams job".
+ * "the McAdams project", "update on McAdams", "McAdams job", "katie liniger project".
  */
 export function extractProjectNameQueries(question: string): string[] {
   const out: string[] = [];
   const q = question.trim();
 
   for (const m of q.matchAll(
-    /\b(?:the\s+)?([A-Za-z][A-Za-z'-]{1,40})\s+(?:project|job|channel)\b/gi,
+    /\b(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\s+(?:project|job|channel|opportunity|deal|account)\b/gi,
   )) {
-    const name = (m[1] ?? "").trim();
+    const raw = (m[1] ?? "").trim();
+    const name = normalizeEntitySearchName(raw) || raw;
     if (name && !PROJECT_NAME_STOP.has(name.toLowerCase())) out.push(name);
   }
 
   for (const m of q.matchAll(
-    /\b(?:on|about|for|with|regarding)\s+(?:the\s+)?([A-Za-z][A-Za-z'-]{1,40})\b/gi,
+    /\b(?:on|about|for|with|regarding)\s+(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\b/gi,
   )) {
-    const name = (m[1] ?? "").trim();
+    const raw = (m[1] ?? "").trim();
+    const name = normalizeEntitySearchName(raw) || raw;
     if (
       name &&
       !PROJECT_NAME_STOP.has(name.toLowerCase()) &&

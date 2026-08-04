@@ -360,3 +360,74 @@ export function buildDeterministicGhlOpportunityAnswer(input: {
   if (pipeline) return `${name} is in the ${pipeline}.`;
   return null;
 }
+
+/** Broad "information about X" chat/Slack summary — contact + opportunity + Customer Center link. */
+export function buildGhlContactInformationAnswer(input: {
+  contact: Pick<
+    GhlContact,
+    | "id"
+    | "firstName"
+    | "lastName"
+    | "name"
+    | "email"
+    | "phone"
+    | "address1"
+    | "city"
+    | "state"
+    | "postalCode"
+    | "country"
+  >;
+  pipelineName?: string | null;
+  stageName?: string | null;
+  opportunityName?: string | null;
+  opportunityCount?: number;
+}): string {
+  const name =
+    input.contact.name?.trim() ||
+    [input.contact.firstName, input.contact.lastName].filter(Boolean).join(" ").trim() ||
+    "This contact";
+  const address = contactAddressFromGhl(input.contact);
+  const lines: string[] = [`Here's what I found in GoHighLevel for ${name}:`];
+
+  if (input.contact.email?.trim()) lines.push(`• Email: ${input.contact.email.trim()}`);
+  if (input.contact.phone?.trim()) lines.push(`• Phone: ${input.contact.phone.trim()}`);
+  if (address.formatted) lines.push(`• Address: ${address.formatted}`);
+
+  const stage = input.stageName?.trim() || null;
+  const pipeline = input.pipelineName?.trim() || null;
+  const oppName = input.opportunityName?.trim() || null;
+  if (stage || pipeline || oppName) {
+    const bits = [oppName, pipeline && stage ? `${pipeline} — ${stage}` : stage || pipeline]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`• Opportunity: ${bits}`);
+    if ((input.opportunityCount ?? 0) > 1) {
+      lines.push(`• Also ${input.opportunityCount! - 1} more opportunity(ies) on this contact.`);
+    }
+  } else {
+    lines.push("• Opportunities: none on file");
+  }
+
+  lines.push(
+    `• Customer Center: /customers/lookup?contactId=${encodeURIComponent(input.contact.id)}`,
+  );
+  return lines.join("\n");
+}
+
+/** True for open-ended “info about …” asks (not a single field like email/phone/stage). */
+export function isBroadGhlEntityInfoQuestion(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (
+    /\b(e-?mail|phone|address|city|zip|postal|stage|pipeline|tag|owner|source)\b/i.test(q) &&
+    !/\b(information|info|details)\b/i.test(q)
+  ) {
+    return false;
+  }
+  return (
+    /\b(give|get|show|tell)\s+(me\s+)?(more\s+)?(information|info|details)\b/i.test(q) ||
+    /\b(information|info|details)\s+(about|on|for)\b/i.test(q) ||
+    /\b(tell me about|who is|what do (?:we|you) know about)\b/i.test(q) ||
+    /\b(full picture|everything (?:about|on)|look(?:\s*up)?)\b/i.test(q)
+  );
+}

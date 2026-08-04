@@ -493,6 +493,8 @@ export async function retrieveGhlLiveEvidence(
   question: string,
   options: {
     activeGhl?: import("@/lib/baxter-data/ghl/conversation-state").GhlConversationContext | null;
+    /** Registry / semantic extracted name — preferred when regex extraction is noisy. */
+    entityNameHint?: string | null;
   } = {},
 ): Promise<{
   items: BaxterContextItem[];
@@ -547,6 +549,7 @@ export async function retrieveGhlLiveEvidence(
   const plan = buildGhlQueryPlan({
     question,
     activeGhl: options.activeGhl ?? null,
+    entityNameHint: options.entityNameHint ?? null,
   });
   const intent = detectGhlIntent(question);
   const effectiveIntent: GhlIntentDetection = {
@@ -887,7 +890,9 @@ export async function retrieveGhlLiveEvidence(
     const {
       buildDeterministicGhlContactFieldAnswer,
       buildDeterministicGhlOpportunityAnswer,
+      buildGhlContactInformationAnswer,
       contactAddressFromGhl,
+      isBroadGhlEntityInfoQuestion,
       isContactLevelGhlQuestion,
     } = await import("@/lib/connectors/ghl/address");
     const { STAGE_QUESTION_RANK_POLICY } = await import("@/lib/connectors/ghl/opportunity-ranking");
@@ -1012,7 +1017,16 @@ export async function retrieveGhlLiveEvidence(
 
     let deterministicAnswer: string | null = null;
     if (!ambiguityWarning) {
-      if (wantsOpp) {
+      const broadInfo = isBroadGhlEntityInfoQuestion(question);
+      if (broadInfo) {
+        deterministicAnswer = buildGhlContactInformationAnswer({
+          contact: graph.contact,
+          pipelineName: selectedOpp?.pipelineName ?? null,
+          stageName: selectedOpp?.stageName ?? null,
+          opportunityName: selectedOpp?.opportunity.name ?? null,
+          opportunityCount: graph.opportunities.length,
+        });
+      } else if (wantsOpp) {
         if (!selectedOpp) {
           deterministicAnswer = `I found ${contactName} in GHL, but I didn’t find an opportunity tied to that contact.`;
         } else {
@@ -1029,6 +1043,16 @@ export async function retrieveGhlLiveEvidence(
           graph.contact,
           requestedFields,
         );
+        // Open-ended contact find with no specific field — still give a useful summary.
+        if (!deterministicAnswer) {
+          deterministicAnswer = buildGhlContactInformationAnswer({
+            contact: graph.contact,
+            pipelineName: selectedOpp?.pipelineName ?? null,
+            stageName: selectedOpp?.stageName ?? null,
+            opportunityName: selectedOpp?.opportunity.name ?? null,
+            opportunityCount: graph.opportunities.length,
+          });
+        }
       }
     }
 

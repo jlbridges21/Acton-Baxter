@@ -48,14 +48,16 @@ questionType values:
 - general_conversational: greeting, thanks, chitchat, or general non-Acton writing help ONLY
 - ambiguous: cannot tell with confidence
 
-entityName: only for entity_lookup — the real person/deal/project/channel identifier as understood (not a sentence fragment). Otherwise null.
+entityName: only for entity_lookup — the clean core proper-noun identifier only (person name, deal title, #channel slug, job number). Otherwise null.
+  Do NOT include generic descriptor/category words that commonly trail or lead a name in natural phrasing: project, opportunity, deal, customer, contact, account, record, file, pipeline, stage.
+  Examples: "give me information about the katie liniger project" → entityName "Katie Liniger" (not "katie liniger project"); "Robert Vertin's opportunity" → "Robert Vertin"; "customer Denis Kornilov" → "Denis Kornilov"; "#l01-24027-mcadams" → "l01-24027-mcadams" or the channel as written.
 entityTypeGuess: only for entity_lookup — ghl_contact | ghl_opportunity | pem_prospect | rulebook_step_or_role | unknown. Otherwise null.
 confidence: 0 to 1.
 
 Critical rules:
 - A #channel mention or "latest update in #…" is NEVER general_conversational or capability_howto — classify as entity_lookup (entityTypeGuess unknown is fine) or ambiguous.
 - "how do I find/get information about [specific named person/project]" is entity_lookup, not capability_howto.
-- Words like project/opportunity/deal/site often appear in how-tos AND in real entity names. Prefer entity_lookup whenever a specific proper name or #channel is present.`;
+- Words like project/opportunity/deal/site often appear in how-tos AND in real entity names. Prefer entity_lookup whenever a specific proper name or #channel is present — but strip those generic words from entityName itself.`;
 
 /**
  * Non-entity types that should bypass GHL/PEM/Rulebook entity lookup.

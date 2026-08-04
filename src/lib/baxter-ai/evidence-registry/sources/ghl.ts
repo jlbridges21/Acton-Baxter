@@ -116,9 +116,11 @@ export const ghlEvidenceSource: EvidenceSource = {
 
   async resolve(input): Promise<EvidenceSourceResult | null> {
     const activeGhl = readGhlConversationState(input.conversationMetadata);
-    const ghlEvidence = await retrieveGhlLiveEvidence(input.question, { activeGhl }).catch(
-      () => null,
-    );
+    const entityNameHint = input.entity.extractedName;
+    const ghlEvidence = await retrieveGhlLiveEvidence(input.question, {
+      activeGhl,
+      entityNameHint,
+    }).catch(() => null);
     if (!ghlEvidence) return null;
 
     if (ghlEvidence.ambiguityWarning) {

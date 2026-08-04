@@ -44,5 +44,36 @@ export function isPlausibleCrmEntityCandidate(name: string | null | undefined): 
     return false;
   }
 
+  // Fragments glued onto "… project" from how-tos ("to create a new", "set up a").
+  if (
+    /^(to|for|with|about|how|create|start|setup|set)\b/i.test(trimmed) ||
+    /\b(create|start|setup|set up)\b/i.test(trimmed)
+  ) {
+    return false;
+  }
+
+  // Function words that never appear in a person/deal label alone.
+  const FUNCTION = new Set([
+    "a",
+    "an",
+    "the",
+    "to",
+    "for",
+    "with",
+    "about",
+    "how",
+    "they",
+    "can",
+    "use",
+    "you",
+    "me",
+    "new",
+    "create",
+    "start",
+  ]);
+  if (words.length >= 2 && words.filter((w) => FUNCTION.has(w.toLowerCase())).length >= 2) {
+    return false;
+  }
+
   return true;
 }

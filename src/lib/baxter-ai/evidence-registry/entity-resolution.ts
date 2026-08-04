@@ -14,6 +14,7 @@ import {
 import type { BaxterHistoryMessage } from "@/lib/baxter-ai/types";
 import type { PreferredEntitySource } from "./conversation-arbitration";
 import { isPlausibleCrmEntityCandidate } from "./entity-plausibility";
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
 import {
   isNonEntitySemanticType,
   isSemanticRoutingConfident,
@@ -238,11 +239,13 @@ export function resolveQuestionEntity(input: {
     semantic!.questionType === "entity_lookup" &&
     semantic!.entityName
   ) {
+    const cleanedSemanticName =
+      normalizeEntitySearchName(semantic!.entityName) || semantic!.entityName;
     const type = mapSemanticEntityType(semantic!.entityTypeGuess);
     if (type !== "none") {
       candidates.push({
         type,
-        name: semantic!.entityName,
+        name: cleanedSemanticName,
         confidence: Math.max(semantic!.confidence, 0.92),
         via: "semantic",
       });
@@ -251,13 +254,13 @@ export function resolveQuestionEntity(input: {
       // Name known, type unknown — prefer attempting both GHL opportunity + PEM.
       candidates.push({
         type: "ghl_opportunity",
-        name: semantic!.entityName,
+        name: cleanedSemanticName,
         confidence: Math.min(semantic!.confidence, 0.75),
         via: "semantic",
       });
       candidates.push({
         type: "pem_prospect",
-        name: semantic!.entityName,
+        name: cleanedSemanticName,
         confidence: Math.min(semantic!.confidence, 0.72),
         via: "semantic",
       });
@@ -273,17 +276,31 @@ export function resolveQuestionEntity(input: {
   });
 
   if (usedSemanticEntity) {
-    const semanticName = semantic!.entityName!.toLowerCase();
+    const semanticName = (
+      normalizeEntitySearchName(semantic!.entityName) ||
+      semantic!.entityName ||
+      ""
+    ).toLowerCase();
     for (const c of regexCandidates) {
       // Keep collision rivals (e.g. PEM for same person) and alternate extractors.
       if (c.via === "semantic") continue;
-      if (c.name && c.name.toLowerCase() === semanticName && c.type === candidates[0]?.type) {
+      const cleanedRegexName = c.name ? normalizeEntitySearchName(c.name) || c.name : null;
+      if (
+        cleanedRegexName &&
+        cleanedRegexName.toLowerCase() === semanticName &&
+        c.type === candidates[0]?.type
+      ) {
         continue; // duplicate of semantic primary
       }
-      candidates.push(c);
+      candidates.push(
+        cleanedRegexName && cleanedRegexName !== c.name ? { ...c, name: cleanedRegexName } : c,
+      );
     }
   } else {
-    candidates.push(...regexCandidates);
+    for (const c of regexCandidates) {
+      const cleaned = c.name ? normalizeEntitySearchName(c.name) || c.name : null;
+      candidates.push(cleaned && cleaned !== c.name ? { ...c, name: cleaned } : c);
+    }
   }
 
   candidates.sort((a, b) => b.confidence - a.confidence);
@@ -302,12 +319,17 @@ export function resolveQuestionEntity(input: {
     primary = null;
   }
 
-  const extractedName =
-    (usedSemanticEntity ? semantic!.entityName : null) ||
+  const rawExtractedName =
+    (usedSemanticEntity
+      ? normalizeEntitySearchName(semantic!.entityName) || semantic!.entityName
+      : null) ||
     primary?.name ||
     candidates.find((c) => c.name)?.name ||
     extractPriorEntitiesFromHistory(history)[0] ||
     null;
+  const extractedName = rawExtractedName
+    ? normalizeEntitySearchName(rawExtractedName) || rawExtractedName
+    : null;
 
   return {
     primary,

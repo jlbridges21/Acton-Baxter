@@ -13,6 +13,7 @@ import {
   isStructuredMetricQuestion,
   stripReservedConceptPhrases,
 } from "@/lib/baxter/concept-vocabulary";
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
 import { detectRequestedPemFields, type PemFieldKey } from "./fields";
 
 export type PemQuestionIntent =
@@ -119,6 +120,23 @@ function emptyEntity(): PemEntityParse {
   return { nameQuery: null, baseName: null, discriminator: null, nameSignal: "none" };
 }
 
+function withNormalizedNames(parse: PemEntityParse): PemEntityParse {
+  const base = normalizeEntitySearchName(parse.baseName) || parse.baseName;
+  let nameQuery = parse.nameQuery;
+  if (nameQuery && parse.discriminator && base) {
+    // Rebuild "Base Test N" after stripping noise from the person portion.
+    const disc = parse.discriminator;
+    if (new RegExp(`\\b${disc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i").test(nameQuery)) {
+      nameQuery = `${base} ${disc}`;
+    } else {
+      nameQuery = normalizeEntitySearchName(nameQuery) || nameQuery;
+    }
+  } else {
+    nameQuery = normalizeEntitySearchName(nameQuery) || nameQuery;
+  }
+  return { ...parse, baseName: base, nameQuery };
+}
+
 /**
  * Parse prospect + optional PEM discriminator from a question (case-insensitive).
  * Does not invent names from operational metric grammar (e.g. "many meetings").
@@ -152,12 +170,12 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
       const candidate = words.slice(-n).join(" ");
       if (looksLikePersonName(candidate)) {
         const base = titleCaseWords(candidate);
-        return {
+        return withNormalizedNames({
           nameQuery: `${base} ${disc}`,
           baseName: base,
           discriminator: disc,
           nameSignal: "test_disc",
-        };
+        });
       }
     }
     if (
@@ -179,7 +197,12 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
     const candidate = parts.join(" ");
     if (looksLikePersonName(candidate)) {
       const base = titleCaseWords(candidate);
-      return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "possessive" };
+      return withNormalizedNames({
+        nameQuery: base,
+        baseName: base,
+        discriminator: null,
+        nameSignal: "possessive",
+      });
     }
   }
 
@@ -189,9 +212,16 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
   );
   if (about?.[1]) {
     const cleaned = stripQuestionLead(stripReservedConceptPhrases(about[1]));
-    if (looksLikePersonName(cleaned)) {
-      const base = titleCaseWords(cleaned);
-      return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "about" };
+    // Allow trailing descriptor noise ("katie liniger project") then normalize.
+    const withoutNoise = normalizeEntitySearchName(cleaned) || cleaned;
+    if (looksLikePersonName(withoutNoise) || looksLikePersonName(cleaned)) {
+      const base = titleCaseWords(looksLikePersonName(withoutNoise) ? withoutNoise : cleaned);
+      return withNormalizedNames({
+        nameQuery: base,
+        baseName: base,
+        discriminator: null,
+        nameSignal: "about",
+      });
     }
   }
 
@@ -210,7 +240,12 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
       const candidate = `${full[1]} ${full[2]}`;
       if (looksLikePersonName(candidate)) {
         const base = titleCaseWords(candidate);
-        return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "bigram" };
+        return withNormalizedNames({
+          nameQuery: base,
+          baseName: base,
+          discriminator: null,
+          nameSignal: "bigram",
+        });
       }
     }
   }
@@ -219,7 +254,12 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
   const surname = q.match(/\bthe\s+([A-Za-z][A-Za-z'-]+)\s+(?:pem|neat|meeting)\b/i);
   if (surname?.[1] && looksLikePersonName(surname[1])) {
     const base = titleCaseWords(surname[1]);
-    return { nameQuery: base, baseName: base, discriminator: null, nameSignal: "surname" };
+    return withNormalizedNames({
+      nameQuery: base,
+      baseName: base,
+      discriminator: null,
+      nameSignal: "surname",
+    });
   }
 
   // Bare discriminator

@@ -32,16 +32,11 @@ function ghlHandleInput(question: string): EvidenceSourceHandleInput {
 }
 
 describe("incident reproduction — opportunity pattern false positive", () => {
-  it("confirms OPPORTUNITY_PATTERNS #3 captures the instructional fragment before 'project'", () => {
-    const pattern = /(.+?)(?:'s|\s+)?(?:opportunity|deal|project)/i;
-    const match = INCIDENT.match(pattern);
-    expect(match?.[1]?.toLowerCase()).toContain("tell the team");
-    expect(match?.[1]?.toLowerCase()).toContain("use you to create a new");
-
+  it("does not treat capability how-to '… new project' as a CRM entity lookup", () => {
     const intent = detectGhlIntent(INCIDENT);
-    expect(intent.intent).toBe("opportunity_lookup");
-    expect(intent.entities.opportunityName?.toLowerCase()).toContain("tell the team");
-    expect(isPlausibleCrmEntityCandidate(intent.entities.opportunityName)).toBe(false);
+    // Tightened name capture + plausibility gate: never claim opportunity_lookup here.
+    expect(intent.intent).not.toBe("opportunity_lookup");
+    expect(intent.entities.opportunityName ?? intent.entities.contactName ?? null).toBeNull();
   });
 
   it("GHL canHandle no longer claims the incident question", () => {
