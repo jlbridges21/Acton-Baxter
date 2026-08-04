@@ -19,14 +19,19 @@ import {
 import { normalizeSlackReactionName, ratingFromSlackReaction } from "@/lib/slack/feedback-emoji";
 import { handleBaxterFeedbackReaction } from "@/lib/slack/feedback-reactions";
 import {
+  BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT,
   BAXTER_FEEDBACK_COMMENT_CALLBACK,
+  BAXTER_FEEDBACK_RECEIVED_TEXT,
   BAXTER_FEEDBACK_TELL_MORE_ACTION,
+  decodeModalMeta,
+  handleBaxterFeedbackBlockActions,
   handleBaxterFeedbackViewSubmission,
 } from "@/lib/slack/feedback-interactions";
 import { ValidationError } from "@/lib/errors";
 
 const postEphemeralSlackMessage = vi.fn();
 const openSlackModal = vi.fn();
+const postSlackResponseUrl = vi.fn();
 
 vi.mock("@/lib/slack/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/slack/client")>();
@@ -44,6 +49,14 @@ vi.mock("@/lib/slack/provisioning", () => ({
   lookupSlackUserByEmail: vi.fn(),
   inviteUsersToSlackChannel: vi.fn(),
 }));
+
+vi.mock("@/lib/slack/response-url", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/slack/response-url")>();
+  return {
+    ...actual,
+    postSlackResponseUrl: (...args: unknown[]) => postSlackResponseUrl(...args),
+  };
+});
 
 async function seedSlackAnswer(input?: { channelId?: string; messageTs?: string }) {
   const conversation = await getOrCreateConversation({
@@ -86,6 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   postEphemeralSlackMessage.mockResolvedValue({ ok: true, ts: "1.2" });
   openSlackModal.mockResolvedValue(undefined);
+  postSlackResponseUrl.mockResolvedValue(undefined);
 });
 
 describe("emoji normalization", () => {
@@ -215,6 +229,7 @@ describe("slack feedback upsert", () => {
           messageId: assistant.id,
           conversationId: before.rows[0]!.conversationId,
           slackUserId: "U_REACTOR",
+          responseUrl: "https://hooks.slack.com/actions/T1/replace-me",
         }),
         state: {
           values: {
@@ -235,6 +250,199 @@ describe("slack feedback upsert", () => {
     expect(after.rows[0]?.id).toBe(feedbackId);
     expect(after.rows[0]?.comment).toContain("Missed the checklist link");
     expect(after.rows[0]?.comment).toContain("A direct link to the doc");
+  });
+
+  it("threads response_url from button click into modal private_metadata", async () => {
+    const { assistant, conversation } = await seedSlackAnswer();
+    const created = await upsertSlackMessageFeedback({
+      messageId: assistant.id,
+      conversationId: conversation.id,
+      slackUserId: "U_REACTOR",
+      rating: "down",
+      comment: null,
+    });
+
+    const responseUrl = "https://hooks.slack.com/actions/T1/ephemeral-abc";
+    await handleBaxterFeedbackBlockActions({
+      type: "block_actions",
+      user: { id: "U_REACTOR" },
+      trigger_id: "trig.123",
+      response_url: responseUrl,
+      actions: [
+        {
+          action_id: BAXTER_FEEDBACK_TELL_MORE_ACTION,
+          value: JSON.stringify({
+            feedbackId: created.id,
+            messageId: assistant.id,
+            conversationId: conversation.id,
+          }),
+        },
+      ],
+    });
+
+    expect(openSlackModal).toHaveBeenCalledTimes(1);
+    const view = openSlackModal.mock.calls[0]?.[0]?.view as {
+      private_metadata?: string;
+    };
+    const meta = decodeModalMeta(view?.private_metadata);
+    expect(meta).toMatchObject({
+      feedbackId: created.id,
+      messageId: assistant.id,
+      conversationId: conversation.id,
+      slackUserId: "U_REACTOR",
+      responseUrl,
+    });
+  });
+
+  it("replaces the ephemeral with a plain confirmation on successful submit", async () => {
+    const { assistant, conversation } = await seedSlackAnswer({
+      messageTs: "1710000000.000250",
+    });
+    const created = await upsertSlackMessageFeedback({
+      messageId: assistant.id,
+      conversationId: conversation.id,
+      slackUserId: "U_REACTOR",
+      rating: "down",
+      comment: null,
+    });
+    const responseUrl = "https://hooks.slack.com/actions/T1/ephemeral-xyz";
+
+    await handleBaxterFeedbackViewSubmission({
+      type: "view_submission",
+      user: { id: "U_REACTOR" },
+      view: {
+        callback_id: BAXTER_FEEDBACK_COMMENT_CALLBACK,
+        private_metadata: JSON.stringify({
+          feedbackId: created.id,
+          messageId: assistant.id,
+          conversationId: conversation.id,
+          slackUserId: "U_REACTOR",
+          responseUrl,
+        }),
+        state: {
+          values: {
+            what_went_wrong: {
+              what_went_wrong_input: { value: "Wrong source" },
+            },
+            what_expected: {
+              what_expected_input: { value: "" },
+            },
+          },
+        },
+      },
+    });
+
+    expect(postSlackResponseUrl).toHaveBeenCalledTimes(1);
+    expect(postSlackResponseUrl).toHaveBeenCalledWith(
+      responseUrl,
+      expect.objectContaining({
+        replace_original: true,
+        text: BAXTER_FEEDBACK_RECEIVED_TEXT,
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "section",
+            text: expect.objectContaining({ text: BAXTER_FEEDBACK_RECEIVED_TEXT }),
+          }),
+        ]),
+      }),
+    );
+    const replaceBody = postSlackResponseUrl.mock.calls[0]?.[1] as {
+      blocks?: Array<{ elements?: unknown[] }>;
+    };
+    const hasActions = (replaceBody.blocks ?? []).some(
+      (b) => Array.isArray(b.elements) && b.elements.length > 0,
+    );
+    expect(hasActions).toBe(false);
+  });
+
+  it("does not replace the ephemeral when the modal is dismissed (no view_submission)", async () => {
+    // Slack does not call view_submission on Cancel/dismiss — only on Submit.
+    // Confirming we never POST replace_original unless submission runs.
+    expect(postSlackResponseUrl).not.toHaveBeenCalled();
+    const { assistant, conversation } = await seedSlackAnswer({
+      messageTs: "1710000000.000260",
+    });
+    const created = await upsertSlackMessageFeedback({
+      messageId: assistant.id,
+      conversationId: conversation.id,
+      slackUserId: "U_REACTOR",
+      rating: "down",
+      comment: null,
+    });
+
+    // Open modal only (user then cancels) — no view_submission.
+    await handleBaxterFeedbackBlockActions({
+      type: "block_actions",
+      user: { id: "U_REACTOR" },
+      trigger_id: "trig.cancel",
+      response_url: "https://hooks.slack.com/actions/T1/leave-alone",
+      actions: [
+        {
+          action_id: BAXTER_FEEDBACK_TELL_MORE_ACTION,
+          value: JSON.stringify({
+            feedbackId: created.id,
+            messageId: assistant.id,
+            conversationId: conversation.id,
+          }),
+        },
+      ],
+    });
+
+    expect(openSlackModal).toHaveBeenCalled();
+    expect(postSlackResponseUrl).not.toHaveBeenCalled();
+  });
+
+  it("shows already-given feedback instead of Tell us more on repeat 👎 after comment", async () => {
+    const { channelId, messageTs, assistant, conversation } = await seedSlackAnswer({
+      messageTs: "1710000000.000270",
+    });
+    await upsertSlackMessageFeedback({
+      messageId: assistant.id,
+      conversationId: conversation.id,
+      slackUserId: "U_REACTOR",
+      rating: "down",
+      comment: "What went wrong:\nMissed the link",
+    });
+
+    const result = await handleBaxterFeedbackReaction({
+      teamId: "T1",
+      event: {
+        type: "reaction_added",
+        user: "U_REACTOR",
+        reaction: "-1",
+        item: { channel: channelId, ts: messageTs },
+      },
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      outcome: "down",
+      reason: "already_commented",
+    });
+    expect(postEphemeralSlackMessage).toHaveBeenCalledTimes(1);
+    const ephemeralArg = postEphemeralSlackMessage.mock.calls[0]?.[0] as {
+      text?: string;
+      blocks?: Array<{ elements?: unknown[]; text?: { text?: string } }>;
+    };
+    expect(ephemeralArg.text).toBe(BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT);
+    expect(ephemeralArg.blocks?.[0]?.text?.text).toContain(BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT);
+    expect(ephemeralArg.blocks?.[0]?.text?.text).toContain("Missed the link");
+    const hasTellMore = (ephemeralArg.blocks ?? []).some((b) =>
+      Array.isArray(b.elements)
+        ? b.elements.some(
+            (el) =>
+              typeof el === "object" &&
+              el !== null &&
+              "action_id" in el &&
+              (el as { action_id?: string }).action_id === BAXTER_FEEDBACK_TELL_MORE_ACTION,
+          )
+        : false,
+    );
+    expect(hasTellMore).toBe(false);
+
+    const listed = await listFeedbackForAdmin({ rating: "down" });
+    expect(listed.rows).toHaveLength(1);
+    expect(listed.rows[0]?.comment).toContain("Missed the link");
   });
 });
 

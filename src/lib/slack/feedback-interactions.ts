@@ -4,6 +4,11 @@
  *
  * Keep this module free of GHL/Google/project-setup heavy imports so the
  * interactions route cold-start budget stays intact.
+ *
+ * Ephemeral lifecycle: chat.postEphemeral messages cannot be updated via
+ * chat.update. The block_actions payload includes a response_url for that
+ * ephemeral; we thread it through modal private_metadata and POST
+ * replace_original: true on successful submit.
  */
 
 import "server-only";
@@ -11,14 +16,26 @@ import "server-only";
 import { updateSlackFeedbackComment } from "@/lib/baxter-ai/feedback";
 import { openSlackModal } from "@/lib/slack/provisioning";
 import type { SlackInteractionPayload } from "@/lib/slack/interaction-payload";
+import { postSlackResponseUrl } from "@/lib/slack/response-url";
 
 export const BAXTER_FEEDBACK_TELL_MORE_ACTION = "baxter_feedback_tell_more";
 export const BAXTER_FEEDBACK_COMMENT_CALLBACK = "baxter_feedback_comment";
+
+/** Plain confirmation after successful modal submit (no interactive elements). */
+export const BAXTER_FEEDBACK_RECEIVED_TEXT = "We got your feedback. Thanks.";
+
+export const BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT = "You've already given feedback on this message";
 
 export type FeedbackActionValue = {
   feedbackId: string;
   messageId: string;
   conversationId: string;
+};
+
+export type FeedbackModalMeta = FeedbackActionValue & {
+  slackUserId: string;
+  /** From the Tell us more button click — required to replace the ephemeral. */
+  responseUrl?: string;
 };
 
 export function encodeFeedbackActionValue(value: FeedbackActionValue): string {
@@ -67,29 +84,64 @@ export function buildNegativeFeedbackEphemeralBlocks(input: FeedbackActionValue)
   ];
 }
 
-function encodeModalMeta(value: FeedbackActionValue & { slackUserId: string }): string {
+/** Confirmation shown via response_url replace_original after modal submit. */
+export function buildFeedbackReceivedEphemeral(text: string = BAXTER_FEEDBACK_RECEIVED_TEXT): {
+  replace_original: true;
+  text: string;
+  blocks: unknown[];
+} {
+  return {
+    replace_original: true,
+    text,
+    blocks: [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text },
+      },
+    ],
+  };
+}
+
+/** Repeat 👎 after a comment was already left — no Tell us more button. */
+export function buildAlreadyGaveFeedbackEphemeral(input: { priorComment?: string | null }): {
+  text: string;
+  blocks: unknown[];
+} {
+  const prior = input.priorComment?.trim();
+  const detail =
+    prior && prior.length > 0
+      ? `${BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT}:\n>${prior.replace(/\n/g, "\n>")}`
+      : `${BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT}.`;
+  return {
+    text: BAXTER_FEEDBACK_ALREADY_GIVEN_TEXT,
+    blocks: [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: detail },
+      },
+    ],
+  };
+}
+
+export function encodeModalMeta(value: FeedbackModalMeta): string {
   return JSON.stringify(value);
 }
 
-function decodeModalMeta(raw: string | undefined | null):
-  | (FeedbackActionValue & {
-      slackUserId: string;
-    })
-  | null {
+export function decodeModalMeta(raw: string | undefined | null): FeedbackModalMeta | null {
   if (!raw?.trim()) return null;
   try {
-    const parsed = JSON.parse(raw) as FeedbackActionValue & { slackUserId?: string };
+    const parsed = JSON.parse(raw) as FeedbackModalMeta;
     if (!parsed?.feedbackId || !parsed.messageId || !parsed.conversationId || !parsed.slackUserId) {
       return null;
     }
-    return parsed as FeedbackActionValue & { slackUserId: string };
+    return parsed;
   } catch {
     return null;
   }
 }
 
 export function buildFeedbackCommentModal(input: {
-  meta: FeedbackActionValue & { slackUserId: string };
+  meta: FeedbackModalMeta;
 }): Record<string, unknown> {
   return {
     type: "modal",
@@ -151,6 +203,8 @@ function formatFeedbackComment(wentWrong: string, expected: string): string {
 /**
  * Open the feedback modal from the ephemeral button click.
  * Must run synchronously while trigger_id is valid (do not defer with after()).
+ * Captures response_url into private_metadata so view_submission can replace
+ * the ephemeral (view_submission does not carry the button's response_url).
  */
 export async function handleBaxterFeedbackBlockActions(
   payload: SlackInteractionPayload,
@@ -169,10 +223,15 @@ export async function handleBaxterFeedbackBlockActions(
     return { handled: true };
   }
 
+  const responseUrl =
+    typeof payload.response_url === "string" && payload.response_url.trim()
+      ? payload.response_url.trim()
+      : undefined;
+
   await openSlackModal({
     triggerId,
     view: buildFeedbackCommentModal({
-      meta: { ...decoded, slackUserId },
+      meta: { ...decoded, slackUserId, responseUrl },
     }),
   });
   return { handled: true };
@@ -180,6 +239,8 @@ export async function handleBaxterFeedbackBlockActions(
 
 /**
  * Persist the modal comment onto the existing Slack feedback row.
+ * On success, replaces the original ephemeral via response_url (replace_original).
+ * Dismiss without submit does not call this handler — ephemeral stays unchanged.
  * Returns a Slack view_submission response body (usually empty close).
  */
 export async function handleBaxterFeedbackViewSubmission(
@@ -215,6 +276,23 @@ export async function handleBaxterFeedbackViewSubmission(
     slackUserId,
     comment: formatFeedbackComment(wentWrong, expected),
   });
+
+  if (meta.responseUrl) {
+    try {
+      await postSlackResponseUrl(meta.responseUrl, buildFeedbackReceivedEphemeral());
+    } catch (error) {
+      // Comment is already saved — don't fail the modal close over ephemeral replace.
+      console.error("[slack.feedback.ephemeral_replace_failed]", {
+        feedbackId: meta.feedbackId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else {
+    console.info("[slack.feedback.ephemeral_replace_skipped]", {
+      reason: "missing_response_url",
+      feedbackId: meta.feedbackId,
+    });
+  }
 
   // Clear the modal.
   return {};

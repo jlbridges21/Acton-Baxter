@@ -27,10 +27,13 @@ describe("parseSlackInteractionPayload", () => {
     const inner = {
       type: "block_actions",
       user: { id: "U1" },
+      response_url: "https://hooks.slack.com/actions/T1/abc",
       actions: [{ action_id: "x" }],
     };
     const rawBody = `payload=${encodeURIComponent(JSON.stringify(inner))}`;
-    expect(parseSlackInteractionPayload(rawBody)?.type).toBe("block_actions");
+    const parsed = parseSlackInteractionPayload(rawBody);
+    expect(parsed?.type).toBe("block_actions");
+    expect(parsed?.response_url).toBe("https://hooks.slack.com/actions/T1/abc");
   });
 
   it("returns null for missing/malformed bodies without throwing", () => {

@@ -6,6 +6,10 @@ import { resolveAddressInput } from "@/lib/address/resolve";
 import { createPropertyReportFromAddress } from "@/lib/research/create-property-report";
 import { enqueueJob } from "@/lib/jobs/queue";
 import { createServiceClient } from "@/lib/supabase/admin";
+import type { SlackCommandAck } from "@/lib/slack/response-url";
+
+export type { SlackCommandAck, SlackResponseUrlBody } from "@/lib/slack/response-url";
+export { postSlackResponseUrl } from "@/lib/slack/response-url";
 
 export type SlackCommandPayload = {
   team_id?: string;
@@ -15,13 +19,6 @@ export type SlackCommandPayload = {
   command?: string;
   response_url?: string;
   trigger_id?: string;
-};
-
-export type SlackCommandAck = {
-  response_type: "ephemeral";
-  text: string;
-  /** Optional Block Kit blocks (e.g. link buttons for `/pem` web handoff). */
-  blocks?: unknown[];
 };
 
 /**
@@ -44,24 +41,6 @@ async function resolvePropertyReportUserId(): Promise<string | null> {
     return data?.id ?? null;
   } catch {
     return null;
-  }
-}
-
-export async function postSlackResponseUrl(
-  responseUrl: string,
-  body: SlackCommandAck,
-): Promise<void> {
-  const response = await fetch(responseUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new AppError(`Slack response_url failed with HTTP ${response.status}`, {
-      code: "SLACK_RESPONSE_URL_FAILED",
-      statusCode: 502,
-      expose: false,
-    });
   }
 }
 

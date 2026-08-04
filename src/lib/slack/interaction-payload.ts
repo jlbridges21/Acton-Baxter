@@ -9,6 +9,8 @@ export type SlackInteractionPayload = {
   user?: { id?: string };
   team?: { id?: string };
   trigger_id?: string;
+  /** Present on block_actions from interactive messages (including ephemerals). */
+  response_url?: string;
   channel?: { id?: string };
   actions?: Array<{
     action_id?: string;

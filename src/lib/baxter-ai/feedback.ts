@@ -361,6 +361,31 @@ export async function updateSlackFeedbackComment(input: {
   return normalizeFeedbackRow(data);
 }
 
+/**
+ * Lookup existing Slack feedback for a message + reactor (service-role path).
+ * Used to avoid re-prompting after a comment was already left.
+ */
+export async function getSlackMessageFeedback(input: {
+  messageId: string;
+  slackUserId: string;
+}): Promise<BaxterMessageFeedback | null> {
+  if (shouldUseMemory()) {
+    const row = getMemory().feedback.get(memoryKeyForSlack(input.messageId, input.slackUserId));
+    return row ?? null;
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("baxter_message_feedback")
+    .select("*")
+    .eq("message_id", input.messageId)
+    .eq("slack_user_id", input.slackUserId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return normalizeFeedbackRow(data);
+}
+
 export async function deleteSlackMessageFeedback(input: {
   messageId: string;
   slackUserId: string;

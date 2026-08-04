@@ -5,11 +5,18 @@
 
 import "server-only";
 
-import { deleteSlackMessageFeedback, upsertSlackMessageFeedback } from "@/lib/baxter-ai/feedback";
+import {
+  deleteSlackMessageFeedback,
+  getSlackMessageFeedback,
+  upsertSlackMessageFeedback,
+} from "@/lib/baxter-ai/feedback";
 import { findAssistantMessageBySlackRef } from "@/lib/baxter-ai/conversations";
 import { postEphemeralSlackMessage } from "@/lib/slack/client";
 import { ratingFromSlackReaction } from "@/lib/slack/feedback-emoji";
-import { buildNegativeFeedbackEphemeralBlocks } from "@/lib/slack/feedback-interactions";
+import {
+  buildAlreadyGaveFeedbackEphemeral,
+  buildNegativeFeedbackEphemeralBlocks,
+} from "@/lib/slack/feedback-interactions";
 
 export type SlackReactionFeedbackEvent = {
   type?: string;
@@ -25,6 +32,10 @@ export type SlackReactionFeedbackEvent = {
 export type HandleBaxterFeedbackReactionResult =
   | { handled: true; outcome: "up" | "down" | "removed" | "ignored"; reason?: string }
   | { handled: false; reason: string };
+
+function hasFeedbackComment(comment: string | null | undefined): boolean {
+  return typeof comment === "string" && comment.trim().length > 0;
+}
 
 /**
  * Handle reaction_added / reaction_removed for Baxter answer feedback.
@@ -95,16 +106,22 @@ export async function handleBaxterFeedbackReaction(input: {
     return { handled: true, outcome: removed ? "removed" : "ignored", reason: "removed" };
   }
 
+  const existing =
+    rating === "down"
+      ? await getSlackMessageFeedback({ messageId: message.id, slackUserId })
+      : null;
+  const alreadyCommented = hasFeedbackComment(existing?.comment);
+
   const feedback = await upsertSlackMessageFeedback({
     messageId: message.id,
     conversationId: message.conversation_id,
     slackUserId,
     slackTeamId: teamId,
     rating,
-    // Positive: no comment. Negative: capture rating even if follow-up never completes;
-    // clear prior comment when flipping rating so a new thumbs-down starts fresh.
+    // Positive: no comment. Negative with prior comment: keep it.
+    // Negative without comment: clear so a fresh thumbs-down can solicit follow-up.
     comment: null,
-    preserveCommentIfUnset: false,
+    preserveCommentIfUnset: alreadyCommented,
   });
 
   if (rating === "up") {
@@ -116,6 +133,35 @@ export async function handleBaxterFeedbackReaction(input: {
   // Do NOT pass thread_ts = reacted message ts: channel answers are thread *replies*,
   // and Slack rejects/hides ephemerals when thread_ts is a reply (use parent, or omit).
   // Omitting thread_ts posts a channel/DM-visible ephemeral the reactor can see.
+  //
+  // Repeat 👎 after a comment was already left: do not re-prompt Tell us more.
+  if (alreadyCommented) {
+    const already = buildAlreadyGaveFeedbackEphemeral({ priorComment: existing?.comment });
+    const ephemeral = await postEphemeralSlackMessage({
+      channel,
+      user: slackUserId,
+      text: already.text,
+      blocks: already.blocks,
+    });
+    if (!ephemeral.ok) {
+      console.error("[slack.feedback.ephemeral_failed]", {
+        channelId: channel,
+        error: ephemeral.error ?? null,
+        kind: "already_commented",
+      });
+    } else {
+      console.info("[slack.feedback.ephemeral_ok]", {
+        channelId: channel,
+        kind: "already_commented",
+      });
+    }
+    console.info("[slack.feedback.reaction.recorded]", {
+      rating: "down",
+      alreadyCommented: true,
+    });
+    return { handled: true, outcome: "down", reason: "already_commented" };
+  }
+
   const ephemeral = await postEphemeralSlackMessage({
     channel,
     user: slackUserId,
