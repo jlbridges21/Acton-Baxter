@@ -8,7 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
 import { KnowledgeStatsPanel } from "@/components/admin/knowledge-center/knowledge-stats-panel";
-import type { KnowledgeCenterView } from "@/components/admin/knowledge-center/knowledge-center-sidebar";
+import type {
+  KnowledgeCenterBasePath,
+  KnowledgeCenterView,
+} from "@/components/admin/knowledge-center/knowledge-center-sidebar";
 import type { KnowledgeAnalytics } from "@/lib/knowledge/analytics";
 import type { KnowledgeEntry } from "@/lib/knowledge/types";
 import { formatDate } from "@/lib/utils";
@@ -60,20 +63,34 @@ function isFailedImport(entry: KnowledgeEntry) {
   );
 }
 
+function isGoogleManaged(entry: KnowledgeEntry) {
+  return (
+    entry.source_type === "Google Drive" ||
+    Boolean((entry.metadata as { googleManaged?: boolean } | undefined)?.googleManaged)
+  );
+}
+
 export function KnowledgeListClient({
   initialEntries,
   analytics,
   connectorLabel,
   connectorDetails,
+  isAdmin = true,
+  basePath = "/admin/knowledge",
+  newEntryHref,
 }: {
   initialEntries: KnowledgeEntry[];
   analytics: KnowledgeAnalytics;
   connectorLabel?: string;
   connectorDetails?: string;
+  isAdmin?: boolean;
+  basePath?: KnowledgeCenterBasePath;
+  newEntryHref?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const view = (searchParams.get("view") as KnowledgeCenterView | null) ?? "all";
+  const resolvedNewHref = newEntryHref ?? (isAdmin ? "/admin/knowledge/new" : "/knowledge/new");
 
   const [entries, setEntries] = useState(initialEntries);
   const [q, setQ] = useState("");
@@ -124,6 +141,7 @@ export function KnowledgeListClient({
   }, [entries, q, activeView, recentCutoffMs]);
 
   async function setStatusAction(id: string, next: "draft" | "approved" | "archived") {
+    if (!isAdmin) return;
     setBusyId(id);
     setError(null);
     try {
@@ -148,10 +166,9 @@ export function KnowledgeListClient({
   }
 
   async function deleteEntry(id: string, title: string) {
+    if (!isAdmin) return;
     const entry = entries.find((row) => row.id === id);
-    const google =
-      entry?.source_type === "Google Drive" ||
-      Boolean((entry?.metadata as { googleManaged?: boolean } | undefined)?.googleManaged);
+    const google = isGoogleManaged(entry!);
     const isUpload = entry?.source_type === "uploaded_document";
     const confirmMsg = google
       ? `Remove “${title}” from Baxter?\n\nBaxter will stop using this file. The original Google Drive file will not be changed.`
@@ -191,6 +208,7 @@ export function KnowledgeListClient({
   }
 
   async function bulk(action: "approved" | "archived" | "draft") {
+    if (!isAdmin) return;
     const ids = [...selected];
     if (ids.length === 0) return;
     if (
@@ -203,18 +221,29 @@ export function KnowledgeListClient({
     setSelected(new Set());
   }
 
+  const entryHref = (id: string) => `${basePath}/${id}`;
+
   return (
     <KnowledgeCenterShell
-      subtitle="Everything Baxter can learn from — manual entries, uploads, and Google Workspace."
+      subtitle={
+        isAdmin
+          ? "Everything Baxter can learn from — manual entries, uploads, and Google Workspace."
+          : "Browse approved Acton knowledge and submit drafts for admin review."
+      }
       activeView={activeView}
       searchValue={q}
       onSearchChange={setQ}
+      isAdmin={isAdmin}
+      basePath={basePath}
+      newEntryHref={resolvedNewHref}
       rightPanel={
-        <KnowledgeStatsPanel
-          analytics={analytics}
-          connectorLabel={connectorLabel}
-          connectorDetails={connectorDetails}
-        />
+        isAdmin ? (
+          <KnowledgeStatsPanel
+            analytics={analytics}
+            connectorLabel={connectorLabel}
+            connectorDetails={connectorDetails}
+          />
+        ) : undefined
       }
     >
       <Card className="overflow-hidden p-0">
@@ -223,35 +252,37 @@ export function KnowledgeListClient({
             <CardTitle className="text-base">Knowledge entries</CardTitle>
             <CardDescription className="mt-0.5">{filtered.length} shown</CardDescription>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={selected.size === 0}
-              onClick={() => void bulk("approved")}
-            >
-              Approve
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={selected.size === 0}
-              onClick={() => void bulk("archived")}
-            >
-              Archive
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              disabled={selected.size === 0}
-              onClick={() => void bulk("draft")}
-            >
-              To draft
-            </Button>
-          </div>
+          {isAdmin ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={selected.size === 0}
+                onClick={() => void bulk("approved")}
+              >
+                Approve
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={selected.size === 0}
+                onClick={() => void bulk("archived")}
+              >
+                Archive
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={selected.size === 0}
+                onClick={() => void bulk("draft")}
+              >
+                To draft
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         {error ? (
@@ -267,18 +298,24 @@ export function KnowledgeListClient({
           <div className="px-4 py-12 text-center">
             <p className="font-semibold text-[var(--acton-navy)]">Nothing here yet</p>
             <p className="mt-1 text-sm text-[var(--acton-muted)]">
-              Create an entry, upload a file, or sync from Google Workspace.
+              {isAdmin
+                ? "Create an entry, upload a file, or sync from Google Workspace."
+                : "Try a different search, or submit a new draft for review."}
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
-              <Link href="/admin/knowledge/new" className="text-sm font-semibold underline">
-                New Entry
+              <Link href={resolvedNewHref} className="text-sm font-semibold underline">
+                {isAdmin ? "New Entry" : "Add New"}
               </Link>
-              <Link href="/admin/knowledge/upload" className="text-sm font-semibold underline">
-                Upload Files
-              </Link>
-              <Link href="/admin/connectors/google" className="text-sm font-semibold underline">
-                Google Workspace
-              </Link>
+              {isAdmin ? (
+                <>
+                  <Link href="/admin/knowledge/upload" className="text-sm font-semibold underline">
+                    Upload Files
+                  </Link>
+                  <Link href="/admin/connectors/google" className="text-sm font-semibold underline">
+                    Google Workspace
+                  </Link>
+                </>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -286,9 +323,11 @@ export function KnowledgeListClient({
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="bg-[var(--acton-gray-50)] text-xs tracking-wide text-[var(--acton-muted)] uppercase">
                 <tr>
-                  <th className="px-3 py-2 font-semibold">
-                    <span className="sr-only">Select</span>
-                  </th>
+                  {isAdmin ? (
+                    <th className="px-3 py-2 font-semibold">
+                      <span className="sr-only">Select</span>
+                    </th>
+                  ) : null}
                   <th className="px-3 py-2 font-semibold">Title</th>
                   <th className="px-3 py-2 font-semibold">Source</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
@@ -306,24 +345,26 @@ export function KnowledgeListClient({
                       key={entry.id}
                       className="border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]/70"
                     >
-                      <td className="px-3 py-3">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(entry.id)}
-                          aria-label={`Select ${entry.title}`}
-                          onChange={() => {
-                            setSelected((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(entry.id)) next.delete(entry.id);
-                              else next.add(entry.id);
-                              return next;
-                            });
-                          }}
-                        />
-                      </td>
+                      {isAdmin ? (
+                        <td className="px-3 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(entry.id)}
+                            aria-label={`Select ${entry.title}`}
+                            onChange={() => {
+                              setSelected((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(entry.id)) next.delete(entry.id);
+                                else next.add(entry.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        </td>
+                      ) : null}
                       <td className="px-3 py-3">
                         <Link
-                          href={`/admin/knowledge/${entry.id}`}
+                          href={entryHref(entry.id)}
                           className="font-semibold text-[var(--acton-navy)] hover:underline"
                         >
                           {entry.title}
@@ -357,12 +398,13 @@ export function KnowledgeListClient({
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-1">
                           <Link
-                            href={`/admin/knowledge/${entry.id}`}
+                            href={entryHref(entry.id)}
                             className="rounded px-2 py-1 text-xs font-semibold text-[var(--acton-navy)] hover:bg-white"
                           >
                             Open
                           </Link>
-                          {entry.source_type === "Google Drive" && entry.source_url ? (
+                          {(entry.source_type === "Google Drive" || isGoogleManaged(entry)) &&
+                          entry.source_url ? (
                             <a
                               href={entry.source_url}
                               target="_blank"
@@ -372,7 +414,7 @@ export function KnowledgeListClient({
                               Open in Google
                             </a>
                           ) : null}
-                          {entry.status !== "approved" ? (
+                          {isAdmin && entry.status !== "approved" ? (
                             <button
                               type="button"
                               className="rounded px-2 py-1 text-xs font-semibold text-emerald-800 hover:bg-white"
@@ -382,7 +424,7 @@ export function KnowledgeListClient({
                               Approve
                             </button>
                           ) : null}
-                          {entry.status !== "archived" ? (
+                          {isAdmin && entry.status !== "archived" ? (
                             <button
                               type="button"
                               className="rounded px-2 py-1 text-xs font-semibold text-amber-900 hover:bg-white"
@@ -392,22 +434,20 @@ export function KnowledgeListClient({
                               Archive
                             </button>
                           ) : null}
-                          <button
-                            type="button"
-                            className="rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-white"
-                            disabled={busyId === entry.id}
-                            onClick={() => void deleteEntry(entry.id, entry.title)}
-                          >
-                            {entry.source_type === "Google Drive" ||
-                            Boolean(
-                              (entry.metadata as { googleManaged?: boolean } | undefined)
-                                ?.googleManaged,
-                            )
-                              ? "Remove from Baxter"
-                              : entry.source_type === "uploaded_document"
-                                ? "Delete from Baxter"
-                                : "Delete permanently"}
-                          </button>
+                          {isAdmin ? (
+                            <button
+                              type="button"
+                              className="rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-white"
+                              disabled={busyId === entry.id}
+                              onClick={() => void deleteEntry(entry.id, entry.title)}
+                            >
+                              {isGoogleManaged(entry)
+                                ? "Remove from Baxter"
+                                : entry.source_type === "uploaded_document"
+                                  ? "Delete from Baxter"
+                                  : "Delete permanently"}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

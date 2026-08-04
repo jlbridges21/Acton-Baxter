@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { Cloud, Plus, Upload } from "lucide-react";
-import { KnowledgeCenterSidebar, type KnowledgeCenterView } from "./knowledge-center-sidebar";
+import {
+  KnowledgeCenterSidebar,
+  type KnowledgeCenterBasePath,
+  type KnowledgeCenterView,
+} from "./knowledge-center-sidebar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
@@ -15,6 +19,9 @@ export function KnowledgeCenterShell({
   children,
   rightPanel,
   hideTopActions,
+  isAdmin = true,
+  basePath = "/admin/knowledge",
+  newEntryHref,
 }: {
   title?: string;
   subtitle?: string;
@@ -24,7 +31,14 @@ export function KnowledgeCenterShell({
   children: React.ReactNode;
   rightPanel?: React.ReactNode;
   hideTopActions?: boolean;
+  /** When false, hide admin-only top actions and sidebar destinations. */
+  isAdmin?: boolean;
+  basePath?: KnowledgeCenterBasePath;
+  /** Create entry href (defaults from role). */
+  newEntryHref?: string;
 }) {
+  const resolvedNewHref = newEntryHref ?? (isAdmin ? "/admin/knowledge/new" : "/knowledge/new");
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -36,24 +50,28 @@ export function KnowledgeCenterShell({
         </div>
         {!hideTopActions ? (
           <div className="flex flex-wrap gap-2">
-            <Link href="/admin/knowledge/new">
+            <Link href={resolvedNewHref}>
               <Button type="button" className="gap-1.5">
                 <Plus className="h-4 w-4" />
-                New Entry
+                {isAdmin ? "New Entry" : "Add New"}
               </Button>
             </Link>
-            <Link href="/admin/knowledge/upload">
-              <Button type="button" variant="secondary" className="gap-1.5">
-                <Upload className="h-4 w-4" />
-                Upload Files
-              </Button>
-            </Link>
-            <Link href="/admin/connectors/google">
-              <Button type="button" variant="secondary" className="gap-1.5">
-                <Cloud className="h-4 w-4" />
-                Google Workspace
-              </Button>
-            </Link>
+            {isAdmin ? (
+              <>
+                <Link href="/admin/knowledge/upload">
+                  <Button type="button" variant="secondary" className="gap-1.5">
+                    <Upload className="h-4 w-4" />
+                    Upload Files
+                  </Button>
+                </Link>
+                <Link href="/admin/connectors/google">
+                  <Button type="button" variant="secondary" className="gap-1.5">
+                    <Cloud className="h-4 w-4" />
+                    Google Workspace
+                  </Button>
+                </Link>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -75,7 +93,12 @@ export function KnowledgeCenterShell({
 
       <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[220px_minmax(0,1fr)_260px]">
         <aside className="rounded-xl border border-[var(--acton-border)] bg-white p-3 shadow-sm">
-          <KnowledgeCenterSidebar activeView={activeView} />
+          <KnowledgeCenterSidebar
+            activeView={activeView}
+            isAdmin={isAdmin}
+            basePath={basePath}
+            newEntryHref={resolvedNewHref}
+          />
         </aside>
         <main className="min-w-0 space-y-4">{children}</main>
         {rightPanel ? (

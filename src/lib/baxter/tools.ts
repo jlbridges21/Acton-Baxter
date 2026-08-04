@@ -67,6 +67,18 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     ctaLabel: "Open Customer Center",
     aliases: ["customer center", "customer dossier", "dossier", "customer profile", "full picture"],
   },
+  {
+    key: "knowledge-center",
+    name: "Knowledge Center",
+    description:
+      "Browse approved Acton knowledge and submit drafts for admin review before Baxter can use them.",
+    href: "/knowledge",
+    createHref: "/knowledge/new",
+    enabled: true,
+    icon: BookOpen,
+    ctaLabel: "Open Knowledge Center",
+    aliases: ["knowledge", "knowledge center", "knowledge base", "wiki"],
+  },
 ];
 
 /** Admin-only platform cards (not employee tools). */
@@ -110,7 +122,7 @@ export type NavContext =
   | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
-  if (pathname.startsWith("/admin/knowledge")) {
+  if (pathname.startsWith("/admin/knowledge") || pathname.startsWith("/knowledge")) {
     return "knowledge";
   }
   if (pathname.startsWith("/admin")) return "platform-admin";

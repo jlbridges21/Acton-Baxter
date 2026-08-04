@@ -61,6 +61,9 @@ export default async function AdminKnowledgePage() {
           analytics={analytics}
           connectorLabel={connectorLabel}
           connectorDetails={connectorDetails}
+          isAdmin
+          basePath="/admin/knowledge"
+          newEntryHref="/admin/knowledge/new"
         />
       </Suspense>
     </AppShell>

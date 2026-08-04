@@ -17,6 +17,7 @@ import {
   Activity,
   PenLine,
   Clock,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
@@ -35,96 +36,165 @@ export type KnowledgeCenterView =
   | "health"
   | "rulebook"
   | "monitoring"
-  | "governance";
+  | "governance"
+  | "new";
 
-const NAV_ALL: Array<{
+export type KnowledgeCenterBasePath = "/admin/knowledge" | "/knowledge";
+
+type NavItem = {
   view: KnowledgeCenterView;
   label: string;
   href: string;
   icon: typeof BookOpen;
-}> = [
-  { view: "all", label: "Knowledge", href: "/admin/knowledge", icon: BookOpen },
-  { view: "recent", label: "Recent", href: "/admin/knowledge?view=recent", icon: Clock },
-  {
-    view: "google",
-    label: "Google Workspace",
-    href: "/admin/connectors/google",
-    icon: Cloud,
-  },
-  {
-    view: "uploads",
-    label: "Uploads",
-    href: "/admin/knowledge?view=uploads",
-    icon: FileUp,
-  },
-  { view: "drafts", label: "Drafts", href: "/admin/knowledge?view=drafts", icon: PenLine },
-  {
-    view: "approved",
-    label: "Approved",
-    href: "/admin/knowledge?view=approved",
-    icon: CheckCircle2,
-  },
-  {
-    view: "archived",
-    label: "Archived",
-    href: "/admin/knowledge?view=archived",
-    icon: Archive,
-  },
-  {
-    view: "failed",
-    label: "Failed Imports",
-    href: "/admin/knowledge?view=failed",
-    icon: FileWarning,
-  },
-  {
-    view: "sources",
-    label: "Sources",
-    href: "/admin/knowledge/sources",
-    icon: Library,
-  },
-  {
-    view: "health",
-    label: "Connector Health",
-    href: "/admin/connectors/google",
-    icon: Activity,
-  },
-  {
-    view: "rulebook",
-    label: "Process Rulebook",
-    href: "/admin/baxter/rulebook",
-    icon: BookMarked,
-  },
-  {
-    view: "monitoring",
-    label: "Process Monitoring",
-    href: "/admin/baxter/monitoring",
-    icon: Bell,
-  },
-  {
-    view: "governance",
-    label: "Baxter Governance",
-    href: "/admin/baxter/governance",
-    icon: Shield,
-  },
-  {
-    view: "settings",
-    label: "Knowledge Settings",
-    href: "/admin/knowledge/settings",
-    icon: Settings,
-  },
+  /** When true, only admins see this item. */
+  adminOnly?: boolean;
+};
+
+/**
+ * Admin-only sidebar destinations (hidden from non-admin viewers of the shared shell).
+ * Explicitly: Process Rulebook, Baxter Governance, Knowledge Settings, Sources,
+ * Uploads, plus other admin connector/ops views.
+ */
+export const KNOWLEDGE_CENTER_ADMIN_ONLY_VIEWS: KnowledgeCenterView[] = [
+  "google",
+  "uploads",
+  "archived",
+  "failed",
+  "sources",
+  "health",
+  "rulebook",
+  "monitoring",
+  "governance",
+  "settings",
 ];
 
-const NAV = PROCESS_MONITORING_UI_ENABLED
-  ? NAV_ALL
-  : NAV_ALL.filter((item) => item.view !== "monitoring");
+function buildNavAll(basePath: KnowledgeCenterBasePath): NavItem[] {
+  const listHref = basePath;
+  return [
+    { view: "all", label: "Knowledge", href: listHref, icon: BookOpen },
+    { view: "recent", label: "Recent", href: `${listHref}?view=recent`, icon: Clock },
+    {
+      view: "google",
+      label: "Google Workspace",
+      href: "/admin/connectors/google",
+      icon: Cloud,
+      adminOnly: true,
+    },
+    {
+      view: "uploads",
+      label: "Uploads",
+      href: `${listHref}?view=uploads`,
+      icon: FileUp,
+      adminOnly: true,
+    },
+    { view: "drafts", label: "Drafts", href: `${listHref}?view=drafts`, icon: PenLine },
+    {
+      view: "approved",
+      label: "Approved",
+      href: `${listHref}?view=approved`,
+      icon: CheckCircle2,
+    },
+    {
+      view: "archived",
+      label: "Archived",
+      href: `${listHref}?view=archived`,
+      icon: Archive,
+      adminOnly: true,
+    },
+    {
+      view: "failed",
+      label: "Failed Imports",
+      href: `${listHref}?view=failed`,
+      icon: FileWarning,
+      adminOnly: true,
+    },
+    {
+      view: "sources",
+      label: "Sources",
+      href: "/admin/knowledge/sources",
+      icon: Library,
+      adminOnly: true,
+    },
+    {
+      view: "health",
+      label: "Connector Health",
+      href: "/admin/connectors/google",
+      icon: Activity,
+      adminOnly: true,
+    },
+    {
+      view: "rulebook",
+      label: "Process Rulebook",
+      href: "/admin/baxter/rulebook",
+      icon: BookMarked,
+      adminOnly: true,
+    },
+    {
+      view: "monitoring",
+      label: "Process Monitoring",
+      href: "/admin/baxter/monitoring",
+      icon: Bell,
+      adminOnly: true,
+    },
+    {
+      view: "governance",
+      label: "Baxter Governance",
+      href: "/admin/baxter/governance",
+      icon: Shield,
+      adminOnly: true,
+    },
+    {
+      view: "settings",
+      label: "Knowledge Settings",
+      href: "/admin/knowledge/settings",
+      icon: Settings,
+      adminOnly: true,
+    },
+  ];
+}
 
-export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeCenterView }) {
+/** Non-admin "Add New" entry point (create-as-draft). */
+function addNewNavItem(newEntryHref: string): NavItem {
+  return { view: "new", label: "Add New", href: newEntryHref, icon: Plus };
+}
+
+export function getKnowledgeCenterNavItems(input: {
+  isAdmin: boolean;
+  basePath: KnowledgeCenterBasePath;
+  newEntryHref: string;
+}): NavItem[] {
+  let items = buildNavAll(input.basePath);
+  if (!PROCESS_MONITORING_UI_ENABLED) {
+    items = items.filter((item) => item.view !== "monitoring");
+  }
+  if (!input.isAdmin) {
+    items = items.filter((item) => !item.adminOnly);
+    items = [...items, addNewNavItem(input.newEntryHref)];
+  }
+  return items;
+}
+
+export function KnowledgeCenterSidebar({
+  activeView,
+  isAdmin = true,
+  basePath = "/admin/knowledge",
+  newEntryHref = "/admin/knowledge/new",
+}: {
+  activeView?: KnowledgeCenterView;
+  isAdmin?: boolean;
+  basePath?: KnowledgeCenterBasePath;
+  newEntryHref?: string;
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const viewParam = (searchParams.get("view") as KnowledgeCenterView | null) ?? "all";
+  const nav = getKnowledgeCenterNavItems({ isAdmin, basePath, newEntryHref });
 
-  function isActive(item: (typeof NAV)[number]) {
+  function isActive(item: NavItem) {
     if (activeView) return activeView === item.view;
+    if (item.view === "new") {
+      return pathname === newEntryHref || pathname.startsWith(`${newEntryHref}/`);
+    }
     if (item.href.startsWith("/admin/connectors/google")) {
       return pathname.startsWith("/admin/connectors/google");
     }
@@ -143,7 +213,12 @@ export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeC
     if (item.href.startsWith("/admin/baxter/governance")) {
       return pathname.startsWith("/admin/baxter/governance");
     }
-    if (pathname === "/admin/knowledge" || pathname.startsWith("/admin/knowledge?")) {
+    const onList =
+      pathname === basePath ||
+      pathname.startsWith(`${basePath}?`) ||
+      (basePath === "/admin/knowledge" && pathname === "/admin/knowledge") ||
+      (basePath === "/knowledge" && pathname === "/knowledge");
+    if (onList) {
       if (item.view === "all") return !searchParams.get("view");
       return viewParam === item.view;
     }
@@ -155,7 +230,7 @@ export function KnowledgeCenterSidebar({ activeView }: { activeView?: KnowledgeC
       <p className="px-2 pb-2 text-[11px] font-semibold tracking-wider text-[var(--acton-muted)] uppercase">
         Knowledge Center
       </p>
-      {NAV.map((item) => {
+      {nav.map((item) => {
         const Icon = item.icon;
         const active = isActive(item);
         return (

@@ -42,6 +42,8 @@ describe("Baxter platform shell", () => {
     expect(getNavContext("/reports/new")).toBe("property-research");
     expect(getNavContext("/pem-neats")).toBe("pem-neat");
     expect(getNavContext("/admin/knowledge")).toBe("knowledge");
+    expect(getNavContext("/knowledge")).toBe("knowledge");
+    expect(getNavContext("/knowledge/new")).toBe("knowledge");
   });
 
   it("preserves Property Research routes", () => {
