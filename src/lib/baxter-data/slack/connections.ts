@@ -132,46 +132,120 @@ export async function upsertSlackSearchConnection(input: {
   }
 }
 
-export async function getSlackSearchConnectionMetadata(baxterUserId: string): Promise<{
+export type SlackSearchConnectionMetadata = {
   linked: boolean;
   slackUserId: string | null;
   slackTeamId: string | null;
   slackUserName: string | null;
   scopes: string[];
   status: string | null;
-} | null> {
+  /** Baxter profile UUID from the connection row when resolved. */
+  baxterUserId: string | null;
+  /** Which requester id was used for the DB lookup (fresh read; not cached). */
+  resolvedVia: "baxter_user_id" | "slack_user_id" | null;
+};
+
+function emptyConnectionMetadata(): SlackSearchConnectionMetadata {
+  return {
+    linked: false,
+    slackUserId: null,
+    slackTeamId: null,
+    slackUserName: null,
+    scopes: [],
+    status: null,
+    baxterUserId: null,
+    resolvedVia: null,
+  };
+}
+
+function metadataFromRow(
+  row: {
+    baxter_user_id?: string;
+    slack_user_id: string;
+    slack_team_id: string;
+    slack_user_name: string | null;
+    granted_scopes: unknown;
+    status: string;
+  },
+  resolvedVia: "baxter_user_id" | "slack_user_id",
+): SlackSearchConnectionMetadata {
+  return {
+    linked: row.status === "connected",
+    slackUserId: row.slack_user_id,
+    slackTeamId: row.slack_team_id,
+    slackUserName: row.slack_user_name,
+    scopes: parseScopes(row.granted_scopes),
+    status: row.status,
+    baxterUserId: row.baxter_user_id ? String(row.baxter_user_id) : null,
+    resolvedVia,
+  };
+}
+
+/**
+ * Web settings path: look up by Baxter profile id.
+ * Fresh DB read each call — no memoization.
+ */
+export async function getSlackSearchConnectionMetadata(
+  baxterUserId: string,
+): Promise<SlackSearchConnectionMetadata | null> {
+  return getSlackSearchConnectionMetadataForRequester({ baxterUserId });
+}
+
+/**
+ * Same identity rules as {@link loadUserSearchCredential}:
+ * prefer baxter_user_id; otherwise slack_user_id (+ optional team).
+ * Used by Slack DM enrichment where answerBaxterQuestion gets userId:null
+ * but externalUserId = event.user.
+ */
+export async function getSlackSearchConnectionMetadataForRequester(
+  requester: SlackRequester,
+): Promise<SlackSearchConnectionMetadata | null> {
+  const baxterUserId = requester.baxterUserId?.trim() || null;
+  const slackUserId = requester.slackUserId?.trim() || null;
+  const slackTeamId = requester.slackTeamId?.trim() || null;
+  if (!baxterUserId && !slackUserId) return emptyConnectionMetadata();
+
   try {
     const supabase = createServiceClient();
-    const { data } = await supabase
+    let query = supabase
       .from("slack_search_connections")
-      .select("slack_user_id, slack_team_id, slack_user_name, granted_scopes, status")
-      .eq("baxter_user_id", baxterUserId)
-      .maybeSingle();
-    if (!data) {
-      return {
-        linked: false,
-        slackUserId: null,
-        slackTeamId: null,
-        slackUserName: null,
-        scopes: [],
-        status: null,
-      };
+      .select(
+        "baxter_user_id, slack_user_id, slack_team_id, slack_user_name, granted_scopes, status",
+      )
+      .limit(1);
+
+    let resolvedVia: "baxter_user_id" | "slack_user_id";
+    if (baxterUserId) {
+      query = query.eq("baxter_user_id", baxterUserId);
+      resolvedVia = "baxter_user_id";
+    } else {
+      query = query.eq("slack_user_id", slackUserId!);
+      if (slackTeamId) query = query.eq("slack_team_id", slackTeamId);
+      resolvedVia = "slack_user_id";
     }
+
+    const { data, error } = await query.maybeSingle();
+    if (error || !data) return emptyConnectionMetadata();
+
     const row = data as {
+      baxter_user_id: string;
       slack_user_id: string;
       slack_team_id: string;
       slack_user_name: string | null;
       granted_scopes: unknown;
       status: string;
     };
-    return {
-      linked: row.status === "connected",
-      slackUserId: row.slack_user_id,
-      slackTeamId: row.slack_team_id,
-      slackUserName: row.slack_user_name,
-      scopes: parseScopes(row.granted_scopes),
-      status: row.status,
-    };
+
+    // When both ids are present, require the stored mapping to match (same as credential load).
+    if (
+      slackUserId &&
+      baxterUserId &&
+      (row.slack_user_id !== slackUserId || row.baxter_user_id !== baxterUserId)
+    ) {
+      return emptyConnectionMetadata();
+    }
+
+    return metadataFromRow(row, resolvedVia);
   } catch {
     return null;
   }

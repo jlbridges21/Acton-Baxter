@@ -228,6 +228,8 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           slackUserName: "Tester",
           scopes: ["search:read.public"],
           status: "connected",
+          baxterUserId: "user-1",
+          resolvedVia: "baxter_user_id" as const,
         }),
         retrieveSlack: async () => ({
           plan: null,
@@ -328,6 +330,8 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           slackUserName: null,
           scopes: [],
           status: null,
+          baxterUserId: null,
+          resolvedVia: null,
         }),
         retrieveSlack: async () => {
           throw new Error("should not search without connection");
@@ -452,6 +456,8 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           slackUserName: "T",
           scopes: [],
           status: "connected",
+          baxterUserId: "user-1",
+          resolvedVia: "baxter_user_id" as const,
         }),
         retrieveSlack: retrieve as never,
       },
@@ -493,6 +499,8 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           slackUserName: "T",
           scopes: [],
           status: "connected",
+          baxterUserId: "user-1",
+          resolvedVia: "baxter_user_id" as const,
         }),
         retrieveSlack: async () => {
           throw new Error("slack down");
@@ -536,6 +544,8 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           slackUserName: "T",
           scopes: [],
           status: "connected",
+          baxterUserId: "user-1",
+          resolvedVia: "baxter_user_id" as const,
         }),
         retrieveSlack: async () => ({
           plan: null,
@@ -582,5 +592,313 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
       },
     });
     expect(enriched).toBe(ghlAnswer);
+  });
+
+  /**
+   * Incident: Slack DM always calls answerBaxterQuestion with userId:null and
+   * externalUserId=event.user. The gate must resolve Slack Search via slack_user_id,
+   * not require a Baxter profile UUID.
+   */
+  it("Slack DM path (baxterUserId null) still enriches when Slack Search is connected", async () => {
+    const retrieve = vi.fn(async (input: { requester: { slackUserId?: string | null } }) => {
+      expect(input.requester.slackUserId).toBe("U_EMPLOYEE");
+      return {
+        plan: null,
+        results: [
+          {
+            sourceType: SLACK_SOURCE_TYPE,
+            messageTs: "1.1",
+            threadTs: null,
+            channelId: "C_LINIGER",
+            channelName: "l01-26019-liniger",
+            channelKind: "public_channel",
+            authorId: "U2",
+            authorName: "Alex",
+            timestamp: "2026-07-20T15:00:00.000Z",
+            text: "Permit package submitted for Liniger.",
+            permalink: null,
+            isThreadReply: false,
+            relevance: 1,
+            contextMessages: [],
+            clusterKey: "c1",
+          },
+        ],
+        clusters: [],
+        ambiguities: { people: [], channels: [] },
+        access: {
+          publicChannels: true,
+          privateChannels: false,
+          dms: false,
+          groupDms: false,
+          threadContext: true,
+          permalinks: true,
+          userLevelAuthorization: "configured",
+          tokenKind: "user",
+          allowedChannelTypes: ["public_channel"],
+        },
+        incomplete: null,
+        diagnostics: {
+          endpoint: "search.messages",
+          latencyMs: 10,
+          resultCount: 1,
+          paginationCount: 1,
+          rateLimited: false,
+          capabilities: {
+            publicChannels: true,
+            privateChannels: false,
+            dms: false,
+            groupDms: false,
+            threadContext: true,
+            permalinks: true,
+            userLevelAuthorization: "configured",
+            tokenKind: "user",
+            allowedChannelTypes: ["public_channel"],
+          },
+          exactNewestGuaranteed: true,
+          notes: [],
+        },
+      };
+    });
+
+    const getSlackConnection = vi.fn(async (requester: { slackUserId?: string | null }) => {
+      expect(requester.slackUserId).toBe("U_EMPLOYEE");
+      return {
+        linked: true,
+        slackUserId: "U_EMPLOYEE",
+        slackTeamId: "T_ACTON",
+        slackUserName: "Employee",
+        scopes: ["search:read.public"],
+        status: "connected",
+        baxterUserId: "profile-from-connection-row",
+        resolvedVia: "slack_user_id" as const,
+      };
+    });
+
+    const enriched = await appendProjectSlackActivityToGhlAnswer({
+      ghlAnswer,
+      question: "give me information about the katie liniger project",
+      ghlContactId: KATIE_ID,
+      // Mirrors baxter-events.ts: userId:null, externalUserId:event.user
+      requester: {
+        baxterUserId: null,
+        slackUserId: "U_EMPLOYEE",
+        slackTeamId: "T_ACTON",
+      },
+      deps: {
+        listSetupRuns: async () => [
+          run({
+            id: "katie-run",
+            ghlContactId: KATIE_ID,
+            status: "complete",
+            slackChannelName: "l01-26019-liniger",
+          }),
+        ],
+        getSetupSteps: async () => [
+          {
+            id: "s1",
+            runId: "katie-run",
+            stepKey: "create_slack_channel",
+            orderIndex: 1,
+            status: "complete",
+            outputJson: { channelId: "C_LINIGER" },
+          } as never,
+        ],
+        slackSearchEnabled: () => true,
+        getSlackConnection,
+        retrieveSlack: retrieve as never,
+      },
+    });
+
+    expect(getSlackConnection).toHaveBeenCalled();
+    expect(retrieve).toHaveBeenCalled();
+    expect(enriched).toContain("Permit package submitted");
+    expect(enriched).not.toContain(PROJECT_SLACK_CONNECT_NOTE);
+  });
+
+  it("Slack DM path still shows connect note when Slack Search is not linked", async () => {
+    const getSlackConnection = vi.fn(async () => ({
+      linked: false,
+      slackUserId: null,
+      slackTeamId: null,
+      slackUserName: null,
+      scopes: [],
+      status: null,
+      baxterUserId: null,
+      resolvedVia: null,
+    }));
+
+    const enriched = await appendProjectSlackActivityToGhlAnswer({
+      ghlAnswer,
+      question: "give me information about the katie liniger project",
+      ghlContactId: KATIE_ID,
+      requester: {
+        baxterUserId: null,
+        slackUserId: "U_UNLINKED",
+        slackTeamId: "T_ACTON",
+      },
+      deps: {
+        listSetupRuns: async () => [
+          run({
+            id: "katie-run",
+            ghlContactId: KATIE_ID,
+            status: "complete",
+            slackChannelName: "l01-26019-liniger",
+          }),
+        ],
+        getSetupSteps: async () => [
+          {
+            id: "s1",
+            runId: "katie-run",
+            stepKey: "create_slack_channel",
+            orderIndex: 1,
+            status: "complete",
+            outputJson: { channelId: "C_LINIGER" },
+          } as never,
+        ],
+        slackSearchEnabled: () => true,
+        getSlackConnection,
+        retrieveSlack: async () => {
+          throw new Error("must not search when unlinked");
+        },
+      },
+    });
+
+    expect(getSlackConnection).toHaveBeenCalled();
+    expect(enriched).toContain(PROJECT_SLACK_CONNECT_NOTE);
+    expect(enriched).not.toContain("Recent activity");
+  });
+
+  it("picks up a freshly created connection on the next request (no stale gate)", async () => {
+    let linked = false;
+    const getSlackConnection = vi.fn(async () =>
+      linked
+        ? {
+            linked: true,
+            slackUserId: "U_EMPLOYEE",
+            slackTeamId: "T_ACTON",
+            slackUserName: "Employee",
+            scopes: ["search:read.public"],
+            status: "connected",
+            baxterUserId: "profile-1",
+            resolvedVia: "slack_user_id" as const,
+          }
+        : {
+            linked: false,
+            slackUserId: null,
+            slackTeamId: null,
+            slackUserName: null,
+            scopes: [],
+            status: null,
+            baxterUserId: null,
+            resolvedVia: null,
+          },
+    );
+
+    const sharedDeps = {
+      listSetupRuns: async () => [
+        run({
+          id: "katie-run",
+          ghlContactId: KATIE_ID,
+          status: "complete",
+          slackChannelName: "l01-26019-liniger",
+        }),
+      ],
+      getSetupSteps: async () => [
+        {
+          id: "s1",
+          runId: "katie-run",
+          stepKey: "create_slack_channel",
+          orderIndex: 1,
+          status: "complete",
+          outputJson: { channelId: "C_LINIGER" },
+        } as never,
+      ],
+      slackSearchEnabled: () => true,
+      getSlackConnection,
+      retrieveSlack: async () => ({
+        plan: null,
+        results: [
+          {
+            sourceType: SLACK_SOURCE_TYPE,
+            messageTs: "1.1",
+            threadTs: null,
+            channelId: "C_LINIGER",
+            channelName: "l01-26019-liniger",
+            channelKind: "public_channel",
+            authorId: "U2",
+            authorName: "Alex",
+            timestamp: "2026-07-20T15:00:00.000Z",
+            text: "Fresh connection search hit.",
+            permalink: null,
+            isThreadReply: false,
+            relevance: 1,
+            contextMessages: [],
+            clusterKey: "c1",
+          },
+        ],
+        clusters: [],
+        ambiguities: { people: [], channels: [] },
+        access: {
+          publicChannels: true,
+          privateChannels: false,
+          dms: false,
+          groupDms: false,
+          threadContext: true,
+          permalinks: true,
+          userLevelAuthorization: "configured",
+          tokenKind: "user",
+          allowedChannelTypes: ["public_channel"],
+        },
+        incomplete: null,
+        diagnostics: {
+          endpoint: "search.messages",
+          latencyMs: 1,
+          resultCount: 1,
+          paginationCount: 1,
+          rateLimited: false,
+          capabilities: {
+            publicChannels: true,
+            privateChannels: false,
+            dms: false,
+            groupDms: false,
+            threadContext: true,
+            permalinks: true,
+            userLevelAuthorization: "configured",
+            tokenKind: "user",
+            allowedChannelTypes: ["public_channel"],
+          },
+          exactNewestGuaranteed: true,
+          notes: [],
+        },
+      }),
+    };
+
+    const requester = {
+      baxterUserId: null as string | null,
+      slackUserId: "U_EMPLOYEE",
+      slackTeamId: "T_ACTON",
+    };
+
+    const before = await appendProjectSlackActivityToGhlAnswer({
+      ghlAnswer,
+      question: "give me information about the katie liniger project",
+      ghlContactId: KATIE_ID,
+      requester,
+      deps: sharedDeps as never,
+    });
+    expect(before).toContain(PROJECT_SLACK_CONNECT_NOTE);
+
+    linked = true; // connection created between requests — gate must re-read
+
+    const after = await appendProjectSlackActivityToGhlAnswer({
+      ghlAnswer,
+      question: "give me information about the katie liniger project",
+      ghlContactId: KATIE_ID,
+      requester,
+      deps: sharedDeps as never,
+    });
+    expect(after).toContain("Fresh connection search hit");
+    expect(after).not.toContain(PROJECT_SLACK_CONNECT_NOTE);
+    expect(getSlackConnection).toHaveBeenCalledTimes(2);
   });
 });

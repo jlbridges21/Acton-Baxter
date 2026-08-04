@@ -13,7 +13,10 @@ import {
   pickPreferredCompleteRunWithSlackChannel,
   type ProjectSetupForContactDeps,
 } from "@/lib/dossier/project-setup-for-contact";
-import { getSlackSearchConnectionMetadata } from "@/lib/baxter-data/slack/connections";
+import {
+  getSlackSearchConnectionMetadataForRequester,
+  type SlackSearchConnectionMetadata,
+} from "@/lib/baxter-data/slack/connections";
 import { retrieveSlackEvidence } from "@/lib/baxter-data/slack/evidence";
 import { formatSlackEvidenceExcerpt } from "@/lib/baxter-data/slack/format";
 import { isSlackSearchEnabled } from "@/lib/baxter-data/slack/config";
@@ -99,8 +102,13 @@ function formatRecentActivitySection(
   return lines.join("\n");
 }
 
+function logEnrichmentGate(payload: Record<string, unknown>): void {
+  console.info("[GHL project Slack enrichment]", JSON.stringify(payload));
+}
+
 export type AppendProjectSlackActivityDeps = ProjectSetupForContactDeps & {
-  getSlackConnection?: typeof getSlackSearchConnectionMetadata;
+  /** Prefer requester-aware lookup (Slack DM has slackUserId, often no baxterUserId). */
+  getSlackConnection?: (requester: SlackRequester) => Promise<SlackSearchConnectionMetadata | null>;
   retrieveSlack?: typeof retrieveSlackEvidence;
   slackSearchEnabled?: () => boolean;
   slackDeps?: SlackSearchDeps;
@@ -129,23 +137,66 @@ export async function appendProjectSlackActivityToGhlAnswer(input: {
 
       const channelDisplay = channelLabel(preferred.slackChannelName, preferred.slackChannelId);
       const slackEnabled = (input.deps?.slackSearchEnabled ?? isSlackSearchEnabled)();
-      const getConnection = input.deps?.getSlackConnection ?? getSlackSearchConnectionMetadata;
+      const getConnection =
+        input.deps?.getSlackConnection ?? getSlackSearchConnectionMetadataForRequester;
 
-      const baxterUserId = input.requester.baxterUserId?.trim() || null;
-      if (!slackEnabled || !baxterUserId) {
+      const incomingBaxterUserId = input.requester.baxterUserId?.trim() || null;
+      const incomingSlackUserId = input.requester.slackUserId?.trim() || null;
+      const incomingSlackTeamId = input.requester.slackTeamId?.trim() || null;
+
+      if (!slackEnabled) {
+        logEnrichmentGate({
+          scope: "ghl.project_slack_enrichment",
+          gate: "slack_search_disabled",
+          slackUserId: incomingSlackUserId,
+          slackTeamId: incomingSlackTeamId,
+          baxterUserId: incomingBaxterUserId,
+          connection: null,
+        });
         return `${base}\n\n• ${CONNECT_NOTE}`;
       }
 
-      const connection = await getConnection(baxterUserId).catch(() => null);
+      if (!incomingBaxterUserId && !incomingSlackUserId) {
+        logEnrichmentGate({
+          scope: "ghl.project_slack_enrichment",
+          gate: "no_requester_identity",
+          slackUserId: null,
+          slackTeamId: incomingSlackTeamId,
+          baxterUserId: null,
+          connection: null,
+        });
+        return `${base}\n\n• ${CONNECT_NOTE}`;
+      }
+
+      const connection = await getConnection(input.requester).catch(() => null);
+
+      logEnrichmentGate({
+        scope: "ghl.project_slack_enrichment",
+        gate: connection?.linked ? "connected" : "not_connected",
+        slackUserId: incomingSlackUserId,
+        slackTeamId: incomingSlackTeamId,
+        baxterUserId: incomingBaxterUserId,
+        connection: connection
+          ? {
+              linked: connection.linked,
+              status: connection.status,
+              resolvedVia: connection.resolvedVia,
+              baxterUserIdFromRow: connection.baxterUserId,
+              slackUserIdFromRow: connection.slackUserId,
+              slackTeamIdFromRow: connection.slackTeamId,
+            }
+          : null,
+      });
+
       if (!connection?.linked) {
         return `${base}\n\n• ${CONNECT_NOTE}`;
       }
 
       const requester: SlackRequester = {
         ...input.requester,
-        baxterUserId,
-        slackUserId: input.requester.slackUserId ?? connection.slackUserId,
-        slackTeamId: input.requester.slackTeamId ?? connection.slackTeamId,
+        baxterUserId: incomingBaxterUserId ?? connection.baxterUserId,
+        slackUserId: incomingSlackUserId ?? connection.slackUserId,
+        slackTeamId: incomingSlackTeamId ?? connection.slackTeamId,
       };
 
       const teamId = requester.slackTeamId?.trim() || connection.slackTeamId || "";
