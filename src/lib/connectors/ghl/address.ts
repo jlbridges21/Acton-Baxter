@@ -409,7 +409,7 @@ export function buildGhlContactInformationAnswer(input: {
   }
 
   lines.push(
-    `• Customer Center: /customers/lookup?contactId=${encodeURIComponent(input.contact.id)}`,
+    `• Customer Center: https://acton-baxter.vercel.app/customers/lookup?contactId=${encodeURIComponent(input.contact.id)}`,
   );
   return lines.join("\n");
 }

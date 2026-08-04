@@ -159,9 +159,15 @@ async function loadRawInquiries(input: {
 
   if (shouldUseMemory()) {
     const convs = await listRecentConversations(10_000);
+    const mem = (
+      globalThis as typeof globalThis & {
+        __baxterConversationMemory?: { messages: Map<string, import("./types").BaxterMessage[]> };
+      }
+    ).__baxterConversationMemory;
     for (const conv of convs) {
       if (input.channel !== "all" && conv.channel !== input.channel) continue;
-      const messages = await listMessagesForConversation(conv.id);
+      // Prefer in-memory map — avoids N× listMessagesForConversation in tests/mock mode.
+      const messages = mem?.messages.get(conv.id) ?? (await listMessagesForConversation(conv.id));
       for (const m of messages) {
         if (m.role !== "assistant") continue;
         if (!inDateRange(m.created_at, input.range)) continue;
@@ -366,19 +372,231 @@ async function resolveDepartmentForEmail(email: string): Promise<string | null> 
   }
 }
 
-async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow[]> {
-  const feedbackMap = await loadFeedbackByMessageIds(raw.map((r) => r.messageId));
-  const webUserIds = raw.map((r) => r.userId).filter((id): id is string => Boolean(id));
-  const profileMap = await loadProfileMap(webUserIds);
+async function loadSlackProfilesBatch(
+  pairs: Array<{ teamId: string; slackUserId: string }>,
+): Promise<Map<string, { label: string; email: string | null }>> {
+  const map = new Map<string, { label: string; email: string | null }>();
+  const unique = new Map<string, { teamId: string; slackUserId: string }>();
+  for (const p of pairs) {
+    if (!p.teamId || !p.slackUserId || p.teamId === "unknown") continue;
+    unique.set(`${p.teamId}:${p.slackUserId}`, p);
+  }
+  if (unique.size === 0) return map;
 
-  // Preload slack labels
-  const slackCache = new Map<
+  if (shouldUseMemory()) {
+    await Promise.all(
+      [...unique.values()].map(async ({ teamId, slackUserId }) => {
+        const info = await loadSlackProfileLabel(teamId, slackUserId);
+        map.set(`${teamId}:${slackUserId}`, info);
+      }),
+    );
+    return map;
+  }
+
+  const byTeam = new Map<string, string[]>();
+  for (const { teamId, slackUserId } of unique.values()) {
+    const list = byTeam.get(teamId) ?? [];
+    list.push(slackUserId);
+    byTeam.set(teamId, list);
+  }
+
+  const supabase = createServiceClient();
+  await Promise.all(
+    [...byTeam.entries()].map(async ([teamId, userIds]) => {
+      const deduped = [...new Set(userIds)];
+      for (let i = 0; i < deduped.length; i += 200) {
+        const chunk = deduped.slice(i, i + 200);
+        const { data } = await supabase
+          .from("slack_user_profiles")
+          .select("display_name, real_name, username, email, slack_user_id, team_id")
+          .eq("team_id", teamId)
+          .in("slack_user_id", chunk);
+        for (const row of data ?? []) {
+          const sid = String(row.slack_user_id);
+          map.set(`${teamId}:${sid}`, {
+            label: pickSlackDisplayName(row),
+            email: (row.email as string | null)?.trim().toLowerCase() || null,
+          });
+        }
+      }
+      for (const sid of deduped) {
+        const key = `${teamId}:${sid}`;
+        if (!map.has(key)) {
+          map.set(key, { label: slackUserFallbackLabel(sid), email: null });
+        }
+      }
+    }),
+  );
+  return map;
+}
+
+/**
+ * Batch-load user messages for many conversations (one/few queries), then pick
+ * the latest user message at-or-before each assistant timestamp.
+ */
+async function loadPriorUserQuestions(
+  items: Array<{ conversationId: string; createdAt: string; messageId: string }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (items.length === 0) return out;
+
+  const convIds = [...new Set(items.map((i) => i.conversationId))];
+  const messagesByConv = new Map<
+    string,
+    Array<{ role: string; content: string; created_at: string }>
+  >();
+
+  if (shouldUseMemory()) {
+    const mem = (
+      globalThis as typeof globalThis & {
+        __baxterConversationMemory?: {
+          messages: Map<string, Array<{ role: string; content: string; created_at: string }>>;
+        };
+      }
+    ).__baxterConversationMemory;
+    for (const id of convIds) {
+      const messages = mem?.messages.get(id) ?? (await listMessagesForConversation(id));
+      messagesByConv.set(id, messages);
+    }
+  } else {
+    const supabase = createServiceClient();
+    for (let i = 0; i < convIds.length; i += 100) {
+      const chunk = convIds.slice(i, i + 100);
+      const { data, error } = await supabase
+        .from("baxter_messages")
+        .select("conversation_id, role, content, created_at")
+        .in("conversation_id", chunk)
+        .eq("role", "user")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      for (const row of data ?? []) {
+        const cid = String(row.conversation_id);
+        const list = messagesByConv.get(cid) ?? [];
+        list.push({
+          role: String(row.role),
+          content: String(row.content ?? ""),
+          created_at: String(row.created_at),
+        });
+        messagesByConv.set(cid, list);
+      }
+    }
+  }
+
+  for (const item of items) {
+    const messages = messagesByConv.get(item.conversationId) ?? [];
+    const userMsg = [...messages]
+      .reverse()
+      .find((m) => m.role === "user" && m.created_at <= item.createdAt);
+    out.set(item.messageId, userMsg?.content ?? "");
+  }
+  return out;
+}
+
+async function resolveSlackAskerInfoBatch(
+  keys: Array<{ teamId: string; slackUserId: string }>,
+): Promise<Map<string, { label: string; email: string | null; department: string | null }>> {
+  const result = new Map<
     string,
     { label: string; email: string | null; department: string | null }
   >();
+  const unique = new Map<string, { teamId: string; slackUserId: string }>();
+  for (const k of keys) {
+    if (!k.slackUserId) continue;
+    const teamId = k.teamId || "unknown";
+    unique.set(`${teamId}:${k.slackUserId}`, { teamId, slackUserId: k.slackUserId });
+  }
+  if (unique.size === 0) return result;
 
-  const rows: BaxterInquiryAdminRow[] = [];
+  const labels = await loadSlackProfilesBatch([...unique.values()]);
+
+  const identityEntries = await Promise.all(
+    [...unique.values()].map(async ({ teamId, slackUserId }) => {
+      const cacheKey = `${teamId}:${slackUserId}`;
+      const labelEmail = labels.get(cacheKey) ?? {
+        label: slackUserFallbackLabel(slackUserId),
+        email: null,
+      };
+      let department: string | null = null;
+      let label = labelEmail.label;
+      if (!shouldUseMemory() && teamId !== "unknown") {
+        const matched = await resolveBaxterUserForSlackIdentity({
+          slackUserId,
+          slackTeamId: teamId,
+        }).catch(() => null);
+        if (matched?.userId) {
+          const profiles = await loadProfileMap([matched.userId]);
+          department = profiles.get(matched.userId)?.department ?? null;
+          if (matched.displayName) label = matched.displayName;
+        }
+      }
+      return {
+        cacheKey,
+        label,
+        email: labelEmail.email,
+        department,
+      };
+    }),
+  );
+
+  const emailsNeedingDept = identityEntries
+    .filter((e) => !e.department && e.email)
+    .map((e) => e.email!);
+  const deptByEmail = new Map<string, string | null>();
+  await Promise.all(
+    [...new Set(emailsNeedingDept)].map(async (email) => {
+      deptByEmail.set(email, await resolveDepartmentForEmail(email));
+    }),
+  );
+
+  for (const entry of identityEntries) {
+    const department =
+      entry.department ?? (entry.email ? (deptByEmail.get(entry.email) ?? null) : null);
+    result.set(entry.cacheKey, {
+      label: entry.label,
+      email: entry.email,
+      department,
+    });
+  }
+  return result;
+}
+
+/**
+ * Identity + feedback enrichment without per-row conversation message fetches.
+ * Question text is attached later only for the visible page.
+ */
+async function enrichInquiryIdentities(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow[]> {
+  const feedbackMap = await loadFeedbackByMessageIds(raw.map((r) => r.messageId));
+
+  const webUserIds = [
+    ...raw.map((r) => r.userId).filter((id): id is string => Boolean(id)),
+    ...[...feedbackMap.values()].flatMap((list) =>
+      list.map((f) => f.user_id).filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const profileMap = await loadProfileMap(webUserIds);
+
+  const slackKeys: Array<{ teamId: string; slackUserId: string }> = [];
   for (const item of raw) {
+    if (item.channel === "slack" && item.externalUserId) {
+      slackKeys.push({
+        teamId: item.slackTeamId ?? "unknown",
+        slackUserId: item.externalUserId,
+      });
+    }
+  }
+  for (const list of feedbackMap.values()) {
+    for (const fb of list) {
+      if (fb.slack_user_id) {
+        slackKeys.push({
+          teamId: fb.slack_team_id ?? "unknown",
+          slackUserId: fb.slack_user_id,
+        });
+      }
+    }
+  }
+  const slackAskerMap = await resolveSlackAskerInfoBatch(slackKeys);
+
+  return raw.map((item) => {
     const feedback = feedbackMap.get(item.messageId) ?? [];
     const summarizedRating = summarizeInquiryRating(feedback);
 
@@ -394,69 +612,29 @@ async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow
     } else if (item.channel === "slack" && item.externalUserId) {
       const teamId = item.slackTeamId ?? "unknown";
       askerKey = encodeSlackAskerKey(teamId, item.externalUserId);
-      const cacheKey = `${teamId}:${item.externalUserId}`;
-      let slackInfo = slackCache.get(cacheKey);
-      if (!slackInfo) {
-        const labelEmail = await loadSlackProfileLabel(teamId, item.externalUserId);
-        let dept: string | null = null;
-        // Prefer identity resolution → profile department (skip network in memory/tests)
-        if (!shouldUseMemory() && teamId !== "unknown") {
-          const matched = await resolveBaxterUserForSlackIdentity({
-            slackUserId: item.externalUserId,
-            slackTeamId: teamId,
-          }).catch(() => null);
-          if (matched?.userId) {
-            const profiles = await loadProfileMap([matched.userId]);
-            dept = profiles.get(matched.userId)?.department ?? null;
-            if (matched.displayName) labelEmail.label = matched.displayName;
-          }
-        }
-        if (!dept && labelEmail.email) {
-          dept = await resolveDepartmentForEmail(labelEmail.email);
-        }
-        slackInfo = {
-          label: labelEmail.label,
-          email: labelEmail.email,
-          department: dept,
-        };
-        slackCache.set(cacheKey, slackInfo);
-      }
-      askerLabel = slackInfo.label;
-      department = slackInfo.department;
+      const slackInfo = slackAskerMap.get(`${teamId}:${item.externalUserId}`);
+      askerLabel = slackInfo?.label ?? slackUserFallbackLabel(item.externalUserId);
+      department = slackInfo?.department ?? null;
     }
 
-    const feedbackEntries: BaxterInquiryFeedbackEntry[] = [];
-    for (const fb of feedback) {
+    const feedbackEntries: BaxterInquiryFeedbackEntry[] = feedback.map((fb) => {
       let commenterLabel = "Unknown";
       if (fb.user_id) {
-        const p =
-          profileMap.get(fb.user_id) ?? (await loadProfileMap([fb.user_id])).get(fb.user_id);
-        commenterLabel = p?.full_name?.trim() || "Web user";
+        commenterLabel = profileMap.get(fb.user_id)?.full_name?.trim() || "Web user";
       } else if (fb.slack_user_id) {
         const team = fb.slack_team_id ?? item.slackTeamId ?? "unknown";
-        const info = await loadSlackProfileLabel(team, fb.slack_user_id);
-        commenterLabel = info.label;
+        commenterLabel =
+          slackAskerMap.get(`${team}:${fb.slack_user_id}`)?.label ??
+          slackUserFallbackLabel(fb.slack_user_id);
       }
-      feedbackEntries.push({
+      return {
         id: fb.id,
         rating: fb.rating,
         comment: fb.comment,
         createdAt: fb.created_at,
         commenterLabel,
-      });
-    }
-
-    // Question: prior user message (full + truncated excerpt for collapsed UI)
-    let questionText = "";
-    try {
-      const messages = await listMessagesForConversation(item.conversationId);
-      const userMsg = [...messages]
-        .reverse()
-        .find((m) => m.role === "user" && m.created_at <= item.createdAt);
-      questionText = userMsg?.content ?? "";
-    } catch {
-      // ignore
-    }
+      };
+    });
 
     const meta = item.metadata as {
       sources?: unknown[];
@@ -464,15 +642,15 @@ async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow
     };
     const answerText = item.content;
 
-    rows.push({
+    return {
       messageId: item.messageId,
       conversationId: item.conversationId,
       createdAt: item.createdAt,
       channel: item.channel,
       summarizedRating,
-      questionExcerpt: questionText.slice(0, 200),
+      questionExcerpt: "",
       answerExcerpt: answerText.slice(0, 240),
-      questionText,
+      questionText: "",
       answerText,
       askerKey,
       askerLabel,
@@ -481,9 +659,29 @@ async function enrichInquiries(raw: RawInquiry[]): Promise<BaxterInquiryAdminRow
       answerMode: meta.answerMode ?? null,
       sourceCount: Array.isArray(meta.sources) ? meta.sources.length : 0,
       errorCode: item.errorCode,
-    });
-  }
-  return rows;
+    };
+  });
+}
+
+async function attachQuestionsToInquiryRows(
+  rows: BaxterInquiryAdminRow[],
+): Promise<BaxterInquiryAdminRow[]> {
+  if (rows.length === 0) return rows;
+  const questions = await loadPriorUserQuestions(
+    rows.map((r) => ({
+      conversationId: r.conversationId,
+      createdAt: r.createdAt,
+      messageId: r.messageId,
+    })),
+  );
+  return rows.map((row) => {
+    const questionText = questions.get(row.messageId) ?? "";
+    return {
+      ...row,
+      questionText,
+      questionExcerpt: questionText.slice(0, 200),
+    };
+  });
 }
 
 export async function listInquiriesForAdmin(input?: InquiryListFilters): Promise<{
@@ -495,6 +693,7 @@ export async function listInquiriesForAdmin(input?: InquiryListFilters): Promise
   totalInquiries: number;
   channelBreakdown: { web: number; slack: number };
 }> {
+  const started = Date.now();
   const range: DateRangeBounds = input?.range ?? { start: null, end: null };
   const channel = input?.channel ?? "all";
   const rating = input?.rating ?? "all";
@@ -511,8 +710,13 @@ export async function listInquiriesForAdmin(input?: InquiryListFilters): Promise
   });
   const departmentSet = new Set(departments.map((d) => d.toLowerCase()));
 
+  const tRaw = Date.now();
   const raw = await loadRawInquiries({ range, channel });
-  let enriched = await enrichInquiries(raw);
+  const rawMs = Date.now() - tRaw;
+
+  const tIdentity = Date.now();
+  let enriched = await enrichInquiryIdentities(raw);
+  const identityMs = Date.now() - tIdentity;
 
   if (askerKeys.length > 0) {
     const askerSet = new Set(askerKeys);
@@ -544,7 +748,23 @@ export async function listInquiriesForAdmin(input?: InquiryListFilters): Promise
       ? a.createdAt.localeCompare(b.createdAt)
       : b.createdAt.localeCompare(a.createdAt),
   );
-  const page = sorted.slice(offset, offset + limit);
+  const pageIdentity = sorted.slice(offset, offset + limit);
+
+  const tQuestions = Date.now();
+  const page = await attachQuestionsToInquiryRows(pageIdentity);
+  const questionsMs = Date.now() - tQuestions;
+
+  console.info(
+    "[feedback-inquiries] listInquiriesForAdmin",
+    JSON.stringify({
+      rawCount: raw.length,
+      pageSize: page.length,
+      rawMs,
+      identityMs,
+      questionsMs,
+      totalMs: Date.now() - started,
+    }),
+  );
 
   return {
     rows: page,
@@ -558,12 +778,13 @@ export async function listInquiriesForAdmin(input?: InquiryListFilters): Promise
 }
 
 export async function listFeedbackAskerOptions(): Promise<FeedbackAskerOption[]> {
+  const started = Date.now();
   const raw = await loadRawInquiries({
     range: { start: null, end: null },
     channel: "all",
   });
-  // Deduplicate by asker key using enrichment (lighter path)
-  const enriched = await enrichInquiries(raw);
+  // Identity only — asker dropdown does not need question text (avoids N message fetches).
+  const enriched = await enrichInquiryIdentities(raw);
   const map = new Map<string, FeedbackAskerOption>();
   for (const row of enriched) {
     if (row.askerKey === "unknown") continue;
@@ -575,6 +796,10 @@ export async function listFeedbackAskerOptions(): Promise<FeedbackAskerOption[]>
       });
     }
   }
+  console.info(
+    "[feedback-inquiries] listFeedbackAskerOptions",
+    JSON.stringify({ rawCount: raw.length, options: map.size, totalMs: Date.now() - started }),
+  );
   return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 

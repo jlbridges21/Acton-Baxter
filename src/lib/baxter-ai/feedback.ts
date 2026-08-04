@@ -433,96 +433,119 @@ function normalizeFeedbackRow(data: unknown): BaxterMessageFeedback {
 async function enrichFeedbackRows(
   rows: BaxterMessageFeedback[],
 ): Promise<BaxterAdminFeedbackRow[]> {
+  if (rows.length === 0) return [];
+
   const supabase = shouldUseMemory() ? null : createServiceClient();
+
+  // Batch profile + slack label lookups (unique ids), then parallel per-row message reads
+  // only for this page of feedback rows (not the full inquiry corpus).
+  const profileIds = [
+    ...new Set(rows.map((r) => r.user_id).filter((id): id is string => Boolean(id))),
+  ];
   const profileCache = new Map<string, string>();
+  if (supabase && profileIds.length > 0) {
+    const { data } = await supabase.from("profiles").select("id, full_name").in("id", profileIds);
+    for (const row of data ?? []) {
+      profileCache.set(String(row.id), (row.full_name as string | undefined)?.trim() || "Web user");
+    }
+  }
+
+  const slackPairs = new Map<string, { teamId: string; slackUserId: string }>();
+  for (const row of rows) {
+    if (row.slack_user_id && row.slack_team_id) {
+      slackPairs.set(`${row.slack_team_id}:${row.slack_user_id}`, {
+        teamId: row.slack_team_id,
+        slackUserId: row.slack_user_id,
+      });
+    }
+  }
   const slackNameCache = new Map<string, string>();
-
-  return Promise.all(
-    rows.map(async (row) => {
-      let channel: BaxterFeedbackChannel = row.slack_user_id ? "slack" : "web";
-      let questionExcerpt = "";
-      let answerExcerpt = "";
-      let answerMode: string | null = null;
-      let sourceCount = 0;
-      let errorCode: string | null = null;
-
-      try {
-        const conversation = await getConversationById(row.conversation_id);
-        if (conversation?.channel === "web" || conversation?.channel === "slack") {
-          channel = conversation.channel;
+  if (supabase && slackPairs.size > 0) {
+    const byTeam = new Map<string, string[]>();
+    for (const { teamId, slackUserId } of slackPairs.values()) {
+      const list = byTeam.get(teamId) ?? [];
+      list.push(slackUserId);
+      byTeam.set(teamId, list);
+    }
+    await Promise.all(
+      [...byTeam.entries()].map(async ([teamId, userIds]) => {
+        const { data } = await supabase
+          .from("slack_user_profiles")
+          .select("display_name, real_name, username, slack_user_id")
+          .eq("team_id", teamId)
+          .in("slack_user_id", [...new Set(userIds)]);
+        for (const row of data ?? []) {
+          slackNameCache.set(`${teamId}:${String(row.slack_user_id)}`, pickSlackDisplayName(row));
         }
+      }),
+    );
+  }
 
-        const messages = await listMessagesForConversation(row.conversation_id);
-        const assistant = messages.find((m) => m.id === row.message_id);
-        const userMsg = [...messages]
-          .reverse()
-          .find((m) => m.role === "user" && m.created_at <= (assistant?.created_at ?? ""));
-        const meta = (assistant?.metadata ?? {}) as {
-          sources?: Array<{ citationLabel?: string }>;
-          answerMode?: string;
-        };
-        questionExcerpt = (userMsg?.content ?? "").slice(0, 200);
-        answerExcerpt = (assistant?.content ?? "").slice(0, 240);
-        answerMode = meta.answerMode ?? null;
-        sourceCount = Array.isArray(meta.sources) ? meta.sources.length : 0;
-        errorCode = assistant?.error_code ?? null;
-      } catch {
-        // Keep excerpts empty on enrichment failure
-      }
-
-      let commenterLabel = "Unknown";
-      if (row.user_id) {
-        if (profileCache.has(row.user_id)) {
-          commenterLabel = profileCache.get(row.user_id)!;
-        } else if (supabase) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("full_name")
-            .eq("id", row.user_id)
-            .maybeSingle();
-          commenterLabel = (profile?.full_name as string | undefined)?.trim() || "Web user";
-          profileCache.set(row.user_id, commenterLabel);
-        } else {
-          commenterLabel = "Web user";
-        }
-      } else if (row.slack_user_id) {
-        const cacheKey = `${row.slack_team_id ?? ""}:${row.slack_user_id}`;
-        if (slackNameCache.has(cacheKey)) {
-          commenterLabel = slackNameCache.get(cacheKey)!;
-        } else if (supabase && row.slack_team_id) {
-          const { data: slackProfile } = await supabase
-            .from("slack_user_profiles")
-            .select("display_name, real_name, username, slack_user_id")
-            .eq("team_id", row.slack_team_id)
-            .eq("slack_user_id", row.slack_user_id)
-            .maybeSingle();
-          commenterLabel = slackProfile
-            ? pickSlackDisplayName(slackProfile)
-            : slackUserFallbackLabel(row.slack_user_id);
-          slackNameCache.set(cacheKey, commenterLabel);
-        } else {
-          commenterLabel = slackUserFallbackLabel(row.slack_user_id);
-          slackNameCache.set(cacheKey, commenterLabel);
-        }
-      }
-
-      return {
-        id: row.id,
-        rating: row.rating,
-        createdAt: row.created_at,
-        channel,
-        messageId: row.message_id,
-        conversationId: row.conversation_id,
-        comment: row.comment,
-        questionExcerpt,
-        answerExcerpt,
-        commenterLabel,
-        answerMode,
-        sourceCount,
-        errorCode,
-      };
+  const uniqueConvIds = [...new Set(rows.map((r) => r.conversation_id))];
+  const messagesByConv = new Map<string, Awaited<ReturnType<typeof listMessagesForConversation>>>();
+  const conversationsById = new Map<string, Awaited<ReturnType<typeof getConversationById>>>();
+  await Promise.all(
+    uniqueConvIds.map(async (id) => {
+      const [conversation, messages] = await Promise.all([
+        getConversationById(id).catch(() => null),
+        listMessagesForConversation(id).catch(() => []),
+      ]);
+      conversationsById.set(id, conversation);
+      messagesByConv.set(id, messages);
     }),
   );
+
+  return rows.map((row) => {
+    let channel: BaxterFeedbackChannel = row.slack_user_id ? "slack" : "web";
+    let questionExcerpt = "";
+    let answerExcerpt = "";
+    let answerMode: string | null = null;
+    let sourceCount = 0;
+    let errorCode: string | null = null;
+
+    const conversation = conversationsById.get(row.conversation_id);
+    if (conversation?.channel === "web" || conversation?.channel === "slack") {
+      channel = conversation.channel;
+    }
+    const messages = messagesByConv.get(row.conversation_id) ?? [];
+    const assistant = messages.find((m) => m.id === row.message_id);
+    const userMsg = [...messages]
+      .reverse()
+      .find((m) => m.role === "user" && m.created_at <= (assistant?.created_at ?? ""));
+    const meta = (assistant?.metadata ?? {}) as {
+      sources?: Array<{ citationLabel?: string }>;
+      answerMode?: string;
+    };
+    questionExcerpt = (userMsg?.content ?? "").slice(0, 200);
+    answerExcerpt = (assistant?.content ?? "").slice(0, 240);
+    answerMode = meta.answerMode ?? null;
+    sourceCount = Array.isArray(meta.sources) ? meta.sources.length : 0;
+    errorCode = assistant?.error_code ?? null;
+
+    let commenterLabel = "Unknown";
+    if (row.user_id) {
+      commenterLabel = profileCache.get(row.user_id) || "Web user";
+    } else if (row.slack_user_id) {
+      const cacheKey = `${row.slack_team_id ?? ""}:${row.slack_user_id}`;
+      commenterLabel = slackNameCache.get(cacheKey) || slackUserFallbackLabel(row.slack_user_id);
+    }
+
+    return {
+      id: row.id,
+      rating: row.rating,
+      createdAt: row.created_at,
+      channel,
+      messageId: row.message_id,
+      conversationId: row.conversation_id,
+      comment: row.comment,
+      questionExcerpt,
+      answerExcerpt,
+      commenterLabel,
+      answerMode,
+      sourceCount,
+      errorCode,
+    };
+  });
 }
 
 function applyCreatedAtRange<
@@ -666,6 +689,7 @@ export async function getFeedbackDashboard(input?: {
   range?: DateRangeBounds | null;
   sort?: FeedbackSortDirection;
 }): Promise<FeedbackDashboardResult> {
+  const started = Date.now();
   const range: DateRangeBounds = input?.range ?? { start: null, end: null };
   const { listInquiriesForAdmin, listFeedbackAskerOptions, listFeedbackDepartmentOptions } =
     await import("./feedback-inquiries");
@@ -686,6 +710,16 @@ export async function getFeedbackDashboard(input?: {
     listFeedbackAskerOptions(),
     listFeedbackDepartmentOptions(),
   ]);
+
+  console.info(
+    "[feedback-dashboard] getFeedbackDashboard",
+    JSON.stringify({
+      totalInquiries: listed.totalInquiries,
+      rows: listed.rows.length,
+      askerOptions: askerOptions.length,
+      totalMs: Date.now() - started,
+    }),
+  );
 
   return {
     totalInquiries: listed.totalInquiries,

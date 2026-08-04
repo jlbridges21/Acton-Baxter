@@ -25,6 +25,18 @@ body {
   font-family: var(--font-source-sans), "Segoe UI", sans-serif;
 }
 
+@keyframes nav-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(-20%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 @media print {
   body {
     background: white !important;
