@@ -36,6 +36,7 @@ export {
   extractProjectNumbers,
   extractProjectNameQueries,
   isProjectStatusQuestion,
+  isProjectInformationQuestion,
   scoreProjectChannelMatch,
 } from "./project-status";
 export { resolvePersonFromDirectory, resolvePeople, formatPersonLabel } from "./users";

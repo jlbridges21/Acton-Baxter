@@ -47,6 +47,76 @@ const BAXTER_META_HOWTO =
 const USE_BAXTER_TO =
   /\b(use\s+(you|baxter)\s+(to|for)|how\s+they\s+can\s+use\s+you|instead of relying)\b/i;
 
+/**
+ * "how do I find/get information about [Name]" is a data lookup wearing how-to clothing —
+ * not a Baxter capability/meta question.
+ */
+const DATA_LOOKUP_HOWTO_CLOTHING =
+  /\bhow\s+(do|can|should)\s+(i|we|they|the\s+team).{0,40}\b(find|get|look\s*up|pull|see|check|search|retrieve|locate)\b.{0,40}\b(info|information|details|status|update|record|about)\b/i;
+
+/**
+ * True when the question names a specific person/project/channel — not a generic tool how-to.
+ */
+export function questionHasSpecificNamedEntity(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (/#[\w-]+/.test(q)) return true;
+  if (/\b[A-Za-z]\d{2}-\d{4,6}\b/.test(q)) return true;
+  // "the Katie Liniger project" / "Katie Liniger's opportunity"
+  if (
+    /\b(?:the\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\s+(?:project|opportunity|deal|job|channel)\b/.test(
+      q,
+    )
+  ) {
+    return true;
+  }
+  // lowercase variant common in Slack
+  if (
+    /\b(?:the\s+)?[a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){0,3}\s+(?:project|opportunity|deal|job)\b/i.test(
+      q,
+    ) &&
+    !/\b(new|a|our|the team|this|that)\s+project\b/i.test(q)
+  ) {
+    // Exclude pure "new project" / "a project" capability phrasing
+    if (
+      /\b(new project setup|create a new project|set up a new project|use you to .{0,30}project)\b/i.test(
+        q,
+      )
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Meta how-to about Baxter itself — never when a specific named entity/channel is the subject
+ * unless the user is clearly asking how to use Baxter/you to do something.
+ */
+export function isBaxterCapabilityMetaHowto(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  // Live Slack channel asks are never capability FAQs.
+  if (/#[\w-]+/.test(q)) return false;
+  // "how do I find/get information about [Name]" — data lookup clothing.
+  if (DATA_LOOKUP_HOWTO_CLOTHING.test(q) && questionHasSpecificNamedEntity(q)) {
+    return false;
+  }
+  // Named project/person without "use you/baxter" → not meta howto.
+  if (
+    questionHasSpecificNamedEntity(q) &&
+    !USE_BAXTER_TO.test(q) &&
+    !/\buse\s+(you|baxter)\b/i.test(q)
+  ) {
+    // Still allow "how do we use you to create a new project" (no specific customer name).
+    if (!/\b(new project setup|create a new project|set up a new project)\b/i.test(q)) {
+      return false;
+    }
+  }
+  return BAXTER_META_HOWTO.test(q) || USE_BAXTER_TO.test(q);
+}
+
 function extractGoogleUrl(question: string): string | null {
   const withProtocol = question.match(
     /https?:\/\/(?:docs|drive|sheets)\.google\.com\/[^\s)\]>"']+/i,
@@ -174,8 +244,8 @@ export function classifyCapabilityQuestion(question: string): CapabilityQuestion
   }
 
   // Meta how-to about using Baxter itself ("tell the team how they can use you to…")
-  // — never a CRM entity lookup.
-  if (BAXTER_META_HOWTO.test(q) || USE_BAXTER_TO.test(q)) {
+  // — never a CRM entity lookup. Must not fire on "how do I find info about [Name]".
+  if (isBaxterCapabilityMetaHowto(q)) {
     return {
       kind: "specific_capability",
       topic,

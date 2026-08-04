@@ -3,6 +3,7 @@
  */
 
 import { detectSlackSearchIntent } from "./intent";
+import { isProjectInformationQuestion, isProjectStatusQuestion } from "./project-status";
 import type { SlackSearchIntent } from "./types";
 
 export type SlackSearchRole = "primary" | "fallback" | "skip";
@@ -47,8 +48,12 @@ export function detectSlackSearchRole(input: {
     "thread_context",
   ];
 
-  // Project-status is always Slack-primary when detected (exact channel / project # / job name).
-  if (intent === "project_status") {
+  // Project-status / project-information is always Slack-primary when detected.
+  if (
+    intent === "project_status" ||
+    isProjectInformationQuestion(q) ||
+    isProjectStatusQuestion(q)
+  ) {
     return "primary";
   }
 

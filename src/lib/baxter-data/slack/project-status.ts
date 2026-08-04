@@ -179,6 +179,29 @@ export function isProjectStatusQuestion(question: string): boolean {
 }
 
 /**
+ * "Give me / find / how do I find information about the X project" —
+ * live project lookup (Slack channel first), not a capability FAQ.
+ */
+export function isProjectInformationQuestion(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (isProjectStatusQuestion(q)) return true;
+
+  const hasProjectRef =
+    extractProjectNumbers(q).length > 0 ||
+    /#[\w-]+/.test(q) ||
+    /\b(?:the\s+)?[A-Za-z][A-Za-z'-]{1,40}(?:\s+[A-Za-z][A-Za-z'-]{1,40}){0,3}\s+(?:project|job)\b/i.test(
+      q,
+    );
+
+  if (!hasProjectRef) return false;
+
+  return /\b(information|info|details|tell me about|give me .{0,20}(info|information|details)|find .{0,40}(info|information|about)|more (info|information) about|what (do we know|can you tell me) about)\b/i.test(
+    q,
+  );
+}
+
+/**
  * Score a Slack channel name against a project number or homeowner slug.
  * Higher is better. Threshold ~70 for confident match.
  */

@@ -8,7 +8,9 @@ import { detectPemIntent, pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-
 import { detectConceptQuestion } from "@/lib/baxter/concept-vocabulary";
 import {
   classifyCapabilityQuestion,
+  isBaxterCapabilityMetaHowto,
   isGeneralCapabilitiesQuestion,
+  questionHasSpecificNamedEntity,
   type CapabilityQuestionClassification,
 } from "@/lib/baxter/capability-intent";
 import { canUserWriteGhl } from "@/lib/connectors/ghl/actions/permissions";
@@ -177,11 +179,13 @@ function answerBaxterMetaHowto(
   classified: CapabilityQuestionClassification,
   role: string | null | undefined,
 ): CapabilityHelpAnswer | null {
-  const isMeta =
-    classified.reason === "baxter_meta_howto" ||
-    /\b(use (you|baxter) (to|for)|how (do|can|should) (i|we|they)|walk (me|us|the team) through|tell the team .{0,40}how)\b/i.test(
-      question,
-    );
+  if (
+    questionHasSpecificNamedEntity(question) &&
+    !/\b(use\s+(you|baxter)\s+(to|for)|how to use (you|baxter))\b/i.test(question)
+  ) {
+    return null;
+  }
+  const isMeta = classified.reason === "baxter_meta_howto" || isBaxterCapabilityMetaHowto(question);
   if (!isMeta) return null;
 
   const cap = resolveHowtoCapability(question, classified, role);
@@ -640,7 +644,14 @@ export function answerCapabilityHelp(input: {
   const question = input.question.trim();
   let classified = classifyCapabilityQuestion(question);
 
-  if (input.forceCapabilityHowto) {
+  // Named person/project/#channel data lookups must never become capability how-tos.
+  const blockCapabilityHowto =
+    questionHasSpecificNamedEntity(question) &&
+    !/\b(use\s+(you|baxter)\s+(to|for)|how to use (you|baxter))\b/i.test(question);
+
+  const allowForce = Boolean(input.forceCapabilityHowto) && !blockCapabilityHowto;
+
+  if (allowForce) {
     // Treat as Baxter meta how-to so dedicated/feature answers run.
     if (classified.kind === "none" || classified.kind === "implied_action") {
       classified = {
@@ -662,11 +673,11 @@ export function answerCapabilityHelp(input: {
   // Concept definitions / how-tos still allowed even if classifier says none
   const pemDef = pemHelpDefinitionAnswer(question);
   const concept = detectConceptQuestion(question);
-  if (classified.kind === "none" && !input.forceCapabilityHowto) {
+  if (classified.kind === "none" && !allowForce) {
     if (!pemDef && concept.kind !== "definition" && concept.kind !== "how_to") {
       return null;
     }
-  } else if (!input.forceCapabilityHowto && !detectCapabilityHelpIntent(question) && !pemDef) {
+  } else if (!allowForce && !detectCapabilityHelpIntent(question) && !pemDef) {
     return null;
   }
 
@@ -676,9 +687,9 @@ export function answerCapabilityHelp(input: {
   });
 
   const metaHowto = answerBaxterMetaHowto(question, classified, role);
-  if (metaHowto) return metaHowto;
+  if (metaHowto && !blockCapabilityHowto) return metaHowto;
 
-  if (input.forceCapabilityHowto) {
+  if (allowForce) {
     const cap = resolveHowtoCapability(question, classified, role);
     if (cap) {
       const dedicated = answerDedicatedCapabilityHowto(cap.key, cap, role);

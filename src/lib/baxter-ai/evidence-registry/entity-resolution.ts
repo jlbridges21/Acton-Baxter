@@ -248,11 +248,17 @@ export function resolveQuestionEntity(input: {
       });
       usedSemanticEntity = true;
     } else {
-      // Name known, type unknown — still prefer the name; regex may refine type.
+      // Name known, type unknown — prefer attempting both GHL opportunity + PEM.
       candidates.push({
         type: "ghl_opportunity",
         name: semantic!.entityName,
         confidence: Math.min(semantic!.confidence, 0.75),
+        via: "semantic",
+      });
+      candidates.push({
+        type: "pem_prospect",
+        name: semantic!.entityName,
+        confidence: Math.min(semantic!.confidence, 0.72),
         via: "semantic",
       });
       usedSemanticEntity = true;

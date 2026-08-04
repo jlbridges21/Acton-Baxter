@@ -47,7 +47,13 @@ export const ghlEvidenceSource: EvidenceSource = {
       if (guess === "pem_prospect" || guess === "rulebook_step_or_role") {
         return { plausible: false, confidence: 0 };
       }
-      // unknown — fall through to regex + plausibility
+      // unknown type but we have a real entity name — still attempt GHL (conservative: try sources).
+      if (semantic!.entityName && isPlausibleCrmEntityCandidate(semantic!.entityName)) {
+        return {
+          plausible: true,
+          confidence: Math.min(0.82, Math.max(0.7, semantic!.confidence)),
+        };
+      }
     }
     // Capability how-tos about Baxter itself are never CRM lookups (regex fallback path).
     if (isBaxterMetaHowtoQuestion(input.question)) {

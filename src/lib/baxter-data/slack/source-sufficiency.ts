@@ -3,7 +3,7 @@
  * Presence of Knowledge is not the same as answering a dynamic WHEN/status ask.
  */
 
-import { isProjectStatusQuestion } from "./project-status";
+import { isProjectStatusQuestion, isProjectInformationQuestion } from "./project-status";
 
 export function nonSlackEvidenceSatisfiesQuestion(
   question: string,
@@ -68,7 +68,7 @@ export function shouldForceSlackDespiteOtherEvidence(question: string): boolean 
   if (/\b(when will|when is|be ready|ready by|latest on|status of|current status)\b/i.test(q)) {
     return true;
   }
-  if (isProjectStatusQuestion(question)) {
+  if (isProjectStatusQuestion(question) || isProjectInformationQuestion(question)) {
     return true;
   }
   return false;

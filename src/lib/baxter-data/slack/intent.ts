@@ -1,5 +1,9 @@
 import type { SlackSearchIntent, SlackSearchSort } from "./types";
-import { isProjectStatusQuestion, isStructuralProjectKeyword } from "./project-status";
+import {
+  isProjectInformationQuestion,
+  isProjectStatusQuestion,
+  isStructuralProjectKeyword,
+} from "./project-status";
 
 const DECISION_LANGUAGE = [
   "decided",
@@ -53,8 +57,8 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
     }
   }
 
-  // Project-status before generic latest_update so "#channel project" uses history, not keyword RTS.
-  if (isProjectStatusQuestion(question)) {
+  // Project-status / project-information before generic latest_update so "#channel project" uses history.
+  if (isProjectStatusQuestion(question) || isProjectInformationQuestion(question)) {
     return "project_status";
   }
 

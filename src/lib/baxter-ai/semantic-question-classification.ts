@@ -42,17 +42,29 @@ const SYSTEM_PROMPT = `You route Acton ADU employee questions for Baxter. Do NOT
 Return JSON with keys: questionType, entityName, entityTypeGuess, confidence.
 
 questionType values:
-- entity_lookup: asks about a specific named CRM contact/opportunity/deal/project, PEM prospect, or rulebook role/step
-- capability_howto: asks how to use Baxter or its tools (project setup, PEM NEAT, Property Research, Customer Center, Slack, GHL features of Baxter itself)
-- procedural_knowledge: asks about company process, procedure, policy, workflow, or site visit steps from Knowledge — not a named CRM record
-- general_conversational: greeting, thanks, chitchat, or general non-Acton writing help
+- entity_lookup: asks about a specific named person, CRM contact/opportunity/deal/project, PEM prospect, Slack project/job, or rulebook role/step. Includes "how do I find information about [Name]'s project" and "give me information about the [Name] project" — those are data lookups, NOT capability how-tos.
+- capability_howto: asks how to use Baxter or its tools themselves (e.g. "how do we use you to set up a new project", "how can the team use Baxter for PEM NEATs") with NO specific customer/project/channel name
+- procedural_knowledge: asks about company process, procedure, policy, workflow, or site visit steps from Knowledge — not a named CRM/Slack record
+- general_conversational: greeting, thanks, chitchat, or general non-Acton writing help ONLY
 - ambiguous: cannot tell with confidence
 
-entityName: only for entity_lookup — the real person/deal/project identifier as understood (not a sentence fragment). Otherwise null.
+entityName: only for entity_lookup — the real person/deal/project/channel identifier as understood (not a sentence fragment). Otherwise null.
 entityTypeGuess: only for entity_lookup — ghl_contact | ghl_opportunity | pem_prospect | rulebook_step_or_role | unknown. Otherwise null.
 confidence: 0 to 1.
 
-Critical: words like project, opportunity, deal, site, schedule, plan, customer often appear in how-to and process questions. Those are NOT entity names unless the user is clearly asking about a specific named record (e.g. "Liniger project", "Robert Vertin opportunity").`;
+Critical rules:
+- A #channel mention or "latest update in #…" is NEVER general_conversational or capability_howto — classify as entity_lookup (entityTypeGuess unknown is fine) or ambiguous.
+- "how do I find/get information about [specific named person/project]" is entity_lookup, not capability_howto.
+- Words like project/opportunity/deal/site often appear in how-tos AND in real entity names. Prefer entity_lookup whenever a specific proper name or #channel is present.`;
+
+/**
+ * Non-entity types that should bypass GHL/PEM/Rulebook entity lookup.
+ * Note: general_conversational is intentionally excluded — the classifier sometimes
+ * mislabels live Slack/#channel asks as conversational; those must still attempt data sources.
+ */
+export function isNonEntitySemanticType(type: SemanticQuestionType | null | undefined): boolean {
+  return type === "capability_howto" || type === "procedural_knowledge";
+}
 
 function resolveRoutingModel(): string {
   const env = getEnv();
@@ -104,14 +116,6 @@ export function isSemanticRoutingConfident(
     semantic.source === "llm" &&
     semantic.confidence >= SEMANTIC_ROUTING_CONFIDENCE_THRESHOLD &&
     semantic.questionType !== "ambiguous",
-  );
-}
-
-export function isNonEntitySemanticType(type: SemanticQuestionType | null | undefined): boolean {
-  return (
-    type === "capability_howto" ||
-    type === "procedural_knowledge" ||
-    type === "general_conversational"
   );
 }
 

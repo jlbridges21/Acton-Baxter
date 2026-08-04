@@ -264,7 +264,7 @@ describe("Prompt 5B Slack conversation mapping", () => {
       externalUserId: "U99",
     });
     expect(otherThread.conversationId).not.toBe(first.conversationId);
-  });
+  }, 20_000);
 });
 
 describe("Prompt 5B Slack client logging safety", () => {

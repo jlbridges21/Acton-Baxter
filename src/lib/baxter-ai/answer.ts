@@ -65,9 +65,15 @@ import {
   classifyQuestionSemantically,
   isSemanticRoutingConfident,
 } from "@/lib/baxter-ai/semantic-question-classification";
+import { questionHasSpecificNamedEntity } from "@/lib/baxter/capability-intent";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
-import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
+import { detectSlackSearchIntent, extractChannelMentions } from "@/lib/baxter-data/slack/intent";
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
+import {
+  isProjectInformationQuestion,
+  isProjectStatusQuestion,
+} from "@/lib/baxter-data/slack/project-status";
+import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
 import { readSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
 import {
   nonSlackEvidenceSatisfiesQuestion,
@@ -371,6 +377,61 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     }
   }
 
+  const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
+
+  // Identity / capability FAQs: answer before semantic routing + Slack (fast path).
+  // Prevents "Who is Baxter?" from paying for routing classification or resource checks.
+  if (questionClass === "baxter_identity" && !preferKnowledgeForConcept) {
+    const identityHelp = answerCapabilityHelp({
+      question: routingQuestion,
+      role: profile?.role ?? null,
+      profile,
+    });
+    if (identityHelp) {
+      const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
+      const sources: BaxterSourceReference[] = identityHelp.links.map((link, index) => {
+        const href = link.href.startsWith("http") ? link.href : `${baseUrl}${link.href}`;
+        return {
+          title: link.label,
+          sourceName: "Baxter",
+          category: "Baxter capability",
+          sourceUrl: href,
+          citationLabel: link.label,
+          sourceKind: "capability" as const,
+          openLabel: link.label,
+          lastUpdated: null,
+          relevanceScore: 100,
+          availability: "available" as const,
+          knowledgeEntryId: `capability-${index}-${link.href}`,
+        };
+      });
+      const helpAnswer = withAbsoluteAppLinks(identityHelp.answer, identityHelp.links);
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: helpAnswer,
+        insufficientKnowledge: false,
+        confidence: "high",
+        modelProvider: "capability-registry",
+        modelName: "identity-fast-path",
+        sources,
+        sourceEntryIds: sources.map((s, index) => ({
+          id: s.knowledgeEntryId!,
+          relevanceScore: 100,
+          order: index + 1,
+        })),
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: helpAnswer,
+        sources,
+        confidence: "high",
+        insufficientKnowledge: false,
+        answerMode: "identity",
+      });
+    }
+  }
+
   // Deterministic capability / how-to answers.
   // Definition questions prefer approved Knowledge first (not a canned short-circuit).
   // Specific resource access (e.g. a Google Doc URL) is verified live — never the full overview.
@@ -401,7 +462,6 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
-  const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
   const resourceAccess = await answerResourceAccessCheck({
     question: routingQuestion,
     role: profile?.role ?? null,
@@ -451,13 +511,36 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   }
 
   const forceCapabilityHowto =
-    isSemanticRoutingConfident(semantic) && semantic.questionType === "capability_howto";
-  const capabilityHelp = answerCapabilityHelp({
-    question: routingQuestion,
-    role: profile?.role ?? null,
-    profile,
-    forceCapabilityHowto,
-  });
+    isSemanticRoutingConfident(semantic) &&
+    semantic.questionType === "capability_howto" &&
+    // Never force capability help over a live data / Slack / named-entity ask.
+    !questionHasSpecificNamedEntity(routingQuestion) &&
+    extractChannelMentions(routingQuestion).length === 0 &&
+    !isProjectInformationQuestion(routingQuestion) &&
+    !isProjectStatusQuestion(routingQuestion) &&
+    detectSlackSearchRole({ question: routingQuestion }) === "skip";
+
+  // Slack Search must not be preempted by capability short-circuit.
+  const slackIntentEarly = detectSlackSearchIntent(routingQuestion);
+  const slackWouldRunEarly =
+    detectSlackSearchRole({ question: routingQuestion }) !== "skip" ||
+    extractChannelMentions(routingQuestion).length > 0 ||
+    slackIntentEarly === "project_status" ||
+    slackIntentEarly === "channel_search" ||
+    slackIntentEarly === "latest_update" ||
+    slackIntentEarly === "latest_message";
+  const semanticWantsEntity =
+    isSemanticRoutingConfident(semantic) && semantic.questionType === "entity_lookup";
+
+  const capabilityHelp =
+    slackWouldRunEarly || semanticWantsEntity
+      ? null
+      : answerCapabilityHelp({
+          question: routingQuestion,
+          role: profile?.role ?? null,
+          profile,
+          forceCapabilityHowto,
+        });
   if (capabilityHelp && !preferKnowledgeForConcept) {
     const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
     const sources: BaxterSourceReference[] = capabilityHelp.links.map((link, index) => {
@@ -544,32 +627,42 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   }
 
   if (registry.earlyAnswer) {
-    const early = registry.earlyAnswer;
-    const sources = early.sources.map((item) => contextItemToSourceReference(item));
-    const message = await appendAssistantMessage({
-      conversationId: conversation.id,
-      content: early.answer,
-      insufficientKnowledge: early.insufficientKnowledge,
-      confidence: early.confidence,
-      modelProvider: early.modelProvider,
-      modelName: early.modelName,
-      sources,
-      sourceEntryIds: sources.map((s, index) => ({
-        id: s.knowledgeEntryId || early.sources[index]?.id || `registry-${index}`,
-        relevanceScore: 100,
-        order: index + 1,
-      })),
-    });
-    return toPublicAnswer({
-      conversationId: conversation.id,
-      messageId: message.id,
-      answer: early.answer,
-      sources,
-      confidence: early.confidence,
-      insufficientKnowledge: early.insufficientKnowledge,
-      answerMode: early.answerMode,
-    });
+    const liveProjectLookup =
+      isProjectInformationQuestion(routingQuestion) ||
+      isProjectStatusQuestion(routingQuestion) ||
+      extractChannelMentions(routingQuestion).length > 0;
+    // Project / #channel asks: do not short-circuit before Slack Search runs.
+    // Stash the registry answer as a fallback after Slack is attempted.
+    if (!liveProjectLookup) {
+      const early = registry.earlyAnswer;
+      const sources = early.sources.map((item) => contextItemToSourceReference(item));
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: early.answer,
+        insufficientKnowledge: early.insufficientKnowledge,
+        confidence: early.confidence,
+        modelProvider: early.modelProvider,
+        modelName: early.modelName,
+        sources,
+        sourceEntryIds: sources.map((s, index) => ({
+          id: s.knowledgeEntryId || early.sources[index]?.id || `registry-${index}`,
+          relevanceScore: 100,
+          order: index + 1,
+        })),
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: early.answer,
+        sources,
+        confidence: early.confidence,
+        insufficientKnowledge: early.insufficientKnowledge,
+        answerMode: early.answerMode,
+      });
+    }
   }
+
+  const deferredRegistryEarly = registry.earlyAnswer;
 
   if (registry.contextItems.length > 0) {
     const renumbered = registry.contextItems.map((item, index) => ({
@@ -846,6 +939,37 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       slackRuntime.noResultsNote,
       slackRuntime.incompleteNote,
     ].filter(Boolean);
+    // After Slack was attempted: if registry had a deferred early answer (PEM/GHL),
+    // include both so the employee sees what was checked.
+    if (deferredRegistryEarly && parts.length) {
+      const combined = [...parts, deferredRegistryEarly.answer].join("\n\n");
+      const sources = deferredRegistryEarly.sources.map((item) =>
+        contextItemToSourceReference(item),
+      );
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: combined,
+        insufficientKnowledge: deferredRegistryEarly.insufficientKnowledge,
+        confidence: deferredRegistryEarly.confidence,
+        modelProvider: deferredRegistryEarly.modelProvider,
+        modelName: `${deferredRegistryEarly.modelName}+slack-checked`,
+        sources,
+        sourceEntryIds: sources.map((s, index) => ({
+          id: s.knowledgeEntryId || deferredRegistryEarly.sources[index]?.id || `registry-${index}`,
+          relevanceScore: 100,
+          order: index + 1,
+        })),
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: combined,
+        sources,
+        confidence: deferredRegistryEarly.confidence,
+        insufficientKnowledge: deferredRegistryEarly.insufficientKnowledge,
+        answerMode: deferredRegistryEarly.answerMode,
+      });
+    }
     // If other sources exist, continue to LLM with a Slack note instead of short-circuiting.
     if (contextItems.length === 0 && parts.length) {
       const answer = parts.join("\n\n");
@@ -871,6 +995,51 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         answerMode: "clarification",
       });
     }
+  }
+
+  // Project-info path: Slack ran (or was primary) with nothing selected — use deferred PEM/GHL.
+  if (
+    deferredRegistryEarly &&
+    (!slackRuntime || slackRuntime.selected.length === 0) &&
+    (isProjectInformationQuestion(routingQuestion) ||
+      isProjectStatusQuestion(routingQuestion) ||
+      extractChannelMentions(routingQuestion).length > 0)
+  ) {
+    const early = deferredRegistryEarly;
+    const slackNote =
+      slackRuntime?.noResultsNote ||
+      slackRuntime?.authNote ||
+      slackRuntime?.incompleteNote ||
+      (slackRuntime?.diagnostics.ran
+        ? "I checked Slack for a matching project channel/update first."
+        : null);
+    const answer = slackNote ? `${slackNote}\n\n${early.answer}` : early.answer;
+    const sources = early.sources.map((item) => contextItemToSourceReference(item));
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: answer,
+      insufficientKnowledge: early.insufficientKnowledge,
+      confidence: early.confidence,
+      modelProvider: early.modelProvider,
+      modelName: slackRuntime?.diagnostics.ran
+        ? `${early.modelName}+slack-checked`
+        : early.modelName,
+      sources,
+      sourceEntryIds: sources.map((s, index) => ({
+        id: s.knowledgeEntryId || early.sources[index]?.id || `registry-${index}`,
+        relevanceScore: 100,
+        order: index + 1,
+      })),
+    });
+    return toPublicAnswer({
+      conversationId: conversation.id,
+      messageId: message.id,
+      answer,
+      sources,
+      confidence: early.confidence,
+      insufficientKnowledge: early.insufficientKnowledge,
+      answerMode: early.answerMode,
+    });
   }
 
   if (slackRuntime?.items.length) {

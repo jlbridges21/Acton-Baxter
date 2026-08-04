@@ -3,18 +3,13 @@
  * Keeps the underlying regex extractors intact — only gates high-confidence claims.
  */
 
+import { isBaxterCapabilityMetaHowto } from "@/lib/baxter/capability-intent";
+
 const INSTRUCTIONAL_START = /^(tell|explain|show|describe|walk|help|teach|remind|ask|let|give)\b/i;
 
 /** Question-level: how-to / “use Baxter to…” — not a CRM entity ask. */
 export function isBaxterMetaHowtoQuestion(question: string): boolean {
-  const q = question.trim();
-  if (!q) return false;
-  return (
-    /\b((tell|show|explain|teach|remind)\s+(the\s+team|us|employees?|me)\s+(about\s+)?how|how\s+(do|can|should)\s+(i|we|they|the\s+team|employees?)|walk\s+(me|us|the\s+team)\s+through|how\s+to\s+use\s+(you|baxter)|(?:can|could)\s+(the\s+team|we|they)\s+use\s+(you|baxter))\b/i.test(
-      q,
-    ) ||
-    /\b(use\s+(you|baxter)\s+(to|for)|how\s+they\s+can\s+use\s+you|instead of relying)\b/i.test(q)
-  );
+  return isBaxterCapabilityMetaHowto(question);
 }
 
 /**

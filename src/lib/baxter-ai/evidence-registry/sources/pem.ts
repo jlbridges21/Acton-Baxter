@@ -47,13 +47,14 @@ export const pemEvidenceSource: EvidenceSource = {
           confidence: Math.max(0.9, semantic!.confidence),
         };
       }
-      if (
-        guess === "ghl_contact" ||
-        guess === "ghl_opportunity" ||
-        guess === "rulebook_step_or_role"
-      ) {
-        // Still allow collision soft-claim below when opportunity-shaped + name.
-        // Only hard-refuse when semantic is clearly non-PEM and no soft path.
+      if (guess === "ghl_contact" || guess === "ghl_opportunity") {
+        // Still allow soft PEM claim below for collision class.
+      } else if (semantic!.entityName) {
+        // unknown / unspecified type — still attempt PEM when we have a name.
+        return {
+          plausible: true,
+          confidence: Math.min(0.78, Math.max(0.65, semantic!.confidence)),
+        };
       }
     }
     const intent = detectPemIntent(input.question);
@@ -72,7 +73,11 @@ export const pemEvidenceSource: EvidenceSource = {
     // Collision class: person named via GHL opportunity patterns / entity candidates
     const pemCandidate = input.entity.candidates.find((c) => c.type === "pem_prospect" && c.name);
     const name = pemCandidate?.name || input.entity.extractedName;
-    if (name && OPPORTUNITY_OR_STATUS.test(input.question)) {
+    if (
+      name &&
+      (OPPORTUNITY_OR_STATUS.test(input.question) ||
+        /\b(project|information|info|details)\b/i.test(input.question))
+    ) {
       return { plausible: true, confidence: 0.7 };
     }
 
