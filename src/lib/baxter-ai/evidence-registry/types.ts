@@ -68,5 +68,14 @@ export type RegistryRunResult = {
     entity: EntityResolutionResult;
     preferredSource: PreferredEntitySource | null;
     tried: Array<{ key: EvidenceSourceKey; confidence: number; outcome: string }>;
+    semantic?: {
+      questionType: string;
+      confidence: number;
+      source: string;
+      latencyMs: number;
+      model: string | null;
+      error?: string;
+      skippedEntityLookup: boolean;
+    };
   };
 };

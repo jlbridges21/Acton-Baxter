@@ -17,3 +17,14 @@ export type {
   RegistryEarlyAnswer,
   RegistryRunResult,
 } from "./types";
+export {
+  classifyQuestionSemantically,
+  shouldSkipSemanticClassification,
+  isSemanticRoutingConfident,
+  SEMANTIC_ROUTING_CONFIDENCE_THRESHOLD,
+} from "@/lib/baxter-ai/semantic-question-classification";
+export type {
+  SemanticQuestionClassification,
+  SemanticQuestionType,
+  SemanticEntityTypeGuess,
+} from "@/lib/baxter-ai/semantic-question-classification";

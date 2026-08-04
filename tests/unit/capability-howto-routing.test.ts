@@ -69,6 +69,7 @@ describe("incident reproduction — opportunity pattern false positive", () => {
       ghlConfigured: true,
       role: "user",
       channel: "web",
+      semanticOptions: { skipSemantic: true },
     });
     expect(registry.earlyAnswer?.answer ?? "").not.toMatch(/couldn['’]t find .+ in GHL/i);
   });

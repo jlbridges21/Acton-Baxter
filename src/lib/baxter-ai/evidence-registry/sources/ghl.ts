@@ -6,6 +6,7 @@
 import { detectGhlIntent } from "@/lib/baxter-ai/ghl-intent";
 import { retrieveGhlLiveEvidence } from "@/lib/baxter-ai/ghl-runtime";
 import { readGhlConversationState } from "@/lib/baxter-data/ghl/conversation-state";
+import { isSemanticRoutingConfident } from "@/lib/baxter-ai/semantic-question-classification";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
 import { isPlausibleCrmEntityCandidate, isBaxterMetaHowtoQuestion } from "../entity-plausibility";
 
@@ -29,7 +30,26 @@ export const ghlEvidenceSource: EvidenceSource = {
 
   canHandle(input) {
     if (!input.ghlConfigured) return { plausible: false, confidence: 0 };
-    // Capability how-tos about Baxter itself are never CRM lookups.
+    // Semantic non-entity routing — never claim.
+    if (input.entity.skipEntityLookup) {
+      return { plausible: false, confidence: 0 };
+    }
+    // Primary: trust confident semantic entity-type guess.
+    const semantic = input.entity.semantic;
+    if (isSemanticRoutingConfident(semantic) && semantic!.questionType === "entity_lookup") {
+      const guess = semantic!.entityTypeGuess;
+      if (guess === "ghl_contact" || guess === "ghl_opportunity") {
+        return {
+          plausible: true,
+          confidence: Math.max(0.92, semantic!.confidence),
+        };
+      }
+      if (guess === "pem_prospect" || guess === "rulebook_step_or_role") {
+        return { plausible: false, confidence: 0 };
+      }
+      // unknown — fall through to regex + plausibility
+    }
+    // Capability how-tos about Baxter itself are never CRM lookups (regex fallback path).
     if (isBaxterMetaHowtoQuestion(input.question)) {
       return { plausible: false, confidence: 0 };
     }

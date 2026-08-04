@@ -631,9 +631,29 @@ export function answerCapabilityHelp(input: {
   question: string;
   role?: string | null;
   profile?: Profile | null;
+  /**
+   * When semantic classification is confident this is a capability how-to,
+   * force the meta how-to path even if regex capability-intent missed.
+   */
+  forceCapabilityHowto?: boolean;
 }): CapabilityHelpAnswer | null {
   const question = input.question.trim();
-  const classified = classifyCapabilityQuestion(question);
+  let classified = classifyCapabilityQuestion(question);
+
+  if (input.forceCapabilityHowto) {
+    // Treat as Baxter meta how-to so dedicated/feature answers run.
+    if (classified.kind === "none" || classified.kind === "implied_action") {
+      classified = {
+        kind: "specific_capability",
+        topic: classified.topic,
+        googleUrl: classified.googleUrl,
+        slackChannel: classified.slackChannel,
+        reason: "baxter_meta_howto",
+      };
+    } else if (classified.reason !== "baxter_meta_howto") {
+      classified = { ...classified, reason: "baxter_meta_howto" };
+    }
+  }
 
   if (classified.kind === "implied_action" || classified.kind === "resource_access_check") {
     return null;
@@ -642,11 +662,11 @@ export function answerCapabilityHelp(input: {
   // Concept definitions / how-tos still allowed even if classifier says none
   const pemDef = pemHelpDefinitionAnswer(question);
   const concept = detectConceptQuestion(question);
-  if (classified.kind === "none") {
+  if (classified.kind === "none" && !input.forceCapabilityHowto) {
     if (!pemDef && concept.kind !== "definition" && concept.kind !== "how_to") {
       return null;
     }
-  } else if (!detectCapabilityHelpIntent(question) && !pemDef) {
+  } else if (!input.forceCapabilityHowto && !detectCapabilityHelpIntent(question) && !pemDef) {
     return null;
   }
 
@@ -657,6 +677,28 @@ export function answerCapabilityHelp(input: {
 
   const metaHowto = answerBaxterMetaHowto(question, classified, role);
   if (metaHowto) return metaHowto;
+
+  if (input.forceCapabilityHowto) {
+    const cap = resolveHowtoCapability(question, classified, role);
+    if (cap) {
+      const dedicated = answerDedicatedCapabilityHowto(cap.key, cap, role);
+      if (dedicated) return dedicated;
+      const where = cap.webRoute
+        ? ` Open **${cap.name}** from the Baxter dashboard or go to ${cap.webRoute}.`
+        : cap.createRoute
+          ? ` Start from ${cap.createRoute}.`
+          : "";
+      return {
+        answer: `Here’s how to use **${cap.name}**: ${cap.shortDescription}.${where}`.trim(),
+        links: linkFor(cap, role),
+      };
+    }
+    return {
+      answer:
+        "I can walk the team through how to use Baxter for a specific tool — for example New Project Setup, PEM NEATs, Property Research, or Customer Center. Ask “how do we use you to set up a new project?” (or name the tool) and I’ll give the concrete steps.",
+      links: [],
+    };
+  }
 
   if (pemDef) {
     return {

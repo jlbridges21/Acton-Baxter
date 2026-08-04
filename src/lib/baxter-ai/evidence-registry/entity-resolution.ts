@@ -1,7 +1,7 @@
 /**
  * Central entity-resolution step.
- * Calls each source's existing extractors and returns a comparable structure —
- * does not replace GHL/PEM/Rulebook detectors.
+ * Semantic classification is the primary signal when available and confident;
+ * regex extractors remain the fallback / secondary path.
  */
 
 import { detectGhlIntent } from "@/lib/baxter-ai/ghl-intent";
@@ -14,6 +14,12 @@ import {
 import type { BaxterHistoryMessage } from "@/lib/baxter-ai/types";
 import type { PreferredEntitySource } from "./conversation-arbitration";
 import { isPlausibleCrmEntityCandidate } from "./entity-plausibility";
+import {
+  isNonEntitySemanticType,
+  isSemanticRoutingConfident,
+  type SemanticQuestionClassification,
+  type SemanticQuestionType,
+} from "@/lib/baxter-ai/semantic-question-classification";
 
 export type EntityType =
   "ghl_contact" | "ghl_opportunity" | "pem_prospect" | "rulebook_step_or_role" | "none";
@@ -23,7 +29,7 @@ export type EntityCandidate = {
   name: string | null;
   confidence: number;
   /** Which extractor produced this candidate. */
-  via: "ghl" | "pem" | "rulebook" | "history" | "arbitration";
+  via: "ghl" | "pem" | "rulebook" | "history" | "arbitration" | "semantic";
 };
 
 export type EntityResolutionResult = {
@@ -34,21 +40,44 @@ export type EntityResolutionResult = {
   ambiguousAcrossTypes: boolean;
   extractedName: string | null;
   isFollowUp: boolean;
+  /** Semantic routing result when provided (may be skipped/fallback). */
+  semantic: SemanticQuestionClassification | null;
+  /**
+   * When true, entity-lookup sources (GHL / PEM / Rulebook / dossier) must not claim —
+   * question is capability/procedural/conversational per semantic classifier.
+   */
+  skipEntityLookup: boolean;
+  /** Effective question type from semantic when confident; otherwise null. */
+  questionType: SemanticQuestionType | null;
 };
 
 const OPPORTUNITY_SHAPE =
   /\b(opportunity|deal|project)\b|\b(status|stage)\s+of\b|\bwhat(?:'s|\s+is)\s+going\s+on\s+with\b/i;
 
-/**
- * Resolve what the question is centrally about, before expensive source retrieval.
- */
-export function resolveQuestionEntity(input: {
+function mapSemanticEntityType(
+  guess: SemanticQuestionClassification["entityTypeGuess"],
+): EntityType {
+  switch (guess) {
+    case "ghl_contact":
+      return "ghl_contact";
+    case "ghl_opportunity":
+      return "ghl_opportunity";
+    case "pem_prospect":
+      return "pem_prospect";
+    case "rulebook_step_or_role":
+      return "rulebook_step_or_role";
+    default:
+      return "none";
+  }
+}
+
+function collectRegexCandidates(input: {
   question: string;
-  history?: BaxterHistoryMessage[];
+  history: BaxterHistoryMessage[];
   preferredSource?: PreferredEntitySource | null;
-}): EntityResolutionResult {
+}): EntityCandidate[] {
   const question = input.question.trim();
-  const history = input.history ?? [];
+  const history = input.history;
   const candidates: EntityCandidate[] = [];
 
   const ghl = detectGhlIntent(question);
@@ -71,12 +100,11 @@ export function resolveQuestionEntity(input: {
     ) {
       type = "ghl_contact";
     } else if (ghl.intent !== "pipeline_info" && ghl.intent !== "calendar_query") {
-      // Insights / general CRM still GHL-scoped but not a person entity
       type = name ? "ghl_contact" : "none";
     }
     if (type !== "none") {
       if (name && !isPlausibleCrmEntityCandidate(name) && !/[^\s@]+@[^\s@]+\.[^\s@]+/.test(name)) {
-        // Instructional/meta false positive from opportunity/contact patterns — skip.
+        // Instructional/meta false positive — skip.
       } else {
         candidates.push({
           type,
@@ -105,8 +133,6 @@ export function resolveQuestionEntity(input: {
       via: "pem",
     });
   } else if (pemEntity.nameQuery) {
-    // Name extracted but PEM intent not yet record_lookup — still a soft PEM candidate
-    // when the question looks person/status shaped (collision class with GHL "opportunity").
     const soft =
       OPPORTUNITY_SHAPE.test(question) || /\b(status|stage|budget|pain|outcome)\b/i.test(question);
     if (soft) {
@@ -119,15 +145,12 @@ export function resolveQuestionEntity(input: {
     }
   }
 
-  // When GHL extracted a person from an opportunity-shaped question, also surface PEM
-  // as a comparable candidate so arbitration can try both (the proof-point collision).
   const ghlOpp = candidates.find((c) => c.type === "ghl_opportunity" && c.name);
   if (ghlOpp?.name) {
     const existingPem = candidates.find(
       (c) => c.type === "pem_prospect" && c.name?.toLowerCase() === ghlOpp.name!.toLowerCase(),
     );
     if (existingPem) {
-      // Keep within 0.15 of typical GHL opportunity confidence (0.85).
       existingPem.confidence = Math.max(existingPem.confidence, 0.72);
     } else {
       candidates.push({
@@ -173,6 +196,90 @@ export function resolveQuestionEntity(input: {
     }
   }
 
+  return candidates;
+}
+
+/**
+ * Resolve what the question is centrally about, before expensive source retrieval.
+ * When `semantic` is confident and non-entity, returns skipEntityLookup (no regex claim).
+ * When semantic is confident entity_lookup, that name/type is primary; regex is secondary.
+ * When semantic is unavailable/ambiguous, regex path runs as before.
+ */
+export function resolveQuestionEntity(input: {
+  question: string;
+  history?: BaxterHistoryMessage[];
+  preferredSource?: PreferredEntitySource | null;
+  semantic?: SemanticQuestionClassification | null;
+}): EntityResolutionResult {
+  const question = input.question.trim();
+  const history = input.history ?? [];
+  const semantic = input.semantic ?? null;
+  const ctx = decideConversationContext(question, history);
+  const isFollowUp = ctx.isFollowUp || ctx.hasPronounReference;
+
+  if (isSemanticRoutingConfident(semantic) && isNonEntitySemanticType(semantic!.questionType)) {
+    return {
+      primary: null,
+      candidates: [],
+      ambiguousAcrossTypes: false,
+      extractedName: null,
+      isFollowUp,
+      semantic,
+      skipEntityLookup: true,
+      questionType: semantic!.questionType,
+    };
+  }
+
+  const candidates: EntityCandidate[] = [];
+  let usedSemanticEntity = false;
+
+  if (
+    isSemanticRoutingConfident(semantic) &&
+    semantic!.questionType === "entity_lookup" &&
+    semantic!.entityName
+  ) {
+    const type = mapSemanticEntityType(semantic!.entityTypeGuess);
+    if (type !== "none") {
+      candidates.push({
+        type,
+        name: semantic!.entityName,
+        confidence: Math.max(semantic!.confidence, 0.92),
+        via: "semantic",
+      });
+      usedSemanticEntity = true;
+    } else {
+      // Name known, type unknown — still prefer the name; regex may refine type.
+      candidates.push({
+        type: "ghl_opportunity",
+        name: semantic!.entityName,
+        confidence: Math.min(semantic!.confidence, 0.75),
+        via: "semantic",
+      });
+      usedSemanticEntity = true;
+    }
+  }
+
+  // Regex secondary (or primary when semantic unavailable / ambiguous).
+  const regexCandidates = collectRegexCandidates({
+    question,
+    history,
+    preferredSource: input.preferredSource,
+  });
+
+  if (usedSemanticEntity) {
+    const semanticName = semantic!.entityName!.toLowerCase();
+    for (const c of regexCandidates) {
+      // Keep collision rivals (e.g. PEM for same person) and alternate extractors.
+      if (c.via === "semantic") continue;
+      if (c.name && c.name.toLowerCase() === semanticName && c.type === candidates[0]?.type) {
+        continue; // duplicate of semantic primary
+      }
+      candidates.push(c);
+    }
+  } else {
+    candidates.push(...regexCandidates);
+  }
+
   candidates.sort((a, b) => b.confidence - a.confidence);
 
   const top = candidates[0] ?? null;
@@ -181,9 +288,16 @@ export function resolveQuestionEntity(input: {
     top && rival && Math.abs(top.confidence - rival.confidence) <= 0.15,
   );
 
-  const primary = !top || top.confidence < 0.4 ? null : ambiguousAcrossTypes ? null : top;
+  // Semantic entity primary wins ambiguity ties when it was the top signal.
+  let primary: EntityCandidate | null =
+    !top || top.confidence < 0.4 ? null : ambiguousAcrossTypes ? null : top;
+  if (usedSemanticEntity && top?.via === "semantic" && ambiguousAcrossTypes) {
+    // Keep ambiguousAcrossTypes true for arbitration (try both), but prefer semantic name.
+    primary = null;
+  }
 
   const extractedName =
+    (usedSemanticEntity ? semantic!.entityName : null) ||
     primary?.name ||
     candidates.find((c) => c.name)?.name ||
     extractPriorEntitiesFromHistory(history)[0] ||
@@ -194,6 +308,12 @@ export function resolveQuestionEntity(input: {
     candidates,
     ambiguousAcrossTypes,
     extractedName,
-    isFollowUp: ctx.isFollowUp || ctx.hasPronounReference,
+    isFollowUp,
+    semantic,
+    skipEntityLookup: false,
+    questionType:
+      isSemanticRoutingConfident(semantic) && semantic!.questionType === "entity_lookup"
+        ? "entity_lookup"
+        : null,
   };
 }

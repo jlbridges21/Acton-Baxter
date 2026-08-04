@@ -61,6 +61,10 @@ import {
 } from "@/lib/baxter/concept-vocabulary";
 import { pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-neats/intent";
 import { runEvidenceRegistry } from "@/lib/baxter-ai/evidence-registry";
+import {
+  classifyQuestionSemantically,
+  isSemanticRoutingConfident,
+} from "@/lib/baxter-ai/semantic-question-classification";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
 import { writeSlackConversationState } from "@/lib/baxter-data/slack/conversation-state";
 import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
@@ -370,6 +374,33 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   // Deterministic capability / how-to answers.
   // Definition questions prefer approved Knowledge first (not a canned short-circuit).
   // Specific resource access (e.g. a Google Doc URL) is verified live — never the full overview.
+  // Semantic routing runs once here (before capability help + registry) so capability/procedural
+  // questions never reach GHL entity matching.
+  const semantic = await classifyQuestionSemantically({
+    question: routingQuestion,
+    history: historyForRouting,
+  });
+  if (semantic.source === "fallback_unavailable") {
+    logBaxterDiagnostic("semanticClassification", {
+      code: "SEMANTIC_CLASSIFY_FALLBACK",
+      route: "answerBaxterQuestion",
+      conversationId: conversation.id,
+      safeMessage: semantic.error ?? "fallback to regex entity extraction",
+    });
+  } else if (semantic.source === "llm") {
+    logBaxterDiagnostic("semanticClassification", {
+      code: "SEMANTIC_CLASSIFY_OK",
+      route: "answerBaxterQuestion",
+      conversationId: conversation.id,
+      safeMessage: JSON.stringify({
+        questionType: semantic.questionType,
+        confidence: semantic.confidence,
+        latencyMs: semantic.latencyMs,
+        model: semantic.model,
+      }),
+    });
+  }
+
   const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
   const resourceAccess = await answerResourceAccessCheck({
     question: routingQuestion,
@@ -419,10 +450,13 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
+  const forceCapabilityHowto =
+    isSemanticRoutingConfident(semantic) && semantic.questionType === "capability_howto";
   const capabilityHelp = answerCapabilityHelp({
     question: routingQuestion,
     role: profile?.role ?? null,
     profile,
+    forceCapabilityHowto,
   });
   if (capabilityHelp && !preferKnowledgeForConcept) {
     const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
@@ -449,7 +483,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       insufficientKnowledge: false,
       confidence: "high",
       modelProvider: "capability-registry",
-      modelName: "help",
+      modelName: forceCapabilityHowto ? "semantic-howto" : "help",
       sources,
       sourceEntryIds: sources.map((s, index) => ({
         id: s.knowledgeEntryId!,
@@ -475,6 +509,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
 
   // Confidence-ordered evidence registry (GHL / PEM / Rulebook). Soft misses do not
   // hard-stop; KB remains the post-registry fallback below.
+  // Semantic already computed above — pass through (do not classify twice).
   const registry = await runEvidenceRegistry({
     question: routingQuestion,
     history: historyEarly,
@@ -482,6 +517,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     role: profile?.role ?? null,
     channel: input.channel,
     ghlConfigured: isGhlConfigured(),
+    semantic,
   });
 
   if (registry.conversationMetadata) {
@@ -491,7 +527,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     );
   }
 
-  if (registry.diagnostics.tried.length > 0) {
+  if (registry.diagnostics.tried.length > 0 || registry.diagnostics.semantic) {
     logBaxterDiagnostic("evidenceRegistry", {
       code: "EVIDENCE_REGISTRY",
       route: "answerBaxterQuestion",
@@ -500,7 +536,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         preferredSource: registry.diagnostics.preferredSource,
         extractedName: registry.diagnostics.entity.extractedName,
         ambiguous: registry.diagnostics.entity.ambiguousAcrossTypes,
+        skipEntityLookup: registry.diagnostics.entity.skipEntityLookup,
         tried: registry.diagnostics.tried,
+        semantic: registry.diagnostics.semantic,
       }),
     });
   }

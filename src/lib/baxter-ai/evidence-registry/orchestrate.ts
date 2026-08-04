@@ -3,6 +3,10 @@
  * Knowledge Base stays outside this registry as the post-registry fallback
  * (always-on lexical/semantic retrieval in context.ts); this module is the
  * single place that decides GHL / Rulebook / PEM order.
+ *
+ * Semantic question classification feeds resolveQuestionEntity as the primary
+ * routing signal; regex extractors remain the fallback when classification
+ * is unavailable or ambiguous. Arbitration logic itself is unchanged.
  */
 
 import type { BaxterContextItem, BaxterHistoryMessage } from "@/lib/baxter-ai/types";
@@ -16,6 +20,11 @@ import { ghlEvidenceSource } from "./sources/ghl";
 import { rulebookEvidenceSource } from "./sources/rulebook";
 import { pemEvidenceSource } from "./sources/pem";
 import { dossierEvidenceSource } from "./sources/dossier";
+import {
+  classifyQuestionSemantically,
+  type ClassifyQuestionSemanticallyOptions,
+  type SemanticQuestionClassification,
+} from "@/lib/baxter-ai/semantic-question-classification";
 import type {
   EvidenceSource,
   EvidenceSourceKey,
@@ -92,6 +101,22 @@ function toEarlyFromResult(
   };
 }
 
+function semanticDiag(
+  semantic: SemanticQuestionClassification | null,
+  skippedEntityLookup: boolean,
+): RegistryRunResult["diagnostics"]["semantic"] {
+  if (!semantic) return undefined;
+  return {
+    questionType: semantic.questionType,
+    confidence: semantic.confidence,
+    source: semantic.source,
+    latencyMs: semantic.latencyMs,
+    model: semantic.model,
+    error: semantic.error,
+    skippedEntityLookup,
+  };
+}
+
 export async function runEvidenceRegistry(input: {
   question: string;
   history?: BaxterHistoryMessage[];
@@ -100,6 +125,10 @@ export async function runEvidenceRegistry(input: {
   channel?: "web" | "slack";
   ghlConfigured: boolean;
   sources?: EvidenceSource[];
+  /** Precomputed semantic classification (answer.ts runs once and passes through). */
+  semantic?: SemanticQuestionClassification | null;
+  /** Options when semantic is not precomputed — used for tests / standalone registry calls. */
+  semanticOptions?: ClassifyQuestionSemanticallyOptions & { skipSemantic?: boolean };
 }): Promise<RegistryRunResult> {
   let metadata: Record<string, unknown> = { ...(input.conversationMetadata ?? {}) };
   const history = input.history ?? [];
@@ -108,10 +137,30 @@ export async function runEvidenceRegistry(input: {
     history,
     conversationMetadata: metadata,
   });
+
+  let semantic: SemanticQuestionClassification | null = input.semantic ?? null;
+  if (!semantic && !input.semanticOptions?.skipSemantic) {
+    semantic = await classifyQuestionSemantically(
+      { question: input.question, history },
+      input.semanticOptions,
+    );
+  } else if (!semantic && input.semanticOptions?.skipSemantic) {
+    semantic = {
+      questionType: "ambiguous",
+      entityName: null,
+      entityTypeGuess: null,
+      confidence: 0,
+      source: "skipped",
+      latencyMs: 0,
+      model: null,
+    };
+  }
+
   const entity = resolveQuestionEntity({
     question: input.question,
     history,
     preferredSource,
+    semantic,
   });
 
   const handleInput = {
@@ -124,6 +173,21 @@ export async function runEvidenceRegistry(input: {
     channel: input.channel,
     ghlConfigured: input.ghlConfigured,
   };
+
+  // Capability / procedural / conversational — bypass entity-lookup sources entirely.
+  if (entity.skipEntityLookup) {
+    return {
+      earlyAnswer: null,
+      contextItems: [],
+      conversationMetadata: metadata,
+      diagnostics: {
+        entity,
+        preferredSource,
+        tried: [],
+        semantic: semanticDiag(semantic, true),
+      },
+    };
+  }
 
   const sources = input.sources ?? DEFAULT_SOURCES;
   const ranked = sources
@@ -189,7 +253,12 @@ export async function runEvidenceRegistry(input: {
         earlyAnswer: toEarlyFromResult(source.key, result, "clarification"),
         contextItems: [],
         conversationMetadata: metadata,
-        diagnostics: { entity, preferredSource, tried },
+        diagnostics: {
+          entity,
+          preferredSource,
+          tried,
+          semantic: semanticDiag(semantic, false),
+        },
       };
     }
 
@@ -211,7 +280,12 @@ export async function runEvidenceRegistry(input: {
         earlyAnswer: toEarlyFromResult(source.key, result, "deterministic"),
         contextItems: result.items,
         conversationMetadata: metadata,
-        diagnostics: { entity, preferredSource, tried },
+        diagnostics: {
+          entity,
+          preferredSource,
+          tried,
+          semantic: semanticDiag(semantic, false),
+        },
       };
     }
 
@@ -230,14 +304,18 @@ export async function runEvidenceRegistry(input: {
           setAt: new Date().toISOString(),
         });
       }
-      // High-confidence item merge from CRM/PEM can still short-circuit if deterministic
       if (result.deterministicAnswer && result.confidence >= SHORT_CIRCUIT_CONFIDENCE) {
         tried[tried.length - 1]!.outcome = "deterministic";
         return {
           earlyAnswer: toEarlyFromResult(source.key, result, "deterministic"),
           contextItems: result.items,
           conversationMetadata: metadata,
-          diagnostics: { entity, preferredSource, tried },
+          diagnostics: {
+            entity,
+            preferredSource,
+            tried,
+            semantic: semanticDiag(semantic, false),
+          },
         };
       }
       continue;
@@ -247,7 +325,6 @@ export async function runEvidenceRegistry(input: {
     tried.push({ key: source.key, confidence, outcome: "empty" });
   }
 
-  // Every plausible source soft-missed → source-agnostic not-found (only if something tried).
   if (mergedItems.length === 0 && softMissAnswers.length > 0 && priorMisses.length > 0) {
     const answer = formatSourceAgnosticNotFound(
       softMissAnswers.map((s) => s.key),
@@ -267,7 +344,12 @@ export async function runEvidenceRegistry(input: {
       },
       contextItems: [],
       conversationMetadata: metadata,
-      diagnostics: { entity, preferredSource, tried },
+      diagnostics: {
+        entity,
+        preferredSource,
+        tried,
+        semantic: semanticDiag(semantic, false),
+      },
     };
   }
 
@@ -275,6 +357,11 @@ export async function runEvidenceRegistry(input: {
     earlyAnswer: null,
     contextItems: mergedItems,
     conversationMetadata: metadata,
-    diagnostics: { entity, preferredSource, tried },
+    diagnostics: {
+      entity,
+      preferredSource,
+      tried,
+      semantic: semanticDiag(semantic, false),
+    },
   };
 }

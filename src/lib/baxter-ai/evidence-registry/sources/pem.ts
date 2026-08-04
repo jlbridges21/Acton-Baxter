@@ -10,6 +10,7 @@ import {
   buildPemProspectIndex,
   hasConfidentProspectMatch,
 } from "@/lib/baxter-data/pem-neats/prospect-index";
+import { isSemanticRoutingConfident } from "@/lib/baxter-ai/semantic-question-classification";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
 
 const OPPORTUNITY_OR_STATUS =
@@ -34,6 +35,27 @@ export const pemEvidenceSource: EvidenceSource = {
   key: "pem_neat",
 
   canHandle(input) {
+    if (input.entity.skipEntityLookup) {
+      return { plausible: false, confidence: 0 };
+    }
+    const semantic = input.entity.semantic;
+    if (isSemanticRoutingConfident(semantic) && semantic!.questionType === "entity_lookup") {
+      const guess = semantic!.entityTypeGuess;
+      if (guess === "pem_prospect") {
+        return {
+          plausible: true,
+          confidence: Math.max(0.9, semantic!.confidence),
+        };
+      }
+      if (
+        guess === "ghl_contact" ||
+        guess === "ghl_opportunity" ||
+        guess === "rulebook_step_or_role"
+      ) {
+        // Still allow collision soft-claim below when opportunity-shaped + name.
+        // Only hard-refuse when semantic is clearly non-PEM and no soft path.
+      }
+    }
     const intent = detectPemIntent(input.question);
     if (intent.intent === "record_lookup" || intent.intent === "pem_selection_reply") {
       let confidence = 0.88;

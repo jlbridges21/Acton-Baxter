@@ -39,6 +39,13 @@ const serverEnvSchema = publicEnvSchema.extend({
   BAXTER_ANTHROPIC_MODEL: z.string().optional().default(""),
   BAXTER_EMBEDDING_PROVIDER: z.string().optional().default("openai"),
   BAXTER_EMBEDDING_MODEL: z.string().optional().default("text-embedding-3-small"),
+  /**
+   * Cheap/fast model for per-question semantic routing (entity vs capability vs procedural).
+   * Separate from BAXTER_CHAT_MODEL so answer quality models (e.g. GPT-5) are not used for routing.
+   */
+  BAXTER_ROUTING_MODEL: z.string().optional().default("gpt-4o-mini"),
+  /** Hard timeout for routing classification; on exceed, fall back to regex extraction. */
+  BAXTER_ROUTING_TIMEOUT_MS: z.coerce.number().int().positive().default(4_000),
   BAXTER_VISION_PROVIDER: z.string().optional().default("openai"),
   BAXTER_VISION_MODEL: z.string().optional().default(""),
   BAXTER_CHAT_ENABLED: booleanFromString.default(true),
@@ -133,6 +140,8 @@ function readServerRaw() {
     BAXTER_ANTHROPIC_MODEL: process.env.BAXTER_ANTHROPIC_MODEL ?? "",
     BAXTER_EMBEDDING_PROVIDER: process.env.BAXTER_EMBEDDING_PROVIDER ?? "openai",
     BAXTER_EMBEDDING_MODEL: process.env.BAXTER_EMBEDDING_MODEL ?? "text-embedding-3-small",
+    BAXTER_ROUTING_MODEL: process.env.BAXTER_ROUTING_MODEL ?? "gpt-4o-mini",
+    BAXTER_ROUTING_TIMEOUT_MS: process.env.BAXTER_ROUTING_TIMEOUT_MS ?? "4000",
     BAXTER_VISION_PROVIDER: process.env.BAXTER_VISION_PROVIDER ?? "openai",
     BAXTER_VISION_MODEL: process.env.BAXTER_VISION_MODEL ?? "",
     BAXTER_CHAT_ENABLED: process.env.BAXTER_CHAT_ENABLED ?? "true",

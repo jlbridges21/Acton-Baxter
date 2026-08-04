@@ -166,6 +166,7 @@ describe("GHL↔PEM opportunity collision (registry)", () => {
       role: "admin",
       channel: "web",
       ghlConfigured: true,
+      semanticOptions: { skipSemantic: true },
       sources: [ghlMiss, pemEvidenceSource, rulebookEvidenceSource],
     });
 
@@ -220,6 +221,7 @@ describe("GHL↔PEM opportunity collision (registry)", () => {
       role: "admin",
       channel: "web",
       ghlConfigured: true,
+      semanticOptions: { skipSemantic: true },
       sources: [ghlHit, pemEmpty],
     });
 
@@ -290,6 +292,7 @@ describe("GHL↔PEM opportunity collision (registry)", () => {
       role: "admin",
       channel: "web",
       ghlConfigured: true,
+      semanticOptions: { skipSemantic: true },
       sources: [ghl, pem],
     });
 

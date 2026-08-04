@@ -12,6 +12,9 @@ export const dossierEvidenceSource: EvidenceSource = {
   key: "customer_dossier",
 
   canHandle(input) {
+    if (input.entity.skipEntityLookup) {
+      return { plausible: false, confidence: 0 };
+    }
     if (!isBroadDossierQuestion(input.question)) {
       return { plausible: false, confidence: 0 };
     }

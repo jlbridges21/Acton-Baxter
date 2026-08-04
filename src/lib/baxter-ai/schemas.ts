@@ -28,6 +28,77 @@ export const baxterLlmStructuredSchema = z.object({
 export type BaxterChatRequest = z.infer<typeof baxterChatRequestSchema>;
 export type BaxterLlmStructured = z.infer<typeof baxterLlmStructuredSchema>;
 
+/** Structured output for the per-question semantic routing call (not an answer). */
+export const semanticQuestionClassificationSchema = z.object({
+  questionType: z.enum([
+    "entity_lookup",
+    "capability_howto",
+    "procedural_knowledge",
+    "general_conversational",
+    "ambiguous",
+  ]),
+  entityName: z
+    .union([z.string(), z.null(), z.undefined()])
+    .transform((v) => {
+      if (typeof v !== "string") return null;
+      const t = v.trim();
+      return t.length > 0 ? t : null;
+    })
+    .optional()
+    .default(null),
+  entityTypeGuess: z
+    .union([
+      z.enum([
+        "ghl_contact",
+        "ghl_opportunity",
+        "pem_prospect",
+        "rulebook_step_or_role",
+        "unknown",
+      ]),
+      z.null(),
+      z.undefined(),
+    ])
+    .transform((v) => v ?? null)
+    .optional()
+    .default(null),
+  confidence: z.number().min(0).max(1),
+});
+
+export type SemanticQuestionClassificationParsed = z.infer<
+  typeof semanticQuestionClassificationSchema
+>;
+
+export function parseSemanticQuestionClassificationJson(
+  raw: string,
+): SemanticQuestionClassificationParsed {
+  const cleaned = raw
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      parsed = JSON.parse(cleaned.slice(start, end + 1));
+    } else {
+      throw new Error("Semantic classifier returned non-JSON content");
+    }
+  }
+  const result = semanticQuestionClassificationSchema.parse(parsed);
+  if (result.questionType !== "entity_lookup") {
+    return { ...result, entityName: null, entityTypeGuess: null };
+  }
+  return {
+    ...result,
+    entityName: result.entityName?.trim() || null,
+    entityTypeGuess: result.entityTypeGuess ?? "unknown",
+  };
+}
+
 export function parseBaxterLlmJson(raw: string): BaxterLlmStructured {
   const cleaned = raw
     .trim()
