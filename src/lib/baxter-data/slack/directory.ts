@@ -1,5 +1,6 @@
 import "server-only";
 
+import { pickSlackDisplayName } from "@/lib/slack/display-names";
 import { listAllSlackChannelProfiles, listAllSlackUserProfiles } from "@/lib/slack/profiles";
 import { inferChannelKind } from "./channels";
 import { refreshSlackWorkspaceDirectory } from "./directory-sync";
@@ -17,7 +18,7 @@ export async function listCachedSlackUsers(teamId: string): Promise<ResolvedSlac
       .slice(0, 5000)
       .map((row) => ({
         id: row.slack_user_id,
-        displayName: row.display_name || row.real_name || row.username || "Slack user",
+        displayName: pickSlackDisplayName(row),
         realName: row.real_name,
         username: row.username,
         teamId: row.team_id,

@@ -18,7 +18,12 @@ import {
   type SlackSearchConnectionMetadata,
 } from "@/lib/baxter-data/slack/connections";
 import { retrieveSlackEvidence } from "@/lib/baxter-data/slack/evidence";
-import { formatSlackEvidenceExcerpt } from "@/lib/baxter-data/slack/format";
+import { summarizeProjectChannelActivity } from "@/lib/baxter-data/slack/format";
+import {
+  hydrateSlackEvidenceAuthorNames,
+  type AuthorLabelDeps,
+} from "@/lib/baxter-data/slack/author-labels";
+import { slackMrkdwnToPlainText } from "@/lib/baxter-data/slack/mrkdwn-plain";
 import { isSlackSearchEnabled } from "@/lib/baxter-data/slack/config";
 import { SLACK_SEARCH_ERROR_CODES } from "@/lib/baxter-data/slack/errors";
 import { defaultLimitForIntent, defaultSortForIntent } from "@/lib/baxter-data/slack/intent";
@@ -86,22 +91,6 @@ function buildChannelScopedPlan(input: {
   };
 }
 
-function formatRecentActivitySection(
-  channelDisplay: string,
-  excerpts: Array<{ author: string; excerpt: string; timestamp: string }>,
-): string {
-  const lines = ["", `Recent activity in ${channelDisplay}:`];
-  if (excerpts.length === 0) {
-    lines.push("• No recent messages found in that channel.");
-    return lines.join("\n");
-  }
-  for (const row of excerpts.slice(0, 4)) {
-    const when = row.timestamp ? ` (${row.timestamp.slice(0, 10)})` : "";
-    lines.push(`• ${row.author}${when}: ${row.excerpt}`);
-  }
-  return lines.join("\n");
-}
-
 function logEnrichmentGate(payload: Record<string, unknown>): void {
   console.info("[GHL project Slack enrichment]", JSON.stringify(payload));
 }
@@ -112,6 +101,7 @@ export type AppendProjectSlackActivityDeps = ProjectSetupForContactDeps & {
   retrieveSlack?: typeof retrieveSlackEvidence;
   slackSearchEnabled?: () => boolean;
   slackDeps?: SlackSearchDeps;
+  authorLabelDeps?: AuthorLabelDeps;
   now?: () => Date;
 };
 
@@ -232,16 +222,23 @@ export async function appendProjectSlackActivityToGhlAnswer(input: {
       const sorted = [...result.results].sort((a, b) =>
         String(b.timestamp ?? b.messageTs).localeCompare(String(a.timestamp ?? a.messageTs)),
       );
-      const excerpts = sorted.slice(0, 4).map((m) => {
-        const formatted = formatSlackEvidenceExcerpt(m, 140);
-        return {
-          author: formatted.author,
-          excerpt: formatted.excerpt,
-          timestamp: formatted.timestamp,
-        };
-      });
+      const top = sorted.slice(0, 4);
+      const { messages: named, nameByUserId } = teamId
+        ? await hydrateSlackEvidenceAuthorNames(top, teamId, input.deps?.authorLabelDeps).catch(
+            () => ({ messages: top, nameByUserId: new Map<string, string>() }),
+          )
+        : { messages: top, nameByUserId: new Map<string, string>() };
 
-      return `${base}${formatRecentActivitySection(channelDisplay, excerpts)}`;
+      const summaryRows = named.map((m) => ({
+        author: m.authorName?.trim() || "A teammate",
+        text: slackMrkdwnToPlainText(m.text, nameByUserId),
+        timestamp: m.timestamp,
+      }));
+
+      return `${base}${summarizeProjectChannelActivity({
+        channelDisplay,
+        messages: summaryRows,
+      })}`;
     })();
 
     const raced = await Promise.race([

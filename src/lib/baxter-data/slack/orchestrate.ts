@@ -367,8 +367,21 @@ export async function retrieveSlackForAnswer(input: {
     }
   }
 
-  const selected = plan ? selectSlackEvidenceForModel(merged, plan) : merged.slice(0, 8);
-  const items = slackEvidenceToContextItems(selected, plan, 1);
+  let selected = plan ? selectSlackEvidenceForModel(merged, plan) : merged.slice(0, 8);
+  const teamForAuthors =
+    input.requester.slackTeamId?.trim() || plan?.channels[0]?.teamId?.trim() || "";
+  let nameByUserId = new Map<string, string>();
+  if (teamForAuthors && selected.length > 0) {
+    try {
+      const { hydrateSlackEvidenceAuthorNames } = await import("./author-labels");
+      const hydrated = await hydrateSlackEvidenceAuthorNames(selected, teamForAuthors);
+      selected = hydrated.messages;
+      nameByUserId = hydrated.nameByUserId;
+    } catch {
+      // Keep raw selected rows — formatting still avoids "Unknown" via id fallback.
+    }
+  }
+  const items = slackEvidenceToContextItems(selected, plan, 1, nameByUserId);
 
   const nextConversationState =
     selected.length > 0

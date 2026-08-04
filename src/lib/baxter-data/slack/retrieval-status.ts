@@ -39,7 +39,7 @@ export function formatSlackRetrievalStatusForModel(status: SlackRetrievalStatus)
     status.retrievalMethod ? `method: ${status.retrievalMethod}` : null,
     "",
     "How to answer based on status:",
-    "- results_found: Use the Slack evidence items. Ground who/what/when/channel/permalink. Label Slack as conversational (not approved policy) when relevant.",
+    "- results_found: Use the Slack evidence items. Ground who/what/when/channel/permalink. Attribute quotes to the AUTHOR name from evidence (e.g. “Jess said…”, “Maxx responded…”) — never say “the sender” or “an employee” when a person’s name is present. Label Slack as conversational (not approved policy) when relevant.",
     "- searched_no_results: Say you searched Slack and found no matching messages. Do NOT offer to search Slack later. Do NOT invent messages.",
     "- authorization_required: Explain the concrete connect/auth blocker (use employeeNote). Do NOT promise a future Slack lookup or say search might be available later.",
     "- channel_not_found / person_not_found / *_ambiguous: Ask for clarification using employeeNote. Do not invent.",

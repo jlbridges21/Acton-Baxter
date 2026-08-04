@@ -231,6 +231,14 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           baxterUserId: "user-1",
           resolvedVia: "baxter_user_id" as const,
         }),
+        authorLabelDeps: {
+          getCachedProfile: async () => ({
+            slack_user_id: "U2",
+            display_name: "Alex",
+            real_name: "Alex",
+            username: "alex",
+          }),
+        },
         retrieveSlack: async () => ({
           plan: null,
           results: [
@@ -242,7 +250,7 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
               channelName: "l01-26019-liniger",
               channelKind: "public_channel",
               authorId: "U2",
-              authorName: "Alex",
+              authorName: null,
               timestamp: "2026-07-20T15:00:00.000Z",
               text: "Permit package submitted for Liniger.",
               permalink: null,
@@ -294,6 +302,8 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
     expect(enriched).toContain("katie@example.com");
     expect(enriched).toContain("#l01-26019-liniger");
     expect(enriched).toContain("Permit package submitted");
+    expect(enriched).toContain("Alex");
+    expect(enriched).not.toContain("Unknown");
     expect(enriched).not.toContain(PROJECT_SLACK_CONNECT_NOTE);
   });
 
@@ -705,6 +715,14 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
         ],
         slackSearchEnabled: () => true,
         getSlackConnection,
+        authorLabelDeps: {
+          getCachedProfile: async () => ({
+            slack_user_id: "U2",
+            display_name: "Alex",
+            real_name: null,
+            username: "alex",
+          }),
+        },
         retrieveSlack: retrieve as never,
       },
     });
@@ -713,6 +731,144 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
     expect(retrieve).toHaveBeenCalled();
     expect(enriched).toContain("Permit package submitted");
     expect(enriched).not.toContain(PROJECT_SLACK_CONNECT_NOTE);
+    expect(enriched).not.toContain("Unknown");
+  });
+
+  it("cleans Slack markup and names authors in Katie-shaped channel activity", async () => {
+    const enriched = await appendProjectSlackActivityToGhlAnswer({
+      ghlAnswer,
+      question: "give me information about the katie liniger project",
+      ghlContactId: KATIE_ID,
+      requester: { baxterUserId: "user-1", slackTeamId: "T_ACTON" },
+      deps: {
+        listSetupRuns: async () => [
+          run({
+            id: "katie-run",
+            ghlContactId: KATIE_ID,
+            status: "complete",
+            slackChannelName: "l01-26019-liniger",
+          }),
+        ],
+        getSetupSteps: async () => [
+          {
+            id: "s1",
+            runId: "katie-run",
+            stepKey: "create_slack_channel",
+            orderIndex: 1,
+            status: "complete",
+            outputJson: { channelId: "C_LINIGER" },
+          } as never,
+        ],
+        slackSearchEnabled: () => true,
+        getSlackConnection: async () => ({
+          linked: true,
+          slackUserId: "U1",
+          slackTeamId: "T_ACTON",
+          slackUserName: "T",
+          scopes: [],
+          status: "connected",
+          baxterUserId: "user-1",
+          resolvedVia: "baxter_user_id" as const,
+        }),
+        authorLabelDeps: {
+          getCachedProfile: async (_team, id) =>
+            id === "U_SENDER"
+              ? {
+                  slack_user_id: "U_SENDER",
+                  display_name: "Jess",
+                  real_name: "Jessica",
+                  username: "jess",
+                }
+              : {
+                  slack_user_id: id,
+                  display_name: "Katie",
+                  real_name: "Katie Liniger",
+                  username: "katie",
+                },
+        },
+        retrieveSlack: async () => ({
+          plan: null,
+          results: [
+            {
+              sourceType: SLACK_SOURCE_TYPE,
+              messageTs: "1.1",
+              threadTs: null,
+              channelId: "C_LINIGER",
+              channelName: "l01-26019-liniger",
+              channelKind: "public_channel",
+              authorId: "U_SENDER",
+              authorName: null,
+              timestamp: "2026-08-04T15:00:00.000Z",
+              text: "<@U03JHQC5B61> Katie <mailto:kathryn_liniger@yahoo.com|kathryn_liniger@yahoo.com> confirmed both the site-inspection and the Kickoff with you.",
+              permalink: null,
+              isThreadReply: false,
+              relevance: 1,
+              contextMessages: [],
+              clusterKey: "c1",
+            },
+            {
+              sourceType: SLACK_SOURCE_TYPE,
+              messageTs: "1.2",
+              threadTs: null,
+              channelId: "C_LINIGER",
+              channelName: "l01-26019-liniger",
+              channelKind: "public_channel",
+              authorId: "U_MAXX",
+              authorName: null,
+              timestamp: "2026-08-04T16:00:00.000Z",
+              text: "CMS setup confirmed and created the project folder in <https://drive.google.com/x|G-Drive>.",
+              permalink: null,
+              isThreadReply: false,
+              relevance: 1,
+              contextMessages: [],
+              clusterKey: "c2",
+            },
+          ],
+          clusters: [],
+          ambiguities: { people: [], channels: [] },
+          access: {
+            publicChannels: true,
+            privateChannels: false,
+            dms: false,
+            groupDms: false,
+            threadContext: true,
+            permalinks: true,
+            userLevelAuthorization: "configured",
+            tokenKind: "user",
+            allowedChannelTypes: ["public_channel"],
+          },
+          incomplete: null,
+          diagnostics: {
+            endpoint: "search.messages",
+            latencyMs: 10,
+            resultCount: 2,
+            paginationCount: 1,
+            rateLimited: false,
+            capabilities: {
+              publicChannels: true,
+              privateChannels: false,
+              dms: false,
+              groupDms: false,
+              threadContext: true,
+              permalinks: true,
+              userLevelAuthorization: "configured",
+              tokenKind: "user",
+              allowedChannelTypes: ["public_channel"],
+            },
+            exactNewestGuaranteed: true,
+            notes: [],
+          },
+        }),
+      },
+    });
+
+    expect(enriched).toContain("Jess");
+    expect(enriched).toContain("kathryn_liniger@yahoo.com");
+    expect(enriched).toContain("G-Drive");
+    expect(enriched).not.toContain("Unknown");
+    expect(enriched).not.toContain("<@");
+    expect(enriched).not.toContain("<mailto:");
+    expect(enriched).not.toMatch(/\w…/);
   });
 
   it("Slack DM path still shows connect note when Slack Search is not linked", async () => {
@@ -871,6 +1027,14 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           notes: [],
         },
       }),
+      authorLabelDeps: {
+        getCachedProfile: async () => ({
+          slack_user_id: "U2",
+          display_name: "Alex",
+          real_name: null,
+          username: "alex",
+        }),
+      },
     };
 
     const requester = {
