@@ -7,6 +7,7 @@ import { detectGhlIntent } from "@/lib/baxter-ai/ghl-intent";
 import { retrieveGhlLiveEvidence } from "@/lib/baxter-ai/ghl-runtime";
 import { readGhlConversationState } from "@/lib/baxter-data/ghl/conversation-state";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
+import { isPlausibleCrmEntityCandidate, isBaxterMetaHowtoQuestion } from "../entity-plausibility";
 
 const GHL_NOT_FOUND =
   /couldn['’]t find a (?:matching )?ghl contact|couldn['’]t find a matching gohighlevel contact/i;
@@ -16,17 +17,55 @@ function isSoftMissAnswer(answer: string | null | undefined): boolean {
   return GHL_NOT_FOUND.test(answer);
 }
 
+function intentEntityNames(intent: ReturnType<typeof detectGhlIntent>): string[] {
+  const e = intent.entities;
+  return [e.contactName, e.opportunityName, e.contactEmail].filter(
+    (v): v is string => typeof v === "string" && v.trim().length > 0,
+  );
+}
+
 export const ghlEvidenceSource: EvidenceSource = {
   key: "ghl",
 
   canHandle(input) {
     if (!input.ghlConfigured) return { plausible: false, confidence: 0 };
+    // Capability how-tos about Baxter itself are never CRM lookups.
+    if (isBaxterMetaHowtoQuestion(input.question)) {
+      return { plausible: false, confidence: 0 };
+    }
     const intent = detectGhlIntent(input.question);
     if (intent.intent === "none") {
       // Follow-up preference still allows GHL when CRM entity was last established
       if (input.preferredSource === "ghl" && input.entity.isFollowUp) {
         return { plausible: true, confidence: 0.85 };
       }
+      return { plausible: false, confidence: 0 };
+    }
+
+    // Lookup intents that hung an entity name on an instructional/meta fragment
+    // must not claim the question — keep pattern matching, drop confidence.
+    const names = intentEntityNames(intent);
+    const isEntityLookup =
+      intent.intent === "opportunity_lookup" ||
+      intent.intent === "contact_lookup" ||
+      intent.intent === "conversation_lookup" ||
+      intent.intent === "write_opportunity" ||
+      intent.intent === "write_contact" ||
+      intent.intent === "write_tag";
+    if (
+      isEntityLookup &&
+      names.length > 0 &&
+      names.every((n) => !isPlausibleCrmEntityCandidate(n))
+    ) {
+      return { plausible: false, confidence: 0 };
+    }
+    if (
+      isEntityLookup &&
+      names.length === 0 &&
+      (intent.intent === "opportunity_lookup" || intent.intent === "contact_lookup") &&
+      !intent.explicitGhl
+    ) {
+      // Matched opportunity/contact shape but extracted nothing usable — don't claim.
       return { plausible: false, confidence: 0 };
     }
 

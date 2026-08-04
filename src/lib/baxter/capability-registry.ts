@@ -86,6 +86,7 @@ export function buildBaxterCapabilityCatalog(
   const pemTool = BAXTER_TOOLS.find((t) => t.key === "pem-neat");
   const propertyTool = BAXTER_TOOLS.find((t) => t.key === "property-research");
   const projectSetupTool = BAXTER_TOOLS.find((t) => t.key === "project-setup");
+  const customerCenterTool = BAXTER_TOOLS.find((t) => t.key === "customer-dossier");
   const knowledgeCard = BAXTER_ADMIN_CARDS.find((c) => c.key === "knowledge-base");
   const integrationsCard = BAXTER_ADMIN_CARDS.find((c) => c.key === "integrations");
   const adminLinks = getAdminNavLinks();
@@ -330,6 +331,34 @@ export function buildBaxterCapabilityCatalog(
       ],
       helpTopics: ["new project setup", "project number", "feasibility package", "/new-project"],
       synonyms: ["project setup", "new project", "master project log", "feasibility"],
+      sourceOfTruth: "baxter_tools",
+    },
+    {
+      key: "customer_center",
+      name: customerCenterTool?.name ?? "Customer Center",
+      shortDescription:
+        customerCenterTool?.description ??
+        "See everything Baxter already knows about one customer across GoHighLevel, PEM NEAT, and Project Setup — read-only.",
+      detailedDescription:
+        "Open Customer Center, search by name or GHL contact id, and review a read-only cross-system view. Admins also see open Process Monitoring findings for that contact. No Project Setup actions are suggested from this view.",
+      category: "process",
+      audience: ["employee", "admin"],
+      rolesAllowed: ["user", "admin", "super_admin", "*"],
+      status: customerCenterTool?.enabled === false ? "disabled" : "available",
+      enabled: customerCenterTool?.enabled !== false,
+      webRoute: customerCenterTool?.href ?? "/customers/lookup",
+      createRoute: customerCenterTool?.createHref ?? "/customers/lookup",
+      adminRoute: null,
+      supportedActions: ["Look up a customer", "Read-only GHL / PEM / Project Setup summary"],
+      limitations: ["Does not start Project Setup or change CRM records"],
+      helpTopics: ["customer center", "customer dossier", "full picture on a customer"],
+      synonyms: [
+        "customer center",
+        "customer dossier",
+        "dossier",
+        "customer profile",
+        "full picture",
+      ],
       sourceOfTruth: "baxter_tools",
     },
     {

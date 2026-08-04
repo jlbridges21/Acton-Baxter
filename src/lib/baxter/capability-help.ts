@@ -79,6 +79,135 @@ function linkFor(
   return links;
 }
 
+/**
+ * Dedicated how-to copy for “how do I use Baxter to do X”, keyed to capability-registry entries.
+ * Facts for project_setup verified against `/projects/setup`, `/new-project`, and docs/project-setup.md.
+ */
+function answerDedicatedCapabilityHowto(
+  capabilityKey: string,
+  cap: BaxterCapability,
+  role: string | null | undefined,
+): CapabilityHelpAnswer | null {
+  if (capabilityKey === "project_setup") {
+    return {
+      answer: [
+        "The team can set up a new project with Baxter instead of doing the kickoff by hand:",
+        "",
+        "• **In Slack:** run `/new-project` — search GoHighLevel for the customer, pick them, confirm the details, and start the run.",
+        "• **On the web:** open **New Project Setup** — same flow: look up a GHL customer, confirm project details (name, number, FP paid date, etc.), then confirm to run.",
+        "",
+        "After human confirmation, Baxter automates the Master Project Log row, copies the Drive project folder from the template, creates the Project Charter in that folder, appends the Project Charter List link, and (when Slack provisioning is enabled) creates the public project channel and posts the kickoff message.",
+        "",
+        "Baxter does **not** auto-trigger this — someone must confirm on the web or in the Slack modal before any live write runs. Dry-run is available on the web to preview without changing Google/Slack.",
+      ].join("\n"),
+      links: [
+        { label: "New Project Setup", href: cap.webRoute || "/projects/setup" },
+        ...(role === "admin" || role === "super_admin"
+          ? [{ label: "Project Setup settings", href: cap.adminRoute || "/admin/project-setup" }]
+          : []),
+      ],
+    };
+  }
+
+  if (capabilityKey === "pem_neat") {
+    return {
+      answer: [
+        "To generate a PEM NEAT with Baxter:",
+        "",
+        "• **On the web:** open **PEM NEATs** (`/pem-neats`) → create a new one, add the prospect and salesperson, paste the transcript, and Generate.",
+        "• **In Slack:** `/pem` hands you into the web form.",
+        "",
+        "Baxter saves Notes, Email, Assessment, and BuilderTrend handoff fields for copy/paste (there is no direct BuilderTrend API).",
+      ].join("\n"),
+      links: linkFor(cap, role),
+    };
+  }
+
+  if (capabilityKey === "property_research") {
+    return {
+      answer: [
+        "To run Property Research:",
+        "",
+        "• Open **Property Research** from the Baxter dashboard (or go to New Property Research).",
+        "• Enter the address and start the report — Baxter gathers parcel/zoning/value evidence and writes up the findings.",
+        "",
+        "You can reopen prior reports from the dashboard anytime.",
+      ].join("\n"),
+      links: linkFor(cap, role),
+    };
+  }
+
+  if (capabilityKey === "customer_center" || capabilityKey === "customer_dossier") {
+    return {
+      answer: [
+        "Use **Customer Center** for a read-only cross-system view of one customer:",
+        "",
+        "• Open **Customer Center** from the Baxter dashboard (or Tools in admin nav).",
+        "• Search by name or GHL contact id — Baxter assembles what it already knows from GoHighLevel, PEM NEAT, and Project Setup (admins also see open Process Monitoring findings).",
+        "",
+        "Nothing is changed from this page — it’s lookup only.",
+      ].join("\n"),
+      links: [{ label: "Customer Center", href: cap.webRoute || "/customers/lookup" }],
+    };
+  }
+
+  return null;
+}
+
+function resolveHowtoCapability(
+  question: string,
+  classified: CapabilityQuestionClassification,
+  role: string | null | undefined,
+): BaxterCapability | null {
+  const topic = classified.topic;
+  const caps = listCapabilitiesForRole(role);
+  if (topic === "project_setup") {
+    return caps.find((c) => c.key === "project_setup") ?? null;
+  }
+  if (topic === "pem_neat") return caps.find((c) => c.key === "pem_neat") ?? null;
+  if (topic === "property_research") return caps.find((c) => c.key === "property_research") ?? null;
+  if (topic === "customer_center") {
+    return caps.find((c) => c.key === "customer_center") ?? null;
+  }
+  return findCapabilityByTopic(question, role);
+}
+
+function answerBaxterMetaHowto(
+  question: string,
+  classified: CapabilityQuestionClassification,
+  role: string | null | undefined,
+): CapabilityHelpAnswer | null {
+  const isMeta =
+    classified.reason === "baxter_meta_howto" ||
+    /\b(use (you|baxter) (to|for)|how (do|can|should) (i|we|they)|walk (me|us|the team) through|tell the team .{0,40}how)\b/i.test(
+      question,
+    );
+  if (!isMeta) return null;
+
+  const cap = resolveHowtoCapability(question, classified, role);
+  if (!cap) {
+    return {
+      answer:
+        "I can walk the team through how to use Baxter for a specific tool — for example New Project Setup, PEM NEATs, Property Research, or Customer Center. Ask “how do we use you to set up a new project?” (or name the tool) and I’ll give the concrete steps.",
+      links: [],
+    };
+  }
+
+  const dedicated = answerDedicatedCapabilityHowto(cap.key, cap, role);
+  if (dedicated) return dedicated;
+
+  // Generic but still useful pointer — never a GHL “couldn’t find” miss.
+  const where = cap.webRoute
+    ? ` Open **${cap.name}** from the Baxter dashboard or go to ${cap.webRoute}.`
+    : cap.createRoute
+      ? ` Start from ${cap.createRoute}.`
+      : "";
+  return {
+    answer: `Here’s how to use **${cap.name}**: ${cap.shortDescription}.${where}`.trim(),
+    links: linkFor(cap, role),
+  };
+}
+
 function formatOverview(
   role: string | null | undefined,
   health: CapabilityRuntimeHealth,
@@ -525,6 +654,9 @@ export function answerCapabilityHelp(input: {
   const health = getCapabilityRuntimeHealth({
     monitoringKnown: isMonitoringCapabilityKnown(),
   });
+
+  const metaHowto = answerBaxterMetaHowto(question, classified, role);
+  if (metaHowto) return metaHowto;
 
   if (pemDef) {
     return {

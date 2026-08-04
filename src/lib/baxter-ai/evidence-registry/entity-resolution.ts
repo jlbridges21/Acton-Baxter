@@ -13,6 +13,7 @@ import {
 } from "@/lib/baxter-ai/conversation-context";
 import type { BaxterHistoryMessage } from "@/lib/baxter-ai/types";
 import type { PreferredEntitySource } from "./conversation-arbitration";
+import { isPlausibleCrmEntityCandidate } from "./entity-plausibility";
 
 export type EntityType =
   "ghl_contact" | "ghl_opportunity" | "pem_prospect" | "rulebook_step_or_role" | "none";
@@ -74,13 +75,17 @@ export function resolveQuestionEntity(input: {
       type = name ? "ghl_contact" : "none";
     }
     if (type !== "none") {
-      candidates.push({
-        type,
-        name,
-        confidence: ghl.confidence,
-        via: "ghl",
-      });
-    } else if (name) {
+      if (name && !isPlausibleCrmEntityCandidate(name) && !/[^\s@]+@[^\s@]+\.[^\s@]+/.test(name)) {
+        // Instructional/meta false positive from opportunity/contact patterns — skip.
+      } else {
+        candidates.push({
+          type,
+          name,
+          confidence: ghl.confidence,
+          via: "ghl",
+        });
+      }
+    } else if (name && isPlausibleCrmEntityCandidate(name)) {
       candidates.push({
         type: "ghl_contact",
         name,

@@ -1,4 +1,5 @@
 export { resolveQuestionEntity } from "./entity-resolution";
+export { isPlausibleCrmEntityCandidate, isBaxterMetaHowtoQuestion } from "./entity-plausibility";
 export type { EntityCandidate, EntityResolutionResult, EntityType } from "./entity-resolution";
 export {
   mostRecentEntitySource,

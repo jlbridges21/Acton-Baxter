@@ -38,7 +38,14 @@ const IMPLIED_ACTION_VERB =
   /\bcan you (find|look\s*up|look|search for|get|check|see what|show me|pull|retrieve|fetch|summarize|tell me what|tell me if)\b/i;
 
 const SYSTEM_TOPIC =
-  /\b(slack|gohighlevel|ghl|crm|google(\s+(drive|docs|sheets|workspace))?|buildertrend|pem(\s+neat)?|neat|property research|knowledge( center)?|rulebook|domo|drive|docs?|spreadsheet|sheet)\b/i;
+  /\b(slack|gohighlevel|ghl|crm|google(\s+(drive|docs|sheets|workspace))?|buildertrend|pem(\s+neat)?|neat|property research|knowledge( center)?|rulebook|domo|drive|docs?|spreadsheet|sheet|new project|project setup|customer center|customer dossier|\/new-project)\b/i;
+
+/** “How do we use Baxter to …” / “tell the team how they can use you …” */
+const BAXTER_META_HOWTO =
+  /\b((tell|show|explain|teach|remind)\s+(the\s+team|us|employees?|me)\s+(about\s+)?how|how\s+(do|can|should)\s+(i|we|they|the\s+team|employees?)|walk\s+(me|us|the\s+team)\s+through|how\s+to\s+use\s+(you|baxter)|(?:can|could)\s+(the\s+team|we|they)\s+use\s+(you|baxter))\b/i;
+
+const USE_BAXTER_TO =
+  /\b(use\s+(you|baxter)\s+(to|for)|how\s+they\s+can\s+use\s+you|instead of relying)\b/i;
 
 function extractGoogleUrl(question: string): string | null {
   const withProtocol = question.match(
@@ -68,7 +75,16 @@ function detectTopic(question: string): string | null {
   if (/\b(gohighlevel|ghl|crm)\b/.test(q)) return "ghl";
   if (/\bslack\b/.test(q) || /#[\w-]+/.test(q)) return "slack";
   if (/\b(pem|neat)\b/.test(q)) return "pem_neat";
-  if (/\bproperty research\b/.test(q)) return "property_research";
+  if (/\bproperty research\b/.test(q) || /\bresearch (a |this )?propert/.test(q)) {
+    return "property_research";
+  }
+  if (
+    /\b(\/new-project|new project setup|project setup|feasibility package)\b/.test(q) ||
+    /\b(create|start|run|set\s*up)\s+(a\s+)?new\s+project\b/.test(q)
+  ) {
+    return "project_setup";
+  }
+  if (/\b(customer center|customer dossier)\b/.test(q)) return "customer_center";
   if (/\b(knowledge|rulebook)\b/.test(q)) return "knowledge";
   if (/\b(google|drive|docs?|spreadsheet|sheet)\b/.test(q) || looksLikeGoogleUrl(q)) {
     return "google";
@@ -154,6 +170,18 @@ export function classifyCapabilityQuestion(question: string): CapabilityQuestion
       googleUrl,
       slackChannel,
       reason: "broad_capability_overview",
+    };
+  }
+
+  // Meta how-to about using Baxter itself ("tell the team how they can use you to…")
+  // — never a CRM entity lookup.
+  if (BAXTER_META_HOWTO.test(q) || USE_BAXTER_TO.test(q)) {
+    return {
+      kind: "specific_capability",
+      topic,
+      googleUrl,
+      slackChannel,
+      reason: "baxter_meta_howto",
     };
   }
 
