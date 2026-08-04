@@ -56,7 +56,7 @@ export function getEmployeeNavLinks(): AppNavLink[] {
     },
     {
       href: "/customers/lookup",
-      label: "Customer Dossier",
+      label: "Customer Center",
       icon: UsersRound,
       match: (pathname) => pathname.startsWith("/customers"),
     },

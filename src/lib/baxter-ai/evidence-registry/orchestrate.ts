@@ -38,7 +38,7 @@ function formatSourceAgnosticNotFound(tried: EvidenceSourceKey[], name: string |
     ghl: "GHL",
     pem_neat: "PEM",
     rulebook: "the Process Rulebook",
-    customer_dossier: "the customer dossier",
+    customer_dossier: "the customer center",
   };
   const unique = [...new Set(tried)];
   const named = name?.trim() || "that";

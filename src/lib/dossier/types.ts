@@ -1,5 +1,5 @@
 /**
- * Customer Dossier — read-only cross-system view types.
+ * Customer Center — read-only cross-system view types.
  * No PEM→Project Setup actions or suggestions live here.
  */
 
@@ -20,6 +20,16 @@ export type DossierGhlSection = {
   contactName: string | null;
   email: string | null;
   phone: string | null;
+  /** Street / address line 1 from GHL (already on the contact payload). */
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  /**
+   * GHL custom field "What type of project are you considering?" — resolved by
+   * field label via customFieldLabels, never by hardcoded field id.
+   */
+  projectTypeConsidering: string | null;
   ownerName: string | null;
   opportunities: DossierGhlOpportunity[];
   snapshotText: string | null;

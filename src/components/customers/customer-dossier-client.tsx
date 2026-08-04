@@ -83,12 +83,12 @@ function DossierView({ dossier }: { dossier: CustomerDossier }) {
   const name = dossier.identity.displayName ?? "Customer";
 
   return (
-    <div className="space-y-4" data-testid="customer-dossier">
+    <div className="space-y-4" data-testid="customer-center">
       <div>
         <h2 className="text-xl font-bold text-[var(--acton-navy)]">{name}</h2>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Read-only dossier. Sections load independently — a failure in one system does not hide the
-          others.
+          Read-only Customer Center. Sections load independently — a failure in one system does not
+          hide the others.
         </p>
       </div>
 
@@ -124,6 +124,38 @@ function DossierView({ dossier }: { dossier: CustomerDossier }) {
               <p>
                 <span className="text-[var(--acton-muted)]">Phone: </span>
                 {dossier.ghl.phone}
+              </p>
+            ) : null}
+            {dossier.ghl.address ? (
+              <p>
+                <span className="text-[var(--acton-muted)]">Address: </span>
+                {dossier.ghl.address}
+              </p>
+            ) : null}
+            {dossier.ghl.city ? (
+              <p>
+                <span className="text-[var(--acton-muted)]">City: </span>
+                {dossier.ghl.city}
+              </p>
+            ) : null}
+            {dossier.ghl.state ? (
+              <p>
+                <span className="text-[var(--acton-muted)]">State: </span>
+                {dossier.ghl.state}
+              </p>
+            ) : null}
+            {dossier.ghl.postalCode ? (
+              <p>
+                <span className="text-[var(--acton-muted)]">Postal code: </span>
+                {dossier.ghl.postalCode}
+              </p>
+            ) : null}
+            {dossier.ghl.projectTypeConsidering ? (
+              <p data-testid="dossier-project-type">
+                <span className="text-[var(--acton-muted)]">
+                  What type of project are you considering?:{" "}
+                </span>
+                {dossier.ghl.projectTypeConsidering}
               </p>
             ) : null}
             {dossier.ghl.ownerName ? (

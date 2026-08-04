@@ -1,5 +1,5 @@
 /**
- * Customer Dossier evidence source — broad "tell me everything" questions only.
+ * Customer Center evidence source — broad "tell me everything" questions only.
  * Does not steal narrow GHL/PEM single-fact questions (those keep higher canHandle scores
  * on their own sources; this source returns plausible:false unless isBroadDossierQuestion).
  */
@@ -30,7 +30,7 @@ export const dossierEvidenceSource: EvidenceSource = {
       return {
         items: [],
         clarification:
-          "Who should I pull a full customer dossier for? Give me a customer or prospect name.",
+          "Who should I pull up in Customer Center? Give me a customer or prospect name.",
         confidence: 0.95,
       };
     }
@@ -48,17 +48,17 @@ export const dossierEvidenceSource: EvidenceSource = {
           {
             number: 1,
             id: `dossier:${dossier.identity.ghlContactId ?? name}`,
-            title: `Customer dossier: ${dossier.identity.displayName ?? name}`,
+            title: `Customer Center: ${dossier.identity.displayName ?? name}`,
             summary: `Cross-system view for ${dossier.identity.displayName ?? name}`,
             contentExcerpt: answer.slice(0, 2000),
             category: "customer_dossier",
-            tags: ["dossier", "customer"],
-            sourceName: "Customer Dossier",
+            tags: ["dossier", "customer", "customer-center"],
+            sourceName: "Customer Center",
             sourceUrl: dossier.pagePath,
             sourceType: "customer_dossier",
             mimeType: null,
             updatedAt: now,
-            citationLabel: "Customer Dossier",
+            citationLabel: "Customer Center",
             relevanceScore: 1,
           },
         ],
@@ -69,7 +69,7 @@ export const dossierEvidenceSource: EvidenceSource = {
     } catch (err) {
       return {
         items: [],
-        deterministicAnswer: `I couldn’t assemble a dossier for ${name}: ${
+        deterministicAnswer: `I couldn’t assemble a Customer Center view for ${name}: ${
           err instanceof Error ? err.message : "unknown error"
         }`,
         confidence: 0.5,

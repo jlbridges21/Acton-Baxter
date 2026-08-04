@@ -21,6 +21,13 @@ export function formatDossierChatSummary(dossier: CustomerDossier): string {
     lines.push(`• Contact: ${dossier.ghl.contactName ?? name}`);
     if (dossier.ghl.email) lines.push(`• Email: ${dossier.ghl.email}`);
     if (dossier.ghl.phone) lines.push(`• Phone: ${dossier.ghl.phone}`);
+    if (dossier.ghl.address) lines.push(`• Address: ${dossier.ghl.address}`);
+    if (dossier.ghl.city) lines.push(`• City: ${dossier.ghl.city}`);
+    if (dossier.ghl.state) lines.push(`• State: ${dossier.ghl.state}`);
+    if (dossier.ghl.postalCode) lines.push(`• Postal code: ${dossier.ghl.postalCode}`);
+    if (dossier.ghl.projectTypeConsidering) {
+      lines.push(`• Project type considering: ${dossier.ghl.projectTypeConsidering}`);
+    }
     if (dossier.ghl.opportunities.length === 0) {
       lines.push("• Opportunities: none on file");
     } else {
@@ -90,7 +97,7 @@ export function formatDossierChatSummary(dossier: CustomerDossier): string {
   }
 
   lines.push("");
-  lines.push(`Full dossier: ${dossier.pagePath}`);
+  lines.push(`Customer Center: ${dossier.pagePath}`);
   return lines.join("\n");
 }
 
@@ -104,7 +111,7 @@ export function isBroadDossierQuestion(question: string): boolean {
     /\b(stage|pipeline|email|phone|address|owner|tag|budget|type\s*[12]|pain|qualification|coaching|raci|responsible|who (?:is|owns))\b/i.test(
       q,
     ) &&
-    !/\b(tell me everything|everything about|full (?:picture|profile|dossier|overview)|customer dossier|what do we know about)\b/i.test(
+    !/\b(tell me everything|everything about|full (?:picture|profile|dossier|overview)|customer (?:dossier|center)|what do we know about)\b/i.test(
       q,
     )
   ) {
@@ -112,11 +119,14 @@ export function isBroadDossierQuestion(question: string): boolean {
   }
 
   // PEM-specific "everything about X's PEM" stays with PEM source.
-  if (/\b(pem|neat)\b/i.test(q) && !/\b(dossier|full picture|across systems|ghl and)\b/i.test(q)) {
+  if (
+    /\b(pem|neat)\b/i.test(q) &&
+    !/\b(dossier|customer center|full picture|across systems|ghl and)\b/i.test(q)
+  ) {
     return false;
   }
 
-  return /\b(tell me everything|everything about|full (?:picture|profile|dossier|overview)|customer (?:dossier|overview|summary)|what do we know about|pull up everything|dossier (?:for|on))\b/i.test(
+  return /\b(tell me everything|everything about|full (?:picture|profile|dossier|overview)|customer (?:dossier|center|overview|summary)|what do we know about|pull up everything|dossier (?:for|on))\b/i.test(
     q,
   );
 }

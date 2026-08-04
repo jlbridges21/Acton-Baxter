@@ -57,15 +57,15 @@ export const BAXTER_TOOLS: BaxterTool[] = [
   },
   {
     key: "customer-dossier",
-    name: "Customer Dossier",
+    name: "Customer Center",
     description:
       "See everything Baxter already knows about one customer across GoHighLevel, PEM NEAT, and Project Setup — read-only.",
     href: "/customers/lookup",
     createHref: "/customers/lookup",
     enabled: true,
     icon: UsersRound,
-    ctaLabel: "Open Customer Dossier",
-    aliases: ["customer dossier", "dossier", "customer profile", "full picture"],
+    ctaLabel: "Open Customer Center",
+    aliases: ["customer center", "customer dossier", "dossier", "customer profile", "full picture"],
   },
 ];
 

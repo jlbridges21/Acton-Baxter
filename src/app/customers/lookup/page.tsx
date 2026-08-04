@@ -29,7 +29,7 @@ export default async function CustomerLookupPage({
   return (
     <AppShell user={user}>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Customer Dossier</h1>
+        <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Customer Center</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
           One read-only view of what Baxter already knows across GoHighLevel, PEM NEAT, and Project
           Setup

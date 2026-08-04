@@ -1,12 +1,19 @@
 /**
- * Customer Dossier — assembly, access rules, hard scope boundary, evidence-source claims.
+ * Customer Center — assembly, access rules, hard scope boundary, evidence-source claims.
  */
 import { describe, expect, it, vi } from "vitest";
 import {
   assembleCustomerDossier,
   formatDossierChatSummary,
   isBroadDossierQuestion,
+  resolveCustomFieldValueByLabel,
+  GHL_PROJECT_TYPE_CONSIDERING_LABEL,
 } from "@/lib/dossier";
+import { BAXTER_TOOLS } from "@/lib/baxter/tools";
+import { getAdminNavSections } from "@/lib/baxter/admin-nav";
+import { getEmployeeNavLinks } from "@/lib/baxter/app-nav-links";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { AssembleCustomerDossierDeps } from "@/lib/dossier/assemble";
 import type { GhlEntityGraph } from "@/lib/connectors/ghl/entity-graph";
 import type { PemProspectIndexEntry } from "@/lib/baxter-data/pem-neats/prospect-index";
@@ -30,7 +37,14 @@ function emptyGraph(overrides: Partial<GhlEntityGraph> = {}): GhlEntityGraph {
       name: "Jane Smith",
       email: "jane@example.com",
       phone: "555-0100",
-    } as GhlEntityGraph["contact"],
+      address1: "123 Main St",
+      city: "San Jose",
+      state: "CA",
+      postalCode: "95110",
+      customFields: {
+        "cf-project-type": "Detached ADU",
+      },
+    } as unknown as GhlEntityGraph["contact"],
     opportunities: [
       {
         opportunity: {
@@ -47,7 +61,9 @@ function emptyGraph(overrides: Partial<GhlEntityGraph> = {}): GhlEntityGraph {
     nextAppointment: null,
     recentConversation: null,
     recentMessages: [],
-    customFieldLabels: {},
+    customFieldLabels: {
+      "cf-project-type": "What type of project are you considering?",
+    },
     contactOwnerName: "Alex",
     ...overrides,
   };
@@ -119,6 +135,107 @@ describe("isBroadDossierQuestion", () => {
     expect(isBroadDossierQuestion("What is Jane Smith's email?")).toBe(false);
     expect(isBroadDossierQuestion("Tell me about Jane Smith's PEM")).toBe(false);
     expect(isBroadDossierQuestion("Who is responsible for conducting the PEM?")).toBe(false);
+  });
+});
+
+describe("Customer Center rename", () => {
+  it("uses Customer Center labels on nav, dashboard card, and page heading", () => {
+    expect(getEmployeeNavLinks().map((l) => l.label)).toContain("Customer Center");
+    expect(getEmployeeNavLinks().map((l) => l.label)).not.toContain("Customer Dossier");
+
+    const toolsLabels = getAdminNavSections()
+      .find((s) => s.id === "tools")
+      ?.links.map((l) => l.label);
+    expect(toolsLabels).toContain("Customer Center");
+    expect(toolsLabels).not.toContain("Customer Dossier");
+
+    const card = BAXTER_TOOLS.find((t) => t.key === "customer-dossier");
+    expect(card?.name).toBe("Customer Center");
+    expect(card?.ctaLabel).toBe("Open Customer Center");
+
+    const pageSrc = readFileSync(
+      path.resolve(__dirname, "../../src/app/customers/lookup/page.tsx"),
+      "utf8",
+    );
+    expect(pageSrc).toContain(">Customer Center<");
+    expect(pageSrc).not.toContain(">Customer Dossier<");
+  });
+});
+
+describe("GHL address + project-type fields", () => {
+  it("maps address/city/state/postal from the contact already returned by resolveGhlEntityGraph", async () => {
+    const dossier = await assembleCustomerDossier({ name: "Jane Smith", role: "user" }, baseDeps());
+    expect(dossier.ghl.address).toBe("123 Main St");
+    expect(dossier.ghl.city).toBe("San Jose");
+    expect(dossier.ghl.state).toBe("CA");
+    expect(dossier.ghl.postalCode).toBe("95110");
+
+    const summary = formatDossierChatSummary(dossier);
+    expect(summary).toMatch(/Address: 123 Main St/);
+    expect(summary).toMatch(/City: San Jose/);
+    expect(summary).toMatch(/State: CA/);
+    expect(summary).toMatch(/Postal code: 95110/);
+  });
+
+  it("resolves project-type custom field by label and omits it when absent", async () => {
+    const withField = await assembleCustomerDossier(
+      { name: "Jane Smith", role: "user" },
+      baseDeps(),
+    );
+    expect(withField.ghl.projectTypeConsidering).toBe("Detached ADU");
+    expect(formatDossierChatSummary(withField)).toMatch(/Project type considering: Detached ADU/);
+
+    const withoutField = await assembleCustomerDossier(
+      { name: "Jane Smith", role: "user" },
+      baseDeps({
+        resolveGhl: vi.fn(async () =>
+          emptyGraph({
+            contact: {
+              id: "contact-1",
+              name: "Jane Smith",
+              email: "jane@example.com",
+              phone: "555-0100",
+              address1: null,
+              city: null,
+              state: null,
+              postalCode: null,
+              customFields: {},
+            } as unknown as GhlEntityGraph["contact"],
+            customFieldLabels: {
+              "cf-other": "Some other field",
+            },
+          }),
+        ),
+      }),
+    );
+    expect(withoutField.ghl.projectTypeConsidering).toBeNull();
+    expect(formatDossierChatSummary(withoutField)).not.toMatch(/Project type considering/);
+  });
+
+  it("resolveCustomFieldValueByLabel matches by name, not id", () => {
+    expect(
+      resolveCustomFieldValueByLabel(
+        { "id-abc-different-per-subaccount": "Garage conversion" },
+        { "id-abc-different-per-subaccount": GHL_PROJECT_TYPE_CONSIDERING_LABEL },
+        GHL_PROJECT_TYPE_CONSIDERING_LABEL,
+      ),
+    ).toBe("Garage conversion");
+
+    expect(
+      resolveCustomFieldValueByLabel(
+        { "id-abc": "" },
+        { "id-abc": GHL_PROJECT_TYPE_CONSIDERING_LABEL },
+        GHL_PROJECT_TYPE_CONSIDERING_LABEL,
+      ),
+    ).toBeNull();
+
+    expect(
+      resolveCustomFieldValueByLabel(
+        { "id-abc": "x" },
+        { "id-abc": "Unrelated" },
+        GHL_PROJECT_TYPE_CONSIDERING_LABEL,
+      ),
+    ).toBeNull();
   });
 });
 

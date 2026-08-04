@@ -26,6 +26,7 @@ import type {
   DossierProjectSetupRun,
   DossierProjectSetupSection,
 } from "./types";
+import { GHL_PROJECT_TYPE_CONSIDERING_LABEL, resolveCustomFieldValueByLabel } from "./ghl-fields";
 
 function asHttpLink(value: unknown): string | null {
   return typeof value === "string" && value.startsWith("http") ? value : null;
@@ -54,6 +55,11 @@ function emptyGhl(
     contactName: null,
     email: null,
     phone: null,
+    address: null,
+    city: null,
+    state: null,
+    postalCode: null,
+    projectTypeConsidering: null,
     ownerName: null,
     opportunities: [],
     snapshotText: null,
@@ -82,6 +88,15 @@ function mapGhlSection(graph: GhlEntityGraph): DossierGhlSection {
     contactName: contact.name ?? null,
     email: contact.email ?? null,
     phone: contact.phone ?? null,
+    address: contact.address1?.trim() || null,
+    city: contact.city?.trim() || null,
+    state: contact.state?.trim() || null,
+    postalCode: contact.postalCode?.trim() || null,
+    projectTypeConsidering: resolveCustomFieldValueByLabel(
+      contact.customFields,
+      graph.customFieldLabels,
+      GHL_PROJECT_TYPE_CONSIDERING_LABEL,
+    ),
     ownerName: graph.contactOwnerName ?? null,
     opportunities: graph.opportunities.map((row) => ({
       id: row.opportunity.id,
@@ -160,7 +175,7 @@ export type AssembleCustomerDossierDeps = {
 };
 
 /**
- * Assemble a read-only customer dossier across GHL, PEM NEAT, Project Setup,
+ * Assemble a read-only Customer Center view across GHL, PEM NEAT, Project Setup,
  * and (admin-only) Process Monitoring. Each section fails independently.
  *
  * Hard scope: never suggests, links, or triggers Project Setup from a PEM outcome.
