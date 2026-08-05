@@ -365,12 +365,113 @@ describe("appendProjectSlackActivityToGhlAnswer", () => {
           run({ id: "other", ghlContactId: DENIS_ID, slackChannelName: "other" }),
         ],
         getSetupSteps: async () => [],
+        listCachedChannels: async () => [],
+        listLiveChannels: async () => [],
         retrieveSlack: async () => {
           throw new Error("should not search");
         },
       },
     });
     expect(enriched).toBe(ghlAnswer);
+  });
+
+  it("falls back to Slack directory by last name when Project Setup has no row (Denis)", async () => {
+    const denisAnswer = baseGhlAnswer("Denis Kornilov", DENIS_ID);
+    const enriched = await appendProjectSlackActivityToGhlAnswer({
+      ghlAnswer: denisAnswer,
+      question: "give me information about the denis kornilov project",
+      ghlContactId: DENIS_ID,
+      contactDisplayName: "Denis Kornilov",
+      requester: { baxterUserId: "user-1", slackTeamId: "T1" },
+      deps: {
+        listSetupRuns: async () => [],
+        listCachedChannels: async () => [{ id: "C_KORN", name: "l01-26018-kornilov" }],
+        listLiveChannels: async () => {
+          throw new Error("should use cache");
+        },
+        slackSearchEnabled: () => true,
+        getSlackConnection: async () => ({
+          linked: true,
+          slackUserId: "U1",
+          slackTeamId: "T1",
+          slackUserName: "Tester",
+          scopes: ["search:read.public"],
+          status: "connected",
+          baxterUserId: "user-1",
+          resolvedVia: "baxter_user_id" as const,
+        }),
+        authorLabelDeps: {
+          getCachedProfile: async () => ({
+            slack_user_id: "U9",
+            display_name: "Maxx",
+            real_name: "Maxx",
+            username: "maxx",
+          }),
+        },
+        retrieveSlack: async () => ({
+          plan: null,
+          results: [
+            {
+              sourceType: SLACK_SOURCE_TYPE,
+              messageTs: "2.1",
+              threadTs: null,
+              channelId: "C_KORN",
+              channelName: "l01-26018-kornilov",
+              channelKind: "public_channel",
+              authorId: "U9",
+              authorName: null,
+              timestamp: "2026-08-01T12:00:00.000Z",
+              text: "Site inspection scheduled for Kornilov.",
+              permalink: null,
+              isThreadReply: false,
+              relevance: 1,
+              contextMessages: [],
+              clusterKey: "c1",
+            },
+          ],
+          clusters: [],
+          ambiguities: { people: [], channels: [] },
+          access: {
+            publicChannels: true,
+            privateChannels: false,
+            dms: false,
+            groupDms: false,
+            threadContext: true,
+            permalinks: true,
+            userLevelAuthorization: "configured",
+            tokenKind: "user",
+            allowedChannelTypes: ["public_channel"],
+          },
+          incomplete: null,
+          diagnostics: {
+            endpoint: "search.messages",
+            latencyMs: 10,
+            resultCount: 1,
+            paginationCount: 1,
+            rateLimited: false,
+            capabilities: {
+              publicChannels: true,
+              privateChannels: false,
+              dms: false,
+              groupDms: false,
+              threadContext: true,
+              permalinks: true,
+              userLevelAuthorization: "configured",
+              tokenKind: "user",
+              allowedChannelTypes: ["public_channel"],
+            },
+            exactNewestGuaranteed: true,
+            notes: [],
+          },
+        }),
+      },
+    });
+
+    expect(enriched).toContain("Denis Kornilov");
+    expect(enriched).toContain("Recent activity in #l01-26018-kornilov");
+    expect(enriched).toContain("Site inspection scheduled");
+    expect(enriched).toContain("Maxx");
+    expect(enriched).not.toContain("Unknown");
   });
 
   it("uses the newest complete run channel when duplicates exist", async () => {

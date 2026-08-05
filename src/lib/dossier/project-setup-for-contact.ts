@@ -5,7 +5,10 @@
 
 import "server-only";
 
-import { listProjectSetupRuns, getProjectSetupSteps } from "@/lib/project-setup/store";
+import {
+  listProjectSetupRunsByGhlContactId,
+  getProjectSetupSteps,
+} from "@/lib/project-setup/store";
 import type { ProjectSetupRun, ProjectSetupStep } from "@/lib/project-setup/types";
 import type { DossierProjectSetupRun } from "./types";
 
@@ -15,6 +18,8 @@ export type LinkedProjectSetupRun = DossierProjectSetupRun & {
 
 export type ProjectSetupForContactDeps = {
   listSetupRuns?: (limit?: number) => Promise<ProjectSetupRun[]>;
+  /** Prefer over scanning recent runs — exact contact id query. */
+  listSetupRunsByContactId?: (ghlContactId: string) => Promise<ProjectSetupRun[]>;
   getSetupSteps?: (runId: string) => Promise<ProjectSetupStep[]>;
 };
 
@@ -74,10 +79,17 @@ export async function listProjectSetupRunsForGhlContact(
   const contactId = ghlContactId.trim();
   if (!contactId) return [];
 
-  const listSetupRuns = deps.listSetupRuns ?? listProjectSetupRuns;
   const getSetupSteps = deps.getSetupSteps ?? getProjectSetupSteps;
-  const allRuns = await listSetupRuns(100);
-  const matched = allRuns.filter((run) => run.ghlContactId === contactId);
+  let matched: ProjectSetupRun[];
+  if (deps.listSetupRunsByContactId) {
+    matched = await deps.listSetupRunsByContactId(contactId);
+  } else if (deps.listSetupRuns) {
+    // Test inject: filter a provided universe by exact id.
+    const allRuns = await deps.listSetupRuns(100);
+    matched = allRuns.filter((run) => run.ghlContactId === contactId);
+  } else {
+    matched = await listProjectSetupRunsByGhlContactId(contactId);
+  }
 
   const out: LinkedProjectSetupRun[] = [];
   for (const run of matched) {

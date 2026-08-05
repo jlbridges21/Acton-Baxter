@@ -109,6 +109,9 @@ describe("PEM mock generation content bar", () => {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key";
     process.env.ENABLE_MOCK_RESEARCH = "true";
+    // Ensure mock path — a real OPENAI_API_KEY from Vite .env.local must not win.
+    process.env.OPENAI_API_KEY = "";
+    process.env.BAXTER_LLM_PROVIDER = "deterministic";
   });
 
   it("mock path remains substantive against Robert-style concepts", async () => {

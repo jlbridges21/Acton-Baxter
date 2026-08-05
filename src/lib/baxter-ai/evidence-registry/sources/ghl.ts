@@ -147,6 +147,11 @@ export const ghlEvidenceSource: EvidenceSource = {
       intent === "conversation_lookup";
 
     const contactId = ghlEvidence.diagnostics?.selectedContactId ?? null;
+    const contactDisplayName =
+      ghlEvidence.diagnostics?.resolvedContactName?.trim() ||
+      ghlEvidence.nextConversationState?.contact?.displayName?.trim() ||
+      ghlEvidence.intent?.entities?.contactName?.trim() ||
+      null;
     if (
       answer &&
       contactId &&
@@ -157,6 +162,7 @@ export const ghlEvidenceSource: EvidenceSource = {
         ghlAnswer: answer,
         question: input.question,
         ghlContactId: contactId,
+        contactDisplayName,
         requester: {
           baxterUserId: input.userId ?? null,
           slackUserId: input.externalUserId ?? null,

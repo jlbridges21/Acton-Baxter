@@ -545,6 +545,30 @@ export async function listProjectSetupRuns(limit = 25): Promise<ProjectSetupRun[
   return ((data as RunRow[]) ?? []).map(mapRun);
 }
 
+/** Exact `ghl_contact_id` filter — does not depend on the recent-runs window. */
+export async function listProjectSetupRunsByGhlContactId(
+  ghlContactId: string,
+  limit = 50,
+): Promise<ProjectSetupRun[]> {
+  const contactId = ghlContactId.trim();
+  if (!contactId) return [];
+  if (usesMemoryStore()) {
+    return [...getMemory().runs.values()]
+      .filter((run) => run.ghlContactId === contactId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("project_setup_runs")
+    .select("*")
+    .eq("ghl_contact_id", contactId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return ((data as RunRow[]) ?? []).map(mapRun);
+}
+
 export async function getProjectSetupSteps(runId: string): Promise<ProjectSetupStep[]> {
   if (usesMemoryStore()) {
     return [...(getMemory().steps.get(runId) ?? [])].sort((a, b) => a.orderIndex - b.orderIndex);

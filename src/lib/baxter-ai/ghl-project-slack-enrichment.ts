@@ -9,10 +9,9 @@
 import "server-only";
 
 import {
-  listProjectSetupRunsForGhlContact,
-  pickPreferredCompleteRunWithSlackChannel,
-  type ProjectSetupForContactDeps,
-} from "@/lib/dossier/project-setup-for-contact";
+  resolveProjectSlackChannelForContact,
+  type ResolveProjectSlackChannelDeps,
+} from "@/lib/dossier/project-slack-channel-resolve";
 import {
   getSlackSearchConnectionMetadataForRequester,
   type SlackSearchConnectionMetadata,
@@ -95,7 +94,7 @@ function logEnrichmentGate(payload: Record<string, unknown>): void {
   console.info("[GHL project Slack enrichment]", JSON.stringify(payload));
 }
 
-export type AppendProjectSlackActivityDeps = ProjectSetupForContactDeps & {
+export type AppendProjectSlackActivityDeps = ResolveProjectSlackChannelDeps & {
   /** Prefer requester-aware lookup (Slack DM has slackUserId, often no baxterUserId). */
   getSlackConnection?: (requester: SlackRequester) => Promise<SlackSearchConnectionMetadata | null>;
   retrieveSlack?: typeof retrieveSlackEvidence;
@@ -112,6 +111,8 @@ export async function appendProjectSlackActivityToGhlAnswer(input: {
   ghlAnswer: string;
   question: string;
   ghlContactId: string;
+  /** Used when Project Setup has no row — match Slack channel by homeowner name. */
+  contactDisplayName?: string | null;
   requester: SlackRequester;
   deps?: AppendProjectSlackActivityDeps;
 }): Promise<string> {
@@ -121,18 +122,34 @@ export async function appendProjectSlackActivityToGhlAnswer(input: {
 
   try {
     const enrichPromise = (async (): Promise<string> => {
-      const runs = await listProjectSetupRunsForGhlContact(input.ghlContactId, input.deps);
-      const preferred = pickPreferredCompleteRunWithSlackChannel(runs);
-      if (!preferred) return input.ghlAnswer;
-
-      const channelDisplay = channelLabel(preferred.slackChannelName, preferred.slackChannelId);
-      const slackEnabled = (input.deps?.slackSearchEnabled ?? isSlackSearchEnabled)();
-      const getConnection =
-        input.deps?.getSlackConnection ?? getSlackSearchConnectionMetadataForRequester;
-
       const incomingBaxterUserId = input.requester.baxterUserId?.trim() || null;
       const incomingSlackUserId = input.requester.slackUserId?.trim() || null;
       const incomingSlackTeamId = input.requester.slackTeamId?.trim() || null;
+
+      const channel = await resolveProjectSlackChannelForContact({
+        ghlContactId: input.ghlContactId,
+        contactDisplayName: input.contactDisplayName,
+        deps: {
+          ...input.deps,
+          teamId: incomingSlackTeamId ?? input.deps?.teamId ?? null,
+        },
+      });
+      if (!channel) return input.ghlAnswer;
+
+      logEnrichmentGate({
+        scope: "ghl.project_slack_enrichment",
+        gate: "channel_resolved",
+        via: channel.via,
+        channelName: channel.channelName,
+        channelId: channel.channelId,
+        slackUserId: incomingSlackUserId,
+        baxterUserId: incomingBaxterUserId,
+      });
+
+      const channelDisplay = channelLabel(channel.channelName, channel.channelId);
+      const slackEnabled = (input.deps?.slackSearchEnabled ?? isSlackSearchEnabled)();
+      const getConnection =
+        input.deps?.getSlackConnection ?? getSlackSearchConnectionMetadataForRequester;
 
       if (!slackEnabled) {
         logEnrichmentGate({
@@ -192,8 +209,8 @@ export async function appendProjectSlackActivityToGhlAnswer(input: {
       const teamId = requester.slackTeamId?.trim() || connection.slackTeamId || "";
       const scopedQuestion = `What is the latest update in ${channelDisplay}?`;
       const plan = buildChannelScopedPlan({
-        channelId: preferred.slackChannelId,
-        channelName: preferred.slackChannelName,
+        channelId: channel.channelId,
+        channelName: channel.channelName,
         teamId,
         question: scopedQuestion,
       });

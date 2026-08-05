@@ -182,8 +182,17 @@ const STAGE_BUDGETS = {
 const FULL_TRANSCRIPT_CHAR_LIMIT = 180_000;
 
 function shouldUseMock(): boolean {
-  const env = getEnv();
-  return Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";
+  // Prefer process.env — getEnv() can be stale across vi.resetModules() in unit tests.
+  const mock = (process.env.ENABLE_MOCK_RESEARCH ?? "true").toLowerCase();
+  if (mock === "true" || mock === "1") {
+    return process.env.NODE_ENV !== "production";
+  }
+  try {
+    const env = getEnv();
+    return Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";
+  } catch {
+    return true;
+  }
 }
 
 export function getPemNeatModelName(): string {

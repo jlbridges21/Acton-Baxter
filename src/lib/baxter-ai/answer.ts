@@ -290,6 +290,60 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
+  // Identity / capability FAQs: answer before GHL write checks + semantic routing.
+  // Prevents "Who is Baxter?" from paying for live CRM probes or routing classification.
+  const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
+  if (questionClass === "baxter_identity" && !preferKnowledgeForConcept) {
+    const identityHelp = answerCapabilityHelp({
+      question: routingQuestion,
+      role: null,
+      profile: null,
+    });
+    if (identityHelp) {
+      const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
+      const sources: BaxterSourceReference[] = identityHelp.links.map((link, index) => {
+        const href = link.href.startsWith("http") ? link.href : `${baseUrl}${link.href}`;
+        return {
+          title: link.label,
+          sourceName: "Baxter",
+          category: "Baxter capability",
+          sourceUrl: href,
+          citationLabel: link.label,
+          sourceKind: "capability" as const,
+          openLabel: link.label,
+          lastUpdated: null,
+          relevanceScore: 100,
+          availability: "available" as const,
+          knowledgeEntryId: `capability-${index}-${link.href}`,
+        };
+      });
+      const helpAnswer = withAbsoluteAppLinks(identityHelp.answer, identityHelp.links);
+      const message = await appendAssistantMessage({
+        conversationId: conversation.id,
+        content: helpAnswer,
+        insufficientKnowledge: false,
+        confidence: "high",
+        modelProvider: "capability-registry",
+        modelName: "identity-fast-path",
+        sources,
+        sourceEntryIds: sources.map((s, index) => ({
+          id: s.knowledgeEntryId!,
+          relevanceScore: 100,
+          order: index + 1,
+        })),
+      });
+      return toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: helpAnswer,
+        sources,
+        confidence: "high",
+        insufficientKnowledge: false,
+        answerMode: "identity",
+      });
+    }
+  }
+
   // GoHighLevel pending confirm/cancel + write proposals (never mutate without confirmation).
   const profile = await loadProfileForGhl(input.userId);
   if (isGhlConfigured()) {
@@ -373,61 +427,6 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         confidence: writeHandled.confidence,
         insufficientKnowledge: writeHandled.insufficientKnowledge,
         answerMode: writeHandled.answerMode,
-      });
-    }
-  }
-
-  const preferKnowledgeForConcept = shouldPreferKnowledgeForConcept(routingQuestion);
-
-  // Identity / capability FAQs: answer before semantic routing + Slack (fast path).
-  // Prevents "Who is Baxter?" from paying for routing classification or resource checks.
-  if (questionClass === "baxter_identity" && !preferKnowledgeForConcept) {
-    const identityHelp = answerCapabilityHelp({
-      question: routingQuestion,
-      role: profile?.role ?? null,
-      profile,
-    });
-    if (identityHelp) {
-      const baseUrl = getPublicAppBaseUrl().replace(/\/$/, "");
-      const sources: BaxterSourceReference[] = identityHelp.links.map((link, index) => {
-        const href = link.href.startsWith("http") ? link.href : `${baseUrl}${link.href}`;
-        return {
-          title: link.label,
-          sourceName: "Baxter",
-          category: "Baxter capability",
-          sourceUrl: href,
-          citationLabel: link.label,
-          sourceKind: "capability" as const,
-          openLabel: link.label,
-          lastUpdated: null,
-          relevanceScore: 100,
-          availability: "available" as const,
-          knowledgeEntryId: `capability-${index}-${link.href}`,
-        };
-      });
-      const helpAnswer = withAbsoluteAppLinks(identityHelp.answer, identityHelp.links);
-      const message = await appendAssistantMessage({
-        conversationId: conversation.id,
-        content: helpAnswer,
-        insufficientKnowledge: false,
-        confidence: "high",
-        modelProvider: "capability-registry",
-        modelName: "identity-fast-path",
-        sources,
-        sourceEntryIds: sources.map((s, index) => ({
-          id: s.knowledgeEntryId!,
-          relevanceScore: 100,
-          order: index + 1,
-        })),
-      });
-      return toPublicAnswer({
-        conversationId: conversation.id,
-        messageId: message.id,
-        answer: helpAnswer,
-        sources,
-        confidence: "high",
-        insufficientKnowledge: false,
-        answerMode: "identity",
       });
     }
   }
@@ -634,9 +633,12 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       isProjectInformationQuestion(routingQuestion) ||
       isProjectStatusQuestion(routingQuestion) ||
       extractChannelMentions(routingQuestion).length > 0;
-    // Project / #channel asks: do not short-circuit before Slack Search runs.
-    // Stash the registry answer as a fallback after Slack is attempted.
-    if (!liveProjectLookup) {
+    // Clarifying menus always short-circuit (including project-flavored generics).
+    // Deterministic project answers may still defer so Slack Search can enrich.
+    const isSourceMenu =
+      registry.earlyAnswer.kind === "clarification" &&
+      registry.earlyAnswer.modelName === "entity-source-menu";
+    if (!liveProjectLookup || isSourceMenu) {
       const early = registry.earlyAnswer;
       const sources = early.sources.map((item) => contextItemToSourceReference(item));
       const message = await appendAssistantMessage({

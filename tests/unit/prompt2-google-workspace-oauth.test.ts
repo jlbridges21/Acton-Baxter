@@ -20,6 +20,8 @@ describe("Prompt 2 — Google Workspace OAuth foundations", () => {
   beforeEach(() => {
     for (const key of [
       "GOOGLE_TOKEN_ENCRYPTION_KEY",
+      "GHL_TOKEN_ENCRYPTION_KEY",
+      "SLACK_TOKEN_ENCRYPTION_KEY",
       "GOOGLE_OAUTH_CLIENT_ID",
       "GOOGLE_OAUTH_CLIENT_SECRET",
       "GOOGLE_OAUTH_REDIRECT_URI",
@@ -29,6 +31,8 @@ describe("Prompt 2 — Google Workspace OAuth foundations", () => {
     ]) {
       prev[key] = process.env[key];
     }
+    delete process.env.GHL_TOKEN_ENCRYPTION_KEY;
+    delete process.env.SLACK_TOKEN_ENCRYPTION_KEY;
     process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
     process.env.GOOGLE_OAUTH_CLIENT_ID = "client-id.apps.googleusercontent.com";
     process.env.GOOGLE_OAUTH_CLIENT_SECRET = "client-secret";
@@ -61,6 +65,8 @@ describe("Prompt 2 — Google Workspace OAuth foundations", () => {
   it("fails decryption with the wrong key", () => {
     const payload = encryptSecret("secret-value");
     process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
+    delete process.env.GHL_TOKEN_ENCRYPTION_KEY;
+    delete process.env.SLACK_TOKEN_ENCRYPTION_KEY;
     expect(() => decryptSecret(payload)).toThrow();
   });
 

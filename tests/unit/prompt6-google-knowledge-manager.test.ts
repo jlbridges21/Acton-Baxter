@@ -103,24 +103,33 @@ describe("Drive root parsing", () => {
 });
 
 describe("source selections", () => {
-  beforeEach(async () => {
+  function installTestEnv() {
     process.env.ENABLE_MOCK_RESEARCH = "true";
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service";
     process.env.APP_BASE_URL = "https://example.com";
     resetEnvCacheForTests();
+  }
+
+  beforeEach(async () => {
+    installTestEnv();
     const { resetGoogleSelectionsMemoryForTests } =
       await import("@/lib/connectors/google/selections");
     const { resetGoogleFoldersMemoryForTests } = await import("@/lib/connectors/google/folders");
+    // Re-assert after dynamic imports — vi.resetModules() earlier in this file can
+    // re-bind modules that re-read Vite-loaded .env.local values.
+    installTestEnv();
     resetGoogleSelectionsMemoryForTests();
     resetGoogleFoldersMemoryForTests();
   });
 
   it("upserts file selection and prevents duplicate include rows", async () => {
+    installTestEnv();
     const { addGoogleSyncFolder } = await import("@/lib/connectors/google/folders");
     const { upsertSelection, listSelectionsForRoot } =
       await import("@/lib/connectors/google/selections");
+    installTestEnv();
     const root = await addGoogleSyncFolder({
       folderId: "root1",
       folderName: "Root",
@@ -147,9 +156,11 @@ describe("source selections", () => {
   });
 
   it("supports folder recursive future inclusion and exclusion", async () => {
+    installTestEnv();
     const { addGoogleSyncFolder } = await import("@/lib/connectors/google/folders");
     const { upsertSelection, listSelectionsForRoot } =
       await import("@/lib/connectors/google/selections");
+    installTestEnv();
     const root = await addGoogleSyncFolder({
       folderId: "root2",
       folderName: "Root2",

@@ -16,3 +16,5 @@ export {
   pickPreferredCompleteRunWithSlackChannel,
 } from "./project-setup-for-contact";
 export type { LinkedProjectSetupRun } from "./project-setup-for-contact";
+export { resolveProjectSlackChannelForContact } from "./project-slack-channel-resolve";
+export type { ResolvedProjectSlackChannel } from "./project-slack-channel-resolve";

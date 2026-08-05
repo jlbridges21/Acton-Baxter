@@ -80,6 +80,7 @@ export type RegistryRunResult = {
       model: string | null;
       error?: string;
       skippedEntityLookup: boolean;
+      lookupSpecificity?: "generic" | "specific" | null;
     };
   };
 };

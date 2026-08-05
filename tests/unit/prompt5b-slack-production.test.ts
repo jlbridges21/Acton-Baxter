@@ -46,6 +46,7 @@ beforeEach(() => {
   process.env.SLACK_ENABLE_CHANNEL_MENTIONS = "true";
   process.env.BAXTER_CHAT_ENABLED = "true";
   process.env.OPENAI_API_KEY = "test-key";
+  process.env.ENABLE_GHL_INTEGRATION = "false";
   resetEnvCacheForTests();
   resetSlackReceiptMemoryForTests();
   resetBaxterConversationMemoryForTests();

@@ -61,6 +61,15 @@ export const semanticQuestionClassificationSchema = z.object({
     .transform((v) => v ?? null)
     .optional()
     .default(null),
+  /**
+   * For entity_lookup only: open-ended vs category-specific.
+   * null when not entity_lookup or classifier omitted the field.
+   */
+  lookupSpecificity: z
+    .union([z.enum(["generic", "specific"]), z.null(), z.undefined()])
+    .transform((v) => (v === "generic" || v === "specific" ? v : null))
+    .optional()
+    .default(null),
   confidence: z.number().min(0).max(1),
 });
 
@@ -90,12 +99,13 @@ export function parseSemanticQuestionClassificationJson(
   }
   const result = semanticQuestionClassificationSchema.parse(parsed);
   if (result.questionType !== "entity_lookup") {
-    return { ...result, entityName: null, entityTypeGuess: null };
+    return { ...result, entityName: null, entityTypeGuess: null, lookupSpecificity: null };
   }
   return {
     ...result,
     entityName: result.entityName?.trim() || null,
     entityTypeGuess: result.entityTypeGuess ?? "unknown",
+    lookupSpecificity: result.lookupSpecificity ?? null,
   };
 }
 

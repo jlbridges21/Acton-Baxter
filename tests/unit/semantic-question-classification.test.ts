@@ -7,6 +7,8 @@ import { resetEnvCacheForTests } from "@/lib/env";
 import {
   classifyQuestionSemantically,
   shouldSkipSemanticClassification,
+  shouldOfferEntitySourceMenu,
+  looksLikeOpenEndedEntityInfoAsk,
   resolveQuestionEntity,
   runEvidenceRegistry,
 } from "@/lib/baxter-ai/evidence-registry";
@@ -63,6 +65,7 @@ describe("schema validation", () => {
         questionType: "capability_howto",
         entityName: null,
         entityTypeGuess: null,
+        lookupSpecificity: null,
         confidence: 0.94,
       }),
     );
@@ -109,6 +112,7 @@ describe("incident + capability_howto via genuine classification (not word-count
           questionType: "capability_howto",
           entityName: null,
           entityTypeGuess: null,
+          lookupSpecificity: null,
           confidence: 0.96,
         }),
       },
@@ -174,6 +178,7 @@ describe("(a) real GHL entity questions containing common words", () => {
             questionType: "entity_lookup",
             entityName,
             entityTypeGuess,
+            lookupSpecificity: "specific",
             confidence: 0.93,
           }),
         },
@@ -240,6 +245,7 @@ describe("(b) procedural / Knowledge questions with common words like project", 
           questionType: "procedural_knowledge",
           entityName: null,
           entityTypeGuess: null,
+          lookupSpecificity: null,
           confidence: 0.91,
         }),
       },
@@ -287,6 +293,7 @@ describe("(c) capability / how-to questions about different features", () => {
             questionType: "capability_howto",
             entityName: null,
             entityTypeGuess: null,
+            lookupSpecificity: null,
             confidence: 0.94,
           }),
         },
@@ -408,6 +415,73 @@ describe("graceful fallback when classification fails", () => {
   });
 });
 
+describe("shouldOfferEntitySourceMenu", () => {
+  it("uses confident LLM generic", () => {
+    expect(
+      shouldOfferEntitySourceMenu("give me information about the katie liniger project", {
+        questionType: "entity_lookup",
+        entityName: "Katie Liniger",
+        entityTypeGuess: "unknown",
+        lookupSpecificity: "generic",
+        confidence: 0.9,
+        source: "llm",
+        latencyMs: 100,
+        model: "gpt-4o-mini",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not override confident specific", () => {
+    expect(
+      shouldOfferEntitySourceMenu("what is Katie Liniger's email?", {
+        questionType: "entity_lookup",
+        entityName: "Katie Liniger",
+        entityTypeGuess: "ghl_contact",
+        lookupSpecificity: "specific",
+        confidence: 0.95,
+        source: "llm",
+        latencyMs: 100,
+        model: "gpt-4o-mini",
+      }),
+    ).toBe(false);
+  });
+
+  it("falls back to phrasing when routing timed out", () => {
+    expect(
+      looksLikeOpenEndedEntityInfoAsk("give me information about the denis kornilov project"),
+    ).toBe(true);
+    expect(
+      shouldOfferEntitySourceMenu("give me information about the denis kornilov project", {
+        questionType: "ambiguous",
+        entityName: null,
+        entityTypeGuess: null,
+        lookupSpecificity: null,
+        confidence: 0,
+        source: "fallback_unavailable",
+        latencyMs: 4000,
+        model: "gpt-4o-mini",
+        error: "timeout after 4000ms",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat Baxter identity skips as menu-eligible", () => {
+    expect(looksLikeOpenEndedEntityInfoAsk("Who is Baxter?")).toBe(false);
+    expect(
+      shouldOfferEntitySourceMenu("Who is Baxter?", {
+        questionType: "ambiguous",
+        entityName: null,
+        entityTypeGuess: null,
+        lookupSpecificity: null,
+        confidence: 0,
+        source: "skipped",
+        latencyMs: 0,
+        model: null,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("measured latency (injected classifier with controlled delay)", () => {
   it("reports average and documents timeout worst-case", async () => {
     const delays = [12, 18, 25, 30, 15];
@@ -423,6 +497,7 @@ describe("measured latency (injected classifier with controlled delay)", () => {
               questionType: "entity_lookup",
               entityName: "Liniger",
               entityTypeGuess: "ghl_opportunity",
+              lookupSpecificity: null,
               confidence: 0.9,
             } satisfies SemanticQuestionClassificationParsed;
           },

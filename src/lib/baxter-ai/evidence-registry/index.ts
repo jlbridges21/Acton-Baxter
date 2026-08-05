@@ -21,10 +21,19 @@ export {
   classifyQuestionSemantically,
   shouldSkipSemanticClassification,
   isSemanticRoutingConfident,
+  isGenericEntityLookup,
+  shouldOfferEntitySourceMenu,
+  looksLikeOpenEndedEntityInfoAsk,
   SEMANTIC_ROUTING_CONFIDENCE_THRESHOLD,
 } from "@/lib/baxter-ai/semantic-question-classification";
 export type {
   SemanticQuestionClassification,
   SemanticQuestionType,
   SemanticEntityTypeGuess,
+  SemanticLookupSpecificity,
 } from "@/lib/baxter-ai/semantic-question-classification";
+export {
+  decideEntitySourceClarifyingMenu,
+  probeEntitySourceAvailability,
+} from "./entity-source-menu";
+export type { EntitySourceAvailability } from "./entity-source-menu";

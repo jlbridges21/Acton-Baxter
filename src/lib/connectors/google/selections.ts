@@ -45,6 +45,16 @@ export function resetGoogleSelectionsMemoryForTests() {
 }
 
 function shouldUseMemory(): boolean {
+  // Read process.env directly — vi.resetModules() can leave getEnv() on a stale instance.
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+  if (url.includes("127.0.0.1") || url.includes("example.supabase")) return true;
+  if (anon === "anon" || anon.startsWith("test-")) return true;
+  if ((process.env.E2E_TEST_AUTH_BYPASS ?? "").toLowerCase() === "true") return true;
+  const mock = (process.env.ENABLE_MOCK_RESEARCH ?? "true").toLowerCase();
+  if (mock === "true" || mock === "1") {
+    return process.env.NODE_ENV !== "production";
+  }
   try {
     const env = getEnv();
     return Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";

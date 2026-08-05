@@ -18,6 +18,7 @@ export type SemanticQuestionType = SemanticQuestionClassificationParsed["questio
 export type SemanticEntityTypeGuess = NonNullable<
   SemanticQuestionClassificationParsed["entityTypeGuess"]
 >;
+export type SemanticLookupSpecificity = SemanticQuestionClassificationParsed["lookupSpecificity"];
 
 export type SemanticClassificationSource = "llm" | "skipped" | "fallback_unavailable";
 
@@ -25,6 +26,8 @@ export type SemanticQuestionClassification = {
   questionType: SemanticQuestionType;
   entityName: string | null;
   entityTypeGuess: SemanticEntityTypeGuess | null;
+  /** generic = open-ended entity ask; specific = named category; null = unknown/not applicable */
+  lookupSpecificity: SemanticLookupSpecificity;
   confidence: number;
   source: SemanticClassificationSource;
   latencyMs: number;
@@ -35,11 +38,11 @@ export type SemanticQuestionClassification = {
 /** Minimum confidence to trust semantic routing over regex. */
 export const SEMANTIC_ROUTING_CONFIDENCE_THRESHOLD = 0.7;
 
-const ROUTING_MAX_OUTPUT_TOKENS = 180;
+const ROUTING_MAX_OUTPUT_TOKENS = 220;
 
 const SYSTEM_PROMPT = `You route Acton ADU employee questions for Baxter. Do NOT answer the question — classify only.
 
-Return JSON with keys: questionType, entityName, entityTypeGuess, confidence.
+Return JSON with keys: questionType, entityName, entityTypeGuess, lookupSpecificity, confidence.
 
 questionType values:
 - entity_lookup: asks about a specific named person, CRM contact/opportunity/deal/project, PEM prospect, Slack project/job, or rulebook role/step. Includes "how do I find information about [Name]'s project" and "give me information about the [Name] project" — those are data lookups, NOT capability how-tos.
@@ -52,11 +55,21 @@ entityName: only for entity_lookup — the clean core proper-noun identifier onl
   Do NOT include generic descriptor/category words that commonly trail or lead a name in natural phrasing: project, opportunity, deal, customer, contact, account, record, file, pipeline, stage.
   Examples: "give me information about the katie liniger project" → entityName "Katie Liniger" (not "katie liniger project"); "Robert Vertin's opportunity" → "Robert Vertin"; "customer Denis Kornilov" → "Denis Kornilov"; "#l01-24027-mcadams" → "l01-24027-mcadams" or the channel as written.
 entityTypeGuess: only for entity_lookup — ghl_contact | ghl_opportunity | pem_prospect | rulebook_step_or_role | unknown. Otherwise null.
+
+lookupSpecificity: only for entity_lookup — otherwise null.
+- generic: open-ended ask that does NOT name a specific information category. Examples: "give me information about the Katie Liniger project", "what can you tell me about Denis Kornilov", "tell me about the Vertin project", "who is X / what do we know about X".
+- specific: clearly wants one category of data:
+  • PEM / sales intelligence: Type 1/2 Pain, budget, decision process, NEAT summary, reason for building, salesperson notes
+  • GHL / CRM: phone, email, address, stage, pipeline, opportunity status, tags, owner
+  • Slack: latest update, recent activity, what someone said in a channel, project status from Slack
+  Examples: "what's Katie's email", "Denis Type 1 Pain", "latest update in #l01-26019-liniger", "what's the stage of Robert's opportunity"
+- When unsure between generic and specific for entity_lookup, prefer specific only if a concrete category word is clearly the ask; otherwise generic.
+
 confidence: 0 to 1.
 
 Critical rules:
-- A #channel mention or "latest update in #…" is NEVER general_conversational or capability_howto — classify as entity_lookup (entityTypeGuess unknown is fine) or ambiguous.
-- "how do I find/get information about [specific named person/project]" is entity_lookup, not capability_howto.
+- A #channel mention or "latest update in #…" is NEVER general_conversational or capability_howto — classify as entity_lookup (entityTypeGuess unknown is fine) or ambiguous. Prefer lookupSpecificity specific when asking for latest/recent channel activity.
+- "how do I find/get information about [specific named person/project]" is entity_lookup, not capability_howto — usually lookupSpecificity generic unless a field/category is named.
 - Words like project/opportunity/deal/site often appear in how-tos AND in real entity names. Prefer entity_lookup whenever a specific proper name or #channel is present — but strip those generic words from entityName itself.`;
 
 /**
@@ -121,6 +134,75 @@ export function isSemanticRoutingConfident(
   );
 }
 
+/**
+ * True when semantic routing is confident this is an open-ended entity ask
+ * (clarifying source menu), not a category-specific direct answer.
+ */
+export function isGenericEntityLookup(
+  semantic: SemanticQuestionClassification | null | undefined,
+): boolean {
+  return Boolean(
+    isSemanticRoutingConfident(semantic) &&
+    semantic!.questionType === "entity_lookup" &&
+    semantic!.lookupSpecificity === "generic",
+  );
+}
+
+/**
+ * Deterministic open-ended entity-info phrasing used when the routing LLM
+ * times out / fails — so we still offer the clarifying menu instead of dumping
+ * a single source.
+ */
+export function looksLikeOpenEndedEntityInfoAsk(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  // Baxter identity / meta — never an entity source menu.
+  if (/^(who|what)\s+(are|is)\s+(you|baxter)\b/i.test(q)) return false;
+  if (/\bwhat can you (do|help)\b/i.test(q) && q.length < 80) return false;
+  // Named field / category → specific, not menu.
+  if (
+    /\b(e-?mail|phone|address|city|zip|postal|stage|pipeline|tag|type\s*1\s*pain|pain\s*points?|latest\s+update|recent\s+activity)\b/i.test(
+      q,
+    ) &&
+    !/\b(information|info|details)\b/i.test(q)
+  ) {
+    return false;
+  }
+  if (/#[a-z0-9_-]+/i.test(q) && /\b(latest|recent|update|activity|said|message)\b/i.test(q)) {
+    return false;
+  }
+  return (
+    /\b(give|get|show|tell)\s+(me\s+)?(more\s+)?(information|info|details)\b/i.test(q) ||
+    /\b(information|info|details)\s+(about|on|for)\b/i.test(q) ||
+    /\b(tell me about|what can you tell me about|what do (?:we|you) know about)\b/i.test(q) ||
+    // "who is X" for a named person/project — not Baxter itself (handled above).
+    (/\bwho is\b/i.test(q) && !/\bwho is baxter\b/i.test(q)) ||
+    /\b(full picture|everything (?:about|on))\b/i.test(q)
+  );
+}
+
+/**
+ * Menu gate: confident LLM "generic", or routing unavailable + deterministic
+ * open-ended phrasing. Never overrides a confident "specific" / non-entity type.
+ * Never treats intentional skips (greetings / Baxter identity) as menu-eligible.
+ */
+export function shouldOfferEntitySourceMenu(
+  question: string,
+  semantic: SemanticQuestionClassification | null | undefined,
+): boolean {
+  if (isGenericEntityLookup(semantic)) return true;
+  if (isSemanticRoutingConfident(semantic)) {
+    // Confident specific / non-entity → do not second-guess.
+    return false;
+  }
+  // Timeout / missing key / parse failure → deterministic fallback.
+  // Do NOT use source "skipped" — those are intentional non-routing questions.
+  if (semantic?.source === "fallback_unavailable" && looksLikeOpenEndedEntityInfoAsk(question)) {
+    return true;
+  }
+  return false;
+}
+
 function unavailableResult(partial: {
   latencyMs: number;
   model: string | null;
@@ -131,6 +213,7 @@ function unavailableResult(partial: {
     questionType: "ambiguous",
     entityName: null,
     entityTypeGuess: null,
+    lookupSpecificity: null,
     confidence: 0,
     source: partial.source ?? "fallback_unavailable",
     latencyMs: partial.latencyMs,
@@ -190,6 +273,7 @@ export async function classifyQuestionSemantically(
       questionType: "ambiguous",
       entityName: null,
       entityTypeGuess: null,
+      lookupSpecificity: null,
       confidence: 0,
       source: "skipped",
       latencyMs: Date.now() - started,
@@ -207,6 +291,7 @@ export async function classifyQuestionSemantically(
         questionType: validated.questionType,
         entityName: validated.entityName ?? null,
         entityTypeGuess: validated.entityTypeGuess ?? null,
+        lookupSpecificity: validated.lookupSpecificity ?? null,
         confidence: validated.confidence,
         source: "llm",
         latencyMs: Date.now() - started,
@@ -302,6 +387,7 @@ export async function classifyQuestionSemantically(
       questionType: validated.questionType,
       entityName: validated.entityName ?? null,
       entityTypeGuess: validated.entityTypeGuess ?? null,
+      lookupSpecificity: validated.lookupSpecificity ?? null,
       confidence: validated.confidence,
       source: "llm",
       latencyMs: Date.now() - started,
@@ -313,6 +399,7 @@ export async function classifyQuestionSemantically(
       safeMessage: JSON.stringify({
         questionType: result.questionType,
         entityTypeGuess: result.entityTypeGuess,
+        lookupSpecificity: result.lookupSpecificity,
         confidence: result.confidence,
         latencyMs: result.latencyMs,
         model: result.model,

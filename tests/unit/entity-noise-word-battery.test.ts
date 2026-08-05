@@ -80,6 +80,7 @@ function noisySemantic(nameWithNoise: string): SemanticQuestionClassification {
     // Simulate the pre-fix classifier habit of attaching "project"
     entityName: nameWithNoise,
     entityTypeGuess: "unknown",
+    lookupSpecificity: "generic",
     confidence: 0.88,
     source: "llm",
     latencyMs: 1,
@@ -222,6 +223,7 @@ describe("capability-howto regression (prior prompts)", () => {
         questionType: "capability_howto",
         entityName: null,
         entityTypeGuess: null,
+        lookupSpecificity: null,
         confidence: 0.95,
         source: "llm",
         latencyMs: 1,

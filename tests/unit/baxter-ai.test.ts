@@ -25,6 +25,8 @@ beforeEach(() => {
   process.env.BAXTER_CHAT_ENABLED = "true";
   process.env.BAXTER_LLM_PROVIDER = "openai";
   process.env.OPENAI_API_KEY = "test-key";
+  process.env.ENABLE_GHL_INTEGRATION = "false";
+  process.env.BAXTER_ROUTING_TIMEOUT_MS = "4000";
   resetEnvCacheForTests();
   resetKnowledgeMemoryForTests();
   resetBaxterConversationMemoryForTests();

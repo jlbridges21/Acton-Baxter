@@ -22,9 +22,15 @@ import { pemEvidenceSource } from "./sources/pem";
 import { dossierEvidenceSource } from "./sources/dossier";
 import {
   classifyQuestionSemantically,
+  shouldOfferEntitySourceMenu,
   type ClassifyQuestionSemanticallyOptions,
   type SemanticQuestionClassification,
 } from "@/lib/baxter-ai/semantic-question-classification";
+import {
+  decideEntitySourceClarifyingMenu,
+  probeEntitySourceAvailability,
+  type ProbeEntitySourcesDeps,
+} from "./entity-source-menu";
 import type {
   EvidenceSource,
   EvidenceSourceKey,
@@ -114,6 +120,7 @@ function semanticDiag(
     model: semantic.model,
     error: semantic.error,
     skippedEntityLookup,
+    lookupSpecificity: semantic.lookupSpecificity ?? null,
   };
 }
 
@@ -133,6 +140,8 @@ export async function runEvidenceRegistry(input: {
   userId?: string | null;
   externalUserId?: string | null;
   slackTeamId?: string | null;
+  /** Test inject for clarifying-menu existence probes. */
+  menuProbeDeps?: ProbeEntitySourcesDeps;
 }): Promise<RegistryRunResult> {
   let metadata: Record<string, unknown> = { ...(input.conversationMetadata ?? {}) };
   const history = input.history ?? [];
@@ -153,6 +162,7 @@ export async function runEvidenceRegistry(input: {
       questionType: "ambiguous",
       entityName: null,
       entityTypeGuess: null,
+      lookupSpecificity: null,
       confidence: 0,
       source: "skipped",
       latencyMs: 0,
@@ -194,6 +204,84 @@ export async function runEvidenceRegistry(input: {
         semantic: semanticDiag(semantic, true),
       },
     };
+  }
+
+  // Open-ended entity ask → clarifying source menu (existence only; no full dumps).
+  // Specific entity asks continue through the normal source loop below.
+  const entityNameForMenu = entity.extractedName || semantic?.entityName || null;
+  if (shouldOfferEntitySourceMenu(input.question, semantic) && entityNameForMenu) {
+    try {
+      const availability = await probeEntitySourceAvailability(
+        entityNameForMenu,
+        input.menuProbeDeps,
+      );
+      const decision = decideEntitySourceClarifyingMenu(availability);
+      if (decision.kind === "menu") {
+        const now = new Date().toISOString();
+        if (availability.ghl.contactId) {
+          const { writeGhlConversationState } =
+            await import("@/lib/baxter-data/ghl/conversation-state");
+          metadata = writeGhlConversationState(metadata, {
+            contact: {
+              id: availability.ghl.contactId,
+              displayName: availability.displayName,
+              email: availability.ghl.email,
+              setAt: now,
+            },
+            opportunity: null,
+            lastRequestedFields: [],
+            updatedAt: now,
+          });
+        }
+        if (availability.pem.pemId && availability.pem.prospectName) {
+          const { writePemConversationState } =
+            await import("@/lib/baxter-data/pem-neats/conversation-state");
+          metadata = writePemConversationState(metadata, {
+            pending: null,
+            active: {
+              type: "pem_active",
+              activePemId: availability.pem.pemId,
+              activeProspectName: availability.pem.prospectName,
+              lastRequestedFields: [],
+              baseProspectHint: availability.displayName,
+            },
+          });
+        }
+        metadata = writeEntityArbitration(metadata, {
+          lastSource: availability.ghl.available
+            ? "ghl"
+            : availability.pem.available
+              ? "pem"
+              : "slack",
+          label: availability.displayName,
+          setAt: now,
+        });
+        return {
+          earlyAnswer: {
+            kind: "clarification",
+            answer: decision.answer,
+            sources: [],
+            confidence: "high",
+            insufficientKnowledge: false,
+            answerMode: "clarification",
+            modelProvider: "evidence-registry",
+            modelName: "entity-source-menu",
+            winningSource: "none",
+          },
+          contextItems: [],
+          conversationMetadata: metadata,
+          diagnostics: {
+            entity,
+            preferredSource,
+            tried: [{ key: "ghl", confidence: 1, outcome: "source_menu" }],
+            semantic: semanticDiag(semantic, false),
+          },
+        };
+      }
+      // skip_single_source / skip_none → fall through to normal retrieval
+    } catch {
+      // Probe failure must not block specific-path retrieval
+    }
   }
 
   const sources = input.sources ?? DEFAULT_SOURCES;

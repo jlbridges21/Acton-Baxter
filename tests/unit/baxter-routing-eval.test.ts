@@ -34,6 +34,9 @@ beforeEach(() => {
   process.env.APP_BASE_URL = "https://acton-baxter.vercel.app";
   process.env.ENABLE_MOCK_RESEARCH = "true";
   process.env.BAXTER_CHAT_ENABLED = "true";
+  process.env.OPENAI_API_KEY = "test-key";
+  process.env.ENABLE_GHL_INTEGRATION = "false";
+  process.env.BAXTER_ROUTING_TIMEOUT_MS = "4000";
   resetEnvCacheForTests();
   resetPemNeatMemoryStoreForTests();
   resetBaxterConversationMemoryForTests();
