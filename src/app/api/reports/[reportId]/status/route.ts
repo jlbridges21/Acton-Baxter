@@ -4,6 +4,7 @@ import { NotFoundError, ValidationError } from "@/lib/errors";
 import { RESEARCH_STAGES } from "@/lib/research/constants";
 import { getResearchStage } from "@/lib/research/run-property-research";
 import { getReportStore } from "@/lib/research/report-store";
+import { recoverStaleResearchingReport } from "@/lib/research/stale-recovery";
 import { isUuid } from "@/lib/utils";
 
 type RouteContext = {
@@ -17,6 +18,8 @@ export async function GET(_request: Request, context: RouteContext) {
     if (!isUuid(reportId)) {
       throw new ValidationError("Invalid report id");
     }
+
+    await recoverStaleResearchingReport(reportId);
 
     const report = await getReportStore().getReport(reportId);
     if (!report) {

@@ -327,6 +327,16 @@ function buildClaims(_retrievedAt: string): ClaimInput[] {
       matchMethod: "mock",
       confidence: "medium",
     },
+    {
+      fieldKey: FIELD_KEYS.foundationType,
+      fieldLabel: "Foundation type",
+      sourceName: "ATTOM (mock)",
+      sourceType: "mock",
+      rawValue: "Concrete Slab",
+      normalizedValue: "Concrete Slab",
+      matchMethod: "mock",
+      confidence: "medium",
+    },
   ];
 }
 
@@ -460,6 +470,16 @@ export async function runMockPropertyResearch(
       "ATTOM (mock)",
       null,
       "high",
+    ),
+    preferredFact(
+      "characteristics",
+      FIELD_KEYS.foundationType,
+      "Foundation type",
+      "Concrete Slab",
+      null,
+      "ATTOM (mock)",
+      null,
+      "medium",
     ),
     preferredFact(
       "characteristics",
@@ -717,6 +737,7 @@ export async function runMockPropertyResearch(
       subdivision: "Hensley Addition",
       tractNumber: "Tract 512",
       taxRateArea: "17194",
+      foundationType: "Concrete Slab",
     },
     planning: {
       zoning: "R-1-8",

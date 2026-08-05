@@ -1,7 +1,7 @@
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { NotFoundError, ValidationError, RateLimitError } from "@/lib/errors";
-import { runPropertyResearch } from "@/lib/research/run-property-research";
+import { enqueuePropertyResearch } from "@/lib/research/enqueue";
 import { getReportStore } from "@/lib/research/report-store";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { isUuid } from "@/lib/utils";
@@ -38,11 +38,17 @@ export async function POST(_request: Request, context: RouteContext) {
       refreshReason: "Refresh live research",
     });
 
-    void runPropertyResearch(child.id).catch((error) => {
-      console.error("[refresh] failed", error);
+    const { jobId } = await enqueuePropertyResearch(child.id, {
+      source: "web_refresh",
+      metadata: { parentReportId: reportId },
     });
 
-    return jsonOk({ reportId: child.id, status: "researching", parentReportId: reportId });
+    return jsonOk({
+      reportId: child.id,
+      status: "researching",
+      parentReportId: reportId,
+      jobId,
+    });
   } catch (error) {
     return jsonError(error, "POST /api/reports/[reportId]/refresh");
   }

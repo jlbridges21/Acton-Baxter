@@ -11,6 +11,7 @@ Preferred facts are selected deterministically in `src/lib/research/select-prefe
 | Living area            | ATTOM → official assessor if available → RentCast                      |
 | Beds / baths           | ATTOM → RentCast → official assessor                                   |
 | Year built             | Official assessor/county → ATTOM → RentCast                            |
+| Foundation type        | ATTOM (assessor-derived; verify on site)                               |
 | Estimated market value | ATTOM AVM → RentCast value endpoint only if explicit                   |
 | Assessment             | Official assessor → ATTOM → RentCast                                   |
 | Governing jurisdiction | Official jurisdiction/county → city GIS → ATTOM locality → postal city |

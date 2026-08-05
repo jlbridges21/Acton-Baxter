@@ -172,6 +172,7 @@ export const normalizedPropertyCharacteristicsSchema = z.object({
   subdivision: z.string().nullable().optional(),
   tractNumber: z.string().nullable().optional(),
   taxRateArea: z.string().nullable().optional(),
+  foundationType: z.string().nullable().optional(),
 });
 
 export const normalizedPlanningSchema = z.object({

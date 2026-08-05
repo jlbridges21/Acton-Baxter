@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Card, CardTitle } from "@/components/ui/card";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/utils";
 import type { PropertyFactRow, PropertySourceClaimRow } from "@/lib/research/db-types";
+import { FOUNDATION_TYPE_VERIFY_NOTE } from "@/lib/research/constants";
 
 function factValue(facts: PropertyFactRow[], key: string) {
   return facts.find((fact) => fact.field_key === key) ?? null;
@@ -41,6 +42,7 @@ const OVERVIEW_ITEMS = [
   { label: "Stories", key: "stories", importantMissing: false },
   { label: "Year built", key: "year_built", importantMissing: true },
   { label: "Property type", key: "property_type", importantMissing: true },
+  { label: "Foundation type", key: "foundation_type", importantMissing: true },
   { label: "Building count", key: "building_count", importantMissing: false },
   { label: "Pool", key: "pool", importantMissing: false },
   { label: "Estimated value", key: "estimated_value", importantMissing: false },
@@ -85,6 +87,11 @@ export function PropertyOverview({
                 <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
                   {displayFact(fact)}
                 </dd>
+                {item.key === "foundation_type" ? (
+                  <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                    {FOUNDATION_TYPE_VERIFY_NOTE}
+                  </p>
+                ) : null}
                 {fact.preferred_source_name ? (
                   <p className="mt-1 text-xs text-[var(--acton-muted)]">
                     Source: {fact.preferred_source_name}

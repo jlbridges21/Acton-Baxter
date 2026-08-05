@@ -1,7 +1,7 @@
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { ValidationError } from "@/lib/errors";
-import { runPropertyResearch } from "@/lib/research/run-property-research";
+import { enqueuePropertyResearch } from "@/lib/research/enqueue";
 import { isUuid } from "@/lib/utils";
 
 type RouteContext = {
@@ -16,12 +16,9 @@ export async function POST(_request: Request, context: RouteContext) {
       throw new ValidationError("Invalid report id");
     }
 
-    // Fire-and-forget so the user can navigate away while research continues.
-    void runPropertyResearch(reportId).catch((error) => {
-      console.error("[run] background research failed", error);
-    });
+    const { jobId } = await enqueuePropertyResearch(reportId, { source: "web" });
 
-    return jsonOk({ reportId, status: "researching", started: true });
+    return jsonOk({ reportId, status: "researching", started: true, jobId });
   } catch (error) {
     return jsonError(error, "POST /api/reports/[reportId]/run");
   }

@@ -9,6 +9,7 @@ import { PropertyOverview } from "./property-overview";
 import { ParcelAndPublicRecords } from "./parcel-and-public-records";
 import { PlanningAndHazards } from "./planning-and-hazards";
 import { SiteObservations } from "./site-observations";
+import { SiteInspectionRequired } from "./site-inspection-required";
 import { ImportantInconsistencies } from "./important-inconsistencies";
 import { PemPreparationSection } from "./pem-preparation";
 import { SourcesSection } from "./sources-section";
@@ -17,6 +18,7 @@ import { ReportDiagnostics } from "./report-diagnostics";
 import { RefreshResearchButton } from "./refresh-research-button";
 import { Button } from "@/components/ui/button";
 import type { FullReport } from "@/lib/research/db-types";
+import { buildSiteInspectionItems } from "@/lib/research/site-inspection";
 
 const DISCLAIMER =
   "This report summarizes licensed and publicly available property information for sales preparation. It is not a zoning determination, title report, survey, site measurement, or feasibility conclusion. Information must be verified during Acton’s feasibility process and with the appropriate public agencies.";
@@ -88,6 +90,7 @@ export function ReportDocument({
         facts={report.facts}
         overlays={overlayNames.length > 0 ? overlayNames : overlays}
       />
+      <SiteInspectionRequired items={buildSiteInspectionItems(report)} />
       <SiteObservations observations={report.siteObservations} />
       <ImportantInconsistencies conflicts={report.conflicts} />
       <PemPreparationSection pem={report.pemPreparation} />

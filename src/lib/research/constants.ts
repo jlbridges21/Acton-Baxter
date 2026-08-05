@@ -68,7 +68,11 @@ export const FIELD_KEYS = {
   longitude: "longitude",
   taxRateArea: "tax_rate_area",
   buildingCount: "building_count",
+  foundationType: "foundation_type",
 } as const;
+
+/** UI qualifier when ATTOM provides foundation type (assessor-derived, incomplete). */
+export const FOUNDATION_TYPE_VERIFY_NOTE = "Assessor-derived — verify on site during feasibility.";
 
 export const CONFLICT_THRESHOLDS = {
   lotSizePercent: 3,

@@ -1,7 +1,8 @@
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
-import { ValidationError } from "@/lib/errors";
-import { retryPropertyResearch } from "@/lib/research/run-property-research";
+import { NotFoundError, ValidationError } from "@/lib/errors";
+import { enqueuePropertyResearch } from "@/lib/research/enqueue";
+import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
 
 type RouteContext = {
@@ -16,12 +17,20 @@ export async function POST(_request: Request, context: RouteContext) {
       throw new ValidationError("Invalid report id");
     }
 
-    // Retry runs in the background so the UI can return to the processing page.
-    void retryPropertyResearch(reportId).catch((error) => {
-      console.error("[retry] failed", error);
+    const store = getReportStore();
+    const report = await store.getReport(reportId);
+    if (!report) throw new NotFoundError("Report not found");
+
+    await store.clearResearchChildren(reportId);
+    await store.updateReportStatus(reportId, "queued", {
+      errorMessage: null,
+      startedAt: null,
+      completedAt: null,
     });
 
-    return jsonOk({ reportId, status: "queued" });
+    const { jobId } = await enqueuePropertyResearch(reportId, { source: "web_retry" });
+
+    return jsonOk({ reportId, status: "queued", jobId });
   } catch (error) {
     return jsonError(error, "POST /api/reports/[reportId]/retry");
   }

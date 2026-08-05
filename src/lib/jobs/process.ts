@@ -8,6 +8,7 @@ import { postSlackMessage } from "@/lib/slack/client";
 import { buildSlackCompletionMessage, buildSlackFailureMessage } from "@/lib/slack/messages";
 import { claimNextJob, completeJob, failJob, reclaimStaleRunningJobs } from "./queue";
 import type { ReportJob } from "./types";
+import { recoverStaleResearchingReports } from "@/lib/research/stale-recovery";
 
 class JobDeferredError extends Error {
   constructor(message: string) {
@@ -221,6 +222,7 @@ export async function processQueuedJobs(options?: { limit?: number }): Promise<{
   failed: number;
   deferred: number;
   reclaimed: number;
+  staleReportsRecovered: number;
 }> {
   const limit = options?.limit ?? 5;
   let processed = 0;
@@ -233,6 +235,9 @@ export async function processQueuedJobs(options?: { limit?: number }): Promise<{
     olderThanMs: 5 * 60_000,
   });
 
+  // Fail researching reports that have no live job backing them (pre-queue crashes).
+  const { recovered: staleReportsRecovered } = await recoverStaleResearchingReports();
+
   for (let i = 0; i < limit; i += 1) {
     const job = await claimNextJob();
     if (!job) break;
@@ -243,5 +248,5 @@ export async function processQueuedJobs(options?: { limit?: number }): Promise<{
     else failed += 1;
   }
 
-  return { processed, completed, failed, deferred, reclaimed };
+  return { processed, completed, failed, deferred, reclaimed, staleReportsRecovered };
 }

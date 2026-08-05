@@ -431,6 +431,35 @@ export async function getJobById(jobId: string): Promise<ReportJob | null> {
   return mapRow(data as JobRow);
 }
 
+/** List jobs for a report, optionally filtered by type/status. */
+export async function listJobsForReport(
+  reportId: string,
+  options?: {
+    jobTypes?: ReportJob["jobType"][];
+    statuses?: ReportJob["status"][];
+  },
+): Promise<ReportJob[]> {
+  if (usesMemoryJobStore()) {
+    return [...getMemoryState().jobs.values()]
+      .filter((job) => job.reportId === reportId)
+      .filter((job) => !options?.jobTypes || options.jobTypes.includes(job.jobType))
+      .filter((job) => !options?.statuses || options.statuses.includes(job.status))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  const supabase = createServiceClient();
+  let query = supabase.from("report_jobs").select("*").eq("report_id", reportId);
+  if (options?.jobTypes?.length) {
+    query = query.in("job_type", options.jobTypes);
+  }
+  if (options?.statuses?.length) {
+    query = query.in("status", options.statuses);
+  }
+  const { data, error } = await query.order("created_at", { ascending: false });
+  if (error) throw error;
+  return ((data as JobRow[] | null) ?? []).map(mapRow);
+}
+
 export function resetMemoryJobsForTests() {
   globalMemory.__actonJobsMemory = { jobs: new Map() };
 }

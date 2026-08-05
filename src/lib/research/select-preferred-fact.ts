@@ -80,6 +80,7 @@ const FIELD_LABELS: Record<string, string> = {
   [FIELD_KEYS.longitude]: "Longitude",
   [FIELD_KEYS.taxRateArea]: "Tax rate area",
   [FIELD_KEYS.buildingCount]: "Building count",
+  [FIELD_KEYS.foundationType]: "Foundation type",
 };
 
 function parseNumber(value: string | null | undefined): number | null {
@@ -172,6 +173,7 @@ export function buildPreferredFacts(claims: SourceClaim[]): PropertyFact[] {
     { fieldKey: FIELD_KEYS.tractNumber, category: "characteristics" },
     { fieldKey: FIELD_KEYS.taxRateArea, category: "characteristics" },
     { fieldKey: FIELD_KEYS.buildingCount, category: "characteristics" },
+    { fieldKey: FIELD_KEYS.foundationType, category: "characteristics" },
     { fieldKey: FIELD_KEYS.zoning, category: "planning" },
     { fieldKey: FIELD_KEYS.generalPlan, category: "planning" },
     { fieldKey: FIELD_KEYS.historicStatus, category: "planning" },

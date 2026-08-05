@@ -321,5 +321,7 @@ RUN_LIVE_INTEGRATION_TESTS=true npm run test:integration
 - Not a feasibility study, survey, title report, or zoning determination
 - Santa Clara County Property Profile is currently **generic_search** (search by APN)
 - Flood/fire values are manual-review links unless a reliable automated source is connected later
+- Foundation type (when ATTOM provides it) is assessor-derived — verify on site; utilities and recorded easements/tract maps are listed under Site inspection required
+- Web research runs through the durable `property_research` job queue (same as Slack `/property`) with cron reclaim; researching reports older than 30 minutes with no live job fail retryably
 - Imagery-based yard measurements are not included
 - No Buildertrend / Domo / autonomous CRM monitoring in this version (GHL live lookup + confirmed writes are available when connected)

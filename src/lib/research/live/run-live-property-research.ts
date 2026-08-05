@@ -555,6 +555,14 @@ export async function runLivePropertyResearch(
     );
     pushClaim(
       claimInputs,
+      claim(FIELD_KEYS.foundationType, src, "licensed_property_api", attomProperty.foundationType, {
+        sourceUrl: url,
+        // Assessor-derived and often incomplete — verify on site during feasibility.
+        confidence: "medium",
+      }),
+    );
+    pushClaim(
+      claimInputs,
       claim(FIELD_KEYS.latitude, src, "licensed_property_api", attomProperty.identity.latitude, {
         sourceUrl: url,
         matchMethod: "coordinate",
@@ -1099,6 +1107,7 @@ export async function runLivePropertyResearch(
       subdivision: factValue(FIELD_KEYS.subdivision)?.normalizedValueText ?? null,
       tractNumber: factValue(FIELD_KEYS.tractNumber)?.normalizedValueText ?? null,
       taxRateArea: factValue(FIELD_KEYS.taxRateArea)?.normalizedValueText ?? null,
+      foundationType: factValue(FIELD_KEYS.foundationType)?.normalizedValueText ?? null,
     },
     planning: {
       zoning: factValue(FIELD_KEYS.zoning)?.normalizedValueText ?? null,
