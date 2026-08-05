@@ -1,7 +1,9 @@
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { KnowledgeListClient } from "@/components/admin/knowledge-list-client";
 import { requireActiveUser } from "@/lib/auth/session";
+import { isAdminRole } from "@/lib/auth/roles";
 import { listKnowledgeEntries } from "@/lib/knowledge/queries";
 import { filterKnowledgeVisibleToUser } from "@/lib/knowledge/permissions";
 import type { KnowledgeAnalytics } from "@/lib/knowledge/analytics";
@@ -26,13 +28,13 @@ function emptyAnalytics(entries: KnowledgeEntry[]): KnowledgeAnalytics {
 }
 
 /**
- * User-facing Knowledge Center — same shared shell/list as /admin/knowledge,
- * always with standard-user presentation (reduced sidebar + actions).
- * Data scope still uses filterKnowledgeVisibleToUser (admins see everything;
- * users see approved + own drafts).
+ * User-facing Knowledge Center — reduced sidebar + actions, scoped by
+ * filterKnowledgeVisibleToUser (approved entries plus the user's own drafts).
+ * Admins belong on /admin/knowledge and are redirected there.
  */
 export default async function KnowledgeBrowsePage() {
   const user = await requireActiveUser();
+  if (isAdminRole(user.profile.role)) redirect("/admin/knowledge");
 
   let entries: KnowledgeEntry[] = [];
   let loadError: string | null = null;

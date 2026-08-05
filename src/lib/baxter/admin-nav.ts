@@ -42,10 +42,10 @@ export function getAdminNavSections(): AdminNavSection[] {
       match: (pathname) => pathname === "/",
     },
     {
-      href: "/dashboard",
-      label: "Property Research",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+      href: "/admin/knowledge",
+      label: "Knowledge Center",
+      icon: BookOpen,
+      match: (pathname) => pathname.startsWith("/admin/knowledge") || pathname === "/knowledge",
     },
     {
       href: "/pem-neats",
@@ -60,16 +60,16 @@ export function getAdminNavSections(): AdminNavSection[] {
       match: (pathname) => pathname.startsWith("/projects/setup"),
     },
     {
+      href: "/dashboard",
+      label: "Property Research",
+      icon: Search,
+      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+    },
+    {
       href: "/customers/lookup",
       label: "Customer Center",
       icon: UsersRound,
       match: (pathname) => pathname.startsWith("/customers"),
-    },
-    {
-      href: "/admin/knowledge",
-      label: "Knowledge Center",
-      icon: BookOpen,
-      match: (pathname) => pathname.startsWith("/admin/knowledge"),
     },
   ];
 

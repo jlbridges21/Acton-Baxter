@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
 import { requireActiveUser } from "@/lib/auth/session";
+import { isAdminRole } from "@/lib/auth/roles";
 import { getKnowledgeEntry } from "@/lib/knowledge/queries";
 import { canUserReadKnowledgeEntry } from "@/lib/knowledge/permissions";
 
@@ -16,6 +17,7 @@ export default async function KnowledgeEntryPublicPage({
 }) {
   const user = await requireActiveUser();
   const { id } = await params;
+  if (isAdminRole(user.profile.role)) redirect(`/admin/knowledge/${id}`);
   const entry = await getKnowledgeEntry(id);
   if (!entry) notFound();
   if (!canUserReadKnowledgeEntry(entry, user.id, user.profile.role)) {

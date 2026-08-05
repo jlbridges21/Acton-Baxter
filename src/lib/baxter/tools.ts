@@ -13,6 +13,13 @@ export type BaxterTool = {
   icon: LucideIcon;
   ctaLabel: string;
   aliases?: string[];
+  /**
+   * Admin-facing route/copy for tools that have a separate full-featured admin surface.
+   * Admins never get the reduced employee view of these tools.
+   */
+  adminHref?: string;
+  adminCreateHref?: string;
+  adminDescription?: string;
 };
 
 /**
@@ -74,6 +81,10 @@ export const BAXTER_TOOLS: BaxterTool[] = [
       "Browse approved Acton knowledge and submit drafts for admin review before Baxter can use them.",
     href: "/knowledge",
     createHref: "/knowledge/new",
+    adminHref: "/admin/knowledge",
+    adminCreateHref: "/admin/knowledge/new",
+    adminDescription:
+      "Search, approve, upload, and manage everything Baxter uses when answering employees.",
     enabled: true,
     icon: BookOpen,
     ctaLabel: "Open Knowledge Center",
@@ -83,15 +94,6 @@ export const BAXTER_TOOLS: BaxterTool[] = [
 
 /** Admin-only platform cards (not employee tools). */
 export const BAXTER_ADMIN_CARDS = [
-  {
-    key: "knowledge-base",
-    name: "Knowledge Center",
-    description:
-      "Search, approve, upload, and manage everything Baxter uses when answering employees.",
-    href: "/admin/knowledge",
-    ctaLabel: "Open Knowledge Center",
-    icon: BookOpen,
-  },
   {
     key: "integrations",
     name: "Integrations",
@@ -109,7 +111,17 @@ export function getEnabledBaxterTools(options?: { isAdmin?: boolean }): BaxterTo
     if (!tool.enabled) return false;
     if (tool.adminOnly && !isAdmin) return false;
     return true;
-  });
+  }).map((tool) => (isAdmin ? resolveAdminSurface(tool) : tool));
+}
+
+function resolveAdminSurface(tool: BaxterTool): BaxterTool {
+  if (!tool.adminHref && !tool.adminCreateHref && !tool.adminDescription) return tool;
+  return {
+    ...tool,
+    href: tool.adminHref ?? tool.href,
+    createHref: tool.adminCreateHref ?? tool.createHref,
+    description: tool.adminDescription ?? tool.description,
+  };
 }
 
 export type NavContext =

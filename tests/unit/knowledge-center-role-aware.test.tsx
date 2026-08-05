@@ -10,7 +10,7 @@ import {
 import { KnowledgeListClient } from "@/components/admin/knowledge-list-client";
 import type { KnowledgeAnalytics } from "@/lib/knowledge/analytics";
 import type { KnowledgeEntry } from "@/lib/knowledge/types";
-import { getEnabledBaxterTools } from "@/lib/baxter/tools";
+import { BAXTER_ADMIN_CARDS, getEnabledBaxterTools } from "@/lib/baxter/tools";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -167,5 +167,17 @@ describe("Dashboard Knowledge Center tool card", () => {
     const knowledge = tools.find((t) => t.key === "knowledge-center");
     expect(knowledge?.href).toBe("/knowledge");
     expect(knowledge?.name).toBe("Knowledge Center");
+  });
+
+  it("points admins at the admin Knowledge Center with no duplicate card", () => {
+    const tools = getEnabledBaxterTools({ isAdmin: true });
+    const knowledgeTools = tools.filter((t) => t.ctaLabel === "Open Knowledge Center");
+
+    expect(knowledgeTools).toHaveLength(1);
+    expect(knowledgeTools[0]?.href).toBe("/admin/knowledge");
+    expect(knowledgeTools[0]?.createHref).toBe("/admin/knowledge/new");
+    expect(BAXTER_ADMIN_CARDS.map((c) => String(c.ctaLabel))).not.toContain(
+      "Open Knowledge Center",
+    );
   });
 });

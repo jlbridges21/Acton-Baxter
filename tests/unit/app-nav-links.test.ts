@@ -8,11 +8,11 @@ function labels(role: string, pathname = "/") {
 
 const EMPLOYEE_NAV = [
   "Dashboard",
-  "Property Research",
+  "Knowledge Center",
   "PEM NEAT",
   "New Project Setup",
+  "Property Research",
   "Customer Center",
-  "Knowledge Center",
   "Integrations",
   "Settings",
 ] as const;
@@ -51,6 +51,15 @@ describe("getAppNavLinksForRole", () => {
     expect(getEmployeeNavLinks().map((l) => l.label)).toEqual([...EMPLOYEE_NAV]);
   });
 
+  it("routes Knowledge Center to the admin surface for admin and super_admin, /knowledge for user", () => {
+    const knowledgeHref = (role: string) =>
+      getAppNavLinksForRole(role).find((link) => link.label === "Knowledge Center")?.href;
+
+    expect(knowledgeHref("admin")).toBe("/admin/knowledge");
+    expect(knowledgeHref("super_admin")).toBe("/admin/knowledge");
+    expect(knowledgeHref("user")).toBe("/knowledge");
+  });
+
   it("keeps pending / unknown roles off the primary tool nav", () => {
     for (const role of ["new_user", "salesperson"] as const) {
       expect(labels(role)).toEqual([]);
@@ -69,11 +78,11 @@ describe("getAdminNavSections", () => {
     ]);
     expect(sections.find((s) => s.id === "tools")?.links.map((l) => l.label)).toEqual([
       "Dashboard",
-      "Property Research",
+      "Knowledge Center",
       "PEM NEAT",
       "New Project Setup",
+      "Property Research",
       "Customer Center",
-      "Knowledge Center",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([
       "Connectors",

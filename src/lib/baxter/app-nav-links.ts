@@ -37,10 +37,10 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       match: (pathname) => pathname === "/",
     },
     {
-      href: "/dashboard",
-      label: "Property Research",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+      href: "/knowledge",
+      label: "Knowledge Center",
+      icon: BookOpen,
+      match: (pathname) => pathname.startsWith("/knowledge"),
     },
     {
       href: "/pem-neats",
@@ -55,16 +55,16 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       match: (pathname) => pathname.startsWith("/projects/setup"),
     },
     {
+      href: "/dashboard",
+      label: "Property Research",
+      icon: Search,
+      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+    },
+    {
       href: "/customers/lookup",
       label: "Customer Center",
       icon: UsersRound,
       match: (pathname) => pathname.startsWith("/customers"),
-    },
-    {
-      href: "/knowledge",
-      label: "Knowledge Center",
-      icon: BookOpen,
-      match: (pathname) => pathname.startsWith("/knowledge"),
     },
     {
       href: "/settings/integrations",

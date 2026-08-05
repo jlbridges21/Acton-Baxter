@@ -87,7 +87,7 @@ export function buildBaxterCapabilityCatalog(
   const propertyTool = BAXTER_TOOLS.find((t) => t.key === "property-research");
   const projectSetupTool = BAXTER_TOOLS.find((t) => t.key === "project-setup");
   const customerCenterTool = BAXTER_TOOLS.find((t) => t.key === "customer-dossier");
-  const knowledgeCard = BAXTER_ADMIN_CARDS.find((c) => c.key === "knowledge-base");
+  const knowledgeTool = BAXTER_TOOLS.find((t) => t.key === "knowledge-center");
   const integrationsCard = BAXTER_ADMIN_CARDS.find((c) => c.key === "integrations");
   const adminLinks = getAdminNavLinks();
   const usersHref = adminLinks.find((l) => l.href === "/admin/users")?.href ?? "/admin/users";
@@ -194,7 +194,7 @@ export function buildBaxterCapabilityCatalog(
       key: "knowledge_center",
       name: "Knowledge Center",
       shortDescription:
-        knowledgeCard?.description ??
+        knowledgeTool?.adminDescription ??
         "Approved Acton knowledge, uploads, and Google Workspace sources.",
       detailedDescription:
         "Baxter answers company questions from approved Knowledge Center entries and selected Google Workspace files admins have connected. Uploaded PDFs, Docs, Sheets, images, and presentations can be indexed when configured.",
@@ -205,7 +205,7 @@ export function buildBaxterCapabilityCatalog(
       enabled: true,
       webRoute: null,
       createRoute: null,
-      adminRoute: knowledgeCard?.href ?? "/admin/knowledge",
+      adminRoute: knowledgeTool?.adminHref ?? "/admin/knowledge",
       supportedActions: [
         "Answer from approved knowledge",
         "Cite sources",
