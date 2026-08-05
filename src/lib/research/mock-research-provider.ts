@@ -289,10 +289,25 @@ function buildClaims(_retrievedAt: string): ClaimInput[] {
       sourceType: "mock",
       sourceUrl:
         "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
-      rawValue: null,
-      normalizedValue: null,
+      rawValue:
+        "Not a wildland Fire Hazard Severity Zone (NonWildland; LRA, recommended map dated March 24, 2025)",
+      normalizedValue:
+        "Not a wildland Fire Hazard Severity Zone (NonWildland; LRA, recommended map dated March 24, 2025)",
       matchMethod: "mock",
-      confidence: "unavailable",
+      confidence: "medium",
+    },
+    {
+      fieldKey: FIELD_KEYS.wuiClassification,
+      fieldLabel: "Wildland-Urban Interface (WUI)",
+      sourceName: "CAL FIRE WUI (mock)",
+      sourceType: "mock",
+      sourceUrl: "https://gis.data.cnra.ca.gov/datasets/CALFIRE-Forestry::wildland-urban-interface",
+      rawValue:
+        "Not mapped as Interface, Intermix, or Influence Zone in the statewide WUI screen layer (screen-level indicator — verify parcel-specific WUI status with the local jurisdiction)",
+      normalizedValue:
+        "Not mapped as Interface, Intermix, or Influence Zone in the statewide WUI screen layer (screen-level indicator — verify parcel-specific WUI status with the local jurisdiction)",
+      matchMethod: "mock",
+      confidence: "medium",
     },
     {
       fieldKey: FIELD_KEYS.latitude,
@@ -618,11 +633,21 @@ export async function runMockPropertyResearch(
       "planning",
       FIELD_KEYS.fireZone,
       "Fire zone",
-      null,
+      "Not a wildland Fire Hazard Severity Zone (NonWildland; LRA, recommended map dated March 24, 2025)",
       null,
       "CAL FIRE (mock)",
+      "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
+      "medium",
+    ),
+    preferredFact(
+      "planning",
+      FIELD_KEYS.wuiClassification,
+      "Wildland-Urban Interface (WUI)",
+      "Not mapped as Interface, Intermix, or Influence Zone in the statewide WUI screen layer (screen-level indicator — verify parcel-specific WUI status with the local jurisdiction)",
       null,
-      "unavailable",
+      "CAL FIRE WUI (mock)",
+      "https://gis.data.cnra.ca.gov/datasets/CALFIRE-Forestry::wildland-urban-interface",
+      "medium",
     ),
   ];
 
@@ -749,7 +774,10 @@ export async function runMockPropertyResearch(
       ],
       historicDesignation: "Not designated (mock)",
       floodZone: "X (Area of Minimal Flood Hazard)",
-      fireZone: null,
+      fireZone:
+        "Not a wildland Fire Hazard Severity Zone (NonWildland; LRA, recommended map dated March 24, 2025)",
+      wuiClassification:
+        "Not mapped as Interface, Intermix, or Influence Zone in the statewide WUI screen layer (screen-level indicator — verify parcel-specific WUI status with the local jurisdiction)",
     },
     maps: {
       parcelMapUrl: parcelGisUrl,
@@ -768,6 +796,7 @@ export async function runMockPropertyResearch(
       femaUrl: "https://msc.fema.gov/portal/search?sample=1",
       fireZoneUrl:
         "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
+      wuiUrl: "https://gis.data.cnra.ca.gov/datasets/CALFIRE-Forestry::wildland-urban-interface",
     },
     permits: [
       {
@@ -872,26 +901,6 @@ export async function runMockPropertyResearch(
       ],
     },
   };
-
-  // Informational conflict for unavailable optional source when fire zone is missing
-  if (!resultWithoutSummary.planning.fireZone) {
-    conflicts.push({
-      fieldKey: FIELD_KEYS.fireZone,
-      fieldLabel: "Fire zone",
-      severity: "information",
-      description: "CAL FIRE fire-zone source was unavailable; field remains missing.",
-      values: [
-        {
-          sourceName: "CAL FIRE (mock)",
-          value: "unavailable",
-          sourceUrl:
-            "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
-        },
-      ],
-      recommendedResolution:
-        "Check CAL FIRE hazard maps manually before the PEM if wildfire risk is a concern.",
-    });
-  }
 
   const summary = summarizeResearch({ ...resultWithoutSummary, conflicts });
 

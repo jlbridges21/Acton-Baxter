@@ -64,6 +64,7 @@ export const FIELD_KEYS = {
   historicStatus: "historic_status",
   floodZone: "flood_zone",
   fireZone: "fire_zone",
+  wuiClassification: "wui_classification",
   latitude: "latitude",
   longitude: "longitude",
   taxRateArea: "tax_rate_area",
@@ -73,6 +74,13 @@ export const FIELD_KEYS = {
 
 /** UI qualifier when ATTOM provides foundation type (assessor-derived, incomplete). */
 export const FOUNDATION_TYPE_VERIFY_NOTE = "Assessor-derived — verify on site during feasibility.";
+
+/**
+ * Mandatory WUI caveat — FRAP documents this as a screen-level relative-risk
+ * indicator, not a parcel-level designation. Must appear whenever WUI is shown.
+ */
+export const WUI_CAVEAT =
+  "screen-level indicator — verify parcel-specific WUI status with the local jurisdiction";
 
 export const CONFLICT_THRESHOLDS = {
   lotSizePercent: 3,

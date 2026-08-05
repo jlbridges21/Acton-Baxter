@@ -146,6 +146,11 @@ export function buildDeterministicAiContent(input: SanitizedAiInput): AiReportCo
       ...(input.missingCriticalFields.includes(FIELD_KEYS.fireZone)
         ? ["Manually confirm fire-hazard status if wildfire risk may affect design."]
         : []),
+      ...(input.wuiClassification
+        ? [
+            "Treat WUI as a screen-level indicator only — verify parcel-specific WUI status with the local jurisdiction.",
+          ]
+        : []),
     ].slice(0, 4),
     verifyThroughTitleOrSurvey: [
       "Confirm legal description and APN.",

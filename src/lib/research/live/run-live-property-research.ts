@@ -32,6 +32,13 @@ import { normalizeAddress } from "@/lib/research/normalize-address";
 import { generateAiReportContent, aiContentToPemPreparation } from "@/lib/providers/ai/provider";
 import { runMockPropertyResearch } from "@/lib/research/mock-research-provider";
 import { buildProviderFieldComparison } from "@/lib/research/provider-comparison";
+import { lookupPropertyHazards } from "@/lib/providers/hazards/lookup";
+import {
+  CALFIRE_FHSZ_VIEWER_URL,
+  CALFIRE_WUI_VIEWER_URL,
+  FEMA_VIEWER_URL,
+} from "@/lib/providers/hazards/config";
+import type { HazardLayerResult } from "@/lib/providers/hazards/types";
 import { buildPreferredFacts } from "@/lib/research/select-preferred-fact";
 import { normalizeApn } from "@/lib/property/apn";
 import type {
@@ -814,27 +821,92 @@ export async function runLivePropertyResearch(
     );
   }
 
-  // Official links as source records (not paid API URLs)
-  sources.push({
-    sourceName: "FEMA Flood Map Service Center",
-    sourceType: "federal_government",
-    sourceUrl: "https://msc.fema.gov/portal/search",
-    status: "manual_review",
-    retrievedAt,
-    responseTimeMs: null,
-    statusMessage:
-      "Flood-zone values are not auto-filled in Prompt 2; use the official search link.",
-  });
-  sources.push({
-    sourceName: "CAL FIRE Fire Hazard Severity Zones",
-    sourceType: "state_government",
-    sourceUrl:
-      "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
-    status: "manual_review",
-    retrievedAt,
-    responseTimeMs: null,
-    statusMessage: "Fire-zone values are not auto-filled in Prompt 2; use the official map link.",
-  });
+  // Official hazard lookups (flood / FHSZ / WUI) — each independent; failures fall back to viewer links.
+  const hazards = await lookupPropertyHazards(gisPointInput.longitude, gisPointInput.latitude);
+
+  function pushHazardSource(layer: HazardLayerResult, fallbackType: SourceType) {
+    const status =
+      layer.status === "ok"
+        ? "active"
+        : layer.status === "error"
+          ? "error"
+          : layer.status === "no_coverage"
+            ? "unavailable"
+            : "manual_review";
+    sources.push({
+      sourceName: layer.sourceName,
+      sourceType: fallbackType,
+      sourceUrl: layer.viewerUrl || layer.sourceUrl,
+      status,
+      retrievedAt,
+      responseTimeMs: layer.responseTimeMs,
+      statusMessage:
+        layer.statusMessage ??
+        (layer.status === "manual_review"
+          ? "Automated lookup unavailable; use the official viewer link."
+          : null),
+    });
+    diagnosticsProviders.push({
+      provider: layer.sourceName,
+      status,
+      responseTimeMs: layer.responseTimeMs,
+      message: layer.statusMessage,
+    });
+  }
+
+  pushHazardSource(hazards.flood, "federal_government");
+  pushHazardSource(hazards.fire, "state_government");
+  pushHazardSource(hazards.wui, "state_government");
+
+  if (hazards.flood.displayText) {
+    pushClaim(
+      claimInputs,
+      claim(
+        FIELD_KEYS.floodZone,
+        hazards.flood.sourceName,
+        "federal_government",
+        hazards.flood.displayText,
+        {
+          sourceUrl: hazards.flood.viewerUrl,
+          matchMethod: "coordinate",
+          confidence: "high",
+        },
+      ),
+    );
+  }
+  if (hazards.fire.displayText) {
+    pushClaim(
+      claimInputs,
+      claim(
+        FIELD_KEYS.fireZone,
+        hazards.fire.sourceName,
+        "state_government",
+        hazards.fire.displayText,
+        {
+          sourceUrl: hazards.fire.viewerUrl,
+          matchMethod: "coordinate",
+          confidence: "high",
+        },
+      ),
+    );
+  }
+  if (hazards.wui.displayText) {
+    pushClaim(
+      claimInputs,
+      claim(
+        FIELD_KEYS.wuiClassification,
+        hazards.wui.sourceName,
+        "state_government",
+        hazards.wui.displayText,
+        {
+          sourceUrl: hazards.wui.viewerUrl,
+          matchMethod: "coordinate",
+          // Screen-level indicator only — never overstate as parcel fact.
+          confidence: "medium",
+        },
+      ),
+    );
+  }
 
   const preferredApn =
     countyParcel?.apn ?? sjParcel.parcel?.apn ?? attomProperty?.identity.apn ?? null;
@@ -1139,8 +1211,9 @@ export async function runLivePropertyResearch(
         : null,
       relevantOverlays: sjOverlays.overlays.map((overlay) => overlay.name),
       historicDesignation: factValue(FIELD_KEYS.historicStatus)?.normalizedValueText ?? null,
-      floodZone: null,
-      fireZone: null,
+      floodZone: factValue(FIELD_KEYS.floodZone)?.normalizedValueText ?? null,
+      fireZone: factValue(FIELD_KEYS.fireZone)?.normalizedValueText ?? null,
+      wuiClassification: factValue(FIELD_KEYS.wuiClassification)?.normalizedValueText ?? null,
     },
     maps: {
       parcelMapUrl: parcelGeometrySource?.sourceUrl ?? SAN_JOSE_CONFIG.links.parcelsOpenData,
@@ -1154,9 +1227,9 @@ export async function runLivePropertyResearch(
       streetViewUrl: googleLinks.streetViewUrl,
       satelliteImageAvailable: googleLinks.satelliteImageAvailable,
       streetViewImageAvailable: googleLinks.streetViewImageAvailable,
-      femaUrl: "https://msc.fema.gov/portal/search",
-      fireZoneUrl:
-        "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
+      femaUrl: hazards.flood.viewerUrl || FEMA_VIEWER_URL,
+      fireZoneUrl: hazards.fire.viewerUrl || CALFIRE_FHSZ_VIEWER_URL,
+      wuiUrl: hazards.wui.viewerUrl || CALFIRE_WUI_VIEWER_URL,
     },
     permits: [],
     facts,

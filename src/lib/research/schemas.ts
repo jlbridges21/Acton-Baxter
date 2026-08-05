@@ -183,6 +183,8 @@ export const normalizedPlanningSchema = z.object({
   historicDesignation: z.string().nullable().optional(),
   floodZone: z.string().nullable().optional(),
   fireZone: z.string().nullable().optional(),
+  /** Always includes screen-level caveat language when set — never a hard parcel fact. */
+  wuiClassification: z.string().nullable().optional(),
 });
 
 export const normalizedMapsSchema = z.object({
@@ -199,6 +201,7 @@ export const normalizedMapsSchema = z.object({
   streetViewImageAvailable: z.boolean().optional(),
   femaUrl: z.string().nullable().optional(),
   fireZoneUrl: z.string().nullable().optional(),
+  wuiUrl: z.string().nullable().optional(),
 });
 
 export type NormalizedMaps = z.infer<typeof normalizedMapsSchema>;

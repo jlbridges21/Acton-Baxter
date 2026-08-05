@@ -9,17 +9,38 @@ import { NotImplementedError } from "@/lib/errors";
 import { AttomProvider } from "./attom/provider";
 import { RentCastProvider } from "./rentcast/provider";
 import { selectJurisdictionConnector } from "@/lib/connectors/california/registry";
+import { CALFIRE_FHSZ_VIEWER_URL, CALFIRE_WUI_VIEWER_URL, FEMA_VIEWER_URL } from "./hazards/config";
+import { lookupCalfireFhsz } from "./hazards/calfire-fhsz";
+import { lookupCalfireWui } from "./hazards/calfire-wui";
+import { lookupFemaFloodZone } from "./hazards/fema";
 
 class FemaProvider implements HazardProvider {
   readonly key = "fema";
   readonly name = "FEMA";
-  async getHazards(_input: PropertyLookupInput): Promise<HazardLookupResult | null> {
-    // Prompt 2 keeps flood as official link / manual review.
+  async getHazards(input: PropertyLookupInput): Promise<HazardLookupResult | null> {
+    if (input.latitude == null || input.longitude == null) {
+      return {
+        floodZone: null,
+        fireZone: null,
+        wuiClassification: null,
+        sourceName: this.name,
+        sourceUrl: FEMA_VIEWER_URL,
+        viewerUrl: FEMA_VIEWER_URL,
+        status: "manual_review",
+        statusMessage: "Coordinates required for FEMA flood-zone lookup.",
+      };
+    }
+    const result = await lookupFemaFloodZone(input.longitude, input.latitude);
     return {
-      floodZone: null,
+      floodZone: result.displayText,
       fireZone: null,
-      sourceName: this.name,
-      sourceUrl: "https://msc.fema.gov/portal/search",
+      wuiClassification: null,
+      sourceName: result.sourceName,
+      sourceUrl: result.sourceUrl,
+      viewerUrl: result.viewerUrl,
+      status: result.status,
+      statusMessage: result.statusMessage,
+      responseTimeMs: result.responseTimeMs,
     };
   }
 }
@@ -27,13 +48,33 @@ class FemaProvider implements HazardProvider {
 class CaliforniaFireProvider implements HazardProvider {
   readonly key = "ca-fire";
   readonly name = "California Fire Hazards";
-  async getHazards(_input: PropertyLookupInput): Promise<HazardLookupResult | null> {
+  async getHazards(input: PropertyLookupInput): Promise<HazardLookupResult | null> {
+    if (input.latitude == null || input.longitude == null) {
+      return {
+        floodZone: null,
+        fireZone: null,
+        wuiClassification: null,
+        sourceName: this.name,
+        sourceUrl: CALFIRE_FHSZ_VIEWER_URL,
+        viewerUrl: CALFIRE_FHSZ_VIEWER_URL,
+        status: "manual_review",
+        statusMessage: "Coordinates required for CAL FIRE hazard lookups.",
+      };
+    }
+    const [fhsz, wui] = await Promise.all([
+      lookupCalfireFhsz(input.longitude, input.latitude),
+      lookupCalfireWui(input.longitude, input.latitude),
+    ]);
     return {
       floodZone: null,
-      fireZone: null,
+      fireZone: fhsz.displayText,
+      wuiClassification: wui.displayText,
       sourceName: this.name,
-      sourceUrl:
-        "https://osfm.fire.ca.gov/what-we-do/community-wildfire-preparedness-and-mitigation/fire-hazard-severity-zones",
+      sourceUrl: fhsz.sourceUrl ?? CALFIRE_WUI_VIEWER_URL,
+      viewerUrl: fhsz.viewerUrl,
+      status: fhsz.status === "error" && wui.status === "error" ? "error" : "ok",
+      statusMessage: fhsz.statusMessage ?? wui.statusMessage,
+      responseTimeMs: Math.max(fhsz.responseTimeMs ?? 0, wui.responseTimeMs ?? 0),
     };
   }
 }

@@ -69,7 +69,9 @@ export async function arcgisFetchJson<T>(
       lastError = error;
       const retryable =
         error instanceof Error &&
-        (error.name === "AbortError" || error.message.includes("fetch failed"));
+        (error.name === "AbortError" ||
+          error.message.includes("fetch failed") ||
+          /ECONNRESET|ETIMEDOUT|socket hang up|network/i.test(error.message));
       if (retryable && attempt < maxRetries) {
         attempt += 1;
         await sleep(250 * 2 ** attempt);

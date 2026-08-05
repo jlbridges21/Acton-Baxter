@@ -33,7 +33,17 @@ When both keys are present, dual-source preference and conflict detection behave
 
 Santa Clara County Property Profile access is currently a **generic search** into the public Property Explorer Experience unless a stable direct report endpoint is confirmed later.
 
-Flood/fire hazard values remain manual-review links unless a reliable automated source is connected later.
+## Flood, fire, and WUI hazards (automated)
+
+These fields are filled from public ArcGIS point-in-polygon queries against the property’s confirmed coordinates. Timeouts/retries follow the shared ArcGIS client (`EXTERNAL_API_*`). One service failure does not block the others or the rest of the report; failures and true coverage gaps fall back to the official viewer link (manual review) without breaking the UI.
+
+| Field                          | Source                                                                                                             | Notes                                                                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flood zone                     | FEMA NFHL Flood Hazard Zones (MapServer layer 28)                                                                  | Zone code + plain-language description; verify on the FEMA Map Service Center                                                                                                 |
+| Fire hazard severity zone      | CAL FIRE FHSZ SRA (`FHSZSRA_23_3`, effective April 1, 2024) and LRA (`FHSALRA25_v1_All`, map dated March 24, 2025) | Includes SRA vs LRA and effective/recommended date; verify on OSFM FHSZ maps                                                                                                  |
+| Wildland-Urban Interface (WUI) | CAL FIRE WUI25-schema FeatureServer (`WUI_DESC` / Interface · Intermix · Influence Zone)                           | **Screen-level indicator only** — not a parcel-level designation. Always shown with: _screen-level indicator — verify parcel-specific WUI status with the local jurisdiction_ |
+
+Official `Environment/WUI/MapServer` and egis FRAP WUI Feature/ImageServers are currently unavailable for anonymous query (404 / token-required); the live pipeline uses a publicly queryable statewide WUI25 republish with the same attribute schema.
 
 ## Research reliability (web + Slack)
 

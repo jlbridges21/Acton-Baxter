@@ -50,6 +50,7 @@ export type SanitizedAiInput = {
   historicDesignation: string | null;
   floodZone: string | null;
   fireZone: string | null;
+  wuiClassification: string | null;
   relevantOverlays: string[];
   permits: SanitizedAiPermit[];
   conflicts: SanitizedAiConflict[];

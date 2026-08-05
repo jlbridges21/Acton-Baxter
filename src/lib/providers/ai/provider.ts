@@ -100,6 +100,7 @@ export function sanitizeAiInput(result: NormalizedResearchResult): SanitizedAiIn
     historicDesignation: truthyText(result.planning.historicDesignation),
     floodZone: truthyText(result.planning.floodZone),
     fireZone: truthyText(result.planning.fireZone),
+    wuiClassification: truthyText(result.planning.wuiClassification),
     relevantOverlays: result.planning.relevantOverlays.slice(0, 12),
     permits: result.permits.slice(0, 8).map((permit) => ({
       permitNumber: permit.permitNumber,
