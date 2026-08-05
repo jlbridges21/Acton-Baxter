@@ -43,8 +43,28 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
-    const parcelGeometry =
-      view === "parcel" ? (await store.getFullReport(reportId))?.parcelGeometry : null;
+    const fullReport = view === "parcel" ? await store.getFullReport(reportId) : null;
+    const parcelGeometry = view === "parcel" ? fullReport?.parcelGeometry : null;
+    const hydrantDiag = (
+      fullReport?.research_diagnostics_json as
+        | {
+            hydrant?: {
+              status?: string;
+              latitude?: number | null;
+              longitude?: number | null;
+            };
+          }
+        | null
+        | undefined
+    )?.hydrant;
+    const hydrant =
+      view === "parcel" &&
+      hydrantDiag?.status === "ok" &&
+      typeof hydrantDiag.latitude === "number" &&
+      typeof hydrantDiag.longitude === "number"
+        ? { latitude: hydrantDiag.latitude, longitude: hydrantDiag.longitude }
+        : null;
+
     const upstream = buildGoogleStaticImageUrl({
       view,
       latitude,
@@ -55,6 +75,7 @@ export async function GET(request: Request, context: RouteContext) {
         view === "parcel"
           ? (parcelGeometry?.geometry_geojson as { type?: unknown; coordinates?: unknown } | null)
           : null,
+      hydrant,
     });
     if (!upstream) {
       return NextResponse.json(

@@ -39,6 +39,10 @@ import {
   FEMA_VIEWER_URL,
 } from "@/lib/providers/hazards/config";
 import type { HazardLayerResult } from "@/lib/providers/hazards/types";
+import {
+  HYDRANT_PULL_DISTANCE_CAVEAT,
+  lookupNearestHydrant,
+} from "@/lib/providers/hydrants/lookup";
 import { buildPreferredFacts } from "@/lib/research/select-preferred-fact";
 import { normalizeApn } from "@/lib/property/apn";
 import type {
@@ -908,6 +912,80 @@ export async function runLivePropertyResearch(
     );
   }
 
+  // Nearest mapped hydrant (straight-line only) — official GIS → OSM → honest no-data.
+  const hydrantLookup = await lookupNearestHydrant(gisPointInput.longitude, gisPointInput.latitude);
+  const hydrantDiagnostics =
+    hydrantLookup.status === "ok"
+      ? {
+          status: "ok" as const,
+          distanceFt: hydrantLookup.hydrant.distanceFt,
+          latitude: hydrantLookup.hydrant.latitude,
+          longitude: hydrantLookup.hydrant.longitude,
+          sourceKey: hydrantLookup.hydrant.sourceKey,
+          sourceLabel: hydrantLookup.hydrant.sourceLabel,
+          sourceUrl: hydrantLookup.hydrant.sourceUrl,
+          statusMessage: null as string | null,
+          attemptedSources: hydrantLookup.attemptedSources,
+        }
+      : {
+          status: "no_data" as const,
+          distanceFt: null as number | null,
+          latitude: null as number | null,
+          longitude: null as number | null,
+          sourceKey: null as string | null,
+          sourceLabel: null as string | null,
+          sourceUrl: null as string | null,
+          statusMessage: hydrantLookup.statusMessage,
+          attemptedSources: hydrantLookup.attemptedSources,
+        };
+
+  diagnosticsProviders.push({
+    provider: "Fire hydrant lookup",
+    status: hydrantLookup.status === "ok" ? "active" : "unavailable",
+    responseTimeMs: hydrantLookup.responseTimeMs,
+    message:
+      hydrantLookup.status === "ok"
+        ? `${hydrantLookup.hydrant.sourceLabel}; ${HYDRANT_PULL_DISTANCE_CAVEAT}`
+        : hydrantLookup.statusMessage,
+  });
+  sources.push({
+    sourceName:
+      hydrantLookup.status === "ok"
+        ? hydrantLookup.hydrant.sourceName
+        : "Fire hydrant GIS / OpenStreetMap",
+    sourceType:
+      hydrantLookup.status === "ok" && hydrantLookup.hydrant.sourceKey !== "osm"
+        ? "city_gis"
+        : "public_portal",
+    sourceUrl:
+      hydrantLookup.status === "ok"
+        ? hydrantLookup.hydrant.sourceUrl
+        : hydrantLookup.manualLookupUrl,
+    status: hydrantLookup.status === "ok" ? "active" : "unavailable",
+    retrievedAt,
+    responseTimeMs: hydrantLookup.responseTimeMs,
+    statusMessage:
+      hydrantLookup.status === "ok" ? HYDRANT_PULL_DISTANCE_CAVEAT : hydrantLookup.statusMessage,
+  });
+
+  if (hydrantLookup.status === "ok") {
+    pushClaim(
+      claimInputs,
+      claim(
+        FIELD_KEYS.nearestHydrantDistanceFt,
+        hydrantLookup.hydrant.sourceName,
+        hydrantLookup.hydrant.sourceKey === "osm" ? "public_portal" : "city_gis",
+        hydrantLookup.hydrant.distanceFt,
+        {
+          sourceUrl: hydrantLookup.hydrant.sourceUrl,
+          matchMethod: "coordinate",
+          confidence: hydrantLookup.hydrant.sourceKey === "osm" ? "low" : "medium",
+          sourceRecordId: hydrantLookup.hydrant.externalId,
+        },
+      ),
+    );
+  }
+
   const preferredApn =
     countyParcel?.apn ?? sjParcel.parcel?.apn ?? attomProperty?.identity.apn ?? null;
   const governingJurisdiction =
@@ -1214,6 +1292,10 @@ export async function runLivePropertyResearch(
       floodZone: factValue(FIELD_KEYS.floodZone)?.normalizedValueText ?? null,
       fireZone: factValue(FIELD_KEYS.fireZone)?.normalizedValueText ?? null,
       wuiClassification: factValue(FIELD_KEYS.wuiClassification)?.normalizedValueText ?? null,
+      nearestHydrantDistance:
+        hydrantLookup.status === "ok"
+          ? `~${hydrantLookup.hydrant.distanceFt.toLocaleString("en-US")} ft straight-line (${hydrantLookup.hydrant.sourceLabel})`
+          : null,
     },
     maps: {
       parcelMapUrl: parcelGeometrySource?.sourceUrl ?? SAN_JOSE_CONFIG.links.parcelsOpenData,
@@ -1259,6 +1341,7 @@ export async function runLivePropertyResearch(
       ),
       providerFieldComparison: buildProviderFieldComparison(claims, facts),
       mockFallback: false,
+      hydrant: hydrantDiagnostics,
     },
   };
 

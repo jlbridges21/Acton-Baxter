@@ -24,6 +24,10 @@ export type ArcgisQueryParams = {
   returnGeometry?: boolean;
   resultRecordCount?: number;
   orderByFields?: string;
+  /** Buffer distance for spatial queries (requires units). */
+  distance?: number;
+  /** e.g. esriSRUnit_Foot */
+  units?: string;
 };
 
 export type ArcgisRequestResult<T> = {

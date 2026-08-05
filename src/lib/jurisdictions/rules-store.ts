@@ -75,15 +75,19 @@ export async function listJurisdictionRules(options?: {
     if (options?.jurisdictionKey) {
       rows = rows.filter((row) => row.jurisdiction_key === options.jurisdictionKey);
     }
-    return rows.sort((a, b) =>
-      a.rule_key.localeCompare(b.rule_key) ||
-      (a.zone_key ?? "").localeCompare(b.zone_key ?? "") ||
-      a.created_at.localeCompare(b.created_at),
+    return rows.sort(
+      (a, b) =>
+        a.rule_key.localeCompare(b.rule_key) ||
+        (a.zone_key ?? "").localeCompare(b.zone_key ?? "") ||
+        a.created_at.localeCompare(b.created_at),
     );
   }
 
   const supabase = createServiceClient();
-  let query = supabase.from("jurisdiction_rules").select("*").order("rule_key", { ascending: true });
+  let query = supabase
+    .from("jurisdiction_rules")
+    .select("*")
+    .order("rule_key", { ascending: true });
   if (options?.jurisdictionKey) {
     query = query.eq("jurisdiction_key", options.jurisdictionKey);
   }
@@ -145,12 +149,14 @@ export async function createJurisdictionRule(
   }
 
   const supabase = createServiceClient();
-  const { data, error } = await supabase.from("jurisdiction_rules").insert(rule).select("*").single();
+  const { data, error } = await supabase
+    .from("jurisdiction_rules")
+    .insert(rule)
+    .select("*")
+    .single();
   if (error) {
     if (error.code === "23505") {
-      throw new ValidationError(
-        "A rule with this jurisdiction, rule key, and zone already exists",
-      );
+      throw new ValidationError("A rule with this jurisdiction, rule key, and zone already exists");
     }
     throw error;
   }
@@ -223,9 +229,7 @@ export async function updateJurisdictionRule(
     .single();
   if (error) {
     if (error.code === "23505") {
-      throw new ValidationError(
-        "A rule with this jurisdiction, rule key, and zone already exists",
-      );
+      throw new ValidationError("A rule with this jurisdiction, rule key, and zone already exists");
     }
     throw error;
   }

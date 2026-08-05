@@ -66,9 +66,7 @@ export async function POST(request: Request) {
           jurisdiction_key: formString,
           doc_kind: z.preprocess(
             (value) => (value == null || value === "" ? undefined : String(value)),
-            z
-              .enum(["building_code", "ordinance", "design_guideline", "other_code"])
-              .optional(),
+            z.enum(["building_code", "ordinance", "design_guideline", "other_code"]).optional(),
           ),
         })
         .parse({

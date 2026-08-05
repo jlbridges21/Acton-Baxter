@@ -37,7 +37,7 @@ Santa Clara County Property Profile access is currently a **generic search** int
 
 Parcel geometry from the San Jose and Santa Clara County ArcGIS connectors is requested with `outSR=4326` and stored as WGS84 GeoJSON (`[longitude, latitude]`). The Parcel and public records card adds that boundary to Google satellite imagery through the authenticated imagery proxy and Google Static Maps encoded `path` parameters. The map derives its center/zoom from the full parcel bounds, draws every Polygon / MultiPolygon ring, and simplifies unusually detailed rings only when needed to stay below the Static Maps URL limit.
 
-The overlay is an orientation aid for seeing lot lines relative to structures, trees, access, and neighboring improvements. It is **not a survey or title determination**. When Google imagery is not configured or the image cannot load, the report keeps the standalone parcel-outline SVG fallback. The plain satellite image in Property imagery & maps remains unchanged.
+The overlay is an orientation aid for seeing lot lines relative to structures, trees, access, and neighboring improvements. It is **not a survey or title determination**. When a nearby mapped hydrant fits the parcel viewport, an `H` marker may appear; distant hydrants are omitted so the parcel stays readable (distance remains in the Fire access section). When Google imagery is not configured or the image cannot load, the report keeps the standalone parcel-outline SVG fallback. The plain satellite image in Property imagery & maps remains unchanged.
 
 ## Flood, fire, and WUI hazards (automated)
 
@@ -54,6 +54,14 @@ Official `Environment/WUI/MapServer` and egis FRAP WUI Feature/ImageServers are 
 ## ADU code highlights (configured, not determined)
 
 The **ADU code highlights** section shows admin-configured structured rules and associated Knowledge code documents for the report’s resolved jurisdiction. It is preparation material only — **not** a code determination, zoning determination, or feasibility conclusion. When nothing is configured, the section still renders with an honest empty state pointing admins to `/admin/jurisdictions`.
+
+## Fire access — hydrant distance & sprinkler indicator
+
+**Nearest mapped hydrant** distance is a GIS nearest-neighbor **straight-line** figure only. Fire-code hydrant pull distance is measured along the path of travel / hose lay and is longer. Every place this number appears (Fire access card, claims/facts, site inspection) states that and directs on-site measurement. The app never presents straight-line distance as pull distance.
+
+Source ladder (verified Aug 2026): City of Santa Clara SCFD Fire Hydrants → Campbell PublicWorks Fire Hydrants → OpenStreetMap Overpass (`emergency=fire_hydrant`) → honest no-data. Official layers cover their city extents only; Campbell’s layer description mentions San Jose Water fusion, but live extent is Campbell-local (not citywide San Jose). Los Altos and much of San Jose rely on OSM or show no nearby mapped hydrant within ~2,500 ft. When a hydrant is found, the parcel-overlay map may add an `H` marker only if it fits the parcel viewport without zooming out; otherwise distance is text-only.
+
+The **sprinkler distance indicator** reads `fire_sprinkler_hydrant_distance_max_ft` from `jurisdiction_rules` (with required citation). It compares straight-line distance to that threshold as preparation material — one factor among several sprinkler triggers — **not** a code determination. No configured rule → empty state pointing to `/admin/jurisdictions` (never a guessed threshold).
 
 ## Research reliability (web + Slack)
 

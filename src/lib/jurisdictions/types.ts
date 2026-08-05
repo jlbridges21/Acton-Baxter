@@ -22,8 +22,7 @@ export type JurisdictionRuleStructuredValue = {
 };
 
 export type JurisdictionRuleValueJson =
-  | JurisdictionRuleQuantityValue
-  | JurisdictionRuleStructuredValue;
+  JurisdictionRuleQuantityValue | JurisdictionRuleStructuredValue;
 
 export type JurisdictionRule = {
   id: string;

@@ -374,9 +374,7 @@ export function KnowledgeUploadClient() {
                   id="importDocKind"
                   className="h-10 w-full rounded-md border border-[var(--acton-border)] px-3 text-sm"
                   value={docKind}
-                  onChange={(event) =>
-                    setDocKind(event.target.value as KnowledgeDocKind | "")
-                  }
+                  onChange={(event) => setDocKind(event.target.value as KnowledgeDocKind | "")}
                 >
                   <option value="">None</option>
                   <option value="building_code">Building code</option>

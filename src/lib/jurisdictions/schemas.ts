@@ -64,7 +64,10 @@ export const associateKnowledgeEntrySchema = z.object({
     .string()
     .trim()
     .nullable()
-    .refine((value) => value == null || isSupportedJurisdictionKey(value), "Unsupported jurisdiction_key"),
+    .refine(
+      (value) => value == null || isSupportedJurisdictionKey(value),
+      "Unsupported jurisdiction_key",
+    ),
   doc_kind: knowledgeDocKindSchema.nullable(),
 });
 

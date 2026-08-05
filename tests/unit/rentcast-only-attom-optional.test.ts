@@ -41,6 +41,20 @@ vi.mock("@/lib/connectors/california/santa-clara-county/normalizers", () => ({
   fetchSantaClaraCountyParcel: (...args: unknown[]) => mockCountyParcel(...args),
 }));
 
+const mockLookupHazards = vi.fn();
+const mockLookupHydrant = vi.fn();
+
+vi.mock("@/lib/providers/hazards/lookup", () => ({
+  lookupPropertyHazards: (...args: unknown[]) => mockLookupHazards(...args),
+}));
+
+vi.mock("@/lib/providers/hydrants/lookup", () => ({
+  lookupNearestHydrant: (...args: unknown[]) => mockLookupHydrant(...args),
+  HYDRANT_PULL_DISTANCE_CAVEAT:
+    "Actual hydrant pull distance is measured along the path of travel and will be longer — measure on site.",
+  HYDRANT_MAX_SEARCH_RADIUS_FT: 2500,
+}));
+
 function setEnv(overrides: Record<string, string | undefined> = {}) {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon-key";
@@ -77,6 +91,49 @@ function emptyGis() {
     statusMessage: "unavailable",
   });
   mockSjOverlays.mockResolvedValue({ overlays: [], responseTimeMs: 10, statusMessage: null });
+  mockLookupHazards.mockResolvedValue({
+    flood: {
+      status: "no_coverage",
+      value: null,
+      displayText: null,
+      sourceName: "FEMA NFHL",
+      sourceUrl: "https://example.com/fema",
+      viewerUrl: "https://example.com/fema-viewer",
+      responseTimeMs: 1,
+      statusMessage: null,
+      details: {},
+    },
+    fire: {
+      status: "no_coverage",
+      value: null,
+      displayText: null,
+      sourceName: "CAL FIRE FHSZ",
+      sourceUrl: "https://example.com/fire",
+      viewerUrl: "https://example.com/fire-viewer",
+      responseTimeMs: 1,
+      statusMessage: null,
+      details: {},
+    },
+    wui: {
+      status: "no_coverage",
+      value: null,
+      displayText: null,
+      sourceName: "CAL FIRE WUI",
+      sourceUrl: "https://example.com/wui",
+      viewerUrl: "https://example.com/wui-viewer",
+      responseTimeMs: 1,
+      statusMessage: null,
+      details: {},
+    },
+  });
+  mockLookupHydrant.mockResolvedValue({
+    status: "no_data",
+    hydrant: null,
+    attemptedSources: ["scfd", "campbell", "osm"],
+    statusMessage: "No mapped hydrant found within 2,500 ft of this location.",
+    manualLookupUrl: "https://www.openstreetmap.org/#map=18/37.34/-121.87",
+    responseTimeMs: 1,
+  });
 }
 
 function rentCastProperty() {
@@ -194,6 +251,7 @@ describe("RentCast-only mode (ATTOM_API_KEY unset)", () => {
     expect(siteItems.map((i) => i.id)).toContain("foundation-type");
     expect(siteItems.map((i) => i.id)).toContain("utilities");
     expect(siteItems.map((i) => i.id)).toContain("easements-tract-maps");
+    expect(siteItems.map((i) => i.id)).toContain("hydrant-pull-distance");
   });
 });
 

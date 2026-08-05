@@ -16,12 +16,12 @@ import type { KnowledgeEntry } from "@/lib/knowledge/types";
 
 describe("jurisdiction key resolution", () => {
   it("reuses connector selection for San Jose vs Santa Clara County", () => {
-    expect(
-      resolveJurisdictionKey({ city: "San Jose", county: "Santa Clara", state: "CA" }),
-    ).toBe("ca-san-jose");
-    expect(
-      resolveJurisdictionKey({ city: "Los Altos", county: "Santa Clara", state: "CA" }),
-    ).toBe("ca-santa-clara-county");
+    expect(resolveJurisdictionKey({ city: "San Jose", county: "Santa Clara", state: "CA" })).toBe(
+      "ca-san-jose",
+    );
+    expect(resolveJurisdictionKey({ city: "Los Altos", county: "Santa Clara", state: "CA" })).toBe(
+      "ca-santa-clara-county",
+    );
   });
 
   it("maps report identity fields the same way", () => {
@@ -35,9 +35,7 @@ describe("jurisdiction key resolution", () => {
   });
 
   it("detects jurisdiction from free text", () => {
-    expect(detectJurisdictionKeyFromText("What is the San Jose ADU setback?")).toBe(
-      "ca-san-jose",
-    );
+    expect(detectJurisdictionKeyFromText("What is the San Jose ADU setback?")).toBe("ca-san-jose");
     expect(detectJurisdictionKeyFromText("unincorporated Santa Clara County sprinklers")).toBe(
       "ca-santa-clara-county",
     );

@@ -57,6 +57,7 @@ export function buildGoogleStaticImageUrl(input: {
   width?: number;
   height?: number;
   parcelGeometry?: ParcelOverlayGeometry | null;
+  hydrant?: { latitude: number; longitude: number } | null;
 }): string | null {
   const key = googleKey();
   if (!key) return null;
@@ -82,6 +83,7 @@ export function buildGoogleStaticImageUrl(input: {
       geometry: input.parcelGeometry,
       width,
       height,
+      hydrant: input.hydrant ?? null,
     });
     if (!overlay) return null;
 
@@ -95,6 +97,9 @@ export function buildGoogleStaticImageUrl(input: {
     });
     for (const path of overlay.paths) {
       params.append("path", path);
+    }
+    for (const marker of overlay.markers) {
+      params.append("markers", marker);
     }
     return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
   }

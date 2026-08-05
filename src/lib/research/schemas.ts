@@ -185,6 +185,8 @@ export const normalizedPlanningSchema = z.object({
   fireZone: z.string().nullable().optional(),
   /** Always includes screen-level caveat language when set — never a hard parcel fact. */
   wuiClassification: z.string().nullable().optional(),
+  /** Straight-line nearest mapped hydrant distance display (never pull distance). */
+  nearestHydrantDistance: z.string().nullable().optional(),
 });
 
 export const normalizedMapsSchema = z.object({
@@ -251,6 +253,19 @@ export const researchDiagnosticsSchema = z
     mockFallback: z.boolean().optional(),
     aiProvider: z.string().optional(),
     aiStatus: z.string().optional(),
+    hydrant: z
+      .object({
+        status: z.enum(["ok", "no_data"]),
+        distanceFt: z.number().nullable().optional(),
+        latitude: z.number().nullable().optional(),
+        longitude: z.number().nullable().optional(),
+        sourceKey: z.string().nullable().optional(),
+        sourceLabel: z.string().nullable().optional(),
+        sourceUrl: z.string().nullable().optional(),
+        statusMessage: z.string().nullable().optional(),
+        attemptedSources: z.array(z.string()).optional(),
+      })
+      .optional(),
   })
   .optional();
 

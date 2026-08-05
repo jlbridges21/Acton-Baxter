@@ -28,11 +28,7 @@ export type KnowledgeVisibility = (typeof KNOWLEDGE_VISIBILITIES)[number];
 export type KnowledgeSourceType = (typeof KNOWLEDGE_SOURCE_TYPES)[number];
 export type KnowledgeSourceStatus = (typeof KNOWLEDGE_SOURCE_STATUSES)[number];
 
-export type KnowledgeDocKind =
-  | "building_code"
-  | "ordinance"
-  | "design_guideline"
-  | "other_code";
+export type KnowledgeDocKind = "building_code" | "ordinance" | "design_guideline" | "other_code";
 
 export type KnowledgeEntry = {
   id: string;

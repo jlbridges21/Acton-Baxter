@@ -77,6 +77,7 @@ const FIELD_LABELS: Record<string, string> = {
   [FIELD_KEYS.floodZone]: "Flood zone",
   [FIELD_KEYS.fireZone]: "Fire zone",
   [FIELD_KEYS.wuiClassification]: "Wildland-Urban Interface (WUI)",
+  [FIELD_KEYS.nearestHydrantDistanceFt]: "Nearest mapped hydrant (straight-line)",
   [FIELD_KEYS.latitude]: "Latitude",
   [FIELD_KEYS.longitude]: "Longitude",
   [FIELD_KEYS.taxRateArea]: "Tax rate area",
@@ -136,6 +137,7 @@ export function selectPreferredFact(
     FIELD_KEYS.latitude,
     FIELD_KEYS.longitude,
     FIELD_KEYS.buildingCount,
+    FIELD_KEYS.nearestHydrantDistanceFt,
   ]);
 
   const numberValue = numericFields.has(fieldKey) ? parseNumber(preferred.normalizedValue) : null;
@@ -181,6 +183,7 @@ export function buildPreferredFacts(claims: SourceClaim[]): PropertyFact[] {
     { fieldKey: FIELD_KEYS.floodZone, category: "planning" },
     { fieldKey: FIELD_KEYS.fireZone, category: "planning" },
     { fieldKey: FIELD_KEYS.wuiClassification, category: "planning" },
+    { fieldKey: FIELD_KEYS.nearestHydrantDistanceFt, category: "planning", unit: "ft" },
     { fieldKey: FIELD_KEYS.latitude, category: "identity" },
     { fieldKey: FIELD_KEYS.longitude, category: "identity" },
   ];

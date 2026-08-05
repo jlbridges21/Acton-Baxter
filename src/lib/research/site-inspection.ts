@@ -133,5 +133,21 @@ export function buildSiteInspectionItems(report: FullReport): SiteInspectionItem
     links: easementLinks,
   });
 
+  // California ADU prep: hose-lay / pull distance always needs on-site measurement.
+  const hydrantFact = factText(report, FIELD_KEYS.nearestHydrantDistanceFt);
+  items.push({
+    id: "hydrant-pull-distance",
+    title: "Hydrant pull distance (path of travel)",
+    description:
+      "Mapped hydrant distance in this report is straight-line only — a lower bound. Fire-code hydrant pull distance is measured along the hose-lay / path of travel and will be longer.",
+    verifySteps: [
+      hydrantFact
+        ? `Use the mapped straight-line distance (~${hydrantFact} ft when numeric) only as orientation — walk the actual hose-lay path from the nearest usable hydrant to the proposed ADU location.`
+        : "No nearby mapped hydrant was found automatically — locate the nearest usable hydrant on site or with local fire / water-district maps.",
+      "Measure pull distance along the path of travel (not as-the-crow-flies) and compare to the jurisdiction sprinkler threshold when one is configured.",
+      "Confirm with the governing fire authority whether hydrant distance, dwelling size, flow, or local amendments require fire sprinklers.",
+    ],
+  });
+
   return items;
 }

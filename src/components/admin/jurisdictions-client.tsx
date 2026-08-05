@@ -117,7 +117,7 @@ export function JurisdictionsClient({ initial }: { initial: Payload }) {
     setEditingRuleId(rule.id);
     const known = JURISDICTION_RULE_KEY_CATALOG.some((item) => item.key === rule.rule_key);
     setRuleKeyMode(known ? "catalog" : "custom");
-    setRuleKey(known ? rule.rule_key : JURISDICTION_RULE_KEY_CATALOG[0]?.key ?? "");
+    setRuleKey(known ? rule.rule_key : (JURISDICTION_RULE_KEY_CATALOG[0]?.key ?? ""));
     setCustomRuleKey(known ? "" : rule.rule_key);
     setZoneKey(rule.zone_key ?? "");
     if (rule.value_json.kind === "quantity") {
@@ -306,7 +306,8 @@ export function JurisdictionsClient({ initial }: { initial: Payload }) {
           </CardDescription>
           {docsForSelected.length === 0 ? (
             <p className="mt-4 text-sm text-[var(--acton-muted)]">
-              No code documents configured yet for {selectedJurisdiction?.name ?? "this jurisdiction"}.
+              No code documents configured yet for{" "}
+              {selectedJurisdiction?.name ?? "this jurisdiction"}.
             </p>
           ) : (
             <ul className="mt-4 divide-y divide-[var(--acton-border)]">
@@ -401,7 +402,7 @@ export function JurisdictionsClient({ initial }: { initial: Payload }) {
             refused.
           </CardDescription>
           <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={(e) => void onSaveRule(e)}>
-            <div className="sm:col-span-2 space-y-2">
+            <div className="space-y-2 sm:col-span-2">
               <span className="block text-sm text-[var(--acton-muted)]">Rule key</span>
               <div className="flex flex-wrap gap-3 text-sm">
                 <label className="inline-flex items-center gap-2">
@@ -470,7 +471,9 @@ export function JurisdictionsClient({ initial }: { initial: Payload }) {
               </div>
             </label>
             <label className="block text-sm sm:col-span-2">
-              <span className="mb-1 block text-[var(--acton-muted)]">Source citation (required)</span>
+              <span className="mb-1 block text-[var(--acton-muted)]">
+                Source citation (required)
+              </span>
               <Input
                 value={sourceCitation}
                 onChange={(e) => setSourceCitation(e.target.value)}

@@ -20,6 +20,8 @@ export function buildArcgisQueryUrl(layerUrl: string, params: ArcgisQueryParams)
     search.set("resultRecordCount", String(params.resultRecordCount));
   }
   if (params.orderByFields) search.set("orderByFields", params.orderByFields);
+  if (params.distance !== undefined) search.set("distance", String(params.distance));
+  if (params.units) search.set("units", params.units);
   const base = layerUrl.replace(/\/$/, "");
   return `${base}/query?${search.toString()}`;
 }

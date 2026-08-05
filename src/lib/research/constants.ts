@@ -65,6 +65,7 @@ export const FIELD_KEYS = {
   floodZone: "flood_zone",
   fireZone: "fire_zone",
   wuiClassification: "wui_classification",
+  nearestHydrantDistanceFt: "nearest_hydrant_distance_ft",
   latitude: "latitude",
   longitude: "longitude",
   taxRateArea: "tax_rate_area",

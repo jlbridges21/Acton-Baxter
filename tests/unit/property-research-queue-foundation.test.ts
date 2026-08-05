@@ -278,6 +278,7 @@ describe("Site Inspection Required items", () => {
       "foundation-type",
       "utilities",
       "easements-tract-maps",
+      "hydrant-pull-distance",
     ]);
     expect(items[1]?.title).toBe("Utilities");
     expect(items[1]?.verifySteps.length).toBeGreaterThan(0);
@@ -313,10 +314,11 @@ describe("Site Inspection Required items", () => {
     expect(buildSiteInspectionItems(withFoundation).map((i) => i.id)).toEqual([
       "utilities",
       "easements-tract-maps",
+      "hydrant-pull-distance",
     ]);
     expect(
       buildSiteInspectionItems({ ...report, apn: null, facts: [] } as FullReport),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
   });
 });
 

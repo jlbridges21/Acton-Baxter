@@ -15,10 +15,20 @@ export type ParcelOverlayParams = {
   center: string;
   zoom: number;
   paths: string[];
+  /** Google Static Maps markers= values (without the markers= key). */
+  markers: string[];
   coordinateSystem: "wgs84" | "web_mercator_converted";
   originalPointCount: number;
   renderedPointCount: number;
   simplified: boolean;
+  /** True when a hydrant marker was omitted to preserve parcel readability. */
+  hydrantMarkerSkipped: boolean;
+  hydrantMarkerIncluded: boolean;
+};
+
+export type HydrantMarkerInput = {
+  latitude: number;
+  longitude: number;
 };
 
 function isFinitePosition(value: unknown): value is Position {
@@ -242,6 +252,7 @@ function estimateStaticMapUrlLength(
   width: number,
   height: number,
   paths: string[],
+  markers: string[] = [],
 ): number {
   const params = new URLSearchParams({
     center,
@@ -252,7 +263,54 @@ function estimateStaticMapUrlLength(
     key: "x".repeat(64),
   });
   for (const path of paths) params.append("path", path);
+  for (const marker of markers) params.append("markers", marker);
   return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`.length;
+}
+
+/**
+ * Include a hydrant marker only when it fits the parcel-fitted viewport.
+ * Never zoom out to force the hydrant into frame (would ruin parcel readability).
+ */
+export function shouldIncludeHydrantMarker(input: {
+  rings: Ring[];
+  center: string;
+  zoom: number;
+  width: number;
+  height: number;
+  hydrant: HydrantMarkerInput;
+}): boolean {
+  const parts = input.center.split(",");
+  const centerLat = Number(parts[0]);
+  const centerLon = Number(parts[1]);
+  if (!Number.isFinite(centerLat) || !Number.isFinite(centerLon)) return false;
+
+  const points = input.rings.flat();
+  if (points.length === 0) return false;
+  const longitudes = points.map(([longitude]) => longitude);
+  const latitudes = points.map(([, latitude]) => latitude);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const padLon = Math.max((maxLongitude - minLongitude) * 0.35, 0.0004);
+  const padLat = Math.max((maxLatitude - minLatitude) * 0.35, 0.0004);
+
+  // Also require the hydrant to fall inside the approximate viewport at this zoom.
+  const worldPerPixel = 360 / (TILE_SIZE * 2 ** input.zoom);
+  const halfWidthDeg = (input.width / 2) * worldPerPixel;
+  const halfHeightDeg = (input.height / 2) * worldPerPixel * Math.cos((centerLat * Math.PI) / 180);
+
+  const inParcelPad =
+    input.hydrant.longitude >= minLongitude - padLon &&
+    input.hydrant.longitude <= maxLongitude + padLon &&
+    input.hydrant.latitude >= minLatitude - padLat &&
+    input.hydrant.latitude <= maxLatitude + padLat;
+
+  const inViewport =
+    Math.abs(input.hydrant.longitude - centerLon) <= halfWidthDeg &&
+    Math.abs(input.hydrant.latitude - centerLat) <= halfHeightDeg;
+
+  return inParcelPad && inViewport;
 }
 
 export function buildParcelOverlayParams(input: {
@@ -260,6 +318,7 @@ export function buildParcelOverlayParams(input: {
   width?: number;
   height?: number;
   maxUrlLength?: number;
+  hydrant?: HydrantMarkerInput | null;
 }): ParcelOverlayParams | null {
   const width = input.width ?? 640;
   const height = input.height ?? 420;
@@ -276,8 +335,28 @@ export function buildParcelOverlayParams(input: {
   let paths = rings.map((ring) => pathStyle(encodePolyline(ring)));
   let tolerance = Math.max(fit.diagonal / 100_000, 1e-8);
 
+  const includeHydrant =
+    input.hydrant != null &&
+    Number.isFinite(input.hydrant.latitude) &&
+    Number.isFinite(input.hydrant.longitude) &&
+    shouldIncludeHydrantMarker({
+      rings: normalized.rings,
+      center: fit.center,
+      zoom: fit.zoom,
+      width,
+      height,
+      hydrant: input.hydrant,
+    });
+
+  const markers = includeHydrant
+    ? [`color:0xE85D04|label:H|${input.hydrant!.latitude},${input.hydrant!.longitude}`]
+    : [];
+
   for (let attempt = 0; attempt < 18; attempt += 1) {
-    if (estimateStaticMapUrlLength(fit.center, fit.zoom, width, height, paths) <= maxUrlLength) {
+    if (
+      estimateStaticMapUrlLength(fit.center, fit.zoom, width, height, paths, markers) <=
+      maxUrlLength
+    ) {
       break;
     }
     rings = normalized.rings.map((ring) => simplifyClosedRing(ring, tolerance));
@@ -285,14 +364,27 @@ export function buildParcelOverlayParams(input: {
     tolerance *= 2;
   }
 
+  // If still over budget after simplification, drop the hydrant marker first.
+  let finalMarkers = markers;
+  if (
+    finalMarkers.length > 0 &&
+    estimateStaticMapUrlLength(fit.center, fit.zoom, width, height, paths, finalMarkers) >
+      maxUrlLength
+  ) {
+    finalMarkers = [];
+  }
+
   const renderedPointCount = rings.reduce((sum, ring) => sum + ring.length, 0);
   return {
     center: fit.center,
     zoom: fit.zoom,
     paths,
+    markers: finalMarkers,
     coordinateSystem: normalized.coordinateSystem,
     originalPointCount,
     renderedPointCount,
     simplified: renderedPointCount < originalPointCount,
+    hydrantMarkerSkipped: Boolean(input.hydrant) && finalMarkers.length === 0,
+    hydrantMarkerIncluded: finalMarkers.length > 0,
   };
 }

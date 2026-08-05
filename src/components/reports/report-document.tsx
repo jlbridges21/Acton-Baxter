@@ -8,6 +8,7 @@ import { PropertyImagerySection } from "./property-imagery";
 import { PropertyOverview } from "./property-overview";
 import { ParcelAndPublicRecords } from "./parcel-and-public-records";
 import { PlanningAndHazards } from "./planning-and-hazards";
+import { FireAccessSection } from "./fire-access";
 import { AduCodeHighlightsSection } from "./adu-code-highlights";
 import { SiteObservations } from "./site-observations";
 import { SiteInspectionRequired } from "./site-inspection-required";
@@ -21,6 +22,8 @@ import { Button } from "@/components/ui/button";
 import type { FullReport } from "@/lib/research/db-types";
 import { buildSiteInspectionItems } from "@/lib/research/site-inspection";
 import type { AduCodeHighlights } from "@/lib/jurisdictions";
+import type { SprinklerIndicator } from "@/lib/research/fire-access";
+import type { FireAccessHydrantView } from "./fire-access";
 
 const DISCLAIMER =
   "This report summarizes licensed and publicly available property information for sales preparation. It is not a zoning determination, title report, survey, site measurement, or feasibility conclusion. Information must be verified during Acton’s feasibility process and with the appropriate public agencies.";
@@ -28,6 +31,7 @@ const DISCLAIMER =
 export function ReportDocument({
   report,
   codeHighlights,
+  fireAccess,
   isAdmin = false,
   showDiagnostics = false,
   logoUrl = null,
@@ -37,6 +41,10 @@ export function ReportDocument({
 }: {
   report: FullReport;
   codeHighlights: AduCodeHighlights;
+  fireAccess: {
+    hydrant: FireAccessHydrantView;
+    sprinkler: SprinklerIndicator;
+  };
   isAdmin?: boolean;
   showDiagnostics?: boolean;
   logoUrl?: string | null;
@@ -94,6 +102,7 @@ export function ReportDocument({
         facts={report.facts}
         overlays={overlayNames.length > 0 ? overlayNames : overlays}
       />
+      <FireAccessSection hydrant={fireAccess.hydrant} sprinkler={fireAccess.sprinkler} />
       <AduCodeHighlightsSection highlights={codeHighlights} />
       <SiteInspectionRequired items={buildSiteInspectionItems(report)} />
       <SiteObservations observations={report.siteObservations} />
