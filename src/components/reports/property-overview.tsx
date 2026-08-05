@@ -42,7 +42,7 @@ const OVERVIEW_ITEMS = [
   { label: "Stories", key: "stories", importantMissing: false },
   { label: "Year built", key: "year_built", importantMissing: true },
   { label: "Property type", key: "property_type", importantMissing: true },
-  { label: "Foundation type", key: "foundation_type", importantMissing: true },
+  { label: "Foundation type", key: "foundation_type", importantMissing: false },
   { label: "Building count", key: "building_count", importantMissing: false },
   { label: "Pool", key: "pool", importantMissing: false },
   { label: "Estimated value", key: "estimated_value", importantMissing: false },

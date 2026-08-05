@@ -221,6 +221,7 @@ export const researchDiagnosticsSchema = z
   .object({
     attomId: z.string().nullable().optional(),
     rentcastId: z.string().nullable().optional(),
+    attomConfigured: z.boolean().optional(),
     connectorKeys: z.array(z.string()).optional(),
     providerStatuses: z
       .array(
@@ -233,6 +234,17 @@ export const researchDiagnosticsSchema = z
       )
       .optional(),
     selectedSources: z.record(z.string(), z.string()).optional(),
+    providerFieldComparison: z
+      .array(
+        z.object({
+          fieldKey: z.string(),
+          fieldLabel: z.string(),
+          attomValue: z.string().nullable(),
+          rentcastValue: z.string().nullable(),
+          preferredSource: z.string().nullable(),
+        }),
+      )
+      .optional(),
     mockFallback: z.boolean().optional(),
     aiProvider: z.string().optional(),
     aiStatus: z.string().optional(),

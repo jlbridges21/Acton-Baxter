@@ -213,7 +213,7 @@ export function getEnv(): AppEnv {
 
   if (!env.ENABLE_MOCK_RESEARCH) {
     const missingLiveKeys: string[] = [];
-    if (!env.ATTOM_API_KEY) missingLiveKeys.push("ATTOM_API_KEY");
+    // RentCast is the required licensed property provider. ATTOM is optional (being sunset).
     if (!env.RENTCAST_API_KEY) missingLiveKeys.push("RENTCAST_API_KEY");
     if (missingLiveKeys.length > 0) {
       throw new Error(

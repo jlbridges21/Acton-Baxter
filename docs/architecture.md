@@ -3,8 +3,10 @@
 Acton Property Research is a Next.js App Router application with:
 
 - Supabase Auth + Postgres + Storage
-- Server-only providers for ATTOM, RentCast, ArcGIS, Google Places, AI, Slack
+- Server-only providers for **RentCast** (required licensed property API), optional **ATTOM** (trial / sunset), ArcGIS, Google Places, AI, Slack
 - Shared research orchestration used by the web UI and Slack
+
+Live mode queries RentCast and (when `ATTOM_API_KEY` is set) ATTOM concurrently, then GIS using confirmed coordinates. Unsetting `ATTOM_API_KEY` is the cutover to RentCast-only — ATTOM code remains but is skipped cleanly.
 
 ## Request flow
 
@@ -13,7 +15,7 @@ Acton Property Research is a Next.js App Router application with:
 3. Processing page calls `POST /api/reports/[id]/run`
 4. Run/refresh/retry **enqueue** a durable `property_research` job (same job type as Slack `/property`), then process inline via `after()` using `claimJobById` → `processJob` so cron cannot double-run an active job
 5. `runPropertyResearch` chooses mock or live mode
-6. Live mode queries ATTOM + RentCast concurrently, then GIS using confirmed coordinates
+6. Live mode queries RentCast and optional ATTOM concurrently, then GIS using confirmed coordinates
 7. Claims are stored, preferred facts selected, conflicts detected
 8. AI or deterministic PEM content is generated
 9. Report is marked complete

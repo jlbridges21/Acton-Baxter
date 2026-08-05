@@ -51,8 +51,8 @@ export function getConfiguredProviderHealth(): SourceHealthView[] {
       responseTimeMs: null,
       schemaValid: Boolean(env.ATTOM_API_KEY),
       message: env.ATTOM_API_KEY
-        ? "API key configured. Use /admin/provider-test for a manual live call (may use credits)."
-        : "ATTOM_API_KEY is missing.",
+        ? "API key configured (optional; sunset after trial). Admin report diagnostics compare ATTOM vs RentCast when both run."
+        : "ATTOM_API_KEY unset — RentCast-only mode (expected after cutover).",
       endpointUrl: env.ATTOM_BASE_URL,
     },
     {

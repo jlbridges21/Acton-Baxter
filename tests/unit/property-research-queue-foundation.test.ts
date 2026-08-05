@@ -274,20 +274,49 @@ describe("Site Inspection Required items", () => {
     } as unknown as FullReport;
 
     const items = buildSiteInspectionItems(report);
-    expect(items.map((i) => i.id)).toEqual(["utilities", "easements-tract-maps"]);
-    expect(items[0]?.title).toBe("Utilities");
-    expect(items[0]?.verifySteps.length).toBeGreaterThan(0);
+    expect(items.map((i) => i.id)).toEqual([
+      "foundation-type",
+      "utilities",
+      "easements-tract-maps",
+    ]);
+    expect(items[1]?.title).toBe("Utilities");
+    expect(items[1]?.verifySteps.length).toBeGreaterThan(0);
 
-    const easements = items[1]!;
+    const easements = items[2]!;
     expect(easements.facts?.some((f) => f.label === "APN" && f.value === "47222019")).toBe(true);
     expect(easements.facts?.some((f) => f.value === "Tract 512")).toBe(true);
     expect(easements.links?.some((l) => l.href.includes("santaclaracounty.gov"))).toBe(true);
     expect(easements.links?.some((l) => l.href.includes("experience.arcgis.com"))).toBe(true);
 
-    // Reusability: empty items array is valid; component is props-driven.
+    // With foundation fact present, foundation-type item is omitted.
+    const withFoundation = {
+      ...report,
+      facts: [
+        ...report.facts,
+        {
+          id: "3",
+          report_id: USER_ID,
+          category: "characteristics",
+          field_key: "foundation_type",
+          field_label: "Foundation type",
+          normalized_value_text: "Concrete Slab",
+          normalized_value_number: null,
+          normalized_value_boolean: null,
+          unit: null,
+          preferred_source_name: "ATTOM",
+          preferred_source_url: null,
+          confidence: "medium",
+          created_at: new Date().toISOString(),
+        },
+      ],
+    } as FullReport;
+    expect(buildSiteInspectionItems(withFoundation).map((i) => i.id)).toEqual([
+      "utilities",
+      "easements-tract-maps",
+    ]);
     expect(
       buildSiteInspectionItems({ ...report, apn: null, facts: [] } as FullReport),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 });
 

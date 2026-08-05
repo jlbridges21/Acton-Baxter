@@ -13,9 +13,22 @@ It is **not**:
 
 Information must be verified during Acton’s feasibility process and with the appropriate public agencies.
 
+## Licensed property providers
+
+**RentCast is the primary (and soon sole) licensed property data provider.** ATTOM remains available while its trial key is configured for side-by-side comparison; the cutover is unsetting `ATTOM_API_KEY` — no other code change.
+
+When ATTOM is absent (RentCast-only):
+
+- Research runs cleanly with RentCast + jurisdiction GIS.
+- Fields ATTOM alone claimed in the live pipeline (`foundation_type`, `tract_number`, `building_count`, `estimated_value`; APN still comes from county/city GIS when available) simply omit ATTOM claims — no blank/broken UI.
+- **Foundation type** moves to **Site inspection required** (RentCast has no equivalent).
+- Estimated value / building count omit from overview when unset; tract number is called out in the easements site-inspection checklist when not auto-filled.
+
+When both keys are present, dual-source preference and conflict detection behave as before. Admin report diagnostics show an ATTOM vs RentCast comparison table for shared fields during the trial window.
+
 ## What is automated vs site inspection
 
-- **Foundation type** may appear when ATTOM returns an assessor-derived value. Treat it as incomplete: verify on site during feasibility. When absent, it is listed under Missing information in Property Overview.
+- **Foundation type** may appear in Property Overview when ATTOM returns an assessor-derived value (verify on site). When absent — including RentCast-only mode — it is listed under **Site inspection required**.
 - **Utilities** (electric panel capacity, meter locations, service laterals) and **easements / recorded tract maps** are intentionally listed under **Site inspection required** — not as missing data. Use the APN, tract/subdivision identifiers, and assessor / Property Profile links there to start recorder and title review.
 
 Santa Clara County Property Profile access is currently a **generic search** into the public Property Explorer Experience unless a stable direct report endpoint is confirmed later.

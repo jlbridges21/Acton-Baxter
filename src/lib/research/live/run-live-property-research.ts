@@ -22,6 +22,7 @@ import {
 import { getEnv } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import { buildGoogleMapLinks } from "@/lib/providers/google/imagery";
+import { isAttomConfigured } from "@/lib/providers/attom/config";
 import { lookupAttomProperty } from "@/lib/providers/attom/provider";
 import { acresToSquareFeet } from "@/lib/providers/attom/normalizer";
 import { lookupRentCastProperty } from "@/lib/providers/rentcast/provider";
@@ -30,6 +31,7 @@ import { FIELD_KEYS } from "@/lib/research/constants";
 import { normalizeAddress } from "@/lib/research/normalize-address";
 import { generateAiReportContent, aiContentToPemPreparation } from "@/lib/providers/ai/provider";
 import { runMockPropertyResearch } from "@/lib/research/mock-research-provider";
+import { buildProviderFieldComparison } from "@/lib/research/provider-comparison";
 import { buildPreferredFacts } from "@/lib/research/select-preferred-fact";
 import { normalizeApn } from "@/lib/property/apn";
 import type {
@@ -141,15 +143,35 @@ export async function runLivePropertyResearch(
     zipCode: normalized.zipCode,
   };
 
+  const attomConfigured = isAttomConfigured(env);
+
   const [attomSettled, rentCastSettled] = await Promise.allSettled([
-    lookupAttomProperty(initialLookup),
+    attomConfigured
+      ? lookupAttomProperty(initialLookup)
+      : Promise.resolve(null as Awaited<ReturnType<typeof lookupAttomProperty>> | null),
     lookupRentCastProperty(initialLookup),
   ]);
 
   const attom = attomSettled.status === "fulfilled" ? attomSettled.value : null;
   const rentcast = rentCastSettled.status === "fulfilled" ? rentCastSettled.value : null;
 
-  if (attomSettled.status === "rejected") {
+  if (!attomConfigured) {
+    diagnosticsProviders.push({
+      provider: "ATTOM",
+      status: "skipped",
+      message: "ATTOM_API_KEY is not configured — running RentCast-only.",
+    });
+    sources.push({
+      sourceName: "ATTOM",
+      sourceType: "licensed_property_api",
+      sourceUrl: null,
+      status: "unavailable",
+      retrievedAt,
+      responseTimeMs: null,
+      statusMessage:
+        "ATTOM_API_KEY is not configured (optional). RentCast is the primary provider.",
+    });
+  } else if (attomSettled.status === "rejected") {
     diagnosticsProviders.push({
       provider: "ATTOM",
       status: "error",
@@ -1156,11 +1178,13 @@ export async function runLivePropertyResearch(
     diagnostics: {
       attomId: attomProperty?.identity.attomId ?? null,
       rentcastId: rentcastProperty?.id ?? null,
+      attomConfigured,
       connectorKeys,
       providerStatuses: diagnosticsProviders,
       selectedSources: Object.fromEntries(
         facts.map((fact) => [fact.fieldKey, fact.preferredSourceName ?? ""]),
       ),
+      providerFieldComparison: buildProviderFieldComparison(claims, facts),
       mockFallback: false,
     },
   };
