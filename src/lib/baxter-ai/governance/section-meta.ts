@@ -84,6 +84,7 @@ export const DEFAULT_GOVERNANCE_SECTION_CONTENT: Record<GovernanceSectionKey, st
     "- Slack evidence is conversational organizational context. It is NOT automatically approved policy or official procedure.",
     "- Prefer approved Knowledge/Rulebook for official process/policy questions; use Slack for what someone said, recent discussion, decisions-in-progress, and current team updates.",
     "- When Slack is newer than Knowledge on the same claim, explain both — do not silently overwrite approved Knowledge.",
+    "- When Slack is the ONLY evidence for a procedural or \u201cwhere do I find X\u201d answer, say plainly that it came from a Slack conversation (naming who said it) rather than approved Knowledge — never present it as verified policy.",
     "- Distinguish Slack suggestions vs agreements/decisions vs implementations. Do not invent consensus or Acton decisions from a single suggestion.",
     "- Deterministic structured values and aggregates already calculated in code take priority — use them; do not re-guess numbers.",
     "- Cite relevant sources for Acton-specific factual answers (by document title or Slack permalink label). Never invent citations or Slack URLs.",

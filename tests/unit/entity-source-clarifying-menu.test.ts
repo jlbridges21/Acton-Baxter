@@ -276,6 +276,7 @@ describe("runEvidenceRegistry generic vs specific", () => {
       ghlConfigured: true,
       semantic: semanticGeneric("Denis Kornilov"),
       menuProbeDeps: {
+        ghlConfigured: () => true,
         searchGhlContacts: async () => [contact("denis-id", "Denis Kornilov")],
         listPemIndex: async () => [
           {
@@ -363,6 +364,7 @@ describe("runEvidenceRegistry generic vs specific", () => {
         error: "timeout after 4000ms",
       },
       menuProbeDeps: {
+        ghlConfigured: () => true,
         searchGhlContacts: async () => [contact("38R58HpyBSvtdnACqOzo", "Katie Liniger")],
         listPemIndex: async () => [],
         listSetupRuns: async () => [
@@ -395,6 +397,7 @@ describe("runEvidenceRegistry generic vs specific", () => {
       ghlConfigured: true,
       semantic: semanticGeneric("Denis Kornilov"),
       menuProbeDeps: {
+        ghlConfigured: () => true,
         searchGhlContacts: async () => [contact("denis-id", "Denis Kornilov")],
         listPemIndex: async () => [
           {

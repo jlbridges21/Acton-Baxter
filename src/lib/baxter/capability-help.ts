@@ -8,6 +8,7 @@ import { detectPemIntent, pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-
 import { detectConceptQuestion } from "@/lib/baxter/concept-vocabulary";
 import {
   classifyCapabilityQuestion,
+  hasBaxterCapabilitySignal,
   isBaxterCapabilityMetaHowto,
   isGeneralCapabilitiesQuestion,
   questionHasSpecificNamedEntity,
@@ -649,7 +650,13 @@ export function answerCapabilityHelp(input: {
     questionHasSpecificNamedEntity(question) &&
     !/\b(use\s+(you|baxter)\s+(to|for)|how to use (you|baxter))\b/i.test(question);
 
-  const allowForce = Boolean(input.forceCapabilityHowto) && !blockCapabilityHowto;
+  // A confident capability_howto classification is not enough on its own — the question
+  // must actually reference Baxter or one of its named tools. Otherwise a real-world
+  // "how do I …" task question would be answered with the capability speech.
+  const allowForce =
+    Boolean(input.forceCapabilityHowto) &&
+    !blockCapabilityHowto &&
+    hasBaxterCapabilitySignal(question);
 
   if (allowForce) {
     // Treat as Baxter meta how-to so dedicated/feature answers run.

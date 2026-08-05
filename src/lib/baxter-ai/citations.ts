@@ -169,3 +169,11 @@ export const INSUFFICIENT_KNOWLEDGE_ANSWER =
 
 export const GENERAL_KNOWLEDGE_NOTE =
   "This answer is based on general knowledge rather than an approved Acton source.";
+
+/** Applied when the only evidence behind an answer is informal Slack conversation. */
+export const SLACK_CONVERSATION_SOURCE_NOTE =
+  "Source note: this came from a Slack conversation, not official Knowledge Base content — treat it as team context rather than verified Acton policy.";
+
+/** Honest close-out when Knowledge, Slack, and the connected systems all came back empty. */
+export const NO_EVIDENCE_ASK_TEAM_NOTE =
+  "I checked approved Acton knowledge and the Slack conversations I'm allowed to search and couldn't find anything covering that. Someone who does this regularly is the fastest path — try asking in the relevant Slack channel (for property/zoning research, #design is usually the right room).";

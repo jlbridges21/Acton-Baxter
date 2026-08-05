@@ -13,6 +13,8 @@ import { retrieveBaxterEvidence } from "./context";
 import {
   INSUFFICIENT_KNOWLEDGE_ANSWER,
   GENERAL_KNOWLEDGE_NOTE,
+  NO_EVIDENCE_ASK_TEAM_NOTE,
+  SLACK_CONVERSATION_SOURCE_NOTE,
   mapUsedSourceNumbers,
   dedupeSourceReferences,
   contextItemToSourceReference,
@@ -65,10 +67,16 @@ import {
   classifyQuestionSemantically,
   isSemanticRoutingConfident,
 } from "@/lib/baxter-ai/semantic-question-classification";
-import { questionHasSpecificNamedEntity } from "@/lib/baxter/capability-intent";
+import {
+  hasBaxterCapabilitySignal,
+  questionHasSpecificNamedEntity,
+} from "@/lib/baxter/capability-intent";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
 import { detectSlackSearchIntent, extractChannelMentions } from "@/lib/baxter-data/slack/intent";
-import { detectSlackSearchRole } from "@/lib/baxter-data/slack/when";
+import {
+  detectSlackSearchRole,
+  isGeneralProceduralLookupQuestion,
+} from "@/lib/baxter-data/slack/when";
 import {
   isProjectInformationQuestion,
   isProjectStatusQuestion,
@@ -512,6 +520,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   const forceCapabilityHowto =
     isSemanticRoutingConfident(semantic) &&
     semantic.questionType === "capability_howto" &&
+    // The question must actually be about Baxter or one of its named tools. A plain
+    // "how do I <real-world task>" gets Knowledge / general knowledge / Slack instead.
+    hasBaxterCapabilitySignal(routingQuestion) &&
     // Never force capability help over a live data / Slack / named-entity ask.
     !questionHasSpecificNamedEntity(routingQuestion) &&
     extractChannelMentions(routingQuestion).length === 0 &&
@@ -781,6 +792,19 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
           hasOtherStrongEvidence,
           followUpSlackContext: Boolean(priorSlack?.refs.length || priorSlack?.topic),
         });
+  // Workspace-wide Slack fallback: a procedural "how/where do I …" question that
+  // Knowledge did not cover. Authorization is still enforced inside
+  // retrieveSlackForAnswer — this only decides whether the search is attempted.
+  const knowledgeCoversQuestion = contextItems.some(
+    (item) => item.sourceType !== "slack" && (item.relevanceScore ?? 0) >= 40,
+  );
+  const proceduralSlackFallback =
+    !skipSlackForGhlContactField &&
+    !input.slackRecallForced &&
+    slackRoleEarly === "skip" &&
+    !knowledgeCoversQuestion &&
+    !hasBaxterCapabilitySignal(routingQuestion) &&
+    isGeneralProceduralLookupQuestion(routingQuestion);
   // Slack-origin requests can use bot public-channel history without a separate web OAuth link.
   const allowPublicOnlyFallback =
     input.channel === "slack" || Boolean(input.externalUserId) || forceSlack;
@@ -838,11 +862,13 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         roleOverride:
           forceSlack && slackRoleEarly === "skip"
             ? "primary"
-            : !otherEvidenceSatisfies && slackRoleEarly === "fallback"
+            : proceduralSlackFallback
               ? "primary"
-              : slackRoleEarly === "skip"
-                ? "skip"
-                : undefined,
+              : !otherEvidenceSatisfies && slackRoleEarly === "fallback"
+                ? "primary"
+                : slackRoleEarly === "skip"
+                  ? "skip"
+                  : undefined,
       }).catch((error) => {
         logBaxterDiagnostic("slackEvidence", {
           code: "SLACK_RETRIEVAL_FAILED",
@@ -943,6 +969,9 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       slackRuntime.authNote,
       slackRuntime.noResultsNote,
       slackRuntime.incompleteNote,
+      // Procedural fallback with nothing anywhere: say so and point at who would know,
+      // rather than leaving it at "I searched Slack".
+      proceduralSlackFallback && !slackRuntime.authNote ? NO_EVIDENCE_ASK_TEAM_NOTE : null,
     ].filter(Boolean);
     // After Slack was attempted: if registry had a deferred early answer (PEM/GHL),
     // include both so the employee sees what was checked.
@@ -1335,6 +1364,37 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         }
       }
       sources = [];
+    }
+
+    if (proceduralSlackFallback) {
+      const slackFound = (slackRuntime?.selected.length ?? 0) > 0;
+      const slackStatus = slackRuntime?.diagnostics.retrievalStatus ?? "skipped";
+      const nonSlackSources = sources.filter((source) => source.sourceKind !== "slack");
+      if (slackFound && nonSlackSources.length === 0) {
+        // Informal chat is never presented as verified policy.
+        if (!/slack conversation/i.test(answerText)) {
+          answerText = `${answerText}\n\n${SLACK_CONVERSATION_SOURCE_NOTE}`;
+        }
+        answerMode = "mixed";
+        insufficientKnowledge = false;
+      } else if (slackStatus === "authorization_required" && slackRuntime?.authNote) {
+        // Degrade honestly rather than implying Slack held nothing.
+        if (!answerText.includes(slackRuntime.authNote)) {
+          answerText = [answerText, slackRuntime.authNote].filter(Boolean).join("\n\n");
+        }
+        answerMode = "mixed";
+        insufficientKnowledge = true;
+      } else if (!slackFound && sources.length === 0 && slackStatus !== "error") {
+        // Nothing in Knowledge and nothing in Slack — say so instead of guessing.
+        const alreadyHonest = /couldn.?t find|could not find|don.?t have|do not have/i.test(
+          answerText,
+        );
+        answerText = alreadyHonest
+          ? `${answerText}\n\n${NO_EVIDENCE_ASK_TEAM_NOTE}`
+          : NO_EVIDENCE_ASK_TEAM_NOTE;
+        answerMode = "mixed";
+        insufficientKnowledge = true;
+      }
     }
 
     if (!answerText) {

@@ -46,8 +46,8 @@ Return JSON with keys: questionType, entityName, entityTypeGuess, lookupSpecific
 
 questionType values:
 - entity_lookup: asks about a specific named person, CRM contact/opportunity/deal/project, PEM prospect, Slack project/job, or rulebook role/step. Includes "how do I find information about [Name]'s project" and "give me information about the [Name] project" — those are data lookups, NOT capability how-tos.
-- capability_howto: asks how to use Baxter or its tools themselves (e.g. "how do we use you to set up a new project", "how can the team use Baxter for PEM NEATs") with NO specific customer/project/channel name
-- procedural_knowledge: asks about company process, procedure, policy, workflow, or site visit steps from Knowledge — not a named CRM/Slack record
+- capability_howto: asks how to use BAXTER ITSELF or one of Baxter's own named tools, with NO specific customer/project/channel name. Requires an explicit reference to Baxter/"you" as the tool, or one of Baxter's tool names (New Project Setup, PEM NEAT, Property Research, Customer Center, Knowledge Center, Process Rulebook, Slack Search, GoHighLevel connector). Examples: "how do we use you to set up a new project", "how can the team use Baxter for PEM NEATs", "show me how to run Property Research".
+- procedural_knowledge: asks about company process, procedure, policy, workflow, or site visit steps from Knowledge — not a named CRM/Slack record. ALSO covers external/real-world research procedures phrased as "how do I / where do I": where to find public records, county tract/parcel maps, zoning or WUI (Wildland-Urban Interface) lookups, permit portals, utility contacts. Examples: "how do I find a tract map for a property at 25 N Avalon Dr", "where do I look up WUI?", "how do I check if a property is in a WUI zone?"
 - general_conversational: greeting, thanks, chitchat, or general non-Acton writing help ONLY
 - ambiguous: cannot tell with confidence
 
@@ -70,6 +70,7 @@ confidence: 0 to 1.
 Critical rules:
 - A #channel mention or "latest update in #…" is NEVER general_conversational or capability_howto — classify as entity_lookup (entityTypeGuess unknown is fine) or ambiguous. Prefer lookupSpecificity specific when asking for latest/recent channel activity.
 - "how do I find/get information about [specific named person/project]" is entity_lookup, not capability_howto — usually lookupSpecificity generic unless a field/category is named.
+- A bare "how do I / where do I [accomplish a real-world task]" with no mention of Baxter, no "you" as the tool, and no Baxter tool name is NEVER capability_howto — it is procedural_knowledge.
 - Words like project/opportunity/deal/site often appear in how-tos AND in real entity names. Prefer entity_lookup whenever a specific proper name or #channel is present — but strip those generic words from entityName itself.`;
 
 /**

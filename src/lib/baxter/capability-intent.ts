@@ -55,6 +55,31 @@ const DATA_LOOKUP_HOWTO_CLOTHING =
   /\bhow\s+(do|can|should)\s+(i|we|they|the\s+team).{0,40}\b(find|get|look\s*up|pull|see|check|search|retrieve|locate)\b.{0,40}\b(info|information|details|status|update|record|about)\b/i;
 
 /**
+ * Baxter itself named as the actor/tool being used.
+ * Bare "do you / can you" is deliberately excluded — those are handled by the
+ * named-system capability branch, and they also appear in ordinary task questions.
+ */
+const BAXTER_AS_TOOL_SIGNAL =
+  /\b(baxter|use\s+(?:you|baxter)\b|using\s+(?:you|baxter)\b|(?:you|baxter)\s+to\s+[a-z]|with\s+(?:you|baxter)\b|through\s+(?:you|baxter)\b|ask\s+(?:you|baxter)\b|your\s+(?:tools?|capabilities|features|systems))\b/i;
+
+/** One of Baxter's own named tools/features. */
+const BAXTER_TOOL_NAME_SIGNAL =
+  /\b(new\s+project\s+setup|project\s+setup|\/new-project|\/pem\b|pem\s*neats?\b|pem\b|property\s+research|customer\s+center|customer\s+dossier|knowledge\s+center|knowledge\s+base|process\s+rulebook|rulebook|slack\s+search|process\s+monitoring|gohighlevel|ghl\b|crm\b|buildertrend|google\s+(?:drive|docs?|sheets?|workspace))\b/i;
+
+/**
+ * Explicit signal that a how-to is about BAXTER ITSELF or one of its named tools.
+ *
+ * Without one, "how do I …" is an ordinary real-world task question (find a tract map,
+ * look up WUI zoning) and must fall through to Knowledge / general knowledge / Slack
+ * search rather than the capability speech.
+ */
+export function hasBaxterCapabilitySignal(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  return BAXTER_AS_TOOL_SIGNAL.test(q) || BAXTER_TOOL_NAME_SIGNAL.test(q);
+}
+
+/**
  * True when the question names a specific person/project/channel — not a generic tool how-to.
  */
 export function questionHasSpecificNamedEntity(question: string): boolean {
@@ -99,6 +124,9 @@ export function isBaxterCapabilityMetaHowto(question: string): boolean {
   if (!q) return false;
   // Live Slack channel asks are never capability FAQs.
   if (/#[\w-]+/.test(q)) return false;
+  // A "how do I …" sentence shape alone is not a Baxter question. Real-world task
+  // questions ("how do I find a tract map for 25 N Avalon Dr") must fall through.
+  if (!hasBaxterCapabilitySignal(q)) return false;
   // "how do I find/get information about [Name]" — data lookup clothing.
   if (DATA_LOOKUP_HOWTO_CLOTHING.test(q) && questionHasSpecificNamedEntity(q)) {
     return false;

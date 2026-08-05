@@ -86,3 +86,29 @@ export function detectSlackSearchRole(input: {
 export function isStrongSlackQuestion(question: string): boolean {
   return detectSlackSearchRole({ question }) === "primary";
 }
+
+const PROCEDURAL_ASK_SHAPE =
+  /\b(how|where|who)\s+(do|does|did|can|could|should|would)\s+(i|we|you|they|the\s+team|our\s+team|someone|anyone)\b/i;
+
+const PROCEDURAL_LOOKUP_SHAPE =
+  /\b(where\s+(is|are|do\s+i\s+find|can\s+i\s+find|to\s+(find|look|get|check))|how\s+to\s+(find|look\s*up|check|see|get|verify|confirm|determine|pull|access))\b/i;
+
+/**
+ * Procedural "how/where do I …" asks about a real-world task — no named project,
+ * channel, or job number.
+ *
+ * Knowledge answers these first. When it has nothing, a workspace-wide Slack search
+ * often finds the exchange where a teammate already answered the same question.
+ * This is deliberately NOT part of `detectSlackSearchRole`: that function runs before
+ * Knowledge retrieval and gates the capability short-circuit, so widening it there
+ * would suppress genuine Baxter how-to answers.
+ */
+export function isGeneralProceduralLookupQuestion(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  // Channel- and project-scoped asks belong to the existing project Slack paths.
+  if (/#[\w-]+/.test(q)) return false;
+  if (/\b[A-Za-z]\d{2}-\d{4,6}\b/.test(q)) return false;
+  if (isProjectInformationQuestion(q) || isProjectStatusQuestion(q)) return false;
+  return PROCEDURAL_ASK_SHAPE.test(q) || PROCEDURAL_LOOKUP_SHAPE.test(q);
+}
