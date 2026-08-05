@@ -42,3 +42,21 @@ export function buildAssessorSearchUrl(apn: string | null | undefined): string |
   void apn;
   return SANTA_CLARA_COUNTY_CONFIG.propertyProfile.assessorSearchUrl;
 }
+
+/**
+ * Public County Surveyor GIS index for recorded subdivision/parcel maps and
+ * filed survey records. The app does not expose a stable APN query parameter,
+ * so APN/address guidance is supplied next to the link in the report.
+ */
+export function buildCountySurveyorRecordIndexUrl(): string {
+  return SANTA_CLARA_COUNTY_CONFIG.propertyProfile.countySurveyorRecordIndexUrl;
+}
+
+/**
+ * Canonical Clerk-Recorder instructions for researching recorded easements and
+ * purchasing official document/map copies. Santa Clara County does not expose
+ * document images or a stable APN-index deep link online.
+ */
+export function buildRecorderResearchUrl(): string {
+  return SANTA_CLARA_COUNTY_CONFIG.propertyProfile.recorderResearchUrl;
+}

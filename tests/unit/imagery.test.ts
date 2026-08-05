@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGoogleMapLinks } from "@/lib/providers/google/imagery";
+import { buildGoogleMapLinks, buildGoogleStaticImageUrl } from "@/lib/providers/google/imagery";
 import { resetEnvCacheForTests } from "@/lib/env";
 
 describe("Google property imagery helpers", () => {
@@ -24,5 +24,23 @@ describe("Google property imagery helpers", () => {
     expect(links.streetViewUrl).toContain("map_action=pano");
     expect(links.streetViewUrl).toContain("37.34521");
     expect(links.satelliteImageAvailable).toBe(false);
+    expect(
+      buildGoogleStaticImageUrl({
+        view: "parcel",
+        latitude: 37.34521,
+        longitude: -121.88045,
+        parcelGeometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [-121.881, 37.345],
+              [-121.88, 37.345],
+              [-121.88, 37.346],
+              [-121.881, 37.345],
+            ],
+          ],
+        },
+      }),
+    ).toBeNull();
   });
 });

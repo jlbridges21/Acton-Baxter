@@ -11,7 +11,12 @@ import type {
 } from "@/lib/research/types";
 import { SANTA_CLARA_COUNTY_CONFIG } from "./config";
 import { fetchSantaClaraCountyParcel } from "./normalizers";
-import { buildAssessorSearchUrl, resolvePropertyProfileAccess } from "./property-profile";
+import {
+  buildAssessorSearchUrl,
+  buildCountySurveyorRecordIndexUrl,
+  buildRecorderResearchUrl,
+  resolvePropertyProfileAccess,
+} from "./property-profile";
 
 export const santaClaraCountyConnector: JurisdictionConnector = {
   key: SANTA_CLARA_COUNTY_CONFIG.key,
@@ -69,8 +74,8 @@ export const santaClaraCountyConnector: JurisdictionConnector = {
     return resolvePropertyProfileAccess(input).url;
   },
 
-  async getTractMapLink(input: PropertyLookupInput): Promise<string | null> {
-    return buildAssessorSearchUrl(input.apn);
+  async getTractMapLink(_input: PropertyLookupInput): Promise<string | null> {
+    return buildCountySurveyorRecordIndexUrl();
   },
 
   getPermitSearchLink(_input: PropertyLookupInput): string | null {
@@ -100,6 +105,21 @@ export const santaClaraCountyConnector: JurisdictionConnector = {
         sourceName: "Santa Clara County Assessor",
       });
     }
+    links.push(
+      {
+        label: "County Surveyor recorded-map index",
+        url: buildCountySurveyorRecordIndexUrl(),
+        sourceName: "Santa Clara County Surveyor",
+        notes: "Search by parcel location; use the APN and any known subdivision/map number.",
+      },
+      {
+        label: "Clerk-Recorder official-record research",
+        url: buildRecorderResearchUrl(),
+        sourceName: "Santa Clara County Clerk-Recorder",
+        notes:
+          "Recorded easement/title document images are researched in person; use APN, address, or known document/book/page numbers.",
+      },
+    );
     return links;
   },
 };

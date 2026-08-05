@@ -33,3 +33,20 @@ Stale recovery: researching reports older than 30 minutes with no live job are m
 - `src/lib/branding/` logo and company settings
 - `src/lib/slack/` signature verification and messaging
 - `src/lib/jobs/` durable queue processing
+
+## Parcel imagery
+
+Parcel FeatureServer queries explicitly request `outSR=4326`; the ArcGIS polygon rings are normalized and persisted as GeoJSON longitude/latitude coordinates in the report’s parcel-geometry record.
+
+`src/lib/providers/google/parcel-overlay.ts` prepares the print-safe parcel visual:
+
+- normalizes Polygon and MultiPolygon rings (with a defensive Web Mercator conversion for legacy/unexpected geometry)
+- closes and Google-polyline-encodes each ring
+- computes a bounds-derived center and zoom with surrounding context
+- simplifies detailed rings with Douglas-Peucker only when the Static Maps URL budget requires it
+
+`GET /api/reports/[reportId]/imagery?view=parcel` loads the stored geometry, builds the server-keyed Google Static Maps request, and proxies the image bytes. The Parcel and public records card uses this as its primary visual; its existing standalone SVG remains the no-key/no-image fallback. The separate plain satellite and Street View requests are unchanged.
+
+## Recorded easement workflow
+
+Easements are not inferred from parcel GIS. `buildSiteInspectionItems()` provides an APN-first manual workflow through the Santa Clara County Assessor / Property Explorer, County Surveyor recorded-map index, preliminary title report, and Clerk-Recorder official-record research. RentCast subdivision and any available tract/map number are optional search aids, not dependencies.

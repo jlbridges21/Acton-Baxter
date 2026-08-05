@@ -20,9 +20,16 @@ export async function GET(request: Request, context: RouteContext) {
 
     const viewParam = new URL(request.url).searchParams.get("view") ?? "satellite";
     const view =
-      viewParam === "street" ? "street" : viewParam === "roadmap" ? "roadmap" : "satellite";
+      viewParam === "street"
+        ? "street"
+        : viewParam === "roadmap"
+          ? "roadmap"
+          : viewParam === "parcel"
+            ? "parcel"
+            : "satellite";
 
-    const report = await getReportStore().getReport(reportId);
+    const store = getReportStore();
+    const report = await store.getReport(reportId);
     if (!report) {
       return NextResponse.json({ error: { message: "Report not found" } }, { status: 404 });
     }
@@ -36,16 +43,29 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
+    const parcelGeometry =
+      view === "parcel" ? (await store.getFullReport(reportId))?.parcelGeometry : null;
     const upstream = buildGoogleStaticImageUrl({
       view,
       latitude,
       longitude,
       width: 640,
       height: 420,
+      parcelGeometry:
+        view === "parcel"
+          ? (parcelGeometry?.geometry_geojson as { type?: unknown; coordinates?: unknown } | null)
+          : null,
     });
     if (!upstream) {
       return NextResponse.json(
-        { error: { message: "Google Maps imagery is not configured" } },
+        {
+          error: {
+            message:
+              view === "parcel"
+                ? "Parcel geometry or Google Maps imagery is not configured"
+                : "Google Maps imagery is not configured",
+          },
+        },
         { status: 503 },
       );
     }

@@ -1,6 +1,10 @@
 import type { FullReport } from "@/lib/research/db-types";
 import type { NormalizedMaps } from "@/lib/research/schemas";
 import { FIELD_KEYS } from "@/lib/research/constants";
+import {
+  buildCountySurveyorRecordIndexUrl,
+  buildRecorderResearchUrl,
+} from "@/lib/connectors/california/santa-clara-county/property-profile";
 
 export type SiteInspectionLink = {
   label: string;
@@ -78,7 +82,7 @@ export function buildSiteInspectionItems(report: FullReport): SiteInspectionItem
   }
   const tract = factText(report, FIELD_KEYS.tractNumber);
   if (tract) {
-    easementFacts.push({ label: "Tract / subdivision map number", value: tract });
+    easementFacts.push({ label: "Tract / map number (bonus identifier)", value: tract });
   }
   const subdivision = factText(report, FIELD_KEYS.subdivision);
   if (subdivision) {
@@ -94,20 +98,36 @@ export function buildSiteInspectionItems(report: FullReport): SiteInspectionItem
       href: profileUrl,
     });
   }
+  easementLinks.push(
+    {
+      label: "County Surveyor recorded-map index",
+      href: buildCountySurveyorRecordIndexUrl(),
+    },
+    {
+      label: "Clerk-Recorder recorded-document research",
+      href: buildRecorderResearchUrl(),
+    },
+  );
+
+  const propertyReference = report.apn
+    ? `APN ${report.apn}`
+    : `the property address (${report.standardized_address ?? report.input_address})`;
+  const subdivisionReference = subdivision
+    ? `; subdivision “${subdivision}” may help narrow the map search`
+    : "";
+  const tractReference = tract ? `; tract/map number ${tract} is an additional search key` : "";
+  const profileReference = profileUrl ? " and County Property Explorer" : "";
 
   items.push({
     id: "easements-tract-maps",
     title: "Easements & recorded tract maps",
     description:
-      "Recorded easements and subdivision tract map sheets are not exposed as a reliable public API. Use identifiers below to start title / recorder / survey review — do not treat public GIS as a substitute for recorded documents." +
-      (!tract
-        ? " Tract/map number was not filled from licensed data for this report — look it up via assessor or recorder using the APN."
-        : ""),
+      "Baxter cannot determine recorded easements automatically. Public parcel GIS shows an approximate boundary, not legal easement rights; the verified path is County Surveyor / Clerk-Recorder research plus title and, when needed, survey review.",
     verifySteps: [
-      "Pull the current title report and recorded easements before relying on buildable area.",
-      "Locate the recorded tract / subdivision map via assessor or County Recorder using the APN and tract identifiers.",
-      "Confirm access, utility, and setback easements that could constrain an ADU footprint.",
-      "Commission a survey when lot lines or easement locations are uncertain.",
+      `Confirm ${propertyReference} in the County Assessor search${profileReference}${subdivisionReference}${tractReference}.`,
+      `Open the County Surveyor recorded-map index and locate the parcel / subdivision map using ${propertyReference} and the parcel location; save the relevant recorded map reference.`,
+      `Review the current preliminary title report for recorded easements. Use the Clerk-Recorder research instructions with ${propertyReference} plus any document, book/page, subdivision, or map references to obtain the actual recorded documents.`,
+      "Confirm visible access and utility conditions on site. If an easement or lot line could affect ADU placement, have the title company or a licensed surveyor plot it before relying on buildable area.",
     ],
     facts: easementFacts.length > 0 ? easementFacts : undefined,
     links: easementLinks,

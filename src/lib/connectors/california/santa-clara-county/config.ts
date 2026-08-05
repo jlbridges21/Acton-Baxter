@@ -21,6 +21,12 @@ export const SANTA_CLARA_COUNTY_CONFIG = {
     legacyProfileUrl: "https://sccdpdapps.com/profile/",
     assessorSearchUrl:
       "https://asr.santaclaracounty.gov/online-services/property-search/real-property",
+    assessorMapUrl:
+      "https://asr.santaclaracounty.gov/online-services/property-search/search-by-map",
+    countySurveyorRecordIndexUrl:
+      "https://sccplanning.maps.arcgis.com/apps/webappviewer/index.html?id=bc21a949580746968cb7139386996978",
+    recorderResearchUrl:
+      "https://clerkrecorder.santaclaracounty.gov/official-records/researching-real-estate-documents",
   },
 } as const;
 

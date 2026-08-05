@@ -91,14 +91,14 @@ function ParcelOutline({ geometry }: { geometry: unknown }) {
   if (geo.type === "Polygon" && Array.isArray(geo.coordinates)) {
     rings = geo.coordinates as number[][][];
   } else if (geo.type === "MultiPolygon" && Array.isArray(geo.coordinates)) {
-    rings = (geo.coordinates as number[][][][])[0] ?? [];
+    rings = (geo.coordinates as number[][][][]).flatMap((polygon) => polygon);
   }
 
-  const outer = rings[0];
-  if (!outer || outer.length < 3) return null;
+  rings = rings.filter((ring) => ring.length >= 3);
+  if (rings.length === 0) return null;
 
-  const lons = outer.map((c) => c[0]!).filter((n) => Number.isFinite(n));
-  const lats = outer.map((c) => c[1]!).filter((n) => Number.isFinite(n));
+  const lons = rings.flatMap((ring) => ring.map((c) => c[0]!)).filter((n) => Number.isFinite(n));
+  const lats = rings.flatMap((ring) => ring.map((c) => c[1]!)).filter((n) => Number.isFinite(n));
   if (!lons.length || !lats.length) return null;
 
   const minLon = Math.min(...lons);
@@ -110,25 +110,64 @@ function ParcelOutline({ geometry }: { geometry: unknown }) {
   const pad = 8;
   const vb = 200;
 
-  const points = outer
-    .map(([lon, lat]) => {
-      const x = pad + ((lon! - minLon) / width) * (vb - pad * 2);
-      const y = pad + ((maxLat - lat!) / height) * (vb - pad * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
   return (
     <svg viewBox={`0 0 ${vb} ${vb}`} className="h-40 w-full" role="img" aria-label="Parcel outline">
       <rect width={vb} height={vb} fill="#f4f6f8" />
-      <polygon
-        points={points}
-        fill="rgba(11, 37, 69, 0.12)"
-        stroke="#0b2545"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
+      {rings.map((ring, ringIndex) => {
+        const points = ring
+          .map(([lon, lat]) => {
+            const x = pad + ((lon! - minLon) / width) * (vb - pad * 2);
+            const y = pad + ((maxLat - lat!) / height) * (vb - pad * 2);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          })
+          .join(" ");
+        return (
+          <polygon
+            key={`${ringIndex}-${points.slice(0, 24)}`}
+            points={points}
+            fill="rgba(11, 37, 69, 0.12)"
+            stroke="#0b2545"
+            strokeWidth="2"
+            strokeLinejoin="round"
+          />
+        );
+      })}
     </svg>
+  );
+}
+
+function ParcelMapVisual({
+  report,
+  geometry,
+  googleImageryAvailable,
+}: {
+  report: FullReport;
+  geometry: unknown;
+  googleImageryAvailable: boolean;
+}) {
+  if (!googleImageryAvailable) {
+    return <ParcelOutline geometry={geometry} />;
+  }
+
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element -- authenticated proxy returns Google Static Maps bytes */}
+      <img
+        src={`/api/reports/${report.id}/imagery?view=parcel`}
+        alt={`Satellite parcel boundary for ${report.standardized_address ?? report.input_address}`}
+        className="h-64 w-full object-cover print:h-56"
+        loading="eager"
+        onError={(event) => {
+          const target = event.currentTarget;
+          target.style.display = "none";
+          const fallback = target.nextElementSibling;
+          if (fallback instanceof HTMLElement) fallback.hidden = false;
+        }}
+      />
+      <div hidden>
+        <ParcelOutline geometry={geometry} />
+      </div>
+    </>
   );
 }
 
@@ -145,6 +184,12 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
     `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
       report.standardized_address ?? report.input_address,
     )}`;
+  const parcelGeometry = report.parcelGeometry?.geometry_geojson ?? null;
+  const googleImageryAvailable =
+    parcelGeometry != null &&
+    report.latitude != null &&
+    report.longitude != null &&
+    maps?.satelliteImageAvailable !== false;
 
   const profileOpenLabel =
     report.property_profile_access_type === "direct_report"
@@ -157,9 +202,13 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
       <CardDescription>
         Parcel boundary and official record links for salesperson follow-up.
       </CardDescription>
-      <div className="mt-4 overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] sm:max-w-xl">
-        {report.parcelGeometry?.geometry_geojson ? (
-          <ParcelOutline geometry={report.parcelGeometry.geometry_geojson} />
+      <div className="mt-4 break-inside-avoid overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] sm:max-w-2xl">
+        {parcelGeometry ? (
+          <ParcelMapVisual
+            report={report}
+            geometry={parcelGeometry}
+            googleImageryAvailable={googleImageryAvailable}
+          />
         ) : (
           <div className="flex min-h-40 items-center justify-center px-4 text-center">
             <div>
@@ -173,8 +222,9 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
         )}
         {report.parcelGeometry ? (
           <p className="border-t border-[var(--acton-border)] px-3 py-2 text-xs text-[var(--acton-muted)]">
-            Parcel polygon · ~{formatNumber(report.parcelGeometry.calculated_area_sq_ft)} sq ft
-            calculated
+            {googleImageryAvailable ? "Parcel boundary over satellite imagery" : "Parcel outline"} ·
+            ~{formatNumber(report.parcelGeometry.calculated_area_sq_ft)} sq ft calculated · Verify
+            against recorded survey/title documents
           </p>
         ) : null}
       </div>

@@ -22,16 +22,22 @@ When ATTOM is absent (RentCast-only):
 - Research runs cleanly with RentCast + jurisdiction GIS.
 - Fields ATTOM alone claimed in the live pipeline (`foundation_type`, `tract_number`, `building_count`, `estimated_value`; APN still comes from county/city GIS when available) simply omit ATTOM claims — no blank/broken UI.
 - **Foundation type** moves to **Site inspection required** (RentCast has no equivalent).
-- Estimated value / building count omit from overview when unset; tract number is called out in the easements site-inspection checklist when not auto-filled.
+- Estimated value / building count omit from overview when unset. The easement checklist does not require tract number; it shows one only as a supplemental search key when available.
 
 When both keys are present, dual-source preference and conflict detection behave as before. Admin report diagnostics show an ATTOM vs RentCast comparison table for shared fields during the trial window.
 
 ## What is automated vs site inspection
 
 - **Foundation type** may appear in Property Overview when ATTOM returns an assessor-derived value (verify on site). When absent — including RentCast-only mode — it is listed under **Site inspection required**.
-- **Utilities** (electric panel capacity, meter locations, service laterals) and **easements / recorded tract maps** are intentionally listed under **Site inspection required** — not as missing data. Use the APN, tract/subdivision identifiers, and assessor / Property Profile links there to start recorder and title review.
+- **Utilities** (electric panel capacity, meter locations, service laterals) and **easements / recorded tract maps** are intentionally listed under **Site inspection required** — not as missing data. The easement workflow is APN-first and remains complete without ATTOM’s optional tract number: use the County Assessor / Property Explorer, County Surveyor recorded-map index, preliminary title report, and Clerk-Recorder research path. Subdivision and tract/map number are supplemental search keys only.
 
 Santa Clara County Property Profile access is currently a **generic search** into the public Property Explorer Experience unless a stable direct report endpoint is confirmed later.
+
+## Parcel boundary imagery
+
+Parcel geometry from the San Jose and Santa Clara County ArcGIS connectors is requested with `outSR=4326` and stored as WGS84 GeoJSON (`[longitude, latitude]`). The Parcel and public records card adds that boundary to Google satellite imagery through the authenticated imagery proxy and Google Static Maps encoded `path` parameters. The map derives its center/zoom from the full parcel bounds, draws every Polygon / MultiPolygon ring, and simplifies unusually detailed rings only when needed to stay below the Static Maps URL limit.
+
+The overlay is an orientation aid for seeing lot lines relative to structures, trees, access, and neighboring improvements. It is **not a survey or title determination**. When Google imagery is not configured or the image cannot load, the report keeps the standalone parcel-outline SVG fallback. The plain satellite image in Property imagery & maps remains unchanged.
 
 ## Flood, fire, and WUI hazards (automated)
 
