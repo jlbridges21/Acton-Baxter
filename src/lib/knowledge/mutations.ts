@@ -1,17 +1,18 @@
 import "server-only";
 
 import { assertCanManageKnowledge } from "./permissions";
+import type { KnowledgeEntryWriteInput, KnowledgeSourceWriteInput } from "./schemas";
+import type { KnowledgeDocKind, KnowledgeStatus } from "./types";
 import {
   createKnowledgeEntry,
   createKnowledgeSource,
   deleteKnowledgeEntry,
   deleteKnowledgeSource,
+  setKnowledgeEntryJurisdiction,
   setKnowledgeEntryStatus,
   updateKnowledgeEntry,
   updateKnowledgeSource,
 } from "./store";
-import type { KnowledgeEntryWriteInput, KnowledgeSourceWriteInput } from "./schemas";
-import type { KnowledgeStatus } from "./types";
 
 export async function adminCreateKnowledgeEntry(
   role: string,
@@ -45,6 +46,19 @@ export async function adminSetKnowledgeStatus(
 export async function adminDeleteKnowledgeEntry(role: string, id: string, userId?: string) {
   assertCanManageKnowledge(role);
   return deleteKnowledgeEntry(id, { userId });
+}
+
+export async function adminSetKnowledgeEntryJurisdiction(
+  role: string,
+  userId: string,
+  id: string,
+  input: {
+    jurisdiction_key: string | null;
+    doc_kind: KnowledgeDocKind | null;
+  },
+) {
+  assertCanManageKnowledge(role);
+  return setKnowledgeEntryJurisdiction(id, input, userId);
 }
 
 export async function adminCreateKnowledgeSource(

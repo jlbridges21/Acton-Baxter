@@ -214,6 +214,14 @@ export default async function BaxterSettingsPage() {
                   Baxter Governance
                 </Link>
               </li>
+              <li>
+                <Link
+                  href="/admin/jurisdictions"
+                  className="font-semibold text-[var(--acton-navy)] underline"
+                >
+                  Jurisdictions &amp; ADU Codes
+                </Link>
+              </li>
             </ul>
           </Card>
         </section>

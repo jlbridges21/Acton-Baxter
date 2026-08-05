@@ -28,6 +28,12 @@ export type KnowledgeVisibility = (typeof KNOWLEDGE_VISIBILITIES)[number];
 export type KnowledgeSourceType = (typeof KNOWLEDGE_SOURCE_TYPES)[number];
 export type KnowledgeSourceStatus = (typeof KNOWLEDGE_SOURCE_STATUSES)[number];
 
+export type KnowledgeDocKind =
+  | "building_code"
+  | "ordinance"
+  | "design_guideline"
+  | "other_code";
+
 export type KnowledgeEntry = {
   id: string;
   title: string;
@@ -41,6 +47,10 @@ export type KnowledgeEntry = {
   source_external_id: string | null;
   status: KnowledgeStatus;
   visibility: KnowledgeVisibility;
+  /** Connector-aligned jurisdiction (e.g. ca-san-jose). Null/undefined = unscoped. */
+  jurisdiction_key?: string | null;
+  /** Marks building-code / ordinance documents for ADU research. */
+  doc_kind?: KnowledgeDocKind | null;
   version: number;
   created_by: string | null;
   updated_by: string | null;
@@ -98,6 +108,13 @@ export type KnowledgeSearchInput = {
   categories?: string[];
   tags?: string[];
   visibility?: "internal";
+  /**
+   * When set, exclude building-code docs tagged to a *different* jurisdiction.
+   * Untagged entries and matching-jurisdiction docs remain eligible.
+   */
+  jurisdictionKey?: string | null;
+  /** Prefer / restrict to these doc_kind values when provided. */
+  docKinds?: KnowledgeDocKind[];
 };
 
 export type KnowledgeSearchResult = {

@@ -18,6 +18,7 @@ import {
   PenLine,
   Clock,
   Plus,
+  Landmark,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
@@ -37,6 +38,7 @@ export type KnowledgeCenterView =
   | "rulebook"
   | "monitoring"
   | "governance"
+  | "jurisdictions"
   | "new";
 
 export type KnowledgeCenterBasePath = "/admin/knowledge" | "/knowledge";
@@ -65,6 +67,7 @@ export const KNOWLEDGE_CENTER_ADMIN_ONLY_VIEWS: KnowledgeCenterView[] = [
   "rulebook",
   "monitoring",
   "governance",
+  "jurisdictions",
   "settings",
 ];
 
@@ -144,6 +147,13 @@ function buildNavAll(basePath: KnowledgeCenterBasePath): NavItem[] {
       adminOnly: true,
     },
     {
+      view: "jurisdictions",
+      label: "Jurisdictions & Codes",
+      href: "/admin/jurisdictions",
+      icon: Landmark,
+      adminOnly: true,
+    },
+    {
       view: "settings",
       label: "Knowledge Settings",
       href: "/admin/knowledge/settings",
@@ -212,6 +222,9 @@ export function KnowledgeCenterSidebar({
     }
     if (item.href.startsWith("/admin/baxter/governance")) {
       return pathname.startsWith("/admin/baxter/governance");
+    }
+    if (item.href.startsWith("/admin/jurisdictions")) {
+      return pathname.startsWith("/admin/jurisdictions");
     }
     const onList =
       pathname === basePath ||

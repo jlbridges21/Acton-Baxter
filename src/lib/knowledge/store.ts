@@ -112,6 +112,8 @@ export type ListKnowledgeOptions = {
   category?: string;
   source_type?: string;
   tag?: string;
+  jurisdiction_key?: string;
+  doc_kind?: string;
   sort?: "updated" | "created" | "title" | "category";
 };
 
@@ -132,6 +134,12 @@ export async function listKnowledgeEntries(
     if (options.tag) {
       const tag = options.tag.toLowerCase();
       rows = rows.filter((row) => row.tags.some((value) => value.toLowerCase() === tag));
+    }
+    if (options.jurisdiction_key) {
+      rows = rows.filter((row) => row.jurisdiction_key === options.jurisdiction_key);
+    }
+    if (options.doc_kind) {
+      rows = rows.filter((row) => row.doc_kind === options.doc_kind);
     }
     if (options.q?.trim()) {
       const q = options.q.trim().toLowerCase();
@@ -167,6 +175,8 @@ export async function listKnowledgeEntries(
     query = query.eq("source_type", options.source_type);
   }
   if (options.tag) query = query.contains("tags", [options.tag]);
+  if (options.jurisdiction_key) query = query.eq("jurisdiction_key", options.jurisdiction_key);
+  if (options.doc_kind) query = query.eq("doc_kind", options.doc_kind);
   if (options.sort === "title") query = query.order("title", { ascending: true });
   else if (options.sort === "category") query = query.order("category", { ascending: true });
   else if (options.sort === "created") query = query.order("created_at", { ascending: false });
@@ -254,6 +264,9 @@ export async function createKnowledgeEntry(
     source_external_id: null,
     status,
     visibility: input.visibility ?? "internal",
+    jurisdiction_key:
+      input.jurisdiction_key === undefined ? null : emptyToNull(input.jurisdiction_key),
+    doc_kind: input.doc_kind === undefined ? null : input.doc_kind,
     version: 1,
     created_by: userId,
     updated_by: userId,
@@ -311,6 +324,11 @@ export async function updateKnowledgeEntry(
     source_type: input.source_type ?? existing.source_type,
     source_url: emptyToNull(input.source_url ?? null),
     visibility: input.visibility ?? existing.visibility,
+    jurisdiction_key:
+      input.jurisdiction_key === undefined
+        ? existing.jurisdiction_key
+        : emptyToNull(input.jurisdiction_key),
+    doc_kind: input.doc_kind === undefined ? existing.doc_kind : input.doc_kind,
     status: nextStatus,
     version: existing.version + 1,
     updated_by: userId,
@@ -349,12 +367,58 @@ export async function updateKnowledgeEntry(
       source_type: updated.source_type,
       source_url: updated.source_url,
       visibility: updated.visibility,
+      jurisdiction_key: updated.jurisdiction_key,
+      doc_kind: updated.doc_kind,
       status: updated.status,
       version: updated.version,
       updated_by: updated.updated_by,
       approved_by: updated.approved_by,
       approved_at: updated.approved_at,
       archived_at: updated.archived_at,
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as KnowledgeEntry;
+}
+
+/**
+ * Associate (or clear) jurisdiction metadata without treating it as a content
+ * revision — approved entries stay approved.
+ */
+export async function setKnowledgeEntryJurisdiction(
+  id: string,
+  input: {
+    jurisdiction_key: string | null;
+    doc_kind: KnowledgeEntry["doc_kind"];
+  },
+  userId: string,
+): Promise<KnowledgeEntry> {
+  const existing = await getKnowledgeEntry(id);
+  if (!existing) throw new ValidationError("Knowledge entry not found");
+
+  const updated: KnowledgeEntry = {
+    ...existing,
+    jurisdiction_key: emptyToNull(input.jurisdiction_key),
+    doc_kind: input.doc_kind,
+    updated_by: userId,
+    updated_at: nowIso(),
+  };
+
+  if (shouldUseMemoryStore()) {
+    getMemory().entries.set(id, updated);
+    return updated;
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("knowledge_entries")
+    .update({
+      jurisdiction_key: updated.jurisdiction_key,
+      doc_kind: updated.doc_kind,
+      updated_by: updated.updated_by,
+      updated_at: updated.updated_at,
     })
     .eq("id", id)
     .select("*")

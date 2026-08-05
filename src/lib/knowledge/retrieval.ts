@@ -301,6 +301,20 @@ export function filterAndRankApprovedKnowledge(
       const have = entry.tags.map((tag) => tag.toLowerCase());
       if (!wanted.some((tag) => have.includes(tag))) return false;
     }
+    if (input.docKinds?.length) {
+      if (!entry.doc_kind || !input.docKinds.includes(entry.doc_kind)) return false;
+    }
+    // Jurisdiction filter: never surface another city's building-code docs.
+    // Untagged entries stay eligible for general Acton process knowledge.
+    if (input.jurisdictionKey) {
+      if (
+        entry.jurisdiction_key &&
+        entry.jurisdiction_key !== input.jurisdictionKey &&
+        entry.doc_kind
+      ) {
+        return false;
+      }
+    }
     return true;
   });
 

@@ -50,3 +50,7 @@ Parcel FeatureServer queries explicitly request `outSR=4326`; the ArcGIS polygon
 ## Recorded easement workflow
 
 Easements are not inferred from parcel GIS. `buildSiteInspectionItems()` provides an APN-first manual workflow through the Santa Clara County Assessor / Property Explorer, County Surveyor recorded-map index, preliminary title report, and Clerk-Recorder official-record research. RentCast subdivision and any available tract/map number are optional search aids, not dependencies.
+
+## Jurisdiction building codes & ADU rules
+
+Knowledge entries may carry a connector-aligned `jurisdiction_key` and `doc_kind` (building_code / ordinance / …). Structured, citation-required values live in `jurisdiction_rules` (admin CRUD at `/admin/jurisdictions`). Completed reports render **ADU code highlights** from those tables using the same jurisdiction resolution as live research (`selectJurisdictionConnector` / `resolveJurisdictionKeyFromReport`). This is preparation material, not a code determination.

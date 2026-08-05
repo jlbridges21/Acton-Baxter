@@ -63,6 +63,13 @@ export async function POST(request: Request) {
           titles: formString,
           allowEmpty: formString,
           allowDuplicate: formString,
+          jurisdiction_key: formString,
+          doc_kind: z.preprocess(
+            (value) => (value == null || value === "" ? undefined : String(value)),
+            z
+              .enum(["building_code", "ordinance", "design_guideline", "other_code"])
+              .optional(),
+          ),
         })
         .parse({
           status: form.get("status"),
@@ -71,6 +78,8 @@ export async function POST(request: Request) {
           titles: form.get("titles"),
           allowEmpty: form.get("allowEmpty"),
           allowDuplicate: form.get("allowDuplicate"),
+          jurisdiction_key: form.get("jurisdiction_key"),
+          doc_kind: form.get("doc_kind"),
         });
 
       const titles = parsed.titles ? (JSON.parse(parsed.titles) as Record<string, string>) : {};
@@ -93,6 +102,8 @@ export async function POST(request: Request) {
           status: parsed.status,
           category: parsed.category ?? "General",
           tags,
+          jurisdiction_key: parsed.jurisdiction_key ?? null,
+          doc_kind: parsed.doc_kind ?? null,
           allowEmpty: parsed.allowEmpty === "true",
           allowDuplicate: parsed.allowDuplicate === "true",
         });

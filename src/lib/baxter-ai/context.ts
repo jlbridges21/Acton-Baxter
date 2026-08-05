@@ -19,6 +19,11 @@ import {
   listAllEmbeddableUnits,
   listAllSpreadsheetRowUnits,
 } from "@/lib/knowledge-index/units-store";
+import {
+  buildJurisdictionRuleContextItems,
+  looksLikeBuildingCodeQuestion,
+  resolveChatJurisdictionKey,
+} from "@/lib/jurisdictions";
 import type { KnowledgeQueryPlan, KnowledgeUnitRecord } from "@/lib/knowledge-index/types";
 
 export const BAXTER_CONTEXT_LIMIT = 6;
@@ -105,8 +110,9 @@ export function dedupeSearchResults(results: KnowledgeSearchResult[]): Knowledge
 export async function retrieveBaxterContext(
   question: string,
   history?: BaxterHistoryMessage[],
+  options?: { jurisdictionKey?: string | null },
 ): Promise<BaxterContextItem[]> {
-  const bundle = await retrieveBaxterEvidence(question, history);
+  const bundle = await retrieveBaxterEvidence(question, history, options);
   return bundle.contextItems;
 }
 
@@ -114,10 +120,14 @@ export async function retrieveBaxterContext(
  * Hybrid retrieval orchestrator:
  * structured → lexical → semantic → document keyword, then rank/dedupe.
  * Exact deterministic facts always outrank vector similarity.
+ *
+ * Building-code questions filter out other jurisdictions' code docs and inject
+ * citation-required structured rules when a jurisdiction can be resolved.
  */
 export async function retrieveBaxterEvidence(
   question: string,
   history?: BaxterHistoryMessage[],
+  options?: { jurisdictionKey?: string | null },
 ): Promise<BaxterRetrievalBundle> {
   const retrieval = history?.length
     ? buildRetrievalQuery(question, history)
@@ -141,6 +151,9 @@ export async function retrieveBaxterEvidence(
     }
   }
 
+  const codeQuestion = looksLikeBuildingCodeQuestion(question);
+  const jurisdictionKey = resolveChatJurisdictionKey(question, options);
+
   let structured: StructuredSearchResult | null = null;
   let structuredItems: BaxterContextItem[] = [];
   let evidencePackage: string | null = null;
@@ -163,11 +176,21 @@ export async function retrieveBaxterEvidence(
     query,
     limit: BAXTER_CONTEXT_LIMIT + 6,
     visibility: "internal",
+    jurisdictionKey: codeQuestion || options?.jurisdictionKey ? jurisdictionKey : null,
   });
   const approvedEntryIds = new Set(docResults.map((r) => r.id));
   // Also include structured entry ids
   for (const hit of structured?.lookups ?? []) approvedEntryIds.add(hit.knowledgeEntryId);
   for (const hit of structured?.aggregates ?? []) approvedEntryIds.add(hit.knowledgeEntryId);
+
+  const ruleItems =
+    codeQuestion && jurisdictionKey
+      ? await buildJurisdictionRuleContextItems({
+          question,
+          jurisdictionKey,
+          startNumber: 1,
+        }).catch(() => [] as BaxterContextItem[])
+      : [];
 
   const [embeddableUnits, rowUnits] = await Promise.all([
     listAllEmbeddableUnits().catch(() => [] as KnowledgeUnitRecord[]),
@@ -220,9 +243,22 @@ export async function retrieveBaxterEvidence(
 
   const conflicts = detectHighConfidenceConflicts(structured);
 
-  // Build context items: structured first, then ranked non-duplicates
-  const seen = new Set(structuredItems.map((i) => i.id));
-  const merged: BaxterContextItem[] = [...structuredItems];
+  // Build context items: jurisdiction rules (code Qs) → structured → ranked
+  const seen = new Set<string>();
+  const merged: BaxterContextItem[] = [];
+
+  for (const item of ruleItems) {
+    if (merged.length >= BAXTER_CONTEXT_LIMIT) break;
+    merged.push({ ...item, number: merged.length + 1 });
+    seen.add(item.id);
+  }
+
+  for (const item of structuredItems) {
+    if (merged.length >= BAXTER_CONTEXT_LIMIT) break;
+    if (seen.has(item.id)) continue;
+    merged.push({ ...item, number: merged.length + 1 });
+    seen.add(item.id);
+  }
 
   for (const candidate of ranked) {
     if (merged.length >= BAXTER_CONTEXT_LIMIT) break;

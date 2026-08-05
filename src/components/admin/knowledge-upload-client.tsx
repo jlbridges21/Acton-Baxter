@@ -2,12 +2,13 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
 import { KNOWLEDGE_CATEGORIES } from "@/lib/knowledge/categories";
+import { SUPPORTED_JURISDICTIONS, type KnowledgeDocKind } from "@/lib/jurisdictions";
 
 type PreviewRow = {
   filename: string;
@@ -84,12 +85,17 @@ function previewHeadline(preview: PreviewRow): {
 
 export function KnowledgeUploadClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialJurisdiction = searchParams.get("jurisdiction") ?? "";
+  const initialDocKind = (searchParams.get("doc_kind") as KnowledgeDocKind | null) ?? "";
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<PreviewRow[]>([]);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<"draft" | "approved">("draft");
   const [category, setCategory] = useState("General");
   const [tags, setTags] = useState("uploaded");
+  const [jurisdictionKey, setJurisdictionKey] = useState(initialJurisdiction);
+  const [docKind, setDocKind] = useState<KnowledgeDocKind | "">(initialDocKind);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -178,6 +184,8 @@ export function KnowledgeUploadClient() {
       form.set("status", status);
       form.set("category", category);
       form.set("tags", tags);
+      if (jurisdictionKey) form.set("jurisdiction_key", jurisdictionKey);
+      if (docKind) form.set("doc_kind", docKind);
       form.set("titles", JSON.stringify(titles));
       const hasEmpty = previews.some(
         (row) => row.extractionStatus === "empty" || row.characterCount === 0,
@@ -339,6 +347,43 @@ export function KnowledgeUploadClient() {
                   value={tags}
                   onChange={(event) => setTags(event.target.value)}
                 />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold" htmlFor="importJurisdiction">
+                  Jurisdiction (optional)
+                </label>
+                <select
+                  id="importJurisdiction"
+                  className="h-10 w-full rounded-md border border-[var(--acton-border)] px-3 text-sm"
+                  value={jurisdictionKey}
+                  onChange={(event) => setJurisdictionKey(event.target.value)}
+                >
+                  <option value="">None (Acton process knowledge)</option>
+                  {SUPPORTED_JURISDICTIONS.map((jurisdiction) => (
+                    <option key={jurisdiction.key} value={jurisdiction.key}>
+                      {jurisdiction.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold" htmlFor="importDocKind">
+                  Document kind (optional)
+                </label>
+                <select
+                  id="importDocKind"
+                  className="h-10 w-full rounded-md border border-[var(--acton-border)] px-3 text-sm"
+                  value={docKind}
+                  onChange={(event) =>
+                    setDocKind(event.target.value as KnowledgeDocKind | "")
+                  }
+                >
+                  <option value="">None</option>
+                  <option value="building_code">Building code</option>
+                  <option value="ordinance">Ordinance</option>
+                  <option value="design_guideline">Design guideline</option>
+                  <option value="other_code">Other code document</option>
+                </select>
               </div>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">

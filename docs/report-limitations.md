@@ -51,6 +51,10 @@ These fields are filled from public ArcGIS point-in-polygon queries against the 
 
 Official `Environment/WUI/MapServer` and egis FRAP WUI Feature/ImageServers are currently unavailable for anonymous query (404 / token-required); the live pipeline uses a publicly queryable statewide WUI25 republish with the same attribute schema.
 
+## ADU code highlights (configured, not determined)
+
+The **ADU code highlights** section shows admin-configured structured rules and associated Knowledge code documents for the report’s resolved jurisdiction. It is preparation material only — **not** a code determination, zoning determination, or feasibility conclusion. When nothing is configured, the section still renders with an honest empty state pointing admins to `/admin/jurisdictions`.
+
 ## Research reliability (web + Slack)
 
 Web-triggered research (`/api/reports/[id]/run`, refresh, and retry) enqueues the same durable `property_research` job type Slack `/property` uses, then processes it via `after()` with queue claim/complete bookkeeping. Cron reclaim is the crash-recovery backup — a mid-run deploy or platform kill no longer leaves a report stuck in “researching” without a recoverable job.

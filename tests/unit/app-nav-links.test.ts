@@ -79,6 +79,7 @@ describe("getAdminNavSections", () => {
     expect(sections.find((s) => s.id === "tools")?.links.map((l) => l.label)).toEqual([
       "Dashboard",
       "Knowledge Center",
+      "Jurisdictions & Codes",
       "PEM NEAT",
       "New Project Setup",
       "Property Research",

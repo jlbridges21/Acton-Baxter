@@ -51,6 +51,24 @@ const optionalChangeNote = z.preprocess(
   z.string().trim().max(1000).optional(),
 );
 
+const knowledgeDocKindSchema = z.enum([
+  "building_code",
+  "ordinance",
+  "design_guideline",
+  "other_code",
+]);
+
+const optionalJurisdictionKey = z.preprocess(
+  (value) => (value == null || value === "" ? null : value),
+  z
+    .string()
+    .trim()
+    .max(80)
+    .regex(/^[a-z][a-z0-9-]*$/, "Invalid jurisdiction_key")
+    .nullable()
+    .optional(),
+);
+
 export const knowledgeEntryWriteSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(300),
   content: z.string().trim().min(1, "Content is required").max(100_000),
@@ -63,6 +81,8 @@ export const knowledgeEntryWriteSchema = z.object({
   visibility: knowledgeVisibilitySchema.optional().default("internal"),
   status: knowledgeStatusSchema.optional(),
   change_note: optionalChangeNote.nullable().optional(),
+  jurisdiction_key: optionalJurisdictionKey,
+  doc_kind: knowledgeDocKindSchema.nullable().optional(),
 });
 
 export const knowledgeSourceWriteSchema = z.object({

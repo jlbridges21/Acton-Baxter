@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createKnowledgeEntry, listAllKnowledgeEntriesForRetrieval } from "@/lib/knowledge/store";
+import type { KnowledgeDocKind } from "@/lib/knowledge/types";
 import { KnowledgeError, KNOWLEDGE_ERROR_CODES } from "@/lib/knowledge/errors";
 import { parseKnowledgeUpload } from "./parser";
 import { findUploadByContentHash, linkUploadToEntry, storeKnowledgeUploadFile } from "./storage";
@@ -50,6 +51,8 @@ export async function importKnowledgeUpload(input: {
   status: "draft" | "approved";
   category?: string | null;
   tags?: string[];
+  jurisdiction_key?: string | null;
+  doc_kind?: KnowledgeDocKind | null;
   allowEmpty?: boolean;
   allowDuplicate?: boolean;
 }): Promise<{ entryId: string; uploadId: string; warnings: string[] }> {
@@ -129,6 +132,8 @@ export async function importKnowledgeUpload(input: {
       source_url: null,
       visibility: "internal",
       status: input.status,
+      jurisdiction_key: input.jurisdiction_key ?? null,
+      doc_kind: input.doc_kind ?? null,
     },
     input.userId,
   );

@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Cloud,
   FolderKanban,
+  Landmark,
   LayoutDashboard,
   MessageSquare,
   MessageCircle,
@@ -46,6 +47,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Knowledge Center",
       icon: BookOpen,
       match: (pathname) => pathname.startsWith("/admin/knowledge") || pathname === "/knowledge",
+    },
+    {
+      href: "/admin/jurisdictions",
+      label: "Jurisdictions & Codes",
+      icon: Landmark,
+      match: (pathname) => pathname.startsWith("/admin/jurisdictions"),
     },
     {
       href: "/pem-neats",

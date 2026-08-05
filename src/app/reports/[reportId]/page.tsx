@@ -6,6 +6,10 @@ import { isAdminRole } from "@/lib/auth/roles";
 import { getBrandingWithLogo } from "@/lib/branding/get-branding";
 import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
+import {
+  buildAduCodeHighlights,
+  resolveJurisdictionKeyFromReport,
+} from "@/lib/jurisdictions";
 
 type PageProps = {
   params: Promise<{ reportId: string }>;
@@ -26,11 +30,18 @@ export default async function ReportPage({ params }: PageProps) {
   const isAdmin = isAdminRole(user.profile.role);
   const showDiagnostics = isAdmin && process.env.NODE_ENV !== "production";
   const branding = await getBrandingWithLogo();
+  const zoning =
+    report.facts.find((fact) => fact.field_key === "zoning")?.normalized_value_text ?? null;
+  const codeHighlights = await buildAduCodeHighlights({
+    jurisdictionKey: resolveJurisdictionKeyFromReport(report),
+    zoning,
+  });
 
   return (
     <AppShell user={user}>
       <ReportDocument
         report={report}
+        codeHighlights={codeHighlights}
         isAdmin={isAdmin}
         showDiagnostics={showDiagnostics}
         logoUrl={branding.logoUrl}
