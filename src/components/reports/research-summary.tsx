@@ -1,12 +1,21 @@
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ReportNotice, ReportSection } from "./report-section";
 
 export function ResearchSummary({ summary }: { summary: string | null }) {
   return (
-    <Card>
-      <CardTitle>Research summary</CardTitle>
-      <CardDescription className="mt-3 text-[15px] leading-relaxed text-[var(--acton-navy)]">
-        {summary ?? "Summary not available."}
-      </CardDescription>
-    </Card>
+    <ReportSection
+      id="research-summary"
+      title="Research summary"
+      description="Plain-language orientation to this property before you read the detail sections."
+      sourceNote="Written from the sources listed under Sources — not a feasibility conclusion."
+    >
+      {summary ? (
+        <p className="text-[15px] leading-relaxed text-[var(--acton-navy)]">{summary}</p>
+      ) : (
+        <ReportNotice>
+          No research summary was generated for this report. The individual sections below still
+          carry every value that was retrieved.
+        </ReportNotice>
+      )}
+    </ReportSection>
   );
 }

@@ -177,7 +177,7 @@ export function DashboardClient({
             </Link>
           </div>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 hidden overflow-x-auto md:block">
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-[var(--acton-border)] text-xs tracking-wide text-[var(--acton-muted)] uppercase">
                 <tr>
@@ -230,6 +230,41 @@ export function DashboardClient({
             </table>
           </div>
         )}
+
+        {filtered.length > 0 ? (
+          <ul className="mt-4 space-y-2 md:hidden">
+            {filtered.slice(0, 8).map((report) => (
+              <li
+                key={`card-${report.id}`}
+                className="rounded-md border border-[var(--acton-border)] px-3 py-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <Link
+                    href={reportHref(report)}
+                    className="text-sm font-semibold text-[var(--acton-navy)] underline"
+                  >
+                    {report.standardized_address ?? report.input_address}
+                  </Link>
+                  <Badge tone={statusTone(report.status)}>{report.status}</Badge>
+                </div>
+                <p className="mt-1.5 text-xs text-[var(--acton-muted)]">
+                  {report.jurisdiction_name ?? "Jurisdiction unknown"} · APN {report.apn ?? "—"} ·{" "}
+                  {formatDate(report.created_at)}
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => void copyReportLink(report)}
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  {copiedId === report.id ? "Copied" : "Copy link"}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </Card>
     </div>
   );

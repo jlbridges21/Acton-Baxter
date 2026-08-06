@@ -1,8 +1,7 @@
-"use client";
-
-import { useState } from "react";
-import { Link2 } from "lucide-react";
 import { ReportHeader } from "./report-header";
+import { ReportToolbar } from "./report-toolbar";
+import { ReportSummaryChips } from "./report-summary-chips";
+import { ReportSectionNav } from "./report-section-nav";
 import { ResearchSummary } from "./research-summary";
 import { PropertyImagerySection } from "./property-imagery";
 import { PropertyOverview } from "./property-overview";
@@ -15,12 +14,10 @@ import { SiteInspectionRequired } from "./site-inspection-required";
 import { ImportantInconsistencies } from "./important-inconsistencies";
 import { PemPreparationSection } from "./pem-preparation";
 import { SourcesSection } from "./sources-section";
-import { DownloadPdfButton } from "./download-pdf-button";
 import { ReportDiagnostics } from "./report-diagnostics";
-import { RefreshResearchButton } from "./refresh-research-button";
-import { Button } from "@/components/ui/button";
 import type { FullReport } from "@/lib/research/db-types";
 import { buildSiteInspectionItems } from "@/lib/research/site-inspection";
+import { buildReportNavItems, buildReportSummaryChips } from "@/lib/research/report-view-model";
 import type { AduCodeHighlights } from "@/lib/jurisdictions";
 import type { SprinklerIndicator } from "@/lib/research/fire-access";
 import type { BuildableEnvelopeResult } from "@/lib/research/buildable-envelope";
@@ -55,7 +52,6 @@ export function ReportDocument({
   reportTitle?: string;
   logoAlt?: string;
 }) {
-  const [copied, setCopied] = useState(false);
   const overlaysFact = report.facts.find((fact) => fact.field_key === "general_plan");
   const overlays =
     report.jurisdiction_name?.toLowerCase().includes("san jose") && overlaysFact ? [] : [];
@@ -64,59 +60,53 @@ export function ReportDocument({
     .filter((obs) => obs.observation_type === "overlay")
     .map((obs) => obs.title.replace(/^Overlay:\s*/i, ""));
 
-  async function copyReportLink() {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  }
+  const siteInspectionItems = buildSiteInspectionItems(report);
+  const chips = buildReportSummaryChips({ report, buildable, hydrant: fireAccess.hydrant });
+
+  // Sections that render nothing must not appear in the nav.
+  const navItems = buildReportNavItems({
+    observations: report.siteObservations.length > 0,
+    "site-inspection": siteInspectionItems.length > 0,
+    "pem-preparation": report.pemPreparation != null,
+    diagnostics: showDiagnostics && isAdmin,
+  });
 
   return (
-    <article className="report-document space-y-5 rounded-xl border border-[var(--acton-border)] bg-white p-5 shadow-sm sm:p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <p className="text-sm text-[var(--acton-muted)]">
-          Print-friendly report · target length under six pages
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" onClick={() => void copyReportLink()}>
-            <Link2 className="h-4 w-4" />
-            {copied ? "Link copied" : "Copy report link"}
-          </Button>
-          <RefreshResearchButton reportId={report.id} />
-          <DownloadPdfButton />
-        </div>
-      </div>
+    <div className="lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:items-start lg:gap-6 print:block">
+      <ReportSectionNav sections={navItems} />
 
-      <ReportHeader
-        report={report}
-        logoUrl={logoUrl}
-        companyName={companyName}
-        reportTitle={reportTitle}
-        logoAlt={logoAlt}
-      />
-      <ResearchSummary summary={report.summary} />
-      <PropertyImagerySection report={report} />
-      <PropertyOverview facts={report.facts} claims={report.claims} />
-      <ParcelAndPublicRecords report={report} buildable={buildable} />
-      <PlanningAndHazards
-        facts={report.facts}
-        overlays={overlayNames.length > 0 ? overlayNames : overlays}
-      />
-      <FireAccessSection hydrant={fireAccess.hydrant} sprinkler={fireAccess.sprinkler} />
-      <AduCodeHighlightsSection highlights={codeHighlights} buildable={buildable} />
-      <SiteInspectionRequired items={buildSiteInspectionItems(report)} />
-      <SiteObservations observations={report.siteObservations} />
-      <ImportantInconsistencies conflicts={report.conflicts} />
-      <PemPreparationSection pem={report.pemPreparation} />
-      <SourcesSection sources={report.sources} />
-      {showDiagnostics && isAdmin ? <ReportDiagnostics report={report} /> : null}
+      <article className="report-document space-y-5 rounded-xl border border-[var(--acton-border)] bg-white p-4 shadow-sm sm:p-6 lg:p-8">
+        <ReportToolbar reportId={report.id} />
 
-      <footer className="border-t border-[var(--acton-border)] pt-4 text-xs text-[var(--acton-muted)]">
-        <p>{DISCLAIMER}</p>
-      </footer>
-    </article>
+        <ReportHeader
+          report={report}
+          logoUrl={logoUrl}
+          companyName={companyName}
+          reportTitle={reportTitle}
+          logoAlt={logoAlt}
+        />
+        <ReportSummaryChips chips={chips} />
+        <ResearchSummary summary={report.summary} />
+        <PropertyImagerySection report={report} />
+        <PropertyOverview facts={report.facts} claims={report.claims} />
+        <ParcelAndPublicRecords report={report} buildable={buildable} />
+        <PlanningAndHazards
+          facts={report.facts}
+          overlays={overlayNames.length > 0 ? overlayNames : overlays}
+        />
+        <FireAccessSection hydrant={fireAccess.hydrant} sprinkler={fireAccess.sprinkler} />
+        <AduCodeHighlightsSection highlights={codeHighlights} buildable={buildable} />
+        <SiteInspectionRequired items={siteInspectionItems} />
+        <SiteObservations observations={report.siteObservations} />
+        <ImportantInconsistencies conflicts={report.conflicts} />
+        <PemPreparationSection pem={report.pemPreparation} />
+        <SourcesSection sources={report.sources} />
+        {showDiagnostics && isAdmin ? <ReportDiagnostics report={report} /> : null}
+
+        <footer className="border-t border-[var(--acton-border)] pt-4 text-xs text-[var(--acton-muted)]">
+          <p>{DISCLAIMER}</p>
+        </footer>
+      </article>
+    </div>
   );
 }

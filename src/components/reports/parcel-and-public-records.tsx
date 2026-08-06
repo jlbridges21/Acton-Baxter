@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, Copy, ExternalLink, Map } from "lucide-react";
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ReportSection } from "./report-section";
 import type { FullReport } from "@/lib/research/db-types";
 import type { NormalizedMaps } from "@/lib/research/schemas";
 import { formatNumber } from "@/lib/utils";
@@ -201,7 +201,7 @@ function ParcelMapVisual({
       <img
         src={`/api/reports/${report.id}/imagery?view=parcel`}
         alt={`Satellite parcel boundary for ${report.standardized_address ?? report.input_address}`}
-        className="h-64 w-full object-cover print:h-56"
+        className="aspect-[8/5] w-full object-cover sm:aspect-auto sm:h-64 print:aspect-auto print:h-48"
         loading="eager"
         onError={(event) => {
           const target = event.currentTarget;
@@ -265,12 +265,17 @@ export function ParcelAndPublicRecords({
       : "Search County Property Profile";
 
   return (
-    <Card>
-      <CardTitle>Parcel and public records</CardTitle>
-      <CardDescription>
-        Parcel boundary and official record links for salesperson follow-up.
-      </CardDescription>
-      <div className="mt-4 break-inside-avoid overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] sm:max-w-2xl">
+    <ReportSection
+      id="parcel"
+      title="Parcel & lot lines"
+      description="Where the lot lines run, roughly where an ADU could sit inside the setbacks, and the official records to pull next."
+      sourceNote={
+        report.parcelGeometry?.source_name
+          ? `Source: ${report.parcelGeometry.source_name} parcel geometry over Google satellite imagery. Not a survey — verify against recorded documents.`
+          : "Source: county/city parcel GIS where available. Not a survey — verify against recorded documents."
+      }
+    >
+      <div className="break-inside-avoid overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] sm:max-w-2xl">
         {parcelGeometry ? (
           <ParcelMapVisual
             report={report}
@@ -280,13 +285,13 @@ export function ParcelAndPublicRecords({
             envelopeOnStaticMap={envelopeOnStaticMap}
           />
         ) : (
-          <div className="flex min-h-40 items-center justify-center px-4 text-center">
-            <div>
-              <Map className="mx-auto h-8 w-8 text-[var(--acton-navy)]" />
-              <p className="mt-2 text-sm font-semibold text-[var(--acton-navy)]">
-                Parcel map preview
+          <div className="flex min-h-40 items-center justify-center px-4 py-6 text-center">
+            <div className="text-sm text-[var(--acton-muted)]">
+              <Map className="mx-auto h-6 w-6" aria-hidden />
+              <p className="mt-2">
+                No parcel geometry is published for this address, so lot lines could not be drawn.
+                Use the assessor links below.
               </p>
-              <p className="mt-1 text-xs text-[var(--acton-muted)]">Parcel geometry unavailable</p>
             </div>
           </div>
         )}
@@ -313,7 +318,13 @@ export function ParcelAndPublicRecords({
         ) : null}
       </div>
       <div className="mt-4 max-w-2xl">
-        {report.apn ? <CopyableApn apn={report.apn} /> : null}
+        {report.apn ? (
+          <CopyableApn apn={report.apn} />
+        ) : (
+          <div className="border-t border-[var(--acton-border)] py-3 text-sm text-[var(--acton-muted)]">
+            No APN was returned for this address — search the assessor by address instead.
+          </div>
+        )}
         <LinkRow label="Google Maps" href={googleMapsUrl} />
         <LinkRow label="Tract / assessor search" href={tractUrl} />
         <LinkRow label="Permit search" href={permitUrl} />
@@ -325,6 +336,6 @@ export function ParcelAndPublicRecords({
           </p>
         ) : null}
       </div>
-    </Card>
+    </ReportSection>
   );
 }

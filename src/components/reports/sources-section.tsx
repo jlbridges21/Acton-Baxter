@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, ExternalLink } from "lucide-react";
-import { Card, CardTitle } from "@/components/ui/card";
+import { ReportNotice, ReportSection } from "./report-section";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatDate } from "@/lib/utils";
 import type { ReportSourceRow } from "@/lib/research/db-types";
@@ -44,31 +44,34 @@ export function SourcesSection({ sources }: { sources: ReportSourceRow[] }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <Card>
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 text-left print:hidden"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        <CardTitle>Sources</CardTitle>
-        <span className="inline-flex items-center gap-1 text-sm font-medium text-[var(--acton-muted)]">
+    <ReportSection
+      id="sources"
+      title="Sources"
+      description="Every source this report consulted, when it answered, and whether it needs a manual check."
+      actions={
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-sm font-medium text-[var(--acton-muted)] hover:text-[var(--acton-navy)]"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          aria-controls="sources-list"
+        >
           {expanded ? "Hide" : "Show"} ({sources.length})
           <ChevronDown
             className={cn("h-4 w-4 transition-transform", expanded ? "rotate-180" : "rotate-0")}
           />
-        </span>
-      </button>
-      <div className="hidden print:block">
-        <CardTitle>Sources</CardTitle>
-      </div>
-
-      <div className={cn("mt-4", expanded ? "block" : "hidden", "print:block")}>
-        <div className="grid gap-3 sm:grid-cols-2">
+        </button>
+      }
+    >
+      <div id="sources-list" className={cn(expanded ? "block" : "hidden", "print:block")}>
+        {sources.length === 0 ? (
+          <ReportNotice>No sources were recorded for this report.</ReportNotice>
+        ) : null}
+        <div className="grid gap-3 sm:grid-cols-2 print:grid-cols-3 print:gap-2">
           {sources.map((source) => (
             <div
               key={source.id}
-              className="rounded-md border border-[var(--acton-border)] p-4 print:break-inside-avoid"
+              className="rounded-md border border-[var(--acton-border)] p-4 print:break-inside-avoid print:p-2"
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-semibold text-[var(--acton-navy)]">
@@ -113,6 +116,6 @@ export function SourcesSection({ sources }: { sources: ReportSourceRow[] }) {
           ))}
         </div>
       </div>
-    </Card>
+    </ReportSection>
   );
 }

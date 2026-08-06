@@ -38,6 +38,15 @@ body {
 }
 
 @media print {
+  /*
+   * The report targets under six printed pages. Everything below is print-only
+   * density work — the on-screen layout is unaffected.
+   */
+  html {
+    /* Scales every rem-based size in one place. */
+    font-size: 13px;
+  }
+
   body {
     background: white !important;
   }
@@ -55,14 +64,36 @@ body {
     padding: 0 !important;
   }
 
+  /* Tighter stack than the screen's space-y-5. */
+  .report-document > * + * {
+    margin-top: 0.6rem !important;
+  }
+
+  /* Section cards */
+  .report-document > [data-report-section] {
+    padding: 0.7rem 0 !important;
+    border-width: 0 0 1px 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    /*
+     * Long sections must be allowed to flow across a page boundary — forcing
+     * them to stay whole leaves half-empty pages and blows the page budget.
+     */
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  /* Keep a section (or sub-block) title with the content it introduces. */
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
   .print\:break-inside-avoid {
     break-inside: avoid;
     page-break-inside: avoid;
-  }
-
-  .print\:break-before-page {
-    break-before: page;
-    page-break-before: always;
   }
 
   a[href]::after {

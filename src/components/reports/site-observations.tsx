@@ -1,4 +1,4 @@
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ReportNotice, ReportSection } from "./report-section";
 import { Badge } from "@/components/ui/badge";
 import type { SiteObservationRow } from "@/lib/research/db-types";
 
@@ -6,12 +6,16 @@ export function SiteObservations({ observations }: { observations: SiteObservati
   if (observations.length === 0) return null;
 
   return (
-    <Card>
-      <CardTitle>Preliminary site observations</CardTitle>
-      <CardDescription className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-950">
-        Preliminary observations based on public records, maps, and imagery. These are not verified
-        measurements or a feasibility determination.
-      </CardDescription>
+    <ReportSection
+      id="observations"
+      title="Site observations"
+      description="What the imagery and public records suggest about the site, with a confidence label on each."
+      sourceNote="Source: public records, GIS overlays, and aerial imagery."
+    >
+      <ReportNotice variant="manual-review">
+        Preliminary observations only — not verified measurements and not a feasibility
+        determination.
+      </ReportNotice>
       <ul className="mt-4 space-y-3">
         {observations.map((observation) => (
           <li
@@ -26,6 +30,6 @@ export function SiteObservations({ observations }: { observations: SiteObservati
           </li>
         ))}
       </ul>
-    </Card>
+    </ReportSection>
   );
 }

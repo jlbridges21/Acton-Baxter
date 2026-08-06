@@ -118,10 +118,10 @@ function NewReportFormInner() {
 
   return (
     <Card className="mx-auto max-w-2xl">
-      <CardTitle>New property research</CardTitle>
+      <CardTitle>Property address</CardTitle>
       <CardDescription className="mt-2">
-        Enter a property address to research public property, parcel, zoning, and planning
-        information.
+        The report comes back organized for PEM prep: imagery, property overview, parcel &amp; lot
+        lines, planning &amp; hazards, fire access, ADU code highlights, and your on-site checklist.
       </CardDescription>
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div>
@@ -246,7 +246,7 @@ export function NewReportForm() {
     <Suspense
       fallback={
         <Card className="mx-auto max-w-2xl">
-          <CardTitle>New property research</CardTitle>
+          <CardTitle>Property address</CardTitle>
           <CardDescription className="mt-2">Loading address form...</CardDescription>
         </Card>
       }

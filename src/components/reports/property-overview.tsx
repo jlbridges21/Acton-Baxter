@@ -1,10 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardTitle } from "@/components/ui/card";
+import {
+  ReportFact,
+  ReportFactGrid,
+  ReportFactNote,
+  ReportNotice,
+  ReportSection,
+} from "./report-section";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/utils";
 import type { PropertyFactRow, PropertySourceClaimRow } from "@/lib/research/db-types";
 import { FOUNDATION_TYPE_VERIFY_NOTE } from "@/lib/research/constants";
+import { NO_DATA_LABEL } from "@/lib/research/report-view-model";
 
 function factValue(facts: PropertyFactRow[], key: string) {
   return facts.find((fact) => fact.field_key === key) ?? null;
@@ -31,7 +38,7 @@ function displayFact(fact: PropertyFactRow) {
   if (fact.normalized_value_text) return fact.normalized_value_text;
   if (fact.normalized_value_number !== null) return formatNumber(fact.normalized_value_number);
   if (fact.normalized_value_boolean !== null) return fact.normalized_value_boolean ? "Yes" : "No";
-  return "Not available";
+  return NO_DATA_LABEL;
 }
 
 const OVERVIEW_ITEMS = [
@@ -72,30 +79,24 @@ export function PropertyOverview({
   }
 
   return (
-    <Card>
-      <CardTitle>Property overview</CardTitle>
+    <ReportSection
+      id="overview"
+      title="Property overview"
+      description="Recorded characteristics of the existing property — lot size, structure, and value history."
+      sourceNote="Source shown per value; where sources disagree, see Inconsistencies."
+    >
       {availableItems.length > 0 ? (
-        <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <ReportFactGrid>
           {availableItems.map((item) => {
             const fact = factValue(facts, item.key)!;
             const fieldClaims = claims.filter((claim) => claim.field_key === item.key);
             return (
-              <div key={item.key} className="border-t border-[var(--acton-border)] pt-3">
-                <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
-                  {item.label}
-                </dt>
-                <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-                  {displayFact(fact)}
-                </dd>
+              <ReportFact key={item.key} label={item.label} value={displayFact(fact)}>
                 {item.key === "foundation_type" ? (
-                  <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                    {FOUNDATION_TYPE_VERIFY_NOTE}
-                  </p>
+                  <ReportFactNote>{FOUNDATION_TYPE_VERIFY_NOTE}</ReportFactNote>
                 ) : null}
                 {fact.preferred_source_name ? (
-                  <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                    Source: {fact.preferred_source_name}
-                  </p>
+                  <ReportFactNote>Source: {fact.preferred_source_name}</ReportFactNote>
                 ) : null}
                 {fieldClaims.length > 1 ? (
                   <button
@@ -110,27 +111,23 @@ export function PropertyOverview({
                   <ul className="mt-2 space-y-1 text-xs text-[var(--acton-muted)] print:hidden">
                     {fieldClaims.map((claim) => (
                       <li key={claim.id}>
-                        {claim.source_name}: {claim.normalized_value ?? "—"}
+                        {claim.source_name}: {claim.normalized_value ?? NO_DATA_LABEL}
                       </li>
                     ))}
                   </ul>
                 ) : null}
-              </div>
+              </ReportFact>
             );
           })}
-        </dl>
+        </ReportFactGrid>
       ) : null}
 
       {missingImportant.length > 0 ? (
-        <div className="mt-4 border-t border-[var(--acton-border)] pt-3">
-          <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
-            Missing information
-          </p>
-          <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            {missingImportant.map((item) => item.label).join(", ")}
-          </p>
-        </div>
+        <ReportNotice className={availableItems.length > 0 ? "mt-4" : undefined}>
+          No data from any source for: {missingImportant.map((item) => item.label).join(", ")}.
+          Capture these on site or from the county assessor.
+        </ReportNotice>
       ) : null}
-    </Card>
+    </ReportSection>
   );
 }

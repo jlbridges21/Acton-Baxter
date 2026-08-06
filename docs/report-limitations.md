@@ -21,15 +21,15 @@ When ATTOM is absent (RentCast-only):
 
 - Research runs cleanly with RentCast + jurisdiction GIS.
 - Fields ATTOM alone claimed in the live pipeline (`foundation_type`, `tract_number`, `building_count`, `estimated_value`; APN still comes from county/city GIS when available) simply omit ATTOM claims — no blank/broken UI.
-- **Foundation type** moves to **Site inspection required** (RentCast has no equivalent).
+- **Foundation type** moves to the **On-site checklist** (RentCast has no equivalent).
 - Estimated value / building count omit from overview when unset. The easement checklist does not require tract number; it shows one only as a supplemental search key when available.
 
 When both keys are present, dual-source preference and conflict detection behave as before. Admin report diagnostics show an ATTOM vs RentCast comparison table for shared fields during the trial window.
 
 ## What is automated vs site inspection
 
-- **Foundation type** may appear in Property Overview when ATTOM returns an assessor-derived value (verify on site). When absent — including RentCast-only mode — it is listed under **Site inspection required**.
-- **Utilities** (electric panel capacity, meter locations, service laterals) and **easements / recorded tract maps** are intentionally listed under **Site inspection required** — not as missing data. The easement workflow is APN-first and remains complete without ATTOM’s optional tract number: use the County Assessor / Property Explorer, County Surveyor recorded-map index, preliminary title report, and Clerk-Recorder research path. Subdivision and tract/map number are supplemental search keys only.
+- **Foundation type** may appear in Property Overview when ATTOM returns an assessor-derived value (verify on site). When absent — including RentCast-only mode — it is listed under the **On-site checklist** (formerly titled “Site inspection required”).
+- **Utilities** (electric panel capacity, meter locations, service laterals) and **easements / recorded tract maps** are intentionally listed under the **On-site checklist** — not as missing data. The easement workflow is APN-first and remains complete without ATTOM’s optional tract number: use the County Assessor / Property Explorer, County Surveyor recorded-map index, preliminary title report, and Clerk-Recorder research path. Subdivision and tract/map number are supplemental search keys only.
 
 Santa Clara County Property Profile access is currently a **generic search** into the public Property Explorer Experience unless a stable direct report endpoint is confirmed later.
 
@@ -62,7 +62,7 @@ When parcel geometry and side/rear setback rules (`adu_setback_side_ft` / `adu_s
 Honesty constraints (repeated on the map caption, area figure, and ADU highlights):
 
 - Approximate; side/rear setbacks only; front yard not modeled
-- Does **not** account for easements (cross-check Site inspection required), existing structures, slopes, trees, or utilities
+- Does **not** account for easements (cross-check the On-site checklist), existing structures, slopes, trees, or utilities
 - **Not** a survey or zoning determination; no fits/doesn’t-fit verdict against `adu_max_size_sqft` (that max is shown adjacent for PEM prep only)
 
 Small lots where the inset consumes the parcel show “setbacks may consume most of this lot — site-specific analysis required” instead of a broken shape. The teal envelope path is added to the parcel static map when URL budget allows; if not, the parcel boundary is kept and the envelope remains in the SVG outline / highlights text.
@@ -80,3 +80,7 @@ The **sprinkler distance indicator** reads `fire_sprinkler_hydrant_distance_max_
 Web-triggered research (`/api/reports/[id]/run`, refresh, and retry) enqueues the same durable `property_research` job type Slack `/property` uses, then processes it via `after()` with queue claim/complete bookkeeping. Cron reclaim is the crash-recovery backup — a mid-run deploy or platform kill no longer leaves a report stuck in “researching” without a recoverable job.
 
 Reports left in **researching** for more than **30 minutes** with no queued/running `property_research` job are flipped to **failed** with a retryable message (status poll and cron sweep). Use Retry research on the processing page.
+
+## Screen vs print presentation
+
+The report page is presentation-only for navigation: at-a-glance chips and a sticky section nav (sidebar on desktop, select on mobile) jump to the same sections that print as the card stack. Chips and nav are `print:hidden`; print CSS densifies spacing so a full report stays at or under six Letter pages. Chip values restate what each section already says — including honest “No data” / “No setback rules” states — and never invent severity or color-coding beyond what the sections express.

@@ -1,4 +1,4 @@
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ReportSection } from "./report-section";
 import type { FullReport } from "@/lib/research/db-types";
 
 type ProviderComparisonRow = {
@@ -33,15 +33,17 @@ export function ReportDiagnostics({ report }: { report: FullReport }) {
   );
 
   return (
-    <Card className="border-dashed print:hidden">
-      <CardTitle>Admin diagnostics</CardTitle>
-      <CardDescription>
-        Development diagnostics only. API keys and raw provider payloads are never shown here.
-        {attomConfigured
+    <ReportSection
+      id="diagnostics"
+      title="Admin diagnostics"
+      description={`Development diagnostics only. API keys and raw provider payloads are never shown here.${
+        attomConfigured
           ? " ATTOM is still configured (trial window) — compare RentCast values before cutover."
-          : " ATTOM_API_KEY is unset — RentCast-only mode."}
-      </CardDescription>
-      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          : " ATTOM_API_KEY is unset — RentCast-only mode."
+      }`}
+      className="border-dashed print:hidden"
+    >
+      <dl className="grid gap-3 text-sm sm:grid-cols-2">
         <div>
           <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">ATTOM ID</dt>
           <dd className="font-semibold text-[var(--acton-navy)]">
@@ -132,6 +134,6 @@ export function ReportDiagnostics({ report }: { report: FullReport }) {
           </ul>
         </div>
       ) : null}
-    </Card>
+    </ReportSection>
   );
 }

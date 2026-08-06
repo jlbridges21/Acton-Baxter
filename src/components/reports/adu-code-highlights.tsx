@@ -1,6 +1,13 @@
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { Card, CardTitle } from "@/components/ui/card";
+import {
+  ReportFact,
+  ReportFactGrid,
+  ReportFactNote,
+  ReportFootnote,
+  ReportNotice,
+  ReportSection,
+} from "./report-section";
 import type { AduCodeHighlights } from "@/lib/jurisdictions";
 import {
   formatEnvelopeAreaDisplay,
@@ -50,28 +57,27 @@ export function AduCodeHighlightsSection({
   const hasSetbackSection = setbackLines.length > 0 || setbacks.scopeLabel === "none";
 
   return (
-    <Card>
-      <CardTitle>ADU code highlights</CardTitle>
-      <p className="mt-1 text-sm text-[var(--acton-muted)]">
-        {highlights.jurisdictionKey
-          ? `Configured for ${jurisdictionLabel}`
-          : "Governing jurisdiction could not be mapped to a supported connector"}
-        {highlights.zoning ? ` · Zoning ${highlights.zoning}` : null}
-      </p>
-
+    <ReportSection
+      id="adu-code"
+      title="ADU code highlights"
+      description="The setbacks, size caps, and code documents that govern a detached ADU on this parcel."
+      sourceNote={`${
+        highlights.jurisdictionKey
+          ? `Source: admin-maintained rules and code documents for ${jurisdictionLabel}`
+          : "Governing jurisdiction could not be mapped to a supported connector"
+      }${highlights.zoning ? ` · Zoning ${highlights.zoning}` : ""}`}
+    >
       {highlights.isEmpty && setbacks.scopeLabel === "none" ? (
-        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-3 text-sm text-[var(--acton-navy)]">
-          <p>
-            No ADU code documents or setback rules have been configured for {jurisdictionLabel} yet
-            — an admin can add them at{" "}
-            <Link href="/admin/jurisdictions" className="font-medium underline">
-              /admin/jurisdictions
-            </Link>
-            .
-          </p>
-        </div>
+        <ReportNotice variant="manual-review">
+          No ADU code documents or setback rules have been configured for {jurisdictionLabel} yet —
+          an admin can add them at{" "}
+          <Link href="/admin/jurisdictions" className="font-medium underline">
+            /admin/jurisdictions
+          </Link>
+          .
+        </ReportNotice>
       ) : (
-        <div className="mt-4 space-y-5">
+        <div className="space-y-5">
           {highlights.fellBackToGeneralRules || setbacks.fellBackToGeneralRules ? (
             <p className="text-sm text-[var(--acton-muted)]">
               No zone-specific rules were configured for zoning{" "}
@@ -103,7 +109,7 @@ export function AduCodeHighlightsSection({
                     : ""}
               </h3>
               {setbackLines.length === 0 ? (
-                <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-3 text-sm text-[var(--acton-navy)]">
+                <ReportNotice variant="manual-review" className="mt-2">
                   No setback rules configured — add{" "}
                   <span className="font-mono text-xs">adu_setback_front_ft</span>,{" "}
                   <span className="font-mono text-xs">adu_setback_side_ft</span>, and{" "}
@@ -112,7 +118,7 @@ export function AduCodeHighlightsSection({
                     /admin/jurisdictions
                   </Link>
                   .
-                </div>
+                </ReportNotice>
               ) : (
                 <ul className="mt-2 space-y-1.5 text-sm font-semibold text-[var(--acton-navy)]">
                   {setbackLines.map((line) => (
@@ -122,9 +128,7 @@ export function AduCodeHighlightsSection({
                   ))}
                 </ul>
               )}
-              <p className="mt-2 text-xs leading-snug text-[var(--acton-muted)]">
-                {buildable.frontYardNote}
-              </p>
+              <ReportFootnote className="mt-2">{buildable.frontYardNote}</ReportFootnote>
             </div>
           ) : null}
 
@@ -150,17 +154,15 @@ export function AduCodeHighlightsSection({
                   {formatMaxSizeDisplay(buildable.maxSize)}
                 </p>
               ) : (
-                <p className="mt-1 text-xs text-[var(--acton-muted)]">
+                <ReportFootnote className="mt-1">
                   Jurisdiction max detached ADU size is not configured.
-                </p>
+                </ReportFootnote>
               )}
-              <p className="mt-2 text-xs leading-snug text-[var(--acton-muted)]">
-                {buildable.disclaimer}
-              </p>
-              <p className="mt-1 text-xs leading-snug text-[var(--acton-muted)]">
-                Cross-check recorded easements under Site inspection required before relying on this
+              <ReportFootnote className="mt-2">{buildable.disclaimer}</ReportFootnote>
+              <ReportFootnote className="mt-1">
+                Cross-check recorded easements in the on-site checklist before relying on this
                 envelope for placement.
-              </p>
+              </ReportFootnote>
             </div>
           ) : null}
 
@@ -169,22 +171,17 @@ export function AduCodeHighlightsSection({
               <h3 className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
                 Structured rules
               </h3>
-              <dl className="mt-2 grid gap-3 sm:grid-cols-2">
+              <ReportFactGrid columns={2} className="mt-2">
                 {highlights.rules.map((rule) => (
-                  <div key={rule.id} className="border-t border-[var(--acton-border)] pt-3">
-                    <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
-                      {rule.label}
-                      {rule.zoneKey ? ` (${rule.zoneKey})` : ""}
-                    </dt>
-                    <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-                      {rule.displayValue}
-                    </dd>
-                    <p className="mt-1 text-xs text-[var(--acton-muted)]">
-                      Source: {rule.sourceCitation}
-                    </p>
-                  </div>
+                  <ReportFact
+                    key={rule.id}
+                    label={`${rule.label}${rule.zoneKey ? ` (${rule.zoneKey})` : ""}`}
+                    value={rule.displayValue}
+                  >
+                    <ReportFactNote>Source: {rule.sourceCitation}</ReportFactNote>
+                  </ReportFact>
                 ))}
-              </dl>
+              </ReportFactGrid>
             </div>
           ) : null}
 
@@ -224,7 +221,7 @@ export function AduCodeHighlightsSection({
         </div>
       )}
 
-      <p className="mt-4 text-xs leading-snug text-[var(--acton-muted)]">{SECTION_DISCLAIMER}</p>
-    </Card>
+      <ReportFootnote className="mt-4">{SECTION_DISCLAIMER}</ReportFootnote>
+    </ReportSection>
   );
 }

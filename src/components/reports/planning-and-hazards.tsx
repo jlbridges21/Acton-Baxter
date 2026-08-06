@@ -1,14 +1,15 @@
 import { ExternalLink } from "lucide-react";
-import { Card, CardTitle } from "@/components/ui/card";
+import { ReportFact, ReportFactGrid, ReportFactNote, ReportSection } from "./report-section";
 import type { PropertyFactRow } from "@/lib/research/db-types";
 import { WUI_CAVEAT } from "@/lib/research/constants";
+import { NO_DATA_LABEL } from "@/lib/research/report-view-model";
 
 function factFor(facts: PropertyFactRow[], key: string) {
   return facts.find((item) => item.field_key === key) ?? null;
 }
 
 function valueFor(facts: PropertyFactRow[], key: string) {
-  return factFor(facts, key)?.normalized_value_text ?? "—";
+  return factFor(facts, key)?.normalized_value_text ?? NO_DATA_LABEL;
 }
 
 function HazardItem({
@@ -25,16 +26,12 @@ function HazardItem({
   caveat?: string | null;
 }) {
   const fact = factFor(facts, factKey);
-  const value = fact?.normalized_value_text ?? "—";
+  const value = fact?.normalized_value_text ?? NO_DATA_LABEL;
   const href = fact?.preferred_source_url ?? null;
 
   return (
-    <div className="border-t border-[var(--acton-border)] pt-3">
-      <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">{label}</dt>
-      <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">{value}</dd>
-      {caveat ? (
-        <p className="mt-1 text-xs leading-snug text-[var(--acton-muted)]">{caveat}</p>
-      ) : null}
+    <ReportFact label={label} value={value}>
+      {caveat ? <ReportFactNote>{caveat}</ReportFactNote> : null}
       {href ? (
         <a
           href={href}
@@ -46,7 +43,7 @@ function HazardItem({
           <ExternalLink className="h-3 w-3" />
         </a>
       ) : null}
-    </div>
+    </ReportFact>
   );
 }
 
@@ -67,18 +64,15 @@ export function PlanningAndHazards({
   const showWuiCaveat = Boolean(wuiFact?.normalized_value_text);
 
   return (
-    <Card>
-      <CardTitle>Planning and hazards</CardTitle>
-      <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <ReportSection
+      id="planning-hazards"
+      title="Planning & hazards"
+      description="The designations and hazard screens that shape what can be built and which reviews apply."
+      sourceNote="Source: city/county GIS for planning designations; FEMA, CAL FIRE / OSFM, and CAL FIRE FRAP for hazard screens. Each is a screen, not a determination — verify with the linked official viewer."
+    >
+      <ReportFactGrid>
         {items.map((item) => (
-          <div key={item.key} className="border-t border-[var(--acton-border)] pt-3">
-            <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
-              {item.label}
-            </dt>
-            <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-              {valueFor(facts, item.key)}
-            </dd>
-          </div>
+          <ReportFact key={item.key} label={item.label} value={valueFor(facts, item.key)} />
         ))}
         <HazardItem
           label="Flood zone"
@@ -103,15 +97,12 @@ export function PlanningAndHazards({
               : null
           }
         />
-        <div className="border-t border-[var(--acton-border)] pt-3 sm:col-span-2 lg:col-span-3">
-          <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
-            Relevant overlays
-          </dt>
-          <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-            {overlays.length > 0 ? overlays.join("; ") : "None identified"}
-          </dd>
-        </div>
-      </dl>
-    </Card>
+        <ReportFact
+          label="Relevant overlays"
+          value={overlays.length > 0 ? overlays.join("; ") : "None identified"}
+          className="sm:col-span-2 lg:col-span-3"
+        />
+      </ReportFactGrid>
+    </ReportSection>
   );
 }

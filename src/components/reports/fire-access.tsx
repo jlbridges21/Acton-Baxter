@@ -1,6 +1,6 @@
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { Card, CardTitle } from "@/components/ui/card";
+import { ReportFact, ReportFactNote, ReportSection } from "./report-section";
 import {
   HYDRANT_PULL_DISTANCE_CAVEAT,
   formatHydrantDistanceDisplay,
@@ -24,28 +24,27 @@ export function FireAccessSection({
   sprinkler: SprinklerIndicator;
 }) {
   return (
-    <Card>
-      <CardTitle>Fire access</CardTitle>
-      <p className="mt-1 text-sm text-[var(--acton-muted)]">
-        Mapped hydrant distance and jurisdiction sprinkler threshold (preparation material only).
-      </p>
-
-      <div className="mt-4 space-y-4">
-        <div className="border-t border-[var(--acton-border)] pt-3">
-          <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
-            Nearest mapped hydrant
-          </dt>
-          {hydrant.status === "ok" && hydrant.distanceFt != null && hydrant.sourceLabel ? (
-            <>
-              <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-                {formatHydrantDistanceDisplay({
+    <ReportSection
+      id="fire-access"
+      title="Fire access"
+      description="How far the nearest mapped hydrant is, and whether that distance alone would trigger the jurisdiction's sprinkler threshold."
+      sourceNote="Source: official fire-hydrant GIS where published, otherwise OpenStreetMap; sprinkler threshold from admin-maintained jurisdiction rules. Preparation material only, not a code determination."
+    >
+      <dl className="space-y-4">
+        <ReportFact
+          label="Nearest mapped hydrant"
+          value={
+            hydrant.status === "ok" && hydrant.distanceFt != null && hydrant.sourceLabel
+              ? formatHydrantDistanceDisplay({
                   distanceFt: hydrant.distanceFt,
                   sourceLabel: hydrant.sourceLabel,
-                })}
-              </dd>
-              <p className="mt-1 text-xs leading-snug text-[var(--acton-muted)]">
-                {HYDRANT_PULL_DISTANCE_CAVEAT}
-              </p>
+                })
+              : "No hydrant data available for this area"
+          }
+        >
+          {hydrant.status === "ok" && hydrant.distanceFt != null && hydrant.sourceLabel ? (
+            <>
+              <ReportFactNote>{HYDRANT_PULL_DISTANCE_CAVEAT}</ReportFactNote>
               {hydrant.sourceUrl ? (
                 <a
                   href={hydrant.sourceUrl}
@@ -60,14 +59,11 @@ export function FireAccessSection({
             </>
           ) : (
             <>
-              <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-                No hydrant data available for this area
-              </dd>
-              <p className="mt-1 text-xs leading-snug text-[var(--acton-muted)]">
+              <ReportFactNote>
                 {hydrant.statusMessage ??
                   "No mapped hydrant was found nearby from official GIS or OpenStreetMap."}{" "}
                 {HYDRANT_PULL_DISTANCE_CAVEAT}
-              </p>
+              </ReportFactNote>
               {hydrant.manualLookupUrl ? (
                 <a
                   href={hydrant.manualLookupUrl}
@@ -81,27 +77,21 @@ export function FireAccessSection({
               ) : null}
             </>
           )}
-        </div>
+        </ReportFact>
 
-        <div className="border-t border-[var(--acton-border)] pt-3">
-          <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">
-            Sprinkler distance indicator
-          </dt>
-          <dd className="mt-1 text-sm font-semibold text-[var(--acton-navy)]">
-            {sprinkler.headline}
-          </dd>
-          <p className="mt-1 text-xs leading-snug text-[var(--acton-muted)]">{sprinkler.detail}</p>
+        <ReportFact label="Sprinkler distance indicator" value={sprinkler.headline}>
+          <ReportFactNote>{sprinkler.detail}</ReportFactNote>
           {sprinkler.state === "no_rule" ? (
-            <p className="mt-2 text-xs text-[var(--acton-muted)]">
+            <ReportFactNote>
               Configure the rule at{" "}
               <Link href="/admin/jurisdictions" className="font-medium underline">
                 /admin/jurisdictions
               </Link>
               .
-            </p>
+            </ReportFactNote>
           ) : null}
-        </div>
-      </div>
-    </Card>
+        </ReportFact>
+      </dl>
+    </ReportSection>
   );
 }

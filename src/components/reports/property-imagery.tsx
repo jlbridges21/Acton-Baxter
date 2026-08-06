@@ -1,7 +1,7 @@
 "use client";
 
 import { ExternalLink, MapPinned } from "lucide-react";
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ReportNotice, ReportSection } from "./report-section";
 import type { FullReport } from "@/lib/research/db-types";
 import type { NormalizedMaps } from "@/lib/research/schemas";
 
@@ -20,7 +20,7 @@ function MapsImage({
       <img
         src={src}
         alt={alt}
-        className="h-52 w-full object-cover"
+        className="aspect-[8/5] w-full object-cover sm:aspect-auto sm:h-52 print:h-40"
         loading="lazy"
         onError={(event) => {
           const target = event.currentTarget;
@@ -31,7 +31,7 @@ function MapsImage({
       />
       <div
         hidden
-        className="flex h-52 items-center justify-center px-4 text-center text-sm text-[var(--acton-muted)]"
+        className="flex aspect-[8/5] items-center justify-center px-4 text-center text-sm text-[var(--acton-muted)] sm:aspect-auto sm:h-52"
       >
         {fallbackLabel}
       </div>
@@ -54,14 +54,13 @@ export function PropertyImagerySection({ report }: { report: FullReport }) {
       : googleMapsUrl);
 
   return (
-    <Card>
-      <CardTitle>Property imagery & maps</CardTitle>
-      <CardDescription className="mt-2">
-        Satellite and Street View imagery from Google Maps for sales and PEM context. Verify on site
-        before relying on setbacks or accessory structures.
-      </CardDescription>
-
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
+    <ReportSection
+      id="imagery"
+      title="Imagery & maps"
+      description="What the lot and street frontage look like today — the first read on access, existing structures, and yard space."
+      sourceNote="Source: Google Maps satellite and Street View imagery. Verify on site before relying on setbacks or accessory structures."
+    >
+      <div className="grid gap-4 md:grid-cols-2">
         {hasCoords ? (
           <>
             <div>
@@ -86,16 +85,16 @@ export function PropertyImagerySection({ report }: { report: FullReport }) {
             </div>
           </>
         ) : (
-          <div className="col-span-full flex min-h-40 items-center justify-center rounded-md border border-dashed border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-4 text-center text-sm text-[var(--acton-muted)]">
-            <div>
-              <MapPinned className="mx-auto mb-2 h-6 w-6 text-[var(--acton-navy)]" />
+          <ReportNotice className="col-span-full">
+            <span className="flex items-start gap-2">
+              <MapPinned className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
               Coordinates were not available to load Google imagery for this report.
-            </div>
-          </div>
+            </span>
+          </ReportNotice>
         )}
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-3">
+      <div className="mt-4 flex flex-wrap gap-3 print:hidden">
         <a
           href={googleMapsUrl}
           target="_blank"
@@ -115,6 +114,6 @@ export function PropertyImagerySection({ report }: { report: FullReport }) {
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
       </div>
-    </Card>
+    </ReportSection>
   );
 }

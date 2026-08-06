@@ -2,7 +2,7 @@
 
 Baxter is Acton ADU’s internal digital teammate (runtime v1.1). See `docs/baxter/governance-architecture.md`.
 
-**Property Research** is the first Baxter tool. It researches a California property address and prepares a short Partnership Evaluation Meeting (PEM) brief.
+**Property Research** is the first Baxter tool. It researches a California property address and prepares a short Partnership Evaluation Meeting (PEM) brief — navigable on screen (section jump + at-a-glance chips) and printable as a clean card stack under six pages.
 
 Baxter also answers employees in Slack (DMs, `@Baxter` mentions, and `/property`). See **Prompt 5B** setup in `docs/slack-setup.md`.
 
@@ -22,9 +22,27 @@ Outside those sources, Property Research still uses ATTOM and RentCast when conf
 3. Selects a standardized property address (Google Places autocomplete when configured).
 4. App researches licensed + public sources, detects meaningful conflicts, and prepares a concise report.
 5. Optional Slack `/property` command creates the same report and returns a login-protected link.
-6. Salesperson opens the report and uses **Download / Print PDF**.
+6. Salesperson opens the report: **at-a-glance chips** and a sticky **section nav** jump straight to the answer on screen; **Download / Print PDF** produces the same content as a clean card stack for the meeting.
 
-Reports target **under six printed pages**.
+### Report layout (screen vs print)
+
+On screen the report follows a PEM-prep order:
+
+1. At a glance (jurisdiction, zoning, lot size, flood / fire / WUI, hydrant, buildable envelope, inconsistencies)
+2. Research summary
+3. Imagery & maps
+4. Property overview
+5. Parcel & lot lines (boundary + approximate buildable envelope)
+6. Planning & hazards
+7. Fire access
+8. ADU code highlights
+9. On-site checklist (easements, utilities, foundation, hydrant pull distance, envelope verify)
+10. Site observations (when present)
+11. Inconsistencies
+12. PEM preparation
+13. Sources
+
+Print / PDF hides the chips and the section nav and keeps the card stack at **under six printed pages**. The report never declares ADU feasibility.
 
 ---
 

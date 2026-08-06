@@ -108,7 +108,7 @@ From the Baxter Dashboard → **Property Research Tool** (or `/reports/new`):
 
 1. Enter a California property address.
 2. Baxter researches public and licensed sources.
-3. Open the report and use **Download / Print PDF**.
+3. Open the report. Use the **at-a-glance chips** or the sticky section nav to jump to flood zone, lot lines, fire access, ADU setbacks, and the on-site checklist; use **Download / Print PDF** for the meeting (under six pages, no screen chrome).
 
 Supported automated jurisdictions today include San Jose and Santa Clara County GIS where available, plus ATTOM/RentCast when configured. Reports are **not** ADU feasibility studies.
 

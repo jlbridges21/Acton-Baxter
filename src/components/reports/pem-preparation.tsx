@@ -1,4 +1,4 @@
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { ReportSection } from "./report-section";
 import type { PemPreparationRow } from "@/lib/research/db-types";
 
 function asStringArray(value: unknown): string[] {
@@ -25,11 +25,12 @@ export function PemPreparationSection({ pem }: { pem: PemPreparationRow | null }
   if (!pem) return null;
 
   return (
-    <Card className="print:break-before-page">
-      <CardTitle>PEM preparation</CardTitle>
-      <CardDescription className="mt-3 text-[15px] leading-relaxed text-[var(--acton-navy)]">
-        {pem.overview}
-      </CardDescription>
+    <ReportSection
+      id="pem-preparation"
+      title="PEM preparation"
+      description="What to raise, ask, and confirm in the meeting — assembled from everything above."
+    >
+      <p className="text-[15px] leading-relaxed text-[var(--acton-navy)]">{pem.overview}</p>
       <div className="mt-4 space-y-4">
         <ListBlock
           title="Important property findings"
@@ -53,6 +54,6 @@ export function PemPreparationSection({ pem }: { pem: PemPreparationRow | null }
           items={asStringArray(pem.verify_with_planning)}
         />
       </div>
-    </Card>
+    </ReportSection>
   );
 }
