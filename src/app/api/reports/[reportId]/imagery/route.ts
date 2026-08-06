@@ -3,6 +3,7 @@ import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError } from "@/lib/api";
 import { ValidationError } from "@/lib/errors";
 import { buildGoogleStaticImageUrl } from "@/lib/providers/google/imagery";
+import { loadBuildableEnvelopeForReport } from "@/lib/research/load-buildable-envelope";
 import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
 
@@ -65,6 +66,11 @@ export async function GET(request: Request, context: RouteContext) {
         ? { latitude: hydrantDiag.latitude, longitude: hydrantDiag.longitude }
         : null;
 
+    const envelope =
+      view === "parcel" && fullReport ? await loadBuildableEnvelopeForReport(fullReport) : null;
+    const envelopeGeometry =
+      envelope?.status === "ok" && envelope.geometry ? envelope.geometry : null;
+
     const upstream = buildGoogleStaticImageUrl({
       view,
       latitude,
@@ -76,6 +82,7 @@ export async function GET(request: Request, context: RouteContext) {
           ? (parcelGeometry?.geometry_geojson as { type?: unknown; coordinates?: unknown } | null)
           : null,
       hydrant,
+      envelopeGeometry,
     });
     if (!upstream) {
       return NextResponse.json(

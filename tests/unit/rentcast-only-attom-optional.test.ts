@@ -252,6 +252,7 @@ describe("RentCast-only mode (ATTOM_API_KEY unset)", () => {
     expect(siteItems.map((i) => i.id)).toContain("utilities");
     expect(siteItems.map((i) => i.id)).toContain("easements-tract-maps");
     expect(siteItems.map((i) => i.id)).toContain("hydrant-pull-distance");
+    expect(siteItems.map((i) => i.id)).toContain("buildable-area-verify");
   });
 });
 

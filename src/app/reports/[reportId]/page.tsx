@@ -8,6 +8,7 @@ import { getReportStore } from "@/lib/research/report-store";
 import { isUuid } from "@/lib/utils";
 import { buildAduCodeHighlights, resolveJurisdictionKeyFromReport } from "@/lib/jurisdictions";
 import { buildSprinklerIndicator, loadSprinklerThreshold } from "@/lib/research/fire-access";
+import { loadBuildableEnvelopeForReport } from "@/lib/research/load-buildable-envelope";
 import { FIELD_KEYS } from "@/lib/research/constants";
 
 type PageProps = {
@@ -46,6 +47,10 @@ export default async function ReportPage({ params }: PageProps) {
     jurisdictionKey,
     zoning,
   });
+  const buildable = await loadBuildableEnvelopeForReport(report, {
+    jurisdictionKey,
+    zoning,
+  });
 
   const diagnostics = (report.research_diagnostics_json ?? {}) as {
     hydrant?: HydrantDiagnostics;
@@ -77,6 +82,7 @@ export default async function ReportPage({ params }: PageProps) {
       <ReportDocument
         report={report}
         codeHighlights={codeHighlights}
+        buildable={buildable}
         fireAccess={{
           hydrant: {
             status: hydrantOk ? "ok" : "no_data",

@@ -6,6 +6,12 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import type { FullReport } from "@/lib/research/db-types";
 import type { NormalizedMaps } from "@/lib/research/schemas";
 import { formatNumber } from "@/lib/utils";
+import {
+  BUILDABLE_ENVELOPE_DISCLAIMER,
+  formatEnvelopeAreaDisplay,
+  type BuildableEnvelopeResult,
+} from "@/lib/research/buildable-envelope";
+import { buildParcelOverlayParams } from "@/lib/providers/google/parcel-overlay";
 
 const ASSESSOR_PROPERTY_SEARCH_URL =
   "https://asr.santaclaracounty.gov/online-services/property-search/real-property";
@@ -77,7 +83,13 @@ function CopyableApn({ apn }: { apn: string }) {
   );
 }
 
-function ParcelOutline({ geometry }: { geometry: unknown }) {
+function ParcelOutline({
+  geometry,
+  envelopeGeometry,
+}: {
+  geometry: unknown;
+  envelopeGeometry?: unknown;
+}) {
   const geo = geometry as {
     type?: string;
     coordinates?: unknown;
@@ -97,8 +109,21 @@ function ParcelOutline({ geometry }: { geometry: unknown }) {
   rings = rings.filter((ring) => ring.length >= 3);
   if (rings.length === 0) return null;
 
-  const lons = rings.flatMap((ring) => ring.map((c) => c[0]!)).filter((n) => Number.isFinite(n));
-  const lats = rings.flatMap((ring) => ring.map((c) => c[1]!)).filter((n) => Number.isFinite(n));
+  const envelopeGeo = envelopeGeometry as {
+    type?: string;
+    coordinates?: unknown;
+  } | null;
+  let envelopeRings: number[][][] = [];
+  if (envelopeGeo?.type === "Polygon" && Array.isArray(envelopeGeo.coordinates)) {
+    envelopeRings = envelopeGeo.coordinates as number[][][];
+  } else if (envelopeGeo?.type === "MultiPolygon" && Array.isArray(envelopeGeo.coordinates)) {
+    envelopeRings = (envelopeGeo.coordinates as number[][][][]).flatMap((polygon) => polygon);
+  }
+  envelopeRings = envelopeRings.filter((ring) => ring.length >= 3);
+
+  const allRings = [...rings, ...envelopeRings];
+  const lons = allRings.flatMap((ring) => ring.map((c) => c[0]!)).filter((n) => Number.isFinite(n));
+  const lats = allRings.flatMap((ring) => ring.map((c) => c[1]!)).filter((n) => Number.isFinite(n));
   if (!lons.length || !lats.length) return null;
 
   const minLon = Math.min(...lons);
@@ -110,28 +135,45 @@ function ParcelOutline({ geometry }: { geometry: unknown }) {
   const pad = 8;
   const vb = 200;
 
+  function ringPoints(ring: number[][]) {
+    return ring
+      .map(([lon, lat]) => {
+        const x = pad + ((lon! - minLon) / width) * (vb - pad * 2);
+        const y = pad + ((maxLat - lat!) / height) * (vb - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+  }
+
   return (
-    <svg viewBox={`0 0 ${vb} ${vb}`} className="h-40 w-full" role="img" aria-label="Parcel outline">
+    <svg
+      viewBox={`0 0 ${vb} ${vb}`}
+      className="h-40 w-full"
+      role="img"
+      aria-label="Parcel outline with approximate buildable envelope"
+    >
       <rect width={vb} height={vb} fill="#f4f6f8" />
-      {rings.map((ring, ringIndex) => {
-        const points = ring
-          .map(([lon, lat]) => {
-            const x = pad + ((lon! - minLon) / width) * (vb - pad * 2);
-            const y = pad + ((maxLat - lat!) / height) * (vb - pad * 2);
-            return `${x.toFixed(1)},${y.toFixed(1)}`;
-          })
-          .join(" ");
-        return (
-          <polygon
-            key={`${ringIndex}-${points.slice(0, 24)}`}
-            points={points}
-            fill="rgba(11, 37, 69, 0.12)"
-            stroke="#0b2545"
-            strokeWidth="2"
-            strokeLinejoin="round"
-          />
-        );
-      })}
+      {rings.map((ring, ringIndex) => (
+        <polygon
+          key={`parcel-${ringIndex}-${ringPoints(ring).slice(0, 24)}`}
+          points={ringPoints(ring)}
+          fill="rgba(11, 37, 69, 0.12)"
+          stroke="#0b2545"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+      ))}
+      {envelopeRings.map((ring, ringIndex) => (
+        <polygon
+          key={`envelope-${ringIndex}-${ringPoints(ring).slice(0, 24)}`}
+          points={ringPoints(ring)}
+          fill="rgba(42, 157, 143, 0.35)"
+          stroke="#2a9d8f"
+          strokeWidth="1.5"
+          strokeDasharray="4 3"
+          strokeLinejoin="round"
+        />
+      ))}
     </svg>
   );
 }
@@ -139,14 +181,18 @@ function ParcelOutline({ geometry }: { geometry: unknown }) {
 function ParcelMapVisual({
   report,
   geometry,
+  envelopeGeometry,
   googleImageryAvailable,
+  envelopeOnStaticMap,
 }: {
   report: FullReport;
   geometry: unknown;
+  envelopeGeometry?: unknown;
   googleImageryAvailable: boolean;
+  envelopeOnStaticMap: boolean;
 }) {
   if (!googleImageryAvailable) {
-    return <ParcelOutline geometry={geometry} />;
+    return <ParcelOutline geometry={geometry} envelopeGeometry={envelopeGeometry} />;
   }
 
   return (
@@ -165,13 +211,25 @@ function ParcelMapVisual({
         }}
       />
       <div hidden>
-        <ParcelOutline geometry={geometry} />
+        <ParcelOutline geometry={geometry} envelopeGeometry={envelopeGeometry} />
       </div>
+      {envelopeGeometry && !envelopeOnStaticMap ? (
+        <p className="border-t border-[var(--acton-border)] px-3 py-1.5 text-xs text-[var(--acton-muted)]">
+          Approximate envelope omitted from satellite overlay to stay within the map URL budget —
+          shown in the outline fallback and ADU code highlights.
+        </p>
+      ) : null}
     </>
   );
 }
 
-export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
+export function ParcelAndPublicRecords({
+  report,
+  buildable,
+}: {
+  report: FullReport;
+  buildable?: BuildableEnvelopeResult | null;
+}) {
   const maps = (report.maps_json ?? null) as NormalizedMaps | null;
   const profileUrl = report.property_profile_url ?? maps?.countyPropertyProfileReportUrl ?? null;
   const tractUrl = ASSESSOR_PROPERTY_SEARCH_URL;
@@ -185,6 +243,16 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
       report.standardized_address ?? report.input_address,
     )}`;
   const parcelGeometry = report.parcelGeometry?.geometry_geojson ?? null;
+  const envelopeGeometry =
+    buildable?.status === "ok" && buildable.geometry ? buildable.geometry : null;
+  const overlayProbe =
+    parcelGeometry != null
+      ? buildParcelOverlayParams({
+          geometry: parcelGeometry as { type?: unknown; coordinates?: unknown },
+          envelopeGeometry,
+        })
+      : null;
+  const envelopeOnStaticMap = Boolean(overlayProbe?.envelopeIncluded);
   const googleImageryAvailable =
     parcelGeometry != null &&
     report.latitude != null &&
@@ -207,7 +275,9 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
           <ParcelMapVisual
             report={report}
             geometry={parcelGeometry}
+            envelopeGeometry={envelopeGeometry}
             googleImageryAvailable={googleImageryAvailable}
+            envelopeOnStaticMap={envelopeOnStaticMap}
           />
         ) : (
           <div className="flex min-h-40 items-center justify-center px-4 text-center">
@@ -222,9 +292,23 @@ export function ParcelAndPublicRecords({ report }: { report: FullReport }) {
         )}
         {report.parcelGeometry ? (
           <p className="border-t border-[var(--acton-border)] px-3 py-2 text-xs text-[var(--acton-muted)]">
-            {googleImageryAvailable ? "Parcel boundary over satellite imagery" : "Parcel outline"} ·
-            ~{formatNumber(report.parcelGeometry.calculated_area_sq_ft)} sq ft calculated · Verify
+            {googleImageryAvailable ? "Parcel boundary over satellite imagery" : "Parcel outline"}
+            {envelopeGeometry
+              ? envelopeOnStaticMap
+                ? " · teal inset = approximate buildable envelope (side/rear only)"
+                : " · approximate envelope in outline / ADU highlights"
+              : ""}{" "}
+            · ~{formatNumber(report.parcelGeometry.calculated_area_sq_ft)} sq ft calculated · Verify
             against recorded survey/title documents
+          </p>
+        ) : null}
+        {buildable?.status === "ok" && buildable.areaSqFt != null ? (
+          <p className="border-t border-[var(--acton-border)] px-3 py-2 text-xs text-[var(--acton-muted)]">
+            {formatEnvelopeAreaDisplay(buildable.areaSqFt)}. {BUILDABLE_ENVELOPE_DISCLAIMER}
+          </p>
+        ) : buildable?.status === "degenerate" || buildable?.status === "rules_only" ? (
+          <p className="border-t border-[var(--acton-border)] px-3 py-2 text-xs text-[var(--acton-muted)]">
+            {buildable.statusMessage} {BUILDABLE_ENVELOPE_DISCLAIMER}
           </p>
         ) : null}
       </div>

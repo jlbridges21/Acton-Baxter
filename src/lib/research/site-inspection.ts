@@ -149,5 +149,17 @@ export function buildSiteInspectionItems(report: FullReport): SiteInspectionItem
     ],
   });
 
+  items.push({
+    id: "buildable-area-verify",
+    title: "Verify buildable area on site",
+    description:
+      "The report’s approximate buildable envelope (when drawn) applies side/rear setbacks only. Front-yard orientation, easements, and existing improvements are not modeled.",
+    verifySteps: [
+      "Confirm which yard is street-facing and apply the front setback by eye / on site — it is not drawn into the approximate envelope.",
+      "Compare the approximate envelope against recorded easements (see Easements & recorded tract maps above), existing structures, trees, slopes, and utility locations.",
+      "Do not treat the envelope area or map inset as a survey, zoning determination, or fit/no-fit conclusion for ADU size.",
+    ],
+  });
+
   return items;
 }

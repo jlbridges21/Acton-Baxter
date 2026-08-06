@@ -3,6 +3,7 @@ import { listKnowledgeEntries } from "@/lib/knowledge/store";
 import { getJurisdictionDisplayName, type SupportedJurisdictionKey } from "./keys";
 import { getJurisdictionRuleKeyLabel } from "./rule-keys";
 import { listJurisdictionRules } from "./rules-store";
+import { selectRulesForZoning } from "./select-rules";
 import type {
   AduCodeHighlights,
   AduCodeHighlightsDocument,
@@ -27,49 +28,7 @@ export function formatJurisdictionRuleValue(value: JurisdictionRuleValueJson): s
   return parts.join("; ") || "—";
 }
 
-function normalizeZone(value: string | null | undefined): string {
-  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-/**
- * Prefer zone-specific rules when zoning matches; otherwise jurisdiction-general
- * (zone_key is null). Never mix zone A rules into zone B.
- */
-export function selectRulesForZoning(
-  rules: JurisdictionRule[],
-  zoning: string | null | undefined,
-): {
-  selected: JurisdictionRule[];
-  usedZoneSpecificRules: boolean;
-  fellBackToGeneralRules: boolean;
-} {
-  const zoneNorm = normalizeZone(zoning);
-  const general = rules.filter((rule) => !rule.zone_key);
-  if (!zoneNorm) {
-    return {
-      selected: general,
-      usedZoneSpecificRules: false,
-      fellBackToGeneralRules: false,
-    };
-  }
-
-  const zoneSpecific = rules.filter(
-    (rule) => rule.zone_key && normalizeZone(rule.zone_key) === zoneNorm,
-  );
-  if (zoneSpecific.length > 0) {
-    return {
-      selected: zoneSpecific,
-      usedZoneSpecificRules: true,
-      fellBackToGeneralRules: false,
-    };
-  }
-
-  return {
-    selected: general,
-    usedZoneSpecificRules: false,
-    fellBackToGeneralRules: general.length > 0,
-  };
-}
+export { selectRulesForZoning } from "./select-rules";
 
 function toHighlightRule(rule: JurisdictionRule): AduCodeHighlightsRule {
   return {

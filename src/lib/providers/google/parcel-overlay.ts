@@ -24,6 +24,10 @@ export type ParcelOverlayParams = {
   /** True when a hydrant marker was omitted to preserve parcel readability. */
   hydrantMarkerSkipped: boolean;
   hydrantMarkerIncluded: boolean;
+  /** True when an approximate buildable envelope path was included. */
+  envelopeIncluded: boolean;
+  /** True when envelope geometry was provided but dropped for URL budget. */
+  envelopeDroppedForUrlBudget: boolean;
 };
 
 export type HydrantMarkerInput = {
@@ -246,6 +250,11 @@ function pathStyle(encoded: string): string {
   return `weight:4|color:0xFFD400FF|fillcolor:0xFFD40018|enc:${encoded}`;
 }
 
+/** Visually distinct inset for approximate buildable envelope (side/rear only). */
+function envelopePathStyle(encoded: string): string {
+  return `weight:2|color:0x2A9D8FFF|fillcolor:0x2A9D8F55|enc:${encoded}`;
+}
+
 function estimateStaticMapUrlLength(
   center: string,
   zoom: number,
@@ -319,6 +328,8 @@ export function buildParcelOverlayParams(input: {
   height?: number;
   maxUrlLength?: number;
   hydrant?: HydrantMarkerInput | null;
+  /** Approximate buildable envelope (side/rear inset) — dropped before parcel if URL budget requires. */
+  envelopeGeometry?: ParcelOverlayGeometry | null;
 }): ParcelOverlayParams | null {
   const width = input.width ?? 640;
   const height = input.height ?? 420;
@@ -329,10 +340,21 @@ export function buildParcelOverlayParams(input: {
   const normalized = normalizeRings(input.geometry);
   if (normalized.rings.length === 0) return null;
 
-  const originalPointCount = normalized.rings.reduce((sum, ring) => sum + ring.length, 0);
+  const envelopeNormalized = normalizeRings(input.envelopeGeometry);
+  const originalPointCount =
+    normalized.rings.reduce((sum, ring) => sum + ring.length, 0) +
+    envelopeNormalized.rings.reduce((sum, ring) => sum + ring.length, 0);
   const fit = fitCenterAndZoom(normalized.rings, width, height);
-  let rings = normalized.rings;
-  let paths = rings.map((ring) => pathStyle(encodePolyline(ring)));
+  let parcelRings = normalized.rings;
+  let envelopeRings = envelopeNormalized.rings;
+  let includeEnvelope = envelopeRings.length > 0;
+  let envelopeDroppedForUrlBudget = false;
+  let paths = [
+    ...parcelRings.map((ring) => pathStyle(encodePolyline(ring))),
+    ...(includeEnvelope
+      ? envelopeRings.map((ring) => envelopePathStyle(encodePolyline(ring)))
+      : []),
+  ];
   let tolerance = Math.max(fit.diagonal / 100_000, 1e-8);
 
   const includeHydrant =
@@ -359,13 +381,40 @@ export function buildParcelOverlayParams(input: {
     ) {
       break;
     }
-    rings = normalized.rings.map((ring) => simplifyClosedRing(ring, tolerance));
-    paths = rings.map((ring) => pathStyle(encodePolyline(ring)));
+    // Prefer parcel boundary: drop the envelope path before over-simplifying both.
+    if (includeEnvelope && attempt >= 4) {
+      includeEnvelope = false;
+      envelopeDroppedForUrlBudget = true;
+      paths = parcelRings.map((ring) => pathStyle(encodePolyline(ring)));
+      if (
+        estimateStaticMapUrlLength(fit.center, fit.zoom, width, height, paths, markers) <=
+        maxUrlLength
+      ) {
+        break;
+      }
+    }
+    parcelRings = normalized.rings.map((ring) => simplifyClosedRing(ring, tolerance));
+    envelopeRings = envelopeNormalized.rings.map((ring) => simplifyClosedRing(ring, tolerance));
+    paths = [
+      ...parcelRings.map((ring) => pathStyle(encodePolyline(ring))),
+      ...(includeEnvelope
+        ? envelopeRings.map((ring) => envelopePathStyle(encodePolyline(ring)))
+        : []),
+    ];
     tolerance *= 2;
   }
 
-  // If still over budget after simplification, drop the hydrant marker first.
+  // Prefer keeping the parcel boundary: drop envelope, then hydrant, if still over budget.
   let finalMarkers = markers;
+  if (
+    includeEnvelope &&
+    estimateStaticMapUrlLength(fit.center, fit.zoom, width, height, paths, finalMarkers) >
+      maxUrlLength
+  ) {
+    includeEnvelope = false;
+    envelopeDroppedForUrlBudget = true;
+    paths = parcelRings.map((ring) => pathStyle(encodePolyline(ring)));
+  }
   if (
     finalMarkers.length > 0 &&
     estimateStaticMapUrlLength(fit.center, fit.zoom, width, height, paths, finalMarkers) >
@@ -374,7 +423,10 @@ export function buildParcelOverlayParams(input: {
     finalMarkers = [];
   }
 
-  const renderedPointCount = rings.reduce((sum, ring) => sum + ring.length, 0);
+  const renderedPointCount =
+    parcelRings.reduce((sum, ring) => sum + ring.length, 0) +
+    (includeEnvelope ? envelopeRings.reduce((sum, ring) => sum + ring.length, 0) : 0);
+
   return {
     center: fit.center,
     zoom: fit.zoom,
@@ -386,5 +438,7 @@ export function buildParcelOverlayParams(input: {
     simplified: renderedPointCount < originalPointCount,
     hydrantMarkerSkipped: Boolean(input.hydrant) && finalMarkers.length === 0,
     hydrantMarkerIncluded: finalMarkers.length > 0,
+    envelopeIncluded: includeEnvelope,
+    envelopeDroppedForUrlBudget,
   };
 }

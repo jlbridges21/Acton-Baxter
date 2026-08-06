@@ -23,6 +23,7 @@ import type { FullReport } from "@/lib/research/db-types";
 import { buildSiteInspectionItems } from "@/lib/research/site-inspection";
 import type { AduCodeHighlights } from "@/lib/jurisdictions";
 import type { SprinklerIndicator } from "@/lib/research/fire-access";
+import type { BuildableEnvelopeResult } from "@/lib/research/buildable-envelope";
 import type { FireAccessHydrantView } from "./fire-access";
 
 const DISCLAIMER =
@@ -31,6 +32,7 @@ const DISCLAIMER =
 export function ReportDocument({
   report,
   codeHighlights,
+  buildable,
   fireAccess,
   isAdmin = false,
   showDiagnostics = false,
@@ -41,6 +43,7 @@ export function ReportDocument({
 }: {
   report: FullReport;
   codeHighlights: AduCodeHighlights;
+  buildable: BuildableEnvelopeResult;
   fireAccess: {
     hydrant: FireAccessHydrantView;
     sprinkler: SprinklerIndicator;
@@ -97,13 +100,13 @@ export function ReportDocument({
       <ResearchSummary summary={report.summary} />
       <PropertyImagerySection report={report} />
       <PropertyOverview facts={report.facts} claims={report.claims} />
-      <ParcelAndPublicRecords report={report} />
+      <ParcelAndPublicRecords report={report} buildable={buildable} />
       <PlanningAndHazards
         facts={report.facts}
         overlays={overlayNames.length > 0 ? overlayNames : overlays}
       />
       <FireAccessSection hydrant={fireAccess.hydrant} sprinkler={fireAccess.sprinkler} />
-      <AduCodeHighlightsSection highlights={codeHighlights} />
+      <AduCodeHighlightsSection highlights={codeHighlights} buildable={buildable} />
       <SiteInspectionRequired items={buildSiteInspectionItems(report)} />
       <SiteObservations observations={report.siteObservations} />
       <ImportantInconsistencies conflicts={report.conflicts} />

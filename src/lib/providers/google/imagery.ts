@@ -58,6 +58,7 @@ export function buildGoogleStaticImageUrl(input: {
   height?: number;
   parcelGeometry?: ParcelOverlayGeometry | null;
   hydrant?: { latitude: number; longitude: number } | null;
+  envelopeGeometry?: ParcelOverlayGeometry | null;
 }): string | null {
   const key = googleKey();
   if (!key) return null;
@@ -84,6 +85,7 @@ export function buildGoogleStaticImageUrl(input: {
       width,
       height,
       hydrant: input.hydrant ?? null,
+      envelopeGeometry: input.envelopeGeometry ?? null,
     });
     if (!overlay) return null;
 

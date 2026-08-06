@@ -279,6 +279,7 @@ describe("Site Inspection Required items", () => {
       "utilities",
       "easements-tract-maps",
       "hydrant-pull-distance",
+      "buildable-area-verify",
     ]);
     expect(items[1]?.title).toBe("Utilities");
     expect(items[1]?.verifySteps.length).toBeGreaterThan(0);
@@ -315,10 +316,11 @@ describe("Site Inspection Required items", () => {
       "utilities",
       "easements-tract-maps",
       "hydrant-pull-distance",
+      "buildable-area-verify",
     ]);
     expect(
       buildSiteInspectionItems({ ...report, apn: null, facts: [] } as FullReport),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
   });
 });
 

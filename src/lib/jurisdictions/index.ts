@@ -53,8 +53,9 @@ export {
   formatJurisdictionRuleValue,
   isCodeDocumentEntry,
   listCodeDocumentsForJurisdiction,
-  selectRulesForZoning,
 } from "./code-highlights";
+
+export { selectRulesForZoning } from "./select-rules";
 
 export {
   buildJurisdictionRuleContextItems,

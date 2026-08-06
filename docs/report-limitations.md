@@ -37,7 +37,7 @@ Santa Clara County Property Profile access is currently a **generic search** int
 
 Parcel geometry from the San Jose and Santa Clara County ArcGIS connectors is requested with `outSR=4326` and stored as WGS84 GeoJSON (`[longitude, latitude]`). The Parcel and public records card adds that boundary to Google satellite imagery through the authenticated imagery proxy and Google Static Maps encoded `path` parameters. The map derives its center/zoom from the full parcel bounds, draws every Polygon / MultiPolygon ring, and simplifies unusually detailed rings only when needed to stay below the Static Maps URL limit.
 
-The overlay is an orientation aid for seeing lot lines relative to structures, trees, access, and neighboring improvements. It is **not a survey or title determination**. When a nearby mapped hydrant fits the parcel viewport, an `H` marker may appear; distant hydrants are omitted so the parcel stays readable (distance remains in the Fire access section). When Google imagery is not configured or the image cannot load, the report keeps the standalone parcel-outline SVG fallback. The plain satellite image in Property imagery & maps remains unchanged.
+The overlay is an orientation aid for seeing lot lines relative to structures, trees, access, and neighboring improvements. It is **not a survey or title determination**. When a nearby mapped hydrant fits the parcel viewport, an `H` marker may appear; distant hydrants are omitted so the parcel stays readable (distance remains in the Fire access section). When setback rules support it, a teal approximate buildable envelope (side/rear inset only) may appear inside the parcel boundary — see Approximate buildable envelope below. When Google imagery is not configured or the image cannot load, the report keeps the standalone parcel-outline SVG fallback. The plain satellite image in Property imagery & maps remains unchanged.
 
 ## Flood, fire, and WUI hazards (automated)
 
@@ -54,6 +54,18 @@ Official `Environment/WUI/MapServer` and egis FRAP WUI Feature/ImageServers are 
 ## ADU code highlights (configured, not determined)
 
 The **ADU code highlights** section shows admin-configured structured rules and associated Knowledge code documents for the report’s resolved jurisdiction. It is preparation material only — **not** a code determination, zoning determination, or feasibility conclusion. When nothing is configured, the section still renders with an honest empty state pointing admins to `/admin/jurisdictions`.
+
+## Approximate buildable envelope (setbacks)
+
+When parcel geometry and side/rear setback rules (`adu_setback_side_ft` / `adu_setback_rear_ft`) are available, the report draws a **uniform inward offset** of the parcel (negative Turf buffer) as an approximate buildable envelope. Front setback is shown with its citation but is **not** modeled in the polygon — automatic street-facing edge detection is unreliable and out of scope.
+
+Honesty constraints (repeated on the map caption, area figure, and ADU highlights):
+
+- Approximate; side/rear setbacks only; front yard not modeled
+- Does **not** account for easements (cross-check Site inspection required), existing structures, slopes, trees, or utilities
+- **Not** a survey or zoning determination; no fits/doesn’t-fit verdict against `adu_max_size_sqft` (that max is shown adjacent for PEM prep only)
+
+Small lots where the inset consumes the parcel show “setbacks may consume most of this lot — site-specific analysis required” instead of a broken shape. The teal envelope path is added to the parcel static map when URL budget allows; if not, the parcel boundary is kept and the envelope remains in the SVG outline / highlights text.
 
 ## Fire access — hydrant distance & sprinkler indicator
 

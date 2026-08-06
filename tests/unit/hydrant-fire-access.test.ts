@@ -237,5 +237,6 @@ describe("site inspection hydrant item", () => {
     const hydrant = items.find((item) => item.id === "hydrant-pull-distance")!;
     expect(hydrant.description).toMatch(/straight-line only/i);
     expect(hydrant.verifySteps.join(" ")).toMatch(/path of travel/i);
+    expect(items.some((item) => item.id === "buildable-area-verify")).toBe(true);
   });
 });
