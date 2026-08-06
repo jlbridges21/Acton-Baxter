@@ -1,8 +1,8 @@
+import { listJurisdictionRules } from "@/lib/jurisdictions/rules-store";
 import {
   getJurisdictionDisplayName,
-  listJurisdictionRules,
   type SupportedJurisdictionKey,
-} from "@/lib/jurisdictions";
+} from "@/lib/jurisdictions/supported";
 import { HYDRANT_PULL_DISTANCE_CAVEAT } from "@/lib/providers/hydrants/config";
 
 export const FIRE_SPRINKLER_RULE_KEY = "fire_sprinkler_hydrant_distance_max_ft" as const;

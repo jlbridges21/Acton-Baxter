@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isValidJurisdictionRuleKey } from "./rule-keys";
 import { KNOWLEDGE_DOC_KINDS } from "./types";
-import { isSupportedJurisdictionKey } from "./keys";
+import { isSupportedJurisdictionKey } from "./supported";
 
 export const knowledgeDocKindSchema = z.enum(KNOWLEDGE_DOC_KINDS);
 

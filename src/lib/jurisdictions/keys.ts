@@ -1,61 +1,27 @@
 import { selectJurisdictionConnector } from "@/lib/connectors/california/registry";
-import { SAN_JOSE_CONFIG } from "@/lib/connectors/california/san-jose/config";
-import { SANTA_CLARA_COUNTY_CONFIG } from "@/lib/connectors/california/santa-clara-county/config";
 import type { JurisdictionLookupInput } from "@/lib/research/types";
+import {
+  isSupportedJurisdictionKey,
+  type SupportedJurisdictionKey,
+} from "./supported";
 
-/**
- * Connector-aligned jurisdiction keys used across research, knowledge tagging,
- * structured rules, and the admin jurisdictions surface.
- */
-export const SUPPORTED_JURISDICTION_KEYS = [
-  SAN_JOSE_CONFIG.key,
-  SANTA_CLARA_COUNTY_CONFIG.key,
-] as const;
-
-export type SupportedJurisdictionKey = (typeof SUPPORTED_JURISDICTION_KEYS)[number];
-
-export type SupportedJurisdiction = {
-  key: SupportedJurisdictionKey;
-  name: string;
-  state: "CA";
-  county: string;
-  /** Cities / labels that typically map to this key during research. */
-  matchHints: string[];
-};
-
-export const SUPPORTED_JURISDICTIONS: SupportedJurisdiction[] = [
-  {
-    key: SAN_JOSE_CONFIG.key as SupportedJurisdictionKey,
-    name: SAN_JOSE_CONFIG.name,
-    state: "CA",
-    county: "Santa Clara",
-    matchHints: ["san jose", "san josé"],
-  },
-  {
-    key: SANTA_CLARA_COUNTY_CONFIG.key as SupportedJurisdictionKey,
-    name: SANTA_CLARA_COUNTY_CONFIG.name,
-    state: "CA",
-    county: "Santa Clara",
-    matchHints: ["santa clara", "unincorporated"],
-  },
-];
-
-export function isSupportedJurisdictionKey(
-  value: string | null | undefined,
-): value is SupportedJurisdictionKey {
-  return Boolean(value && (SUPPORTED_JURISDICTION_KEYS as readonly string[]).includes(value));
-}
-
-export function getJurisdictionDisplayName(key: string | null | undefined): string {
-  if (!key) return "Unknown jurisdiction";
-  const match = SUPPORTED_JURISDICTIONS.find((item) => item.key === key);
-  return match?.name ?? key;
-}
+export {
+  SUPPORTED_JURISDICTION_KEYS,
+  SUPPORTED_JURISDICTIONS,
+  detectJurisdictionKeyFromText,
+  getJurisdictionDisplayName,
+  isSupportedJurisdictionKey,
+  type SupportedJurisdiction,
+  type SupportedJurisdictionKey,
+} from "./supported";
 
 /**
  * Resolve connector-aligned jurisdiction_key using the same city→connector
  * preference as live property research (`selectJurisdictionConnector`).
  * Returns null for the California fallback connector (unsupported automation).
+ *
+ * Server-oriented: pulls the connector registry. Client UI should use
+ * `./supported` instead of this module.
  */
 export function resolveJurisdictionKey(
   input: JurisdictionLookupInput & {
@@ -90,12 +56,4 @@ export function resolveJurisdictionKeyFromReport(report: {
     state: report.state ?? "CA",
     jurisdictionName: report.jurisdiction_name,
   });
-}
-
-/** Best-effort detection from free text (chat / admin search). */
-export function detectJurisdictionKeyFromText(text: string): SupportedJurisdictionKey | null {
-  const normalized = text.toLowerCase();
-  if (/san\s*jos[eé]/.test(normalized)) return "ca-san-jose";
-  if (/santa\s*clara|unincorporated/.test(normalized)) return "ca-santa-clara-county";
-  return null;
 }

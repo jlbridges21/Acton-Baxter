@@ -4,10 +4,13 @@ export {
   detectJurisdictionKeyFromText,
   getJurisdictionDisplayName,
   isSupportedJurisdictionKey,
-  resolveJurisdictionKey,
-  resolveJurisdictionKeyFromReport,
   type SupportedJurisdiction,
   type SupportedJurisdictionKey,
+} from "./supported";
+
+export {
+  resolveJurisdictionKey,
+  resolveJurisdictionKeyFromReport,
 } from "./keys";
 
 export {

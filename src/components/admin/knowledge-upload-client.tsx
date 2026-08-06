@@ -8,7 +8,8 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { KnowledgeCenterShell } from "@/components/admin/knowledge-center/knowledge-center-shell";
 import { KNOWLEDGE_CATEGORIES } from "@/lib/knowledge/categories";
-import { SUPPORTED_JURISDICTIONS, type KnowledgeDocKind } from "@/lib/jurisdictions";
+import { SUPPORTED_JURISDICTIONS } from "@/lib/jurisdictions/supported";
+import type { KnowledgeDocKind } from "@/lib/jurisdictions/types";
 
 type PreviewRow = {
   filename: string;

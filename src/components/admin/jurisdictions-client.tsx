@@ -8,12 +8,14 @@ import { Input } from "@/components/ui/input";
 import {
   JURISDICTION_RULE_KEY_CATALOG,
   defaultUnitForRuleKey,
-  type JurisdictionRule,
   type JurisdictionRuleKeyMeta,
-  type JurisdictionRuleValueJson,
-  type KnowledgeDocKind,
-  type SupportedJurisdiction,
-} from "@/lib/jurisdictions";
+} from "@/lib/jurisdictions/rule-keys";
+import type { SupportedJurisdiction } from "@/lib/jurisdictions/supported";
+import type {
+  JurisdictionRule,
+  JurisdictionRuleValueJson,
+  KnowledgeDocKind,
+} from "@/lib/jurisdictions/types";
 
 type AssociableEntry = {
   id: string;

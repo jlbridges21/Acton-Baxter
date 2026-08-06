@@ -1,5 +1,5 @@
 import type { KnownJurisdictionRuleKey } from "./rule-keys";
-import type { SupportedJurisdictionKey } from "./keys";
+import type { SupportedJurisdictionKey } from "./supported";
 
 export const KNOWLEDGE_DOC_KINDS = [
   "building_code",
