@@ -35,6 +35,7 @@ export type AdminNavSection = {
 
 /** Grouped admin nav — used by AppNav. Flat list via getAdminNavLinks(). */
 export function getAdminNavSections(): AdminNavSection[] {
+  // Desktop primary strip shows the first 5 Tools links for admins.
   const tools: AdminNavLink[] = [
     {
       href: "/",
@@ -49,10 +50,10 @@ export function getAdminNavSections(): AdminNavSection[] {
       match: (pathname) => pathname.startsWith("/admin/knowledge") || pathname === "/knowledge",
     },
     {
-      href: "/admin/jurisdictions",
-      label: "Jurisdictions & Codes",
-      icon: Landmark,
-      match: (pathname) => pathname.startsWith("/admin/jurisdictions"),
+      href: "/dashboard",
+      label: "Property Research",
+      icon: Search,
+      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
     },
     {
       href: "/pem-neats",
@@ -61,22 +62,22 @@ export function getAdminNavSections(): AdminNavSection[] {
       match: (pathname) => pathname.startsWith("/pem-neats"),
     },
     {
-      href: "/projects/setup",
-      label: "New Project Setup",
-      icon: FolderKanban,
-      match: (pathname) => pathname.startsWith("/projects/setup"),
-    },
-    {
-      href: "/dashboard",
-      label: "Property Research",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
-    },
-    {
       href: "/customers/lookup",
       label: "Customer Center",
       icon: UsersRound,
       match: (pathname) => pathname.startsWith("/customers"),
+    },
+    {
+      href: "/admin/jurisdictions",
+      label: "Jurisdictions & Codes",
+      icon: Landmark,
+      match: (pathname) => pathname.startsWith("/admin/jurisdictions"),
+    },
+    {
+      href: "/projects/setup",
+      label: "New Project Setup",
+      icon: FolderKanban,
+      match: (pathname) => pathname.startsWith("/projects/setup"),
     },
   ];
 

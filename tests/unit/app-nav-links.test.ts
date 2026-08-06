@@ -26,6 +26,14 @@ describe("getAppNavLinksForRole", () => {
     expect(adminLabels).toEqual(expected);
     expect(superAdminLabels).toEqual(expected);
     expect(superAdminLabels).toEqual(adminLabels);
+    // Desktop primary strip for admins is the first five Tools links.
+    expect(adminLabels.slice(0, 5)).toEqual([
+      "Dashboard",
+      "Knowledge Center",
+      "Property Research",
+      "PEM NEAT",
+      "Customer Center",
+    ]);
     expect(superAdminLabels).toContain("Users");
     expect(superAdminLabels).toContain("Feedback");
     expect(superAdminLabels).toContain("Settings");
@@ -79,11 +87,11 @@ describe("getAdminNavSections", () => {
     expect(sections.find((s) => s.id === "tools")?.links.map((l) => l.label)).toEqual([
       "Dashboard",
       "Knowledge Center",
-      "Jurisdictions & Codes",
-      "PEM NEAT",
-      "New Project Setup",
       "Property Research",
+      "PEM NEAT",
       "Customer Center",
+      "Jurisdictions & Codes",
+      "New Project Setup",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([
       "Connectors",
