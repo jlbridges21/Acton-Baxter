@@ -99,4 +99,44 @@ body {
   a[href]::after {
     content: none !important;
   }
+
+  /*
+   * PEM NEAT print export — scoped so Property Research print density is unchanged.
+   * Tab panels may carry Tailwind `hidden` while another tab is active on screen;
+   * print must still show the NEAT body.
+   */
+  .pem-neat-document [data-testid="pem-neat-panel"] {
+    display: block !important;
+  }
+
+  .pem-neat-document [data-testid="pem-neat-buildertrend-panel"],
+  .pem-neat-document [data-testid="pem-neat-source-panel"] {
+    display: none !important;
+  }
+
+  .pem-neat-document .rounded-lg.border {
+    break-inside: auto;
+    page-break-inside: auto;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0.65rem 0 !important;
+    border-width: 0 0 1px 0 !important;
+  }
+
+  .pem-neat-document .pem-neat-score-row {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .pem-neat-document [data-print-score-details] {
+    display: block !important;
+  }
+
+  .pem-neat-document {
+    color: var(--acton-navy);
+  }
+
+  .pem-neat-print-header {
+    display: block !important;
+  }
 }

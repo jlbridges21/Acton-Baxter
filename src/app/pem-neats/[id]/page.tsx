@@ -3,6 +3,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { PemNeatResultClient } from "@/components/pem-neat/pem-neat-result-client";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
+import { getBrandingWithLogo } from "@/lib/branding/get-branding";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
 
 type PageProps = { params: Promise<{ id: string }> };
@@ -23,12 +24,17 @@ export default async function PemNeatDetailPage({ params }: PageProps) {
     generations = [];
   }
 
+  const branding = await getBrandingWithLogo();
+
   return (
     <AppShell user={user}>
       <PemNeatResultClient
         item={item}
         generations={generations}
         isAdmin={isAdminRole(user.profile.role)}
+        logoUrl={branding.logoUrl}
+        companyName={branding.companyName}
+        logoAlt={branding.logoAltText}
       />
     </AppShell>
   );

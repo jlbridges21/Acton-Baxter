@@ -1,9 +1,6 @@
 import { selectJurisdictionConnector } from "@/lib/connectors/california/registry";
 import type { JurisdictionLookupInput } from "@/lib/research/types";
-import {
-  isSupportedJurisdictionKey,
-  type SupportedJurisdictionKey,
-} from "./supported";
+import { isSupportedJurisdictionKey, type SupportedJurisdictionKey } from "./supported";
 
 export {
   SUPPORTED_JURISDICTION_KEYS,

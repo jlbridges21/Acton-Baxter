@@ -8,10 +8,7 @@ export {
   type SupportedJurisdictionKey,
 } from "./supported";
 
-export {
-  resolveJurisdictionKey,
-  resolveJurisdictionKeyFromReport,
-} from "./keys";
+export { resolveJurisdictionKey, resolveJurisdictionKeyFromReport } from "./keys";
 
 export {
   JURISDICTION_RULE_KEYS,

@@ -106,70 +106,72 @@ export function NeatAssessmentPanel({
                     ? "Not enough transcript evidence to score this category."
                     : "—");
                 const isOpen = expanded === cat.key;
+                const detailBlock = (
+                  <div className="mt-2 space-y-1 text-xs font-normal text-[var(--acton-navy)]">
+                    <AssessmentStatusBadge status={cat.status} />
+                    {cat.evidence && !isPlaceholder(cat.evidence) ? (
+                      <p data-score-detail="evidence">
+                        <span className="font-medium">Evidence:</span> {cat.evidence}
+                      </p>
+                    ) : null}
+                    {cat.whatWorked && !isPlaceholder(cat.whatWorked) ? (
+                      <p data-score-detail="what-worked">
+                        <span className="font-medium">What worked:</span> {cat.whatWorked}
+                      </p>
+                    ) : null}
+                    {cat.coachingOpportunity && !isPlaceholder(cat.coachingOpportunity) ? (
+                      <p data-score-detail="coaching">
+                        <span className="font-medium">Coaching:</span> {cat.coachingOpportunity}
+                      </p>
+                    ) : null}
+                    {cat.key === "palo_upfront_contract" && cat.palo ? (
+                      <div className="mt-1 grid gap-1 sm:grid-cols-2">
+                        {(["purpose", "agenda", "logistics", "outcome"] as const).map((part) => (
+                          <div
+                            key={part}
+                            className={cn(
+                              "rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-1.5",
+                            )}
+                          >
+                            <span className="text-[10px] font-bold tracking-wide uppercase">
+                              {part}
+                            </span>{" "}
+                            <AssessmentStatusBadge status={cat.palo![part].status} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                );
                 return (
-                  <tr key={cat.key} className="border-b border-[var(--acton-border)] align-top">
+                  <tr
+                    key={cat.key}
+                    data-pem-neat-score-row={cat.key}
+                    className="pem-neat-score-row border-b border-[var(--acton-border)] align-top print:break-inside-avoid"
+                  >
                     <td className="py-2.5 pr-3 font-medium text-[var(--acton-navy)]">
                       <button
                         type="button"
-                        className="text-left hover:underline"
+                        className="text-left hover:underline print:hidden"
                         onClick={() => setExpanded(isOpen ? null : cat.key)}
                         aria-expanded={isOpen}
                       >
                         {label}
                       </button>
-                      {isOpen ? (
-                        <div className="mt-2 space-y-1 text-xs font-normal text-[var(--acton-muted)]">
-                          <AssessmentStatusBadge status={cat.status} />
-                          {cat.evidence && !isPlaceholder(cat.evidence) ? (
-                            <p>
-                              <span className="font-medium text-[var(--acton-navy)]">
-                                Evidence:
-                              </span>{" "}
-                              {cat.evidence}
-                            </p>
-                          ) : null}
-                          {cat.whatWorked && !isPlaceholder(cat.whatWorked) ? (
-                            <p>
-                              <span className="font-medium text-[var(--acton-navy)]">
-                                What worked:
-                              </span>{" "}
-                              {cat.whatWorked}
-                            </p>
-                          ) : null}
-                          {cat.coachingOpportunity && !isPlaceholder(cat.coachingOpportunity) ? (
-                            <p>
-                              <span className="font-medium text-[var(--acton-navy)]">
-                                Coaching:
-                              </span>{" "}
-                              {cat.coachingOpportunity}
-                            </p>
-                          ) : null}
-                          {cat.key === "palo_upfront_contract" && cat.palo ? (
-                            <div className="mt-1 grid gap-1 sm:grid-cols-2">
-                              {(["purpose", "agenda", "logistics", "outcome"] as const).map(
-                                (part) => (
-                                  <div
-                                    key={part}
-                                    className={cn(
-                                      "rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)] p-1.5",
-                                    )}
-                                  >
-                                    <span className="text-[10px] font-bold tracking-wide uppercase">
-                                      {part}
-                                    </span>{" "}
-                                    <AssessmentStatusBadge status={cat.palo![part].status} />
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
+                      {/* Print: category name as plain text (buttons are print-hidden globally). */}
+                      <span className="hidden print:inline">{label}</span>
+                      {isOpen ? <div className="print:hidden">{detailBlock}</div> : null}
+                      {/* Print always expands every category's evidence / coaching. */}
+                      <div className="hidden print:block" data-print-score-details>
+                        {detailBlock}
+                      </div>
                     </td>
                     <td className="py-2.5 pr-3 font-semibold whitespace-nowrap text-[var(--acton-navy)]">
                       {cat.score != null ? cat.score : "—"}
                     </td>
-                    <td className="py-2.5 text-[var(--acton-muted)]">{explanation}</td>
+                    <td className="py-2.5 text-[var(--acton-navy)] print:text-[var(--acton-navy)]">
+                      {explanation}
+                    </td>
                   </tr>
                 );
               })}
@@ -182,9 +184,13 @@ export function NeatAssessmentPanel({
             Overall Score: {overall} / 10
           </p>
         ) : null}
-        <p className="mt-1 text-xs text-[var(--acton-muted)]">
+        <p className="mt-1 text-xs text-[var(--acton-muted)] print:hidden">
           Overall score is the mean of determinable category scores (excludes NOT DETERMINABLE /
           N/A). Click a category for evidence and coaching detail.
+        </p>
+        <p className="mt-1 hidden text-xs text-[var(--acton-muted)] print:block">
+          Overall score is the mean of determinable category scores (excludes NOT DETERMINABLE /
+          N/A).
         </p>
       </Card>
     </div>

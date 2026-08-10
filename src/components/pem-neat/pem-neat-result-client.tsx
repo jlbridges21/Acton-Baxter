@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ActionMenu } from "@/components/ui/action-menu";
+import { ExportPemNeatPdfButton } from "@/components/pem-neat/export-pem-neat-pdf-button";
+import { PemNeatPrintHeader } from "@/components/pem-neat/pem-neat-print-header";
 import { BuildertrendFieldsPanel } from "@/components/pem-neat/buildertrend-fields-panel";
 import { ConfirmDialog } from "@/components/pem-neat/confirm-dialog";
 import { CopyButton } from "@/components/pem-neat/copy-button";
@@ -73,10 +75,16 @@ export function PemNeatResultClient({
   item,
   generations = [],
   isAdmin = false,
+  logoUrl = null,
+  companyName = "Acton ADU",
+  logoAlt = "Acton ADU logo",
 }: {
   item: PemNeatRecord;
   generations?: PemNeatGenerationRow[];
   isAdmin?: boolean;
+  logoUrl?: string | null;
+  companyName?: string;
+  logoAlt?: string;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("neat");
@@ -195,8 +203,24 @@ export function PemNeatResultClient({
     }
   }
 
+  const canExportPdf = Boolean(result) && !isGenerating && !showFailed;
+
   return (
-    <div className="space-y-6">
+    <div className="pem-neat-document space-y-6">
+      {canExportPdf ? (
+        <PemNeatPrintHeader
+          prospectName={item.prospect_name}
+          salespersonDisplayName={item.salesperson_display_name}
+          meetingDate={item.meeting_date}
+          meetingOutcome={item.meeting_outcome}
+          qualification={item.qualification}
+          generatedAt={item.generated_at}
+          logoUrl={logoUrl}
+          companyName={companyName}
+          logoAlt={logoAlt}
+        />
+      ) : null}
+
       <header>
         <Link
           href="/pem-neats"
@@ -238,7 +262,7 @@ export function PemNeatResultClient({
             </dl>
           </div>
 
-          <div className="relative flex flex-wrap gap-2">
+          <div className="relative flex flex-wrap gap-2 print:hidden">
             <Link
               href="/pem-neats"
               className={buttonVariants({ variant: "secondary", size: "sm" })}
@@ -277,6 +301,7 @@ export function PemNeatResultClient({
                 />
               </>
             ) : null}
+            {canExportPdf ? <ExportPemNeatPdfButton /> : null}
             <ActionMenu
               label="More actions"
               items={[
@@ -300,13 +325,13 @@ export function PemNeatResultClient({
       </header>
 
       {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 print:hidden">
           {error}
         </div>
       ) : null}
 
       {isStale && result ? (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-amber-200 bg-amber-50 print:hidden">
           <CardTitle className="text-amber-900">Transcript Updated</CardTitle>
           <CardDescription className="text-amber-800">
             This NEAT was generated from an earlier version of the transcript. You can still inspect
@@ -324,42 +349,46 @@ export function PemNeatResultClient({
       ) : null}
 
       {isGenerating ? (
-        <GeneratingCard
-          generationStage={generationStage}
-          isTimedOut={isTimedOut}
-          onManualRefresh={() => void refresh()}
-        />
+        <div className="print:hidden">
+          <GeneratingCard
+            generationStage={generationStage}
+            isTimedOut={isTimedOut}
+            onManualRefresh={() => void refresh()}
+          />
+        </div>
       ) : null}
 
       {showFailed ? (
-        <GenerationFailedCard
-          errorMessage={item.generation_error}
-          retrying={retrying}
-          onRetry={onRetry}
-          generationStage={generationStage ?? item.generation_stage}
-          isAdmin={isAdmin}
-          adminDetails={
-            isAdmin
-              ? (adminDiag ?? {
-                  errorCode: item.last_error_code,
-                  modelName: item.model_name,
-                  failedStage: item.generation_stage,
-                  validationIssues: Array.isArray(
-                    (item.stage_outputs_json as { validationDiagnostics?: { issues?: string[] } })
-                      ?.validationDiagnostics?.issues,
-                  )
-                    ? (
-                        item.stage_outputs_json as {
-                          validationDiagnostics?: { issues?: string[] };
-                        }
-                      ).validationDiagnostics!.issues
-                    : undefined,
-                })
-              : null
-          }
-        />
+        <div className="print:hidden">
+          <GenerationFailedCard
+            errorMessage={item.generation_error}
+            retrying={retrying}
+            onRetry={onRetry}
+            generationStage={generationStage ?? item.generation_stage}
+            isAdmin={isAdmin}
+            adminDetails={
+              isAdmin
+                ? (adminDiag ?? {
+                    errorCode: item.last_error_code,
+                    modelName: item.model_name,
+                    failedStage: item.generation_stage,
+                    validationIssues: Array.isArray(
+                      (item.stage_outputs_json as { validationDiagnostics?: { issues?: string[] } })
+                        ?.validationDiagnostics?.issues,
+                    )
+                      ? (
+                          item.stage_outputs_json as {
+                            validationDiagnostics?: { issues?: string[] };
+                          }
+                        ).validationDiagnostics!.issues
+                      : undefined,
+                  })
+                : null
+            }
+          />
+        </div>
       ) : item.generation_error && result ? (
-        <Card className="border-amber-200 bg-amber-50">
+        <Card className="border-amber-200 bg-amber-50 print:hidden">
           <CardTitle className="text-amber-900">Last generation attempt failed</CardTitle>
           <CardDescription className="text-amber-800">
             {item.generation_error} Showing the most recent successful result.
@@ -370,7 +399,7 @@ export function PemNeatResultClient({
       <div
         role="tablist"
         aria-label="PEM NEAT views"
-        className="flex gap-2 border-b border-[var(--acton-border)]"
+        className="flex gap-2 border-b border-[var(--acton-border)] print:hidden"
       >
         {(
           [
@@ -401,58 +430,71 @@ export function PemNeatResultClient({
         ))}
       </div>
 
-      {tab === "neat" ? (
-        <div role="tabpanel" id="panel-neat" aria-labelledby="tab-neat" className="space-y-6">
-          {!result ? (
-            <Card>
-              <CardTitle>NEAT not available yet</CardTitle>
-              <CardDescription>
-                {item.status === "failed"
-                  ? "Generation did not produce structured analysis. Retry above."
-                  : "Structured analysis has not been saved for this record."}
-              </CardDescription>
-            </Card>
-          ) : (
-            <>
-              <NeatSalesIntelligencePanel sales={result.salesIntelligence} />
-              <NeatAssessmentPanel
-                assessment={result.assessment}
-                qualification={result.salesIntelligence.qualification}
-              />
-              <NeatFollowUpPanel followUpEmail={result.followUpEmail} />
-              <NeatProjectIntelligencePanel
-                projectIntelligence={result.projectIntelligence}
-                productionNotes={result.productionNotes}
-                internalOpportunityNotes={result.internalOpportunityNotes}
-              />
-              <NeatSourcePanel transcript={item.transcript} />
-            </>
-          )}
-        </div>
-      ) : (
-        <div
-          role="tabpanel"
-          id="panel-buildertrend"
-          aria-labelledby="tab-buildertrend"
-          className="space-y-4"
-        >
-          {isStale ? (
-            <Card className="border-amber-200 bg-amber-50">
-              <CardTitle className="text-amber-900">Generated from earlier transcript</CardTitle>
-              <CardDescription className="text-amber-800">
-                Do not copy these BuilderTrend fields into production until you regenerate from the
-                current transcript.
-              </CardDescription>
-            </Card>
-          ) : null}
-          <BuildertrendFieldsPanel fields={btFields} />
-        </div>
-      )}
+      {/*
+        Both panels stay mounted so print always includes NEAT content regardless
+        of the active tab. BuilderTrend is print:hidden by design.
+      */}
+      <div
+        role="tabpanel"
+        id="panel-neat"
+        aria-labelledby="tab-neat"
+        aria-hidden={tab !== "neat"}
+        className={cn("space-y-6 print:block", tab !== "neat" && "hidden")}
+        data-testid="pem-neat-panel"
+      >
+        {!result ? (
+          <Card>
+            <CardTitle>NEAT not available yet</CardTitle>
+            <CardDescription>
+              {item.status === "failed"
+                ? "Generation did not produce structured analysis. Retry above."
+                : "Structured analysis has not been saved for this record."}
+            </CardDescription>
+          </Card>
+        ) : (
+          <>
+            <NeatSalesIntelligencePanel sales={result.salesIntelligence} />
+            <NeatAssessmentPanel
+              assessment={result.assessment}
+              qualification={result.salesIntelligence.qualification}
+            />
+            <NeatFollowUpPanel followUpEmail={result.followUpEmail} />
+            <NeatProjectIntelligencePanel
+              projectIntelligence={result.projectIntelligence}
+              productionNotes={result.productionNotes}
+              internalOpportunityNotes={result.internalOpportunityNotes}
+            />
+            <NeatSourcePanel transcript={item.transcript} />
+          </>
+        )}
+      </div>
 
-      <GenerationHistoryPanel
-        generations={generations}
-        currentTranscriptHash={item.current_generation_transcript_hash}
-      />
+      <div
+        role="tabpanel"
+        id="panel-buildertrend"
+        aria-labelledby="tab-buildertrend"
+        aria-hidden={tab !== "buildertrend"}
+        className={cn("space-y-4 print:hidden", tab !== "buildertrend" && "hidden")}
+        data-testid="pem-neat-buildertrend-panel"
+      >
+        {isStale ? (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardTitle className="text-amber-900">Generated from earlier transcript</CardTitle>
+            <CardDescription className="text-amber-800">
+              Do not copy these BuilderTrend fields into production until you regenerate from the
+              current transcript.
+            </CardDescription>
+          </Card>
+        ) : null}
+        <BuildertrendFieldsPanel fields={btFields} />
+      </div>
+
+      <div className="print:hidden">
+        <GenerationHistoryPanel
+          generations={generations}
+          currentTranscriptHash={item.current_generation_transcript_hash}
+        />
+      </div>
 
       <ConfirmDialog
         open={confirmOpen}

@@ -85,6 +85,50 @@ test("PEM NEAT library action menu Edit/Delete is clickable (portal)", async ({ 
   await expect(page.getByRole("heading", { name: "Edit PEM NEAT" })).toBeVisible();
 });
 
+test("PEM NEAT Export as PDF print layout hides exclusions and expands scores", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await page.goto("/pem-neats/new");
+  await page.getByLabel("Prospect Name").fill("PDF Export Prospect");
+  await page.getByLabel("Partnership Evaluation Meeting Transcript").fill(SAMPLE_TRANSCRIPT);
+  await page.getByRole("button", { name: "Generate PEM NEAT" }).click();
+  await page.waitForURL(/\/pem-neats\/[0-9a-f-]+$/, { timeout: 60_000 });
+
+  await expect(page.getByTestId("pem-neat-export-pdf")).toBeVisible();
+  await expect(page.getByTestId("pem-neat-print-header")).toBeAttached();
+
+  // Switch to BuilderTrend — print must still include NEAT content.
+  await page.getByRole("tab", { name: /BuilderTrend Custom Fields/ }).click();
+  await expect(page.getByTestId("pem-neat-buildertrend-panel")).toBeVisible();
+
+  await page.emulateMedia({ media: "print" });
+
+  await expect(page.getByTestId("pem-neat-print-header")).toBeVisible();
+  await expect(page.getByText("Internal — Acton ADU")).toBeVisible();
+  await expect(page.getByTestId("pem-neat-panel")).toBeVisible();
+  await expect(page.getByText(/Sales Intelligence|Customer Story/i).first()).toBeVisible();
+  await expect(page.getByTestId("pem-neat-source-panel")).toBeHidden();
+  await expect(page.getByTestId("pem-neat-buildertrend-panel")).toBeHidden();
+  await expect(page.getByTestId("pem-neat-export-pdf")).toBeHidden();
+  await expect(page.getByRole("tab", { name: "NEAT" })).toBeHidden();
+
+  // Score explanations expand in print even when categories were never clicked.
+  const printDetails = page.locator("[data-print-score-details]");
+  await expect(printDetails.first()).toBeVisible();
+  expect(await printDetails.count()).toBeGreaterThan(3);
+
+  const pdf = await page.pdf({ format: "Letter", printBackground: true });
+  const pageMatches = pdf.toString("latin1").match(/\/Type\s*\/Page(?![s/])/g);
+  const pages = pageMatches ? pageMatches.length : 0;
+  console.log(`PEM_NEAT_PDF_PAGES=${pages}`);
+  expect(pages).toBeGreaterThan(0);
+  // Full NEAT with expanded score explanations typically lands in a short packet.
+  expect(pages, `PEM NEAT PDF is ${pages} pages`).toBeLessThanOrEqual(12);
+
+  await page.emulateMedia({ media: null });
+});
+
 test("PEM NEAT edit transcript marks needs regeneration, then delete", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto("/pem-neats/new");

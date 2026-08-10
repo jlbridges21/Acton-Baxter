@@ -18,7 +18,7 @@ export function NeatSourcePanel({ transcript }: { transcript: string }) {
   }, [isLong, open, transcript]);
 
   return (
-    <Card className="space-y-3">
+    <Card className="space-y-3 print:hidden" data-testid="pem-neat-source-panel">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <SectionHeading>Source</SectionHeading>
         <CopyButton getText={() => transcript} label="Copy Transcript" copiedLabel="Copied" />
