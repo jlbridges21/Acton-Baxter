@@ -62,6 +62,7 @@ import {
   resolveRetryQuestion,
 } from "@/lib/baxter/concept-vocabulary";
 import { pemHelpDefinitionAnswer } from "@/lib/baxter-data/pem-neats/intent";
+import { isKnowledgeBaseRelevantToPemContentQuestion } from "@/lib/baxter-data/pem-neats";
 import { runEvidenceRegistry } from "@/lib/baxter-ai/evidence-registry";
 import {
   classifyQuestionSemantically,
@@ -654,13 +655,13 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       let answerText = early.answer;
       let sources = early.sources.map((item) => contextItemToSourceReference(item));
 
-      // Combined answers: PEM content-search leads; strong KB guidance may follow, attributed.
+      // Combined answers: PEM content-search leads; KB follows only when topically relevant.
       const isPemContentSearch =
         early.modelProvider === "pem-neats" &&
         early.sources.some((s) => (s.tags ?? []).includes("content_search"));
       if (isPemContentSearch && contextItems.length > 0) {
         const kbBits = contextItems
-          .filter((item) => item.sourceType !== "slack" && (item.relevanceScore ?? 0) >= 40)
+          .filter((item) => isKnowledgeBaseRelevantToPemContentQuestion(routingQuestion, item))
           .slice(0, 2);
         if (kbBits.length > 0) {
           const kbBlock = kbBits

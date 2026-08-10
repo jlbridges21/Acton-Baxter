@@ -122,7 +122,7 @@ export function detectRequestedPemFields(question: string): PemFieldKey[] {
     /\bmotivation(?:\s+for (?:the )?adu|\s+to build)\b/i.test(q) ||
     /\bwhy (?:do they|does (?:he|she)|are they) (?:want|need) (?:an )?adu\b/i.test(q);
   const coachingNarrative =
-    /\b(disqualif|don'?t recommend|what am i missing|show jesse|how i (?:handled|said)|got her to share)\b/i.test(
+    /\b(?:disqualif\w*|don'?t recommend|what am i missing|show jesse|how i (?:handled|said)|got (?:her|him|them) to share|open up more|find (?:the )?part|look in .+ (?:pem|neat))\b/i.test(
       q,
     );
   if (

@@ -22,7 +22,16 @@ const SALES_ID = "00000000-0000-4000-8000-000000000099";
 const REPORTED_Q =
   "I want to show Jesse how I disqualified Sharon liu by saying I don't recommend an ADU 'what am i missing' and how that got her to share more pain about why she needs the adu";
 
+const REPORTED_Q_A =
+  "Look in Sharon Liu neat and find the part of the transcript where Kevin disqualified her by saying that he didn't recommend an ADU and this caused her to open up more about her pain";
+
+const REPORTED_Q_B =
+  "@Baxter I want to show Jesse how I disqualified Sharon liu by saying I don't recommend an ADU 'what am i missing' and how that got her to share more pain about why she needs the adu";
+
 const DISQUALIFY_TRANSCRIPT = `
+36:50: Advisor: On payment, some families prefer cash.
+36:58: Sharon: We could do a cash payment if that helps move things along faster.
+37:10: Advisor: Understood — we can talk financing options later.
 38:50: Sharon: We just want to know if an ADU makes sense for us right now.
 39:10: Advisor: I hear you. Before we talk floor plans, can I be honest with you?
 39:31: I, I, I can't sit here and recommend you do it at this moment.
@@ -132,19 +141,77 @@ describe("searchPemNeatContent", () => {
       ) ?? result.passages.find((p) => p.kind === "transcript");
     expect(transcriptHit?.timestamp).toMatch(/39:3[15]/);
     expect(transcriptHit?.excerpt).toMatch(/recommend you do it|haven.?t heard/i);
+    // Must rank the disqualification exchange above the cash-payment distractor.
+    expect(result.passages[0]?.kind).toBe("transcript");
+    expect(result.passages[0]?.timestamp).toMatch(/39:3[15]/);
+    expect(result.passages.some((p) => p.timestamp === "36:58")).toBe(false);
 
     const answer = formatPemContentSearchAnswer({
       prospectName: full.prospect_name,
       meetingDate: full.meeting_date,
       citationLabel: `${full.prospect_name} PEM NEAT (${full.meeting_date})`,
       passages: result.passages,
+      question: REPORTED_Q,
     });
     expect(answer).toMatch(/Transcript quote \(39:/);
     expect(answer).toMatch(/exact wording from the NEAT transcript/i);
     expect(answer).toMatch(/Sharon Liu/);
-    expect(answer).toMatch(/NEAT assessment|Type 1 Pain/i);
+    expect(answer).toMatch(/can'?t sit here and recommend|recommend you do it/i);
+    expect(answer).not.toMatch(/Customer Story/i);
+    expect(answer).not.toMatch(/Bonding/i);
     // Surface for the report.
     console.log("\n--- REPORTED QUESTION SAMPLE ANSWER ---\n" + answer + "\n---\n");
+  });
+
+  it("ranks 39:31 above 36:58 cash for both reported Slack phrasings", async () => {
+    const full = await seedSharonLiuNeat({
+      prospectName: "Sharon Liu & Jeff Liu",
+      prospectNames: ["Sharon Liu", "Jeff Liu"],
+    });
+    for (const q of [REPORTED_Q_A, REPORTED_Q_B]) {
+      const result = searchPemNeatContent(full, q, { limit: 4 });
+      expect(result.passages[0]?.kind, q).toBe("transcript");
+      expect(result.passages[0]?.timestamp, q).toMatch(/39:3[15]/);
+      expect(result.passages[0]?.excerpt, q).toMatch(/recommend you do it|haven.?t heard/i);
+      const answer = formatPemContentSearchAnswer({
+        prospectName: full.prospect_name,
+        meetingDate: full.meeting_date,
+        citationLabel: `${full.prospect_name} PEM NEAT`,
+        passages: result.passages,
+        question: q,
+      });
+      expect(answer, q).toMatch(/39:3[15]/);
+      expect(answer, q).not.toMatch(/cash payment/i);
+    }
+  });
+
+  it("gates KB combine: Culture Guide out; technique playbook in", async () => {
+    const { isKnowledgeBaseRelevantToPemContentQuestion } =
+      await import("@/lib/baxter-data/pem-neats");
+    expect(
+      isKnowledgeBaseRelevantToPemContentQuestion(REPORTED_Q_B, {
+        title: "Culture Guide",
+        summary: "Our values and brand voice for Acton.",
+        contentExcerpt: "Be helpful and on-brand in every customer conversation.",
+        category: "Culture",
+        relevanceScore: 55,
+        sourceType: "knowledge",
+      }),
+    ).toBe(false);
+    expect(
+      isKnowledgeBaseRelevantToPemContentQuestion(
+        "Show me how I disqualified Sharon Liu — and what does the sales playbook say about temporary disqualification?",
+        {
+          title: "Sales Playbook — Temporary Disqualification",
+          summary: "Use temporary disqualification carefully; listen for pain.",
+          contentExcerpt:
+            "When you don't recommend an ADU yet, ask what you are missing so pain can surface.",
+          category: "Sales",
+          relevanceScore: 70,
+          sourceType: "knowledge",
+        },
+      ),
+    ).toBe(true);
   });
 
   it("finds budget / timeline / pricing-objection shapes", async () => {
@@ -289,6 +356,68 @@ describe("registry routing priority for PEM content search", () => {
     const pemTried = result.diagnostics.tried.find((t) => t.key === "pem_neat");
     expect(pemTried?.outcome).toBe("deterministic");
     expect(pemTried?.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it("both reported Slack phrasings resolve the same NEAT and lead with 39:31", async () => {
+    await seedSharonLiuNeat({
+      prospectName: "Sharon Liu & Jeff Liu",
+      prospectNames: ["Sharon Liu", "Jeff Liu"],
+    });
+    const ghlMiss: EvidenceSource = {
+      key: "ghl",
+      canHandle: () => ({ plausible: true, confidence: 0.7 }),
+      resolve: async () => ({ items: [], softMiss: true, confidence: 0.1 }),
+    };
+
+    for (const [label, q, semantic] of [
+      [
+        "A",
+        REPORTED_Q_A,
+        {
+          questionType: "entity_lookup" as const,
+          entityName: "Sharon Liu",
+          entityTypeGuess: "pem_prospect" as const,
+          lookupSpecificity: "generic" as const,
+          confidence: 0.9,
+          source: "llm" as const,
+          latencyMs: 1,
+          model: "test",
+        },
+      ],
+      [
+        "B",
+        REPORTED_Q_B,
+        {
+          questionType: "entity_lookup" as const,
+          entityName: "Sharon Liu",
+          entityTypeGuess: "pem_prospect" as const,
+          lookupSpecificity: "generic" as const,
+          confidence: 0.9,
+          source: "llm" as const,
+          latencyMs: 1,
+          model: "test",
+        },
+      ],
+      ["A-null-sem", REPORTED_Q_A, null],
+    ] as const) {
+      const result = await runEvidenceRegistry({
+        question: q,
+        history: [],
+        conversationMetadata: {},
+        role: "admin",
+        channel: "slack",
+        ghlConfigured: true,
+        semantic: semantic ?? undefined,
+        semanticOptions: semantic ? undefined : { skipSemantic: true },
+        sources: [ghlMiss, pemEvidenceSource],
+      });
+      expect(result.earlyAnswer?.winningSource, label).toBe("pem_neat");
+      expect(result.earlyAnswer?.answer, label).toMatch(/39:3[15]/);
+      expect(result.earlyAnswer?.answer, label).toMatch(/recommend you do it|haven.?t heard/i);
+      expect(result.earlyAnswer?.answer, label).not.toMatch(/pem-recordings|cash payment/i);
+      expect(result.earlyAnswer?.answer, label).not.toMatch(/Customer Story|Bonding/i);
+      console.log(`\n--- AFTER ${label} ---\n${result.earlyAnswer?.answer}\n---\n`);
+    }
   });
 
   it("canHandle boosts content_search + pem_prospect above typical Slack-fallback band", async () => {

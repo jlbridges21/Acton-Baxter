@@ -340,6 +340,7 @@ async function loadAndAnswer(input: {
         meetingDate: full.meeting_date,
         citationLabel,
         passages: searched.passages,
+        question: input.question,
       });
       if (staleWarning) deterministicAnswer = `${staleWarning}\n\n${deterministicAnswer}`;
 

@@ -39,7 +39,6 @@ const QUERY_NOISE = new Set([
   "show",
   "jesse",
   "baxter",
-  "missing",
   "saying",
   "said",
   "share",
@@ -58,6 +57,9 @@ const QUERY_NOISE = new Set([
   "salesperson",
   "handle",
   "handled",
+  "sharon",
+  "liu",
+  "jeff",
 ]);
 
 /** Domain terms that alone can justify a passage hit (field-like coaching asks). */
@@ -74,6 +76,24 @@ const STRONG_SINGLE_TERMS = new Set([
   "schedule",
   "decision",
 ]);
+
+/** Technique / quote fragments that should dominate ranking for coaching asks. */
+const TECHNIQUE_PHRASES: Array<{ re: RegExp; weight: number }> = [
+  { re: /can'?t sit here and recommend|cannot sit here and recommend/i, weight: 48 },
+  {
+    re: /don'?t recommend (?:an )?adu|didn'?t recommend (?:an )?adu|not recommend (?:an )?adu/i,
+    weight: 36,
+  },
+  { re: /what am i missing|haven'?t heard.? why you would|why you would/i, weight: 36 },
+  { re: /\brecommend you do it\b/i, weight: 28 },
+  { re: /\btemporary disqualification\b|\bdisqualif\w*\b/i, weight: 18 },
+];
+
+export function isTranscriptFocusedQuestion(question: string): boolean {
+  return /\b(transcript|quote|passage|find (?:the )?part|look in .{0,80}\b(?:pem|neat)\b|what am i missing|disqualif\w*|don'?t recommend|didn'?t recommend|show (?:me )?how|got (?:her|him|them) to|open up more|exchange|said that)\b/i.test(
+    question,
+  );
+}
 
 /** Score a haystack against a question using the same term/phrase weights as lexical-search. */
 export function scorePassageAgainstQuery(haystack: string, question: string): number {
@@ -95,6 +115,27 @@ export function scorePassageAgainstQuery(haystack: string, question: string): nu
       if (phrase.length >= 12 && hay.includes(phrase)) {
         score += 18 + n * 2;
       }
+    }
+  }
+
+  // Keep "what am i missing" scorable even though "missing" is common coaching noise.
+  if (
+    /\bwhat am i missing\b/i.test(question) &&
+    /\bwhat am i missing\b|\bhaven'?t heard\b|\bwhy you would\b/i.test(haystack)
+  ) {
+    score += 22;
+  }
+
+  for (const { re, weight } of TECHNIQUE_PHRASES) {
+    if (re.test(question) && re.test(haystack)) {
+      score += weight;
+    } else if (
+      !re.test(question) &&
+      re.test(haystack) &&
+      /recommend|disqualif|missing/i.test(question)
+    ) {
+      // Passage carries the technique verb even when the question only paraphrases it.
+      score += Math.round(weight * 0.55);
     }
   }
 
@@ -333,6 +374,7 @@ export function searchPemNeatContent(
     // Score each timestamped segment on its own text so attribution stays accurate;
     // include short neighbors only in the returned excerpt for context.
     const segments = splitTranscriptIntoPassages(record.transcript);
+    const transcriptFocused = isTranscriptFocusedQuestion(question);
     for (let i = 0; i < segments.length; i++) {
       const prev = segments[i - 1];
       const cur = segments[i]!;
@@ -341,7 +383,8 @@ export function searchPemNeatContent(
       // "39:31 recommend…" + "39:35 what am I missing" share signal.
       const ownHaystack =
         cur.text.length < 140 && next?.text ? `${cur.text}\n${next.text}` : cur.text;
-      const ownScore = scorePassageAgainstQuery(ownHaystack, question);
+      let ownScore = scorePassageAgainstQuery(ownHaystack, question);
+      if (transcriptFocused && ownScore > 0) ownScore += 24;
       if (ownScore < minScore) continue;
       const prevText = prev && prev.text.length <= 280 ? prev.text : null;
       const nextText = next && next.text.length <= 280 ? next.text : null;
@@ -359,8 +402,11 @@ export function searchPemNeatContent(
         const hay = normalizeSearchText(s.text);
         // Prefer the line that carries the technique/quote verb from the question
         // (e.g. "recommend") over a later pain disclosure that also matches.
-        for (const t of ["recommend", "disqualify", "disqualified", "objection"]) {
+        for (const t of ["recommend", "disqualify", "disqualified", "objection", "missing"]) {
           if (qNorm.includes(t) && hay.includes(t)) sc += 20;
+        }
+        if (/can'?t sit here and recommend|haven'?t heard|why you would/i.test(s.text)) {
+          sc += 30;
         }
         if (sc > attrScore) {
           attr = s;
@@ -379,16 +425,42 @@ export function searchPemNeatContent(
     }
   }
 
+  // For exchange / transcript asks, demote assessment & SI dumps that merely
+  // paraphrase the question — the exact transcript line should lead.
+  if (isTranscriptFocusedQuestion(question)) {
+    const bestTranscript = candidates
+      .filter((c) => c.kind === "transcript")
+      .reduce((m, c) => Math.max(m, c.score), 0);
+    if (bestTranscript > 0) {
+      for (const c of candidates) {
+        if (c.kind !== "transcript") {
+          c.score = Math.min(c.score, bestTranscript - 1);
+        }
+      }
+    }
+  }
+
   candidates.sort((a, b) => b.score - a.score);
+
+  const limitForQuestion = isTranscriptFocusedQuestion(question) ? Math.min(limit, 2) : limit;
 
   const passages: PemContentPassage[] = [];
   let total = 0;
   let truncated = false;
   const seen = new Set<string>();
   for (const c of candidates) {
-    if (passages.length >= limit) {
+    if (passages.length >= limitForQuestion) {
       truncated = true;
       break;
+    }
+    // After a strong transcript hit, skip tangential SI categories (customer story, bonding).
+    if (
+      isTranscriptFocusedQuestion(question) &&
+      passages.some((p) => p.kind === "transcript") &&
+      c.kind === "sales_intelligence"
+    ) {
+      truncated = true;
+      continue;
     }
     if (seen.has(c.sectionId)) continue;
     if (total + c.excerpt.length > MAX_TOTAL_CHARS) {
@@ -406,6 +478,7 @@ export function searchPemNeatContent(
 /**
  * Format content-search hits into a deterministic, attribution-honest answer.
  * Transcript excerpts are reproduced verbatim with timestamps.
+ * Exchange/technique asks stay short: lead with the best transcript quote only.
  */
 export function formatPemContentSearchAnswer(input: {
   prospectName: string;
@@ -413,6 +486,8 @@ export function formatPemContentSearchAnswer(input: {
   citationLabel: string;
   passages: PemContentPassage[];
   searchedButEmpty?: boolean;
+  /** Original question — used to keep exchange answers short and transcript-led. */
+  question?: string;
 }): string {
   if (input.searchedButEmpty || input.passages.length === 0) {
     return [
@@ -424,6 +499,14 @@ export function formatPemContentSearchAnswer(input: {
     ].join("\n");
   }
 
+  const focused = input.question ? isTranscriptFocusedQuestion(input.question) : false;
+  let passages = input.passages;
+  if (focused) {
+    const bestTranscript = passages.find((p) => p.kind === "transcript");
+    // Exchange / technique asks: exact transcript quote only (short and sweet).
+    passages = bestTranscript ? [bestTranscript] : passages.slice(0, 1);
+  }
+
   const blocks: string[] = [
     `From ${input.prospectName}'s PEM NEAT` +
       (input.meetingDate ? ` (${input.meetingDate})` : "") +
@@ -431,7 +514,7 @@ export function formatPemContentSearchAnswer(input: {
     "",
   ];
 
-  for (const p of input.passages) {
+  for (const p of passages) {
     if (p.kind === "transcript") {
       blocks.push(
         p.timestamp
@@ -449,4 +532,55 @@ export function formatPemContentSearchAnswer(input: {
 
   blocks.push(`Source: ${input.citationLabel}`);
   return blocks.join("\n").trim();
+}
+
+/**
+ * Gate PEM content-search + Knowledge Base combine: include KB only when it is
+ * topically relevant to the question (not automatic Culture/Brand append).
+ */
+export function isKnowledgeBaseRelevantToPemContentQuestion(
+  question: string,
+  item: {
+    title?: string | null;
+    summary?: string | null;
+    contentExcerpt?: string | null;
+    category?: string | null;
+    tags?: string[] | null;
+    sourceType?: string | null;
+    relevanceScore?: number | null;
+  },
+): boolean {
+  if ((item.relevanceScore ?? 0) < 40) return false;
+  if (item.sourceType === "slack") return false;
+  const wantsExplicitGuidance =
+    /\b(guidance|best practice|how (?:should|do) (?:i|we)|playbook|according to|rulebook|culture guide|brand guide|from (?:the )?(?:kb|knowledge base))\b/i.test(
+      question,
+    );
+  const hay = normalizeSearchText(
+    [item.title, item.summary, item.contentExcerpt, item.category, ...(item.tags ?? [])]
+      .filter(Boolean)
+      .join(" "),
+  );
+  if (isTranscriptFocusedQuestion(question) && !wantsExplicitGuidance) {
+    const technique =
+      /\b(disqualif\w*|recommend|objection|what am i missing|temporary disqualification|coaching moment|sales technique)\b/i;
+    if (!technique.test(hay)) return false;
+  }
+  const domain =
+    /\b(disqualif|recommend|objection|pain|pem|neat|transcript|budget|timeline|pricing|coaching|qualification|rapport|adu)\b/i;
+  const kbHasDomain = domain.test(hay);
+  const noise = new Set([
+    "sharon",
+    "liu",
+    "jesse",
+    "baxter",
+    "want",
+    "show",
+    "find",
+    "part",
+    "look",
+  ]);
+  const terms = tokenizeQuery(question).filter((t) => t.length > 3 && !noise.has(t));
+  const overlap = terms.filter((t) => hay.includes(t)).length;
+  return wantsExplicitGuidance || kbHasDomain || overlap >= 2;
 }

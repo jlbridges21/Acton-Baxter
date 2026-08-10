@@ -46,8 +46,30 @@ const STRICT_FIELD_KEYS = new Set<PemFieldKey>([
 export function adaptQuestionForPemLookup(question: string, name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return question;
-  if (/\b(pem|neat)\b/i.test(question) && detectPemIntent(question).intent === "record_lookup") {
-    return question;
+  const intent = detectPemIntent(question);
+  if (/\b(pem|neat)\b/i.test(question) && intent.intent === "record_lookup" && intent.nameQuery) {
+    // Keep the original wording only when intent already resolved the same person.
+    // Otherwise "Look in … neat … open up …" can invent "Open Up" while semantic
+    // correctly names Sharon Liu — rewriting is required.
+    const intentNorm = intent.nameQuery
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const goodNorm = trimmed
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (
+      intentNorm === goodNorm ||
+      intentNorm.startsWith(goodNorm) ||
+      goodNorm.startsWith(intentNorm) ||
+      intentNorm.includes(goodNorm) ||
+      goodNorm.includes(intentNorm)
+    ) {
+      return question;
+    }
   }
   // Possessive + PEM triggers RECORD_SIGNAL + strong name signal.
   return `Tell me about ${trimmed}'s PEM`;
@@ -67,7 +89,7 @@ function isSemanticContentSeeking(input: {
  */
 function looksLikeContentSeekingQuestion(question: string): boolean {
   return (
-    /\b(what did|how did|find where|where (?:did|do) they|show (?:me )?how|disqualif|what am i missing|transcript|said about|handled|objection|got (?:her|him|them) to|share more)\b/i.test(
+    /\b(what did|how did|find (?:the )?part|find where|look in .{0,60}\b(?:pem|neat)\b|where (?:did|do) they|show (?:me )?how|disqualif\w*|what am i missing|transcript|said about|handled|objection|got (?:her|him|them) to|share more|open up more|caused (?:her|him|them) to)\b/i.test(
       question,
     ) || /\b(quote|passage|discussed|conversation about)\b/i.test(question)
   );
@@ -76,12 +98,11 @@ function looksLikeContentSeekingQuestion(question: string): boolean {
 function inferContentSeeking(input: {
   question: string;
   entity: { semantic?: { lookupSpecificity?: string | null; questionType?: string } | null };
-  adaptedFromNone: boolean;
 }): boolean {
   if (isSemanticContentSeeking(input)) return true;
-  if (!input.adaptedFromNone) return false;
 
   const fields = detectRequestedPemFields(input.question);
+  // Explicit typed field asks stay on the field path (even if phrasing mentions a name).
   if (fields.some((f) => STRICT_FIELD_KEYS.has(f))) return false;
 
   // Explicit record/summary asks stay on the summary path.
@@ -92,14 +113,14 @@ function inferContentSeeking(input: {
     return false;
   }
 
-  // Opportunity / status / open info asks adapted from intent "none" are field/summary
-  // lookups — not transcript passage search.
-  if (!looksLikeContentSeekingQuestion(input.question)) {
-    return false;
+  // Content-seeking shapes (transcript / technique / exchange) — whether or not
+  // intent already fired record_lookup (e.g. "Look in Sharon Liu neat and find…").
+  if (looksLikeContentSeekingQuestion(input.question)) {
+    return fields.length === 0 || (fields.length === 1 && fields[0] === "summary");
   }
 
-  // Adapted coaching / content narrative with only summary fields → search NEAT content.
-  return fields.length === 0 || (fields.length === 1 && fields[0] === "summary");
+  // Adapted opportunity / status / open asks without content cues stay on field/summary.
+  return false;
 }
 
 export const pemEvidenceSource: EvidenceSource = {
@@ -183,8 +204,6 @@ export const pemEvidenceSource: EvidenceSource = {
       input.entity.extractedName ||
       input.entity.semantic?.entityName ||
       null;
-    let adaptedFromNone = false;
-
     // Prefer a confident semantic/candidate prospect over a weak intent parse
     // (e.g. coaching narratives where bigram extraction invents "Want To" from
     // "I want to show…" while semantic correctly names Sharon Liu).
@@ -200,7 +219,6 @@ export const pemEvidenceSource: EvidenceSource = {
           intent.intent === "record_lookup" && !intent.nameQuery && !pemState.active?.activePemId;
         if (intent.intent === "none" || inventingBadName || missingNameNoActivePem) {
           resolutionQuestion = adaptQuestionForPemLookup(input.question, name);
-          adaptedFromNone = true;
         }
       } else if (intent.intent === "none") {
         return null;
@@ -210,9 +228,7 @@ export const pemEvidenceSource: EvidenceSource = {
     const contentSeeking = inferContentSeeking({
       question: input.question,
       entity: input.entity,
-      adaptedFromNone,
     });
-
     const pemEvidence = await retrievePemEvidence({
       // Adapted question drives intent/record resolution.
       question: resolutionQuestion,

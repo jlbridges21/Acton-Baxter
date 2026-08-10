@@ -109,6 +109,17 @@ describe("adaptQuestionForPemLookup", () => {
     const { detectPemIntent } = await import("@/lib/baxter-data/pem-neats/intent");
     expect(detectPemIntent(adapted).intent).toBe("record_lookup");
   });
+
+  it("rewrites when intent invents a bad name from coaching verb bigrams", async () => {
+    const adapted = adaptQuestionForPemLookup(
+      "Look in Sharon Liu neat and find the part where they open up more about pain",
+      "Sharon Liu",
+    );
+    expect(adapted).toMatch(/Sharon Liu/i);
+    expect(adapted).toMatch(/PEM/i);
+    const { detectPemIntent } = await import("@/lib/baxter-data/pem-neats/intent");
+    expect(detectPemIntent(adapted).nameQuery).toMatch(/Sharon Liu/i);
+  });
 });
 
 describe("GHL↔PEM opportunity collision (registry)", () => {

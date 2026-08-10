@@ -48,6 +48,8 @@ export {
 } from "./prospect-index";
 export {
   formatPemContentSearchAnswer,
+  isKnowledgeBaseRelevantToPemContentQuestion,
+  isTranscriptFocusedQuestion,
   scorePassageAgainstQuery,
   searchPemNeatContent,
   splitTranscriptIntoPassages,

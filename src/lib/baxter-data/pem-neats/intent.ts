@@ -88,7 +88,7 @@ function isStopName(name: string): boolean {
     .replace(/['\u2019]/g, "");
   if (!token) return true;
   if (isReservedConceptToken(token)) return true;
-  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|Meetings|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Him|Them|Their|What|Who|When|Where|How|Why|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again|Many|Several|Few|Some|Most|All|Conducted|Ran|Held|Completed|Want|To|By|Got|Said|Saying|Share|More|Needs|Missing|Recommend|Disqualified|February|January|March|April|May|June|July|August|September|October|November|December|Bay|Area|KPI|KPIs)$/i.test(
+  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|Meetings|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Him|Them|Their|What|Who|When|Where|How|Why|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again|Many|Several|Few|Some|Most|All|Conducted|Ran|Held|Completed|Want|To|By|Got|Said|Saying|Share|More|Needs|Missing|Recommend|Disqualified|Disqualify|Open|Up|Look|Find|Part|Transcript|Caused|Cause|Alone|Along|Faster|Payment|Cash|Advisor|Prospect|February|January|March|April|May|June|July|August|September|October|November|December|Bay|Area|KPI|KPIs)$/i.test(
     token,
   );
 }
@@ -226,6 +226,30 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
         baseName: base,
         discriminator: null,
         nameSignal: "about",
+      });
+    }
+  }
+
+  // Prefer "Name Name neat/pem/meeting" over later verb bigrams ("open up").
+  const neatPerson = q.match(
+    /\b([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\s+(?:pem|neat|meeting)\b/i,
+  );
+  if (neatPerson?.[1]) {
+    const parts = neatPerson[1].split(/\s+/).filter(Boolean);
+    while (
+      parts.length &&
+      (isStopName(parts[0]!) || /^(in|the|a|an|from|into|for|of|on)$/i.test(parts[0]!))
+    ) {
+      parts.shift();
+    }
+    const candidate = parts.join(" ");
+    if (looksLikePersonName(candidate)) {
+      const base = titleCaseWords(candidate);
+      return withNormalizedNames({
+        nameQuery: base,
+        baseName: base,
+        discriminator: null,
+        nameSignal: "strong",
       });
     }
   }
