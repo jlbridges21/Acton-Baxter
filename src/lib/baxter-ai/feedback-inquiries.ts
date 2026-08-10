@@ -607,14 +607,18 @@ async function enrichInquiryIdentities(raw: RawInquiry[]): Promise<BaxterInquiry
     if (item.channel === "web" && item.userId) {
       askerKey = encodeWebAskerKey(item.userId);
       const profile = profileMap.get(item.userId);
+      // Missing profile or null department must not throw — degrade to placeholders.
       askerLabel = profile?.full_name?.trim() || item.userDisplayName?.trim() || "Web user";
-      department = profile?.department ?? null;
+      department = profile?.department?.trim() || null;
     } else if (item.channel === "slack" && item.externalUserId) {
       const teamId = item.slackTeamId ?? "unknown";
       askerKey = encodeSlackAskerKey(teamId, item.externalUserId);
       const slackInfo = slackAskerMap.get(`${teamId}:${item.externalUserId}`);
-      askerLabel = slackInfo?.label ?? slackUserFallbackLabel(item.externalUserId);
-      department = slackInfo?.department ?? null;
+      askerLabel =
+        slackInfo?.label?.trim() ||
+        item.userDisplayName?.trim() ||
+        slackUserFallbackLabel(item.externalUserId);
+      department = slackInfo?.department?.trim() || null;
     }
 
     const feedbackEntries: BaxterInquiryFeedbackEntry[] = feedback.map((fb) => {
@@ -624,23 +628,24 @@ async function enrichInquiryIdentities(raw: RawInquiry[]): Promise<BaxterInquiry
       } else if (fb.slack_user_id) {
         const team = fb.slack_team_id ?? item.slackTeamId ?? "unknown";
         commenterLabel =
-          slackAskerMap.get(`${team}:${fb.slack_user_id}`)?.label ??
+          slackAskerMap.get(`${team}:${fb.slack_user_id}`)?.label?.trim() ||
           slackUserFallbackLabel(fb.slack_user_id);
       }
+      const rating: BaxterFeedbackRating = fb.rating === "up" ? "up" : "down";
       return {
-        id: fb.id,
-        rating: fb.rating,
-        comment: fb.comment,
-        createdAt: fb.created_at,
+        id: String(fb.id ?? ""),
+        rating,
+        comment: typeof fb.comment === "string" ? fb.comment : null,
+        createdAt: String(fb.created_at ?? item.createdAt),
         commenterLabel,
       };
     });
 
-    const meta = item.metadata as {
-      sources?: unknown[];
-      answerMode?: string;
-    };
-    const answerText = item.content;
+    const meta =
+      item.metadata && typeof item.metadata === "object"
+        ? (item.metadata as { sources?: unknown[]; answerMode?: string })
+        : {};
+    const answerText = typeof item.content === "string" ? item.content : String(item.content ?? "");
 
     return {
       messageId: item.messageId,
@@ -653,12 +658,12 @@ async function enrichInquiryIdentities(raw: RawInquiry[]): Promise<BaxterInquiry
       questionText: "",
       answerText,
       askerKey,
-      askerLabel,
+      askerLabel: askerLabel || "Unknown",
       department,
       feedbackEntries,
-      answerMode: meta.answerMode ?? null,
+      answerMode: typeof meta.answerMode === "string" ? meta.answerMode : null,
       sourceCount: Array.isArray(meta.sources) ? meta.sources.length : 0,
-      errorCode: item.errorCode,
+      errorCode: item.errorCode ?? null,
     };
   });
 }
@@ -676,10 +681,21 @@ async function attachQuestionsToInquiryRows(
   );
   return rows.map((row) => {
     const questionText = questions.get(row.messageId) ?? "";
+    const safeQuestion =
+      typeof questionText === "string" ? questionText : String(questionText ?? "");
     return {
       ...row,
-      questionText,
-      questionExcerpt: questionText.slice(0, 200),
+      questionText: safeQuestion,
+      questionExcerpt: safeQuestion.slice(0, 200),
+      answerText:
+        typeof row.answerText === "string" ? row.answerText : String(row.answerText ?? ""),
+      answerExcerpt:
+        typeof row.answerExcerpt === "string"
+          ? row.answerExcerpt
+          : String(row.answerText ?? "").slice(0, 240),
+      askerLabel: row.askerLabel?.trim() || "Unknown",
+      department: row.department?.trim() || null,
+      feedbackEntries: Array.isArray(row.feedbackEntries) ? row.feedbackEntries : [],
     };
   });
 }

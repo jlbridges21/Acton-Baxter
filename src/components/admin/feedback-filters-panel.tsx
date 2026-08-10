@@ -5,79 +5,19 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import type { FeedbackAskerOption } from "@/lib/baxter-ai/feedback-inquiries";
-import type { FeedbackRangePreset, FeedbackSortDirection } from "@/lib/baxter-ai/feedback";
+import {
+  buildFeedbackFilterHref,
+  countActiveFeedbackFilters,
+  FEEDBACK_RANGE_PRESET_LINKS,
+  type FeedbackFiltersState,
+} from "@/lib/baxter-ai/feedback-filter-url";
 
-export const FEEDBACK_RANGE_PRESET_LINKS: Array<{
-  value: Exclude<FeedbackRangePreset, "custom">;
-  label: string;
-}> = [
-  { value: "this_week", label: "This week" },
-  { value: "this_month", label: "This month" },
-  { value: "last_month", label: "Last month" },
-  { value: "this_year", label: "This year" },
-  { value: "last_7_days", label: "Last 7 days" },
-  { value: "last_30_days", label: "Last 30 days" },
-  { value: "all_time", label: "All time" },
-];
-
-export type FeedbackFiltersState = {
-  range: FeedbackRangePreset;
-  rating: "all" | "positive" | "negative" | "none";
-  channel: "all" | "web" | "slack";
-  sort: FeedbackSortDirection;
-  /** Multi-select asker keys (empty = no filter). */
-  askerKeys: string[];
-  /** Multi-select departments (empty = no filter). */
-  departments: string[];
-  customStart: string;
-  customEnd: string;
-};
-
-export function countActiveFeedbackFilters(state: FeedbackFiltersState): number {
-  let n = 0;
-  // Default range is this_month
-  if (state.range !== "this_month") n += 1;
-  if (state.rating !== "all") n += 1;
-  if (state.channel !== "all") n += 1;
-  if (state.sort !== "newest") n += 1;
-  // Each multi-select value counts toward the badge
-  n += state.askerKeys.length;
-  n += state.departments.length;
-  if (state.range === "custom" && (state.customStart || state.customEnd)) n += 1;
-  return n;
-}
-
-/** Build a feedback admin URL preserving non-range filters (for preset quick-links). */
-export function buildFeedbackFilterHref(input: {
-  range: FeedbackRangePreset;
-  rating?: string;
-  channel?: string;
-  sort?: string;
-  askerKeys?: string[];
-  departments?: string[];
-  start?: string;
-  end?: string;
-  offset?: number;
-}): string {
-  const params = new URLSearchParams();
-  params.set("range", input.range);
-  if (input.rating && input.rating !== "all") params.set("rating", input.rating);
-  if (input.channel && input.channel !== "all") params.set("channel", input.channel);
-  if (input.sort && input.sort !== "newest") params.set("sort", input.sort);
-  for (const key of input.askerKeys ?? []) {
-    if (key) params.append("asker", key);
-  }
-  for (const dept of input.departments ?? []) {
-    if (dept) params.append("department", dept);
-  }
-  if (input.range === "custom") {
-    if (input.start) params.set("start", input.start);
-    if (input.end) params.set("end", input.end);
-  }
-  if (input.offset && input.offset > 0) params.set("offset", String(input.offset));
-  const qs = params.toString();
-  return qs ? `/admin/baxter/feedback?${qs}` : "/admin/baxter/feedback";
-}
+export {
+  buildFeedbackFilterHref,
+  countActiveFeedbackFilters,
+  FEEDBACK_RANGE_PRESET_LINKS,
+  type FeedbackFiltersState,
+} from "@/lib/baxter-ai/feedback-filter-url";
 
 export function FeedbackFiltersPanel({
   initial,
@@ -88,17 +28,20 @@ export function FeedbackFiltersPanel({
   askerOptions: FeedbackAskerOption[];
   departmentOptions: string[];
 }) {
-  const activeCount = useMemo(() => countActiveFeedbackFilters(initial), [initial]);
+  const askerKeys = initial.askerKeys ?? [];
+  const departments = initial.departments ?? [];
+  const activeCount = useMemo(
+    () => countActiveFeedbackFilters({ ...initial, askerKeys, departments }),
+    [initial, askerKeys, departments],
+  );
   const [open, setOpen] = useState(activeCount > 0);
   const [showCustomDates, setShowCustomDates] = useState(initial.range === "custom");
   const [askerQuery, setAskerQuery] = useState("");
-  const [selectedAskers, setSelectedAskers] = useState<string[]>(() => [...initial.askerKeys]);
-  const [selectedDepartments, setSelectedDepartments] = useState<string[]>(() => [
-    ...initial.departments,
-  ]);
+  const [selectedAskers, setSelectedAskers] = useState<string[]>(() => [...askerKeys]);
+  const [selectedDepartments, setSelectedDepartments] = useState<string[]>(() => [...departments]);
 
-  const filteredAskers = askerOptions.filter((a) =>
-    a.label.toLowerCase().includes(askerQuery.trim().toLowerCase()),
+  const filteredAskers = (askerOptions ?? []).filter((a) =>
+    (a.label ?? "").toLowerCase().includes(askerQuery.trim().toLowerCase()),
   );
 
   function toggleAsker(key: string) {
@@ -237,10 +180,10 @@ export function FeedbackFiltersPanel({
                   Department
                 </legend>
                 <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[var(--acton-border)] bg-white p-2">
-                  {departmentOptions.length === 0 ? (
+                  {(departmentOptions ?? []).length === 0 ? (
                     <p className="px-1 py-1 text-xs text-[var(--acton-muted)]">No departments</p>
                   ) : (
-                    departmentOptions.map((d) => (
+                    (departmentOptions ?? []).map((d) => (
                       <label
                         key={d}
                         className="flex cursor-pointer items-start gap-2 rounded px-1 py-0.5 hover:bg-[var(--acton-soft)]"

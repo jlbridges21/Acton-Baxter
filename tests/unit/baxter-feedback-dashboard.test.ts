@@ -25,7 +25,7 @@ import {
   countActiveFeedbackFilters,
   buildFeedbackFilterHref,
   FEEDBACK_RANGE_PRESET_LINKS,
-} from "@/components/admin/feedback-filters-panel";
+} from "@/lib/baxter-ai/feedback-filter-url";
 import { assignUserDepartmentLabel } from "@/lib/org/departments";
 import { getReportStore } from "@/lib/research/report-store";
 import { resetSlackProfilesMemoryForTests, upsertSlackUserProfile } from "@/lib/slack/profiles";
@@ -216,6 +216,42 @@ describe("inquiry-based dashboard", () => {
     });
     expect(positive.rows.every((r) => r.summarizedRating === "positive")).toBe(true);
     expect(positive.rows.some((r) => r.summarizedRating === "none")).toBe(false);
+  });
+
+  it("degrades Slack askers without profiles and null departments to placeholders", async () => {
+    // No slack_user_profiles row and no profile.department — must not throw.
+    const { assistant } = await seedInquiry({
+      channel: "slack",
+      createdAt: "2026-07-08T12:00:00.000Z",
+      rate: null,
+    });
+
+    const listed = await listInquiriesForAdmin({
+      range: { start: "2026-07-01T00:00:00.000Z", end: "2026-07-31T23:59:59.999Z" },
+    });
+    const row = listed.rows.find((r) => r.messageId === assistant.id);
+    expect(row).toBeTruthy();
+    expect(row!.summarizedRating).toBe("none");
+    expect(row!.feedbackEntries).toEqual([]);
+    expect(row!.department).toBeNull();
+    expect(row!.askerLabel.length).toBeGreaterThan(0);
+    expect(row!.askerKey).toMatch(/^slack:/);
+  });
+
+  it("treats web askers with null department as Unassigned without dropping the row", async () => {
+    const { assistant, userId } = await seedInquiry({
+      channel: "web",
+      createdAt: "2026-07-09T12:00:00.000Z",
+      rate: "up",
+      // omit department → null
+    });
+    const listed = await listInquiriesForAdmin({
+      range: { start: "2026-07-01T00:00:00.000Z", end: "2026-07-31T23:59:59.999Z" },
+    });
+    const row = listed.rows.find((r) => r.messageId === assistant.id);
+    expect(row?.askerKey).toBe(`web:${userId}`);
+    expect(row?.department).toBeNull();
+    expect(row?.summarizedRating).toBe("positive");
   });
 
   it("summarizes mixed feedback as negative and keeps both entries", async () => {

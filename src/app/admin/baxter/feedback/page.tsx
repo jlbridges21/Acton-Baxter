@@ -2,11 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import {
-  buildFeedbackFilterHref,
-  FeedbackFiltersPanel,
-  type FeedbackFiltersState,
-} from "@/components/admin/feedback-filters-panel";
+import { FeedbackFiltersPanel } from "@/components/admin/feedback-filters-panel";
 import { FeedbackInquiryCard } from "@/components/admin/feedback-inquiry-card";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
@@ -16,6 +12,10 @@ import {
   resolveFeedbackDateRange,
   type FeedbackSortDirection,
 } from "@/lib/baxter-ai/feedback";
+import {
+  buildFeedbackFilterHref,
+  type FeedbackFiltersState,
+} from "@/lib/baxter-ai/feedback-filter-url";
 
 const PAGE_SIZE = 50;
 
