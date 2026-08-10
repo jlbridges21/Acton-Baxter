@@ -318,7 +318,7 @@ async function loadAndAnswer(input: {
       question: input.question,
       transcriptPassages: searched.passages,
       fieldPassages: fieldHits,
-      limit: 3,
+      limit: 2,
     });
 
     if (ladder.candidates.length > 0) {

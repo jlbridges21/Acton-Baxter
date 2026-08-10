@@ -290,18 +290,31 @@ export function extractChannelMentions(question: string): string[] {
     }
   }
 
+  // Relational / possessive project-channel phrasing is NOT a literal channel name
+  // ("his project channel", "Kornilov's project channel" → do not emit "s-project").
+  const relationalProjectChannel =
+    /\b(?:his|her|their|its|my|your|our)\s+(?:slack\s+)?project\s+channel\b/i.test(question) ||
+    /\b[A-Za-z][A-Za-z'-]*'s\s+(?:slack\s+)?project\s+channel\b/i.test(question) ||
+    /\bthe\s+(?:slack\s+)?project\s+channel\b/i.test(question);
+
   // "in the baxter channel" / "about the project-management channel" / "from the sales channel"
-  const namedPatterns = [
-    /\b(?:in|about|from|regarding|for)\s+(?:the\s+)?([\w-]+(?:\s+[\w-]+){0,3})\s+channel\b/gi,
-    /\b(?:the\s+)?([\w-]+(?:\s+[\w-]+){0,2})\s+channel\b/gi,
-  ];
-  for (const re of namedPatterns) {
-    for (const m of question.matchAll(re)) {
-      if (m[1]) {
-        const raw = m[1].trim();
-        // Ignore mrkdwn leftovers
-        if (raw.includes("<") || raw.includes(">")) continue;
-        names.push(raw.replace(/\s+/g, "-").toLowerCase());
+  if (!relationalProjectChannel) {
+    const namedPatterns = [
+      /\b(?:in|about|from|regarding|for)\s+(?:the\s+)?([\w-]+(?:\s+[\w-]+){0,3})\s+channel\b/gi,
+      /\b(?:the\s+)?([\w-]+(?:\s+[\w-]+){0,2})\s+channel\b/gi,
+    ];
+    for (const re of namedPatterns) {
+      for (const m of question.matchAll(re)) {
+        if (m[1]) {
+          const raw = m[1].trim();
+          // Ignore mrkdwn leftovers
+          if (raw.includes("<") || raw.includes(">")) continue;
+          // Possessive remnant: "Kornilov's project channel" → capture "s project"
+          if (/^[a-z]\s+/i.test(raw)) continue;
+          if (/\b(his|her|their|its|my|your|our)\b/i.test(raw)) continue;
+          if (/^project$/i.test(raw)) continue;
+          names.push(raw.replace(/\s+/g, "-").toLowerCase());
+        }
       }
     }
   }
@@ -330,9 +343,50 @@ export function extractChannelMentions(question: string): string[] {
             .replace(/-+/g, "-")
             .replace(/^-|-$/g, "");
         })
-        .filter((n) => n.length >= 2),
+        .filter((n) => n.length >= 2)
+        .filter((n) => !isRelationalOrMangledChannelSlug(n)),
     ),
   ];
+}
+
+/** Possessive / relational / apostrophe-mangled channel slugs that must never literal-match. */
+export function isRelationalOrMangledChannelSlug(slug: string): boolean {
+  const n = slug.replace(/^#/, "").toLowerCase();
+  if (
+    n === "project" ||
+    n === "slack-project" ||
+    n === "the-project" ||
+    n === "s-project" ||
+    n === "s" ||
+    n === "his" ||
+    n === "her" ||
+    n === "their" ||
+    n === "its" ||
+    n === "my" ||
+    n === "your" ||
+    n === "our"
+  ) {
+    return true;
+  }
+  if (/^(his|her|their|its|my|your|our)-/.test(n)) return true;
+  // Single-letter possessive remnant: "s-project", "s-foo"
+  if (/^[a-z]-/.test(n)) return true;
+  return false;
+}
+
+/** True when the ask points at an entity's linked project channel without an explicit #name. */
+export function isRelationalProjectChannelAsk(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  if (/#[\w-]{2,}/.test(q) || /<#[CG]/i.test(q)) return false;
+  return (
+    /\b(?:his|her|their|its|my|your|our)\s+(?:slack\s+)?project\s+channel\b/i.test(q) ||
+    /\b[A-Za-z][A-Za-z'-]*'s\s+(?:slack\s+)?project\s+channel\b/i.test(q) ||
+    /\bthe\s+(?:slack\s+)?project\s+channel\b/i.test(q) ||
+    /\b(?:latest|update|activity|happening).{0,40}\b(?:his|her|their)\s+(?:slack\s+)?(?:project\s+)?channel\b/i.test(
+      q,
+    )
+  );
 }
 
 /**

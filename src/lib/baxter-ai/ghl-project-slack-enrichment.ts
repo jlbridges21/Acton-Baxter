@@ -32,6 +32,7 @@ import type {
   SlackRequester,
   SlackSearchDeps,
 } from "@/lib/baxter-data/slack/types";
+import { SLACK_SOURCE_TYPE } from "@/lib/baxter-data/slack/types";
 import { isBroadGhlEntityInfoQuestion } from "@/lib/connectors/ghl/address";
 import { isProjectInformationQuestion } from "@/lib/baxter-data/slack/project-status";
 
@@ -271,3 +272,153 @@ export async function appendProjectSlackActivityToGhlAnswer(input: {
 }
 
 export const PROJECT_SLACK_CONNECT_NOTE = CONNECT_NOTE;
+
+export type LinkedProjectChannelActivity = {
+  answer: string;
+  channelName: string | null;
+  channelId: string | null;
+  items: Array<{
+    sourceType: typeof SLACK_SOURCE_TYPE;
+    title: string;
+    contentExcerpt: string;
+    citationLabel: string;
+    relevanceScore: number;
+  }>;
+};
+
+/**
+ * Resolve an entity's linked Project Setup Slack channel and return recent activity.
+ * Used by multi-need Slack parts for "his/their project channel" (no explicit #name).
+ */
+export async function retrieveLinkedProjectChannelActivity(input: {
+  ghlContactId: string;
+  contactDisplayName?: string | null;
+  question: string;
+  requester: SlackRequester;
+  deps?: AppendProjectSlackActivityDeps;
+}): Promise<LinkedProjectChannelActivity | null> {
+  if (!input.ghlContactId.trim()) return null;
+
+  try {
+    const incomingBaxterUserId = input.requester.baxterUserId?.trim() || null;
+    const incomingSlackUserId = input.requester.slackUserId?.trim() || null;
+    const incomingSlackTeamId = input.requester.slackTeamId?.trim() || null;
+
+    const channel = await resolveProjectSlackChannelForContact({
+      ghlContactId: input.ghlContactId,
+      contactDisplayName: input.contactDisplayName,
+      deps: {
+        ...input.deps,
+        teamId: incomingSlackTeamId ?? input.deps?.teamId ?? null,
+      },
+    });
+    if (!channel) return null;
+
+    const channelDisplay = channelLabel(channel.channelName, channel.channelId);
+    const slackEnabled = (input.deps?.slackSearchEnabled ?? isSlackSearchEnabled)();
+    const getConnection =
+      input.deps?.getSlackConnection ?? getSlackSearchConnectionMetadataForRequester;
+
+    if (!slackEnabled || (!incomingBaxterUserId && !incomingSlackUserId)) {
+      return {
+        answer: CONNECT_NOTE,
+        channelName: channel.channelName,
+        channelId: channel.channelId,
+        items: [],
+      };
+    }
+
+    const connection = await getConnection(input.requester).catch(() => null);
+    if (!connection?.linked) {
+      return {
+        answer: CONNECT_NOTE,
+        channelName: channel.channelName,
+        channelId: channel.channelId,
+        items: [],
+      };
+    }
+
+    const requester: SlackRequester = {
+      ...input.requester,
+      baxterUserId: incomingBaxterUserId ?? connection.baxterUserId,
+      slackUserId: incomingSlackUserId ?? connection.slackUserId,
+      slackTeamId: incomingSlackTeamId ?? connection.slackTeamId,
+    };
+
+    const teamId = requester.slackTeamId?.trim() || connection.slackTeamId || "";
+    const scopedQuestion = `What is the latest update in ${channelDisplay}?`;
+    const plan = buildChannelScopedPlan({
+      channelId: channel.channelId,
+      channelName: channel.channelName,
+      teamId,
+      question: scopedQuestion,
+    });
+
+    const retrieve = input.deps?.retrieveSlack ?? retrieveSlackEvidence;
+    const result = await retrieve({
+      requester,
+      question: scopedQuestion,
+      plan,
+      deps: input.deps?.slackDeps,
+    });
+
+    if (result.incomplete?.code) {
+      const code = result.incomplete.code;
+      if (
+        code === SLACK_SEARCH_ERROR_CODES.AUTH_REQUIRED ||
+        code === SLACK_SEARCH_ERROR_CODES.USER_NOT_LINKED ||
+        code === SLACK_SEARCH_ERROR_CODES.SCOPE_MISSING ||
+        /not.?connect|authoriz|oauth|Settings → Integrations/i.test(result.incomplete.message)
+      ) {
+        return {
+          answer: CONNECT_NOTE,
+          channelName: channel.channelName,
+          channelId: channel.channelId,
+          items: [],
+        };
+      }
+      return null;
+    }
+
+    const sorted = [...result.results].sort((a, b) =>
+      String(b.timestamp ?? b.messageTs).localeCompare(String(a.timestamp ?? a.messageTs)),
+    );
+    const top = sorted.slice(0, 4);
+    const { messages: named, nameByUserId } = teamId
+      ? await hydrateSlackEvidenceAuthorNames(top, teamId, input.deps?.authorLabelDeps).catch(
+          () => ({ messages: top, nameByUserId: new Map<string, string>() }),
+        )
+      : { messages: top, nameByUserId: new Map<string, string>() };
+
+    const summaryRows = named.map((m) => ({
+      author: m.authorName?.trim() || "A teammate",
+      text: slackMrkdwnToPlainText(m.text, nameByUserId),
+      timestamp: m.timestamp,
+    }));
+
+    const summary = summarizeProjectChannelActivity({
+      channelDisplay,
+      messages: summaryRows,
+    }).replace(/^\n+/, "");
+
+    const answer =
+      summary.trim().length > 0
+        ? `${summary}\n\nSource: Slack Search (${channelDisplay})`
+        : `I found ${channelDisplay}, but there was no recent activity I could show.\n\nSource: Slack Search`;
+
+    return {
+      answer,
+      channelName: channel.channelName,
+      channelId: channel.channelId,
+      items: top.map((m, i) => ({
+        sourceType: SLACK_SOURCE_TYPE,
+        title: channelDisplay,
+        contentExcerpt: (m.text || "").slice(0, 400),
+        citationLabel: channelDisplay,
+        relevanceScore: 90 - i,
+      })),
+    };
+  } catch {
+    return null;
+  }
+}

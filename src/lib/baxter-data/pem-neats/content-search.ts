@@ -335,6 +335,8 @@ export function searchPemNeatContent(
   const limit = options?.limit ?? DEFAULT_LIMIT;
   const minScore = options?.minScore ?? 6;
   const includeTranscript = options?.includeTranscript !== false;
+  // Synonym expansion for paraphrase gaps (kid→son/apartment) without changing focus detection.
+  const scoringQuestion = expandQueryForSemanticMatch(question).replace(/\n+/g, " ");
 
   const candidates: PemContentPassage[] = [];
   const structured =
@@ -344,7 +346,7 @@ export function searchPemNeatContent(
 
   if (structured) {
     for (const p of flattenAssessmentPassages(structured)) {
-      const score = scorePassageAgainstQuery(p.text, question);
+      const score = scorePassageAgainstQuery(p.text, scoringQuestion);
       if (score >= minScore) {
         candidates.push({
           kind: p.kind,
@@ -357,7 +359,7 @@ export function searchPemNeatContent(
       }
     }
     for (const p of flattenSalesIntelligencePassages(structured)) {
-      const score = scorePassageAgainstQuery(p.text, question);
+      const score = scorePassageAgainstQuery(p.text, scoringQuestion);
       if (score >= minScore) {
         candidates.push({
           kind: p.kind,
@@ -384,15 +386,15 @@ export function searchPemNeatContent(
       // "39:31 recommend…" + "39:35 what am I missing" share signal.
       const ownHaystack =
         cur.text.length < 140 && next?.text ? `${cur.text}\n${next.text}` : cur.text;
-      let ownScore = scorePassageAgainstQuery(ownHaystack, question);
+      let ownScore = scorePassageAgainstQuery(ownHaystack, scoringQuestion);
       // Only boost transcript windows that actually carry distinctive question topic
       // terms (timeline/solar/recommend…) — weak name/"discussed" overlaps stay weak.
       if (transcriptFocused && ownScore > 0) {
-        const topicTerms = tokenizeQuery(question).filter(
+        const topicTerms = tokenizeQuery(scoringQuestion).filter(
           (t) =>
             t.length > 3 &&
             !QUERY_NOISE.has(t) &&
-            !/^(neat|pem|transcript|robert|vertin|leslie|kita|sharon|liu|jeff|jesse|kevin|talks|talk|discussed|discuss)$/i.test(
+            !/^(neat|pem|transcript|robert|vertin|leslie|kita|sharon|liu|jeff|jesse|kevin|talks|talk|discussed|discuss|denis|kornilov)$/i.test(
               t,
             ),
         );
@@ -403,6 +405,12 @@ export function searchPemNeatContent(
             if (hay.includes(t)) return true;
             if (t === "timeline" && /timing|schedule|months|rush/.test(hay)) return true;
             if (t === "solar" && /photovoltaic|\bpv\b/.test(hay)) return true;
+            if (
+              (t === "kid" || t === "kids" || t === "child" || t === "children") &&
+              /\b(son|daughter|child|children|kid|apartment|college)\b/.test(hay)
+            ) {
+              return true;
+            }
             return false;
           });
         if (topicHit) ownScore += 24;
@@ -418,9 +426,9 @@ export function searchPemNeatContent(
       );
       let attr = cur;
       let attrScore = -1;
-      const qNorm = normalizeSearchText(question);
+      const qNorm = normalizeSearchText(scoringQuestion);
       for (const s of attrCandidates) {
-        let sc = scorePassageAgainstQuery(s.text, question);
+        let sc = scorePassageAgainstQuery(s.text, scoringQuestion);
         const hay = normalizeSearchText(s.text);
         // Prefer the line that carries the technique/quote verb from the question
         // (e.g. "recommend") over a later pain disclosure that also matches.
@@ -519,7 +527,81 @@ export function expandQueryForSemanticMatch(question: string): string {
       "huge investment",
     );
   }
+  if (/\b(kid|kids|child|children|son|daughter|living situation)\b/i.test(question)) {
+    bits.push(
+      "son",
+      "daughter",
+      "child",
+      "children",
+      "community college",
+      "apartment",
+      "temporary apartment",
+      "living arrangement",
+    );
+  }
   return bits.join("\n");
+}
+
+/**
+ * Pull 1–2 evidence-backed sentences from a NEAT field instead of dumping the whole field.
+ */
+export function pickRelevantSentencesFromField(
+  fieldText: string,
+  question: string,
+  options?: { maxSentences?: number },
+): string {
+  const maxSentences = options?.maxSentences ?? 2;
+  const scoringQ = expandQueryForSemanticMatch(question).replace(/\n/g, " ");
+  const sentences = fieldText
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter((s) => s.length >= 24);
+  if (sentences.length === 0) {
+    const clipped = fieldText.replace(/\s+/g, " ").trim();
+    return clipped.length > 320 ? `${clipped.slice(0, 319).trimEnd()}…` : clipped;
+  }
+  const scored = sentences
+    .map((s) => {
+      let score = scorePassageAgainstQuery(s, scoringQ);
+      // Prefer sentences that carry the asked-about substance (not field openers).
+      if (
+        /\b(kid|kids|child|children|son|daughter|living situation|apartment|college)\b/i.test(
+          question,
+        ) &&
+        /\b(son|daughter|child|children|kid|apartment|college|housing)\b/i.test(s)
+      ) {
+        score += 20;
+      }
+      return { s, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  const familyAsk = /\b(kid|kids|child|children|son|daughter|living situation)\b/i.test(question);
+  const good = scored.filter((x) => x.score >= 8);
+  const preferred =
+    familyAsk && good.some((x) => /\b(son|daughter|child|children|kid|apartment|college)\b/i.test(x.s))
+      ? good.filter((x) => /\b(son|daughter|child|children|kid|apartment|college)\b/i.test(x.s))
+      : good;
+  const picked = (preferred.length > 0 ? preferred : scored)
+    .slice(0, maxSentences)
+    .map((x) => x.s);
+  // Preserve original field order for readability.
+  const order = new Map(sentences.map((s, i) => [s, i]));
+  picked.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  return picked.join(" ");
+}
+
+function shouldSynthesizeStructuredFields(
+  question: string | undefined,
+  passages: PemContentPassage[],
+): boolean {
+  if (!question) return false;
+  if (passages.some((p) => p.kind === "transcript")) return false;
+  if (!passages.some((p) => p.sectionId.startsWith("field."))) return false;
+  // Content / "find where" asks should answer the question, not paste fields.
+  return (
+    isTranscriptFocusedQuestion(question) ||
+    /\b(find|where|what|tell|about|who|how|when)\b/i.test(question)
+  );
 }
 
 /**
@@ -674,6 +756,21 @@ export function formatPemContentSearchAnswer(input: {
     passages = passages.slice(0, 2);
   }
 
+  if (shouldSynthesizeStructuredFields(input.question, passages)) {
+    const top = passages[0]!;
+    const synthesized = pickRelevantSentencesFromField(top.excerpt, input.question!);
+    const lead = input.uncertain
+      ? `I found something related in ${input.prospectName}'s PEM NEAT` +
+        (input.meetingDate ? ` (${input.meetingDate})` : "") +
+        `, but I'm not fully certain it matches what you asked:`
+      : `In ${input.prospectName}'s PEM NEAT` +
+        (input.meetingDate ? ` (${input.meetingDate})` : "") +
+        `:`;
+    return [lead, "", synthesized, "", `Source: ${input.citationLabel} — ${top.label}`]
+      .join("\n")
+      .trim();
+  }
+
   const blocks: string[] = [];
   if (input.uncertain) {
     blocks.push(
@@ -743,8 +840,24 @@ export function isKnowledgeBaseRelevantToPemContentQuestion(
       /\b(disqualif\w*|recommend|objection|what am i missing|temporary disqualification|coaching moment|sales technique)\b/i;
     if (!technique.test(hay)) return false;
   }
+
+  // Glossary / meta PEM entries ("what is a PEM NEAT", project brief) must not ride
+  // along on prospect-content asks just because they mention the words PEM/NEAT.
+  const kbIsPemMeta =
+    /\b(manual entry|what (?:is|are) (?:a |an )?pem|pem neat|partnership evaluation meeting|baxter project brief|project brief)\b/i.test(
+      hay,
+    ) || /\bmanual entry\b/i.test(normalizeSearchText(item.title ?? ""));
+  const questionAsksPemDefinition =
+    /\b(what (?:is|are) (?:a |an )?(?:pem|neat)|how (?:do|does|is) (?:a |an )?(?:pem|neat)|pem neat (?:work|mean|definition)|define (?:a |an )?(?:pem|neat))\b/i.test(
+      question,
+    );
+  if (kbIsPemMeta && !wantsExplicitGuidance && !questionAsksPemDefinition) {
+    return false;
+  }
+
+  // Domain match requires coaching / content substance — not bare "pem"/"neat".
   const domain =
-    /\b(disqualif|recommend|objection|pain|pem|neat|transcript|budget|timeline|pricing|coaching|qualification|rapport|adu)\b/i;
+    /\b(disqualif|recommend|objection|pain|transcript|budget|timeline|pricing|coaching|qualification|rapport|adu|solar|schedule|temporary disqualification|sales (?:playbook|technique))\b/i;
   const kbHasDomain = domain.test(hay);
   const noise = new Set([
     "sharon",
@@ -756,8 +869,13 @@ export function isKnowledgeBaseRelevantToPemContentQuestion(
     "find",
     "part",
     "look",
+    "denis",
+    "kornilov",
+    "neat",
+    "living",
+    "situation",
   ]);
   const terms = tokenizeQuery(question).filter((t) => t.length > 3 && !noise.has(t));
   const overlap = terms.filter((t) => hay.includes(t)).length;
-  return wantsExplicitGuidance || kbHasDomain || overlap >= 2;
+  return wantsExplicitGuidance || (kbHasDomain && overlap >= 1) || overlap >= 2;
 }

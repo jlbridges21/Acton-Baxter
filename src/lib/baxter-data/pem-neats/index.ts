@@ -48,10 +48,23 @@ export {
   type PemProspectMatch,
 } from "./prospect-index";
 export {
+  TRANSCRIPT_RELEVANCE_FLOOR,
+  STRUCTURED_FIELD_RELEVANCE_FLOOR,
+  PEM_LADDER_CANDIDATE_CAP,
+  extractTopicAnchorTerms,
+  expandQuestionWithTopicSynonyms,
+  passageMatchesTopicAnchors,
+  passesTranscriptRelevanceGate,
+  scoreStructuredFieldCandidates,
+  selectPemLadderCandidates,
+  type PemLadderResult,
+} from "./pem-answer-ladder";
+export {
   formatPemContentSearchAnswer,
   expandQueryForSemanticMatch,
   isKnowledgeBaseRelevantToPemContentQuestion,
   isTranscriptFocusedQuestion,
+  pickRelevantSentencesFromField,
   scorePassageAgainstQuery,
   searchPemNeatContent,
   searchPemNeatContentAsync,
@@ -60,13 +73,3 @@ export {
   type PemContentSearchResult,
 } from "./content-search";
 export { buildPemAnswerableExampleQuestions, formatPemHonestMissAnswer } from "./honest-fallback";
-export {
-  TRANSCRIPT_RELEVANCE_FLOOR,
-  STRUCTURED_FIELD_RELEVANCE_FLOOR,
-  extractTopicAnchorTerms,
-  passageMatchesTopicAnchors,
-  passesTranscriptRelevanceGate,
-  scoreStructuredFieldCandidates,
-  selectPemLadderCandidates,
-  type PemLadderResult,
-} from "./pem-answer-ladder";

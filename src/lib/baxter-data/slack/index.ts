@@ -28,6 +28,8 @@ export {
   detectSlackSearchIntent,
   extractPersonQueries,
   extractChannelMentions,
+  isRelationalProjectChannelAsk,
+  isRelationalOrMangledChannelSlug,
   extractKeywords,
   getDecisionLanguageTerms,
 } from "./intent";

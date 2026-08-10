@@ -75,6 +75,9 @@ import {
   questionHasSpecificNamedEntity,
 } from "@/lib/baxter/capability-intent";
 import { retrieveSlackForAnswer } from "@/lib/baxter-data/slack/orchestrate";
+import { isRelationalProjectChannelAsk } from "@/lib/baxter-data/slack/intent";
+import { retrieveLinkedProjectChannelActivity } from "@/lib/baxter-ai/ghl-project-slack-enrichment";
+import { resolveGhlEntityGraph } from "@/lib/connectors/ghl/entity-graph";
 import { detectSlackSearchIntent, extractChannelMentions } from "@/lib/baxter-data/slack/intent";
 import {
   detectSlackSearchRole,
@@ -610,15 +613,52 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   const multiNeedResolvers = hasMultipleInformationNeeds(semantic)
     ? {
         slack: async (need: SemanticInformationNeed) => {
+          const requester = {
+            baxterUserId: input.userId,
+            slackUserId: input.externalUserId,
+            slackTeamId: input.slackTeamId ?? null,
+            actionToken: input.slackActionToken ?? null,
+            allowPublicOnlyFallback: input.channel === "slack" || Boolean(input.externalUserId),
+          };
+
+          // Possessive / relational "his project channel" → linked Project Setup channel,
+          // never a mangled literal like "#s-project".
+          if (
+            isRelationalProjectChannelAsk(need.partQuestion) &&
+            (need.entityName?.trim() || semantic.entityName?.trim())
+          ) {
+            const entityName = (need.entityName || semantic.entityName || "").trim();
+            try {
+              const graph = await resolveGhlEntityGraph(entityName, {
+                includeAppointments: false,
+                includeConversations: false,
+              });
+              const contactId = graph.contact?.id?.trim() || "";
+              if (contactId) {
+                const linked = await retrieveLinkedProjectChannelActivity({
+                  ghlContactId: contactId,
+                  contactDisplayName:
+                    graph.contact?.name ||
+                    [graph.contact?.firstName, graph.contact?.lastName].filter(Boolean).join(" ") ||
+                    entityName,
+                  question: need.partQuestion,
+                  requester,
+                });
+                if (linked?.answer) {
+                  return {
+                    answer: linked.answer,
+                    softMiss: linked.items.length === 0,
+                  };
+                }
+              }
+            } catch {
+              // Fall through to ordinary Slack retrieval.
+            }
+          }
+
           const slack = await retrieveSlackForAnswer({
             question: need.partQuestion,
-            requester: {
-              baxterUserId: input.userId,
-              slackUserId: input.externalUserId,
-              slackTeamId: input.slackTeamId ?? null,
-              actionToken: input.slackActionToken ?? null,
-              allowPublicOnlyFallback: input.channel === "slack" || Boolean(input.externalUserId),
-            },
+            requester,
             conversationMetadata: conversation.metadata ?? {},
             hasOtherStrongEvidence: false,
             roleOverride: "primary",

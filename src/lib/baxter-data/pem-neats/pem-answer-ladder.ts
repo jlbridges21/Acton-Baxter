@@ -21,8 +21,17 @@ import {
  */
 export const TRANSCRIPT_RELEVANCE_FLOOR = 70;
 
-/** Structured fields may clear a slightly lower bar — they are curated NEAT content. */
-export const STRUCTURED_FIELD_RELEVANCE_FLOOR = 50;
+/**
+ * Structured-field floor (Denis kid living situation, measured):
+ * - Decision Process 57 / Competition 51 — false positives via weak "living"↔"Living Large"
+ * - Customer Story 51 — true positive (son / college / apartment) but under-boosted
+ * After synonym expansion + rejecting weak-only anchors, true fields clear ~80+;
+ * keep floor at 62 so weak Living-Large collisions stay out even with a leftover boost.
+ */
+export const STRUCTURED_FIELD_RELEVANCE_FLOOR = 62;
+
+/** Max structured/transcript candidates shown before synthesis (was 3 — too dump-y). */
+export const PEM_LADDER_CANDIDATE_CAP = 2;
 
 const META_QUERY_TERMS = new Set([
   "want",
@@ -66,6 +75,8 @@ const META_QUERY_TERMS = new Set([
   "him",
   "she",
   "he",
+  "living",
+  "situation",
 ]);
 
 /** Synonyms so "timeline" questions can match Schedule field wording ("timing", "months"). */
@@ -83,29 +94,68 @@ const TOPIC_SYNONYMS: Record<string, string[]> = {
   disqualified: ["disqualified", "disqualify", "disqualification"],
   disqualify: ["disqualify", "disqualified", "disqualification"],
   pain: ["pain", "why-now", "motivation"],
+  kid: ["kid", "kids", "child", "children", "son", "daughter", "college", "apartment"],
+  kids: ["kid", "kids", "child", "children", "son", "daughter", "college", "apartment"],
+  child: ["child", "children", "kid", "kids", "son", "daughter", "college", "apartment"],
+  children: ["child", "children", "kid", "kids", "son", "daughter"],
+  son: ["son", "child", "kid", "children", "daughter", "college", "apartment"],
+  daughter: ["daughter", "child", "kid", "children", "son"],
+  apartment: ["apartment", "housing", "rent", "renter", "living arrangement"],
+  college: ["college", "community college", "school", "university"],
 };
 
+const PERSON_NAME_NOISE =
+  /^(robert|vertin|leslie|kita|sharon|liu|jeff|jesse|kevin|alex|razel|talle|denis|deni|kornilov|cindy|lee|robin|mortarotti|normandie|ramirez)$/i;
+
 export function extractTopicAnchorTerms(question: string): string[] {
-  const terms = tokenizeQuery(question).filter((t) => t.length > 3 && !META_QUERY_TERMS.has(t));
+  const terms = tokenizeQuery(question)
+    .map((t) => t.replace(/[^a-z0-9]/gi, ""))
+    .filter((t) => t.length > 3 && !META_QUERY_TERMS.has(t));
   return Array.from(
     new Set(
       terms.filter((t) => {
-        if (/^(robert|vertin|leslie|kita|sharon|liu|jeff|jesse|kevin|alex|razel|talle)$/i.test(t)) {
-          return false;
-        }
+        if (PERSON_NAME_NOISE.test(t)) return false;
         return true;
       }),
     ),
   );
 }
 
+/** Expand question terms with topic synonyms for lexical scoring / sentence pick. */
+export function expandQuestionWithTopicSynonyms(question: string): string {
+  const anchors = extractTopicAnchorTerms(question);
+  const extras: string[] = [];
+  for (const a of anchors) {
+    for (const v of TOPIC_SYNONYMS[a] ?? []) {
+      if (!extras.includes(v)) extras.push(v);
+    }
+  }
+  // Also expand raw family words even if filtered as short ("kid" is length 3).
+  if (/\b(kid|kids|child|children|son|daughter)\b/i.test(question)) {
+    for (const v of TOPIC_SYNONYMS.kid ?? []) {
+      if (!extras.includes(v)) extras.push(v);
+    }
+  }
+  return extras.length ? `${question} ${extras.join(" ")}` : question;
+}
+
 export function passageMatchesTopicAnchors(haystack: string, question: string): boolean {
   const anchors = extractTopicAnchorTerms(question);
-  if (anchors.length === 0) return true;
+  const familyAsk = /\b(kid|kids|child|children|son|daughter)\b/i.test(question);
+  const effectiveAnchors = anchors.length > 0 ? anchors : familyAsk ? ["kid"] : [];
+  if (effectiveAnchors.length === 0) return true;
   const hay = normalizeSearchText(haystack);
-  return anchors.some((anchor) => {
+  return effectiveAnchors.some((anchor) => {
     const variants = TOPIC_SYNONYMS[anchor] ?? [anchor];
-    return variants.some((v) => hay.includes(v));
+    return variants.some((v) => {
+      const token = normalizeSearchText(v);
+      if (!token) return false;
+      // Word-boundary-ish: avoid "living" matching only as part of unrelated brands when
+      // stronger family synonyms are available — prefer multi-char specific terms.
+      return new RegExp(
+        `(?:^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9]|$)`,
+      ).test(hay);
+    });
   });
 }
 
@@ -149,6 +199,10 @@ export function scoreStructuredFieldCandidates(
       : null;
   if (!structured) return [];
 
+  const scoringQuestion = expandQuestionWithTopicSynonyms(question);
+  const requiresAnchor =
+    extractTopicAnchorTerms(question).length > 0 ||
+    /\b(kid|kids|child|children|son|daughter)\b/i.test(question);
   const out: PemContentPassage[] = [];
   for (const key of LADDER_FIELD_KEYS) {
     const field = getPemField(structured, key, {
@@ -157,7 +211,9 @@ export function scoreStructuredFieldCandidates(
     });
     if (!field.determinable || field.lines.length === 0) continue;
     const text = field.lines.join("\n");
-    let score = scorePassageAgainstQuery(text, question);
+    // Same discipline as transcript gate: topic anchors must hit when present.
+    if (requiresAnchor && !passageMatchesTopicAnchors(text, question)) continue;
+    let score = scorePassageAgainstQuery(text, scoringQuestion);
     // Boost when topic anchors clearly point at this field.
     if (passageMatchesTopicAnchors(text, question)) {
       score += 25;
@@ -168,6 +224,14 @@ export function scoreStructuredFieldCandidates(
     }
     if (key === "budget" && /\b(budget|pricing|price|cost|afford)\b/i.test(question)) {
       score += 30;
+    }
+    if (
+      key === "customer_story" &&
+      /\b(kid|kids|child|children|son|daughter|living situation|apartment|college)\b/i.test(
+        question,
+      )
+    ) {
+      score += 20;
     }
     if (score < STRUCTURED_FIELD_RELEVANCE_FLOOR) continue;
     out.push({
@@ -198,7 +262,7 @@ export function selectPemLadderCandidates(input: {
   fieldPassages: PemContentPassage[];
   limit?: number;
 }): PemLadderResult {
-  const limit = input.limit ?? 3;
+  const limit = input.limit ?? PEM_LADDER_CANDIDATE_CAP;
   const gatedTx = input.transcriptPassages.filter(
     (p) =>
       p.kind === "transcript" &&
