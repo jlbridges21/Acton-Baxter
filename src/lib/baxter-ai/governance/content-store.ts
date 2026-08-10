@@ -5,12 +5,18 @@ import { getEnv } from "@/lib/env";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { isAdminRole, isSuperAdminRole } from "@/lib/auth/roles";
 import {
-  DEFAULT_GOVERNANCE_SECTION_CONTENT,
+  DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT,
+  DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
   GOVERNANCE_DOMAINS,
   GOVERNANCE_SECTION_KEYS,
+  GOVERNANCE_SURFACES,
   SECTION_DOMAIN,
+  defaultSectionContentForSurface,
+  isGovernanceSectionKey,
+  sectionKeysForSurface,
   type GovernanceDomain,
   type GovernanceSectionKey,
+  type GovernanceSurface,
 } from "./section-meta";
 
 export type GovernanceVersionStatus = "draft" | "active" | "superseded";
@@ -19,6 +25,7 @@ export type GovernanceVersion = {
   id: string;
   version_number: number;
   status: GovernanceVersionStatus;
+  surface: GovernanceSurface;
   proposed_by: string | null;
   rationale: string | null;
   created_at: string;
@@ -90,13 +97,16 @@ function usesMemoryStore(): boolean {
 }
 
 function seedMemoryFromDefaults(): MemoryState {
-  const id = "a0000000-0000-4000-8000-000000000001";
   const timestamp = nowIso();
   const versions = new Map<string, GovernanceVersion>();
-  versions.set(id, {
-    id,
+  const sections = new Map<string, GovernanceVersionSection>();
+
+  const baxterId = "a0000000-0000-4000-8000-000000000001";
+  versions.set(baxterId, {
+    id: baxterId,
     version_number: 1,
     status: "active",
+    surface: "baxter_runtime",
     proposed_by: null,
     rationale: "Initial seed: verbatim compiled defaults",
     created_at: timestamp,
@@ -104,15 +114,40 @@ function seedMemoryFromDefaults(): MemoryState {
     activated_by: null,
     superseded_version_id: null,
   });
-  const sections = new Map<string, GovernanceVersionSection>();
   for (const key of GOVERNANCE_SECTION_KEYS) {
-    sections.set(`${id}:${key}`, {
-      version_id: id,
+    sections.set(`${baxterId}:${key}`, {
+      version_id: baxterId,
       section_key: key,
-      content: DEFAULT_GOVERNANCE_SECTION_CONTENT[key],
+      content: DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT[key],
       domain: SECTION_DOMAIN[key],
     });
   }
+
+  const pemId = "b0000000-0000-4000-8000-000000000001";
+  versions.set(pemId, {
+    id: pemId,
+    version_number: 1,
+    status: "active",
+    surface: "pem_neat_grading",
+    proposed_by: null,
+    rationale: "Initial seed: verbatim PEM NEAT grading prompts from compiled defaults",
+    created_at: timestamp,
+    activated_at: timestamp,
+    activated_by: null,
+    superseded_version_id: null,
+  });
+  for (const key of sectionKeysForSurface("pem_neat_grading")) {
+    sections.set(`${pemId}:${key}`, {
+      version_id: pemId,
+      section_key: key,
+      content:
+        DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT[
+          key as keyof typeof DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT
+        ],
+      domain: SECTION_DOMAIN[key],
+    });
+  }
+
   const owners = new Map<GovernanceDomain, GovernanceDomainOwner>();
   for (const domain of GOVERNANCE_DOMAINS) {
     owners.set(domain, {
@@ -132,17 +167,25 @@ export function resetGovernanceMemoryForTests(): void {
 export type ActiveGovernanceContent = {
   versionNumber: number;
   versionId: string;
+  surface: GovernanceSurface;
   sections: Record<GovernanceSectionKey, string>;
   usedFallback: boolean;
   fallbackReason: string | null;
 };
 
-function defaultActiveContent(reason: string): ActiveGovernanceContent {
-  console.error(`[governance] FALLBACK to compiled defaults: ${reason}`);
+function defaultActiveContent(surface: GovernanceSurface, reason: string): ActiveGovernanceContent {
+  console.error(`[governance] FALLBACK to compiled defaults (${surface}): ${reason}`);
+  const defaults = defaultSectionContentForSurface(surface);
+  const keys = sectionKeysForSurface(surface);
+  const sections = {} as Record<GovernanceSectionKey, string>;
+  for (const key of keys) {
+    sections[key] = defaults[key]!;
+  }
   return {
     versionNumber: 0,
     versionId: "compiled-fallback",
-    sections: { ...DEFAULT_GOVERNANCE_SECTION_CONTENT },
+    surface,
+    sections,
     usedFallback: true,
     fallbackReason: reason,
   };
@@ -151,24 +194,31 @@ function defaultActiveContent(reason: string): ActiveGovernanceContent {
 /**
  * Fresh read of active governance section content for this request.
  * Falls back to compiled-in defaults if DB is unreachable or incomplete — never empty.
+ * Prefer a fresh read over caching — this content changes rarely but wrong cache is worse.
  */
-export async function loadActiveGovernanceContent(): Promise<ActiveGovernanceContent> {
+export async function loadActiveGovernanceContent(
+  surface: GovernanceSurface = "baxter_runtime",
+): Promise<ActiveGovernanceContent> {
+  const keys = sectionKeysForSurface(surface);
   try {
     if (usesMemoryStore()) {
       const mem = getMemory();
-      const active = [...mem.versions.values()].find((v) => v.status === "active");
-      if (!active) return defaultActiveContent("no_active_version_in_memory");
+      const active = [...mem.versions.values()].find(
+        (v) => v.status === "active" && v.surface === surface,
+      );
+      if (!active) return defaultActiveContent(surface, "no_active_version_in_memory");
       const sections = {} as Record<GovernanceSectionKey, string>;
-      for (const key of GOVERNANCE_SECTION_KEYS) {
+      for (const key of keys) {
         const row = mem.sections.get(`${active.id}:${key}`);
         if (!row?.content) {
-          return defaultActiveContent(`missing_section_${key}`);
+          return defaultActiveContent(surface, `missing_section_${key}`);
         }
         sections[key] = row.content;
       }
       return {
         versionNumber: active.version_number,
         versionId: active.id,
+        surface,
         sections,
         usedFallback: false,
         fallbackReason: null,
@@ -180,13 +230,14 @@ export async function loadActiveGovernanceContent(): Promise<ActiveGovernanceCon
       .from("governance_versions")
       .select("*")
       .eq("status", "active")
+      .eq("surface", surface)
       .maybeSingle();
 
     if (error) {
-      return defaultActiveContent(`db_error:${error.message}`);
+      return defaultActiveContent(surface, `db_error:${error.message}`);
     }
     if (!active) {
-      return defaultActiveContent("no_active_version");
+      return defaultActiveContent(surface, "no_active_version");
     }
 
     const { data: rows, error: sectionError } = await supabase
@@ -195,17 +246,17 @@ export async function loadActiveGovernanceContent(): Promise<ActiveGovernanceCon
       .eq("version_id", active.id);
 
     if (sectionError) {
-      return defaultActiveContent(`sections_error:${sectionError.message}`);
+      return defaultActiveContent(surface, `sections_error:${sectionError.message}`);
     }
 
     const byKey = new Map(
       (rows ?? []).map((r) => [r.section_key as GovernanceSectionKey, r.content as string]),
     );
     const sections = {} as Record<GovernanceSectionKey, string>;
-    for (const key of GOVERNANCE_SECTION_KEYS) {
+    for (const key of keys) {
       const content = byKey.get(key);
       if (!content) {
-        return defaultActiveContent(`missing_section_${key}`);
+        return defaultActiveContent(surface, `missing_section_${key}`);
       }
       sections[key] = content;
     }
@@ -213,37 +264,58 @@ export async function loadActiveGovernanceContent(): Promise<ActiveGovernanceCon
     return {
       versionNumber: active.version_number as number,
       versionId: active.id as string,
+      surface,
       sections,
       usedFallback: false,
       fallbackReason: null,
     };
   } catch (err) {
-    return defaultActiveContent(`exception:${err instanceof Error ? err.message : "unknown"}`);
+    return defaultActiveContent(
+      surface,
+      `exception:${err instanceof Error ? err.message : "unknown"}`,
+    );
   }
 }
 
-export async function getActiveGovernanceVersion(): Promise<GovernanceVersion | null> {
+/** Convenience: fresh read of PEM NEAT grading sections (or compiled fallback). */
+export async function loadActivePemNeatGradingContent(): Promise<ActiveGovernanceContent> {
+  return loadActiveGovernanceContent("pem_neat_grading");
+}
+
+export async function getActiveGovernanceVersion(
+  surface: GovernanceSurface = "baxter_runtime",
+): Promise<GovernanceVersion | null> {
   if (usesMemoryStore()) {
-    return [...getMemory().versions.values()].find((v) => v.status === "active") ?? null;
+    return (
+      [...getMemory().versions.values()].find(
+        (v) => v.status === "active" && v.surface === surface,
+      ) ?? null
+    );
   }
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("governance_versions")
     .select("*")
     .eq("status", "active")
+    .eq("surface", surface)
     .maybeSingle();
   if (error) throw error;
   return (data as GovernanceVersion | null) ?? null;
 }
 
-export async function listGovernanceVersions(): Promise<GovernanceVersion[]> {
+export async function listGovernanceVersions(
+  surface: GovernanceSurface = "baxter_runtime",
+): Promise<GovernanceVersion[]> {
   if (usesMemoryStore()) {
-    return [...getMemory().versions.values()].sort((a, b) => b.version_number - a.version_number);
+    return [...getMemory().versions.values()]
+      .filter((v) => v.surface === surface)
+      .sort((a, b) => b.version_number - a.version_number);
   }
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("governance_versions")
     .select("*")
+    .eq("surface", surface)
     .order("version_number", { ascending: false });
   if (error) throw error;
   return (data as GovernanceVersion[]) ?? [];
@@ -299,19 +371,35 @@ export async function assignDomainOwner(
   return data as GovernanceDomainOwner;
 }
 
-export async function getOrCreateDraftVersion(proposedBy: string, rationale?: string | null) {
+export async function getOrCreateDraftVersion(
+  proposedBy: string,
+  rationale?: string | null,
+  surface: GovernanceSurface = "baxter_runtime",
+) {
+  const keys = sectionKeysForSurface(surface);
   if (usesMemoryStore()) {
     const mem = getMemory();
-    const existing = [...mem.versions.values()].find((v) => v.status === "draft");
+    const existing = [...mem.versions.values()].find(
+      (v) => v.status === "draft" && v.surface === surface,
+    );
     if (existing) return existing;
-    const active = [...mem.versions.values()].find((v) => v.status === "active");
+    const active = [...mem.versions.values()].find(
+      (v) => v.status === "active" && v.surface === surface,
+    );
     if (!active) throw new Error("No active governance version to draft from");
-    const nextNum = Math.max(...[...mem.versions.values()].map((v) => v.version_number)) + 1;
+    const nextNum =
+      Math.max(
+        0,
+        ...[...mem.versions.values()]
+          .filter((v) => v.surface === surface)
+          .map((v) => v.version_number),
+      ) + 1;
     const id = randomUUID();
     const draft: GovernanceVersion = {
       id,
       version_number: nextNum,
       status: "draft",
+      surface,
       proposed_by: proposedBy,
       rationale: rationale ?? null,
       created_at: nowIso(),
@@ -320,7 +408,7 @@ export async function getOrCreateDraftVersion(proposedBy: string, rationale?: st
       superseded_version_id: null,
     };
     mem.versions.set(id, draft);
-    for (const key of GOVERNANCE_SECTION_KEYS) {
+    for (const key of keys) {
       const src = mem.sections.get(`${active.id}:${key}`)!;
       mem.sections.set(`${id}:${key}`, {
         version_id: id,
@@ -337,6 +425,7 @@ export async function getOrCreateDraftVersion(proposedBy: string, rationale?: st
     .from("governance_versions")
     .select("*")
     .eq("status", "draft")
+    .eq("surface", surface)
     .maybeSingle();
   if (existing) return existing as GovernanceVersion;
 
@@ -344,12 +433,14 @@ export async function getOrCreateDraftVersion(proposedBy: string, rationale?: st
     .from("governance_versions")
     .select("*")
     .eq("status", "active")
+    .eq("surface", surface)
     .single();
   if (!active) throw new Error("No active governance version to draft from");
 
   const { data: maxRow } = await supabase
     .from("governance_versions")
     .select("version_number")
+    .eq("surface", surface)
     .order("version_number", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -360,6 +451,7 @@ export async function getOrCreateDraftVersion(proposedBy: string, rationale?: st
     .insert({
       version_number: nextNum,
       status: "draft",
+      surface,
       proposed_by: proposedBy,
       rationale: rationale ?? null,
     })
@@ -390,7 +482,7 @@ export async function updateDraftSection(
   content: string,
 ): Promise<void> {
   // Structure is code-fixed — reject unknown keys
-  if (!GOVERNANCE_SECTION_KEYS.includes(sectionKey)) {
+  if (!isGovernanceSectionKey(sectionKey)) {
     throw new Error(`Unknown governance section: ${sectionKey}`);
   }
 
@@ -523,7 +615,21 @@ export type ActivationGateResult =
 
 export async function getActivationGate(versionId: string): Promise<ActivationGateResult> {
   const draftSections = await getGovernanceVersionSections(versionId);
-  const active = await getActiveGovernanceVersion();
+  let surface: GovernanceSurface = "baxter_runtime";
+  if (usesMemoryStore()) {
+    surface = getMemory().versions.get(versionId)?.surface ?? "baxter_runtime";
+  } else {
+    const supabase = createServiceClient();
+    const { data } = await supabase
+      .from("governance_versions")
+      .select("surface")
+      .eq("id", versionId)
+      .maybeSingle();
+    surface = (data?.surface as GovernanceSurface | undefined) ?? "baxter_runtime";
+  }
+
+  const keys = sectionKeysForSurface(surface);
+  const active = await getActiveGovernanceVersion(surface);
   if (!active) {
     return { ok: false, error: "No active version to compare against", missingApprovals: [] };
   }
@@ -531,7 +637,7 @@ export async function getActivationGate(versionId: string): Promise<ActivationGa
   const activeByKey = new Map(activeSections.map((s) => [s.section_key, s.content]));
 
   const changed: GovernanceSectionKey[] = [];
-  for (const key of GOVERNANCE_SECTION_KEYS) {
+  for (const key of keys) {
     const draft = draftSections.find((s) => s.section_key === key);
     const prev = activeByKey.get(key) ?? "";
     if ((draft?.content ?? "") !== prev) {
@@ -579,7 +685,9 @@ export async function activateGovernanceVersion(
     if (!draft || draft.status !== "draft") {
       return { ok: false, error: "Version is not a draft", missingApprovals: [] };
     }
-    const prior = [...mem.versions.values()].find((v) => v.status === "active");
+    const prior = [...mem.versions.values()].find(
+      (v) => v.status === "active" && v.surface === draft.surface,
+    );
     if (prior) {
       mem.versions.set(prior.id, {
         ...prior,
@@ -607,10 +715,12 @@ export async function activateGovernanceVersion(
     return { ok: false, error: "Version is not a draft", missingApprovals: [] };
   }
 
+  const surface = (draft.surface as GovernanceSurface) ?? "baxter_runtime";
   const { data: prior } = await supabase
     .from("governance_versions")
     .select("id")
     .eq("status", "active")
+    .eq("surface", surface)
     .maybeSingle();
 
   if (prior) {
@@ -643,13 +753,17 @@ export async function activateGovernanceVersion(
 export function diffGovernanceSections(
   from: GovernanceVersionSection[],
   to: GovernanceVersionSection[],
+  surface: GovernanceSurface = "baxter_runtime",
 ): GovernanceSectionKey[] {
   const fromMap = new Map(from.map((s) => [s.section_key, s.content]));
   const changed: GovernanceSectionKey[] = [];
-  for (const key of GOVERNANCE_SECTION_KEYS) {
+  for (const key of sectionKeysForSurface(surface)) {
     const a = fromMap.get(key) ?? "";
     const b = to.find((s) => s.section_key === key)?.content ?? "";
     if (a !== b) changed.push(key);
   }
   return changed;
 }
+
+export { GOVERNANCE_SURFACES };
+export type { GovernanceSurface };

@@ -267,6 +267,8 @@ function cleanExtractedName(raw: string | undefined): string | undefined {
     .replace(/\s+/g, " ")
     .trim();
   name = normalizeEntitySearchName(name) ?? "";
+  // "What is his email" → normalize may strip "What" and leave "is his".
+  name = name.replace(/^(is|are|was|were|am)\s+/i, "").trim();
   if (!name || name.length < 2) return undefined;
   // Reject pronouns / stopwords — follow-ups inherit active entity in the query plan
   if (/^(his|her|their|him|them|he|she|they|it|this|that)\b/i.test(name)) {

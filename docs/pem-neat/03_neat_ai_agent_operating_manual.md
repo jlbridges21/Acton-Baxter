@@ -1,5 +1,7 @@
 # Acton ADU NEAT AI Agent Operating Manual
 
+> **Live source of truth:** PEM NEAT grading criteria used by generation live in **Admin → Baxter Governance → PEM NEAT grading standard**. This file is reference/background only.
+
 ## Mission
 
 Given a Partnership Evaluation Meeting (PEM) transcript, produce an accurate, useful NEAT that:

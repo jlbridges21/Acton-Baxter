@@ -1,7 +1,25 @@
 import { BAXTER_RUNTIME_VERSION } from "./version";
+import {
+  DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
+  PEM_NEAT_GRADING_SECTION_KEYS,
+  PEM_NEAT_GRADING_SECTION_LABELS,
+  type PemNeatGradingSectionKey,
+} from "./pem-neat-grading-meta";
 
 /**
- * Code-fixed section keys and assembly order.
+ * Consumer surface for versioned governance content.
+ * Same draft/approval/activation machinery; different section sets and assemblers.
+ */
+export const GOVERNANCE_SURFACES = ["baxter_runtime", "pem_neat_grading"] as const;
+export type GovernanceSurface = (typeof GOVERNANCE_SURFACES)[number];
+
+export const GOVERNANCE_SURFACE_LABELS: Record<GovernanceSurface, string> = {
+  baxter_runtime: "Baxter chat runtime",
+  pem_neat_grading: "PEM NEAT grading standard",
+};
+
+/**
+ * Code-fixed section keys and assembly order for Baxter runtime.
  * A webapp edit must never remove or reorder these — only content text is editable.
  * Confidentiality remains immediately after the fixed hierarchy block in assemble.ts.
  */
@@ -17,7 +35,28 @@ export const GOVERNANCE_SECTION_KEYS = [
   "style",
 ] as const;
 
-export type GovernanceSectionKey = (typeof GOVERNANCE_SECTION_KEYS)[number];
+export type BaxterRuntimeSectionKey = (typeof GOVERNANCE_SECTION_KEYS)[number];
+export type { PemNeatGradingSectionKey };
+export type GovernanceSectionKey = BaxterRuntimeSectionKey | PemNeatGradingSectionKey;
+
+export const ALL_GOVERNANCE_SECTION_KEYS: readonly GovernanceSectionKey[] = [
+  ...GOVERNANCE_SECTION_KEYS,
+  ...PEM_NEAT_GRADING_SECTION_KEYS,
+];
+
+export function sectionKeysForSurface(surface: GovernanceSurface): readonly GovernanceSectionKey[] {
+  return surface === "baxter_runtime" ? GOVERNANCE_SECTION_KEYS : PEM_NEAT_GRADING_SECTION_KEYS;
+}
+
+export function isGovernanceSectionKey(key: string): key is GovernanceSectionKey {
+  return (ALL_GOVERNANCE_SECTION_KEYS as readonly string[]).includes(key);
+}
+
+export function surfaceForSectionKey(key: GovernanceSectionKey): GovernanceSurface {
+  return (GOVERNANCE_SECTION_KEYS as readonly string[]).includes(key)
+    ? "baxter_runtime"
+    : "pem_neat_grading";
+}
 
 export const GOVERNANCE_DOMAINS = [
   "precedence_confidentiality_scope",
@@ -35,7 +74,7 @@ export const GOVERNANCE_DOMAIN_LABELS: Record<GovernanceDomain, string> = {
   tone_persona_format: "Tone, persona & format",
 };
 
-export const SECTION_DOMAIN: Record<GovernanceSectionKey, GovernanceDomain> = {
+const BAXTER_SECTION_DOMAIN: Record<BaxterRuntimeSectionKey, GovernanceDomain> = {
   identity: "precedence_confidentiality_scope",
   confidentiality: "precedence_confidentiality_scope",
   evidence: "precedence_confidentiality_scope",
@@ -47,7 +86,16 @@ export const SECTION_DOMAIN: Record<GovernanceSectionKey, GovernanceDomain> = {
   style: "tone_persona_format",
 };
 
-export const SECTION_LABELS: Record<GovernanceSectionKey, string> = {
+const PEM_SECTION_DOMAIN = Object.fromEntries(
+  PEM_NEAT_GRADING_SECTION_KEYS.map((k) => [k, "process_content" as GovernanceDomain]),
+) as Record<PemNeatGradingSectionKey, GovernanceDomain>;
+
+export const SECTION_DOMAIN: Record<GovernanceSectionKey, GovernanceDomain> = {
+  ...BAXTER_SECTION_DOMAIN,
+  ...PEM_SECTION_DOMAIN,
+};
+
+const BAXTER_SECTION_LABELS: Record<BaxterRuntimeSectionKey, string> = {
   identity: "Identity",
   confidentiality: "Confidentiality",
   evidence: "Evidence",
@@ -59,11 +107,16 @@ export const SECTION_LABELS: Record<GovernanceSectionKey, string> = {
   style: "Output style",
 };
 
+export const SECTION_LABELS: Record<GovernanceSectionKey, string> = {
+  ...BAXTER_SECTION_LABELS,
+  ...PEM_NEAT_GRADING_SECTION_LABELS,
+};
+
 /**
- * Compiled-in defaults — verbatim from the original TypeScript builders.
+ * Compiled-in Baxter runtime defaults — verbatim from the original TypeScript builders.
  * Used as seed source of truth and as runtime fallback when DB is unreachable.
  */
-export const DEFAULT_GOVERNANCE_SECTION_CONTENT: Record<GovernanceSectionKey, string> = {
+export const DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT: Record<BaxterRuntimeSectionKey, string> = {
   identity: [
     "Identity:",
     "You are Baxter — Acton ADU's internal digital teammate (not a generic chatbot that happens to search docs).",
@@ -155,3 +208,22 @@ export const DEFAULT_GOVERNANCE_SECTION_CONTENT: Record<GovernanceSectionKey, st
     "- Customer-facing drafts: clearly marked as draft for human review.",
   ].join("\n"),
 };
+
+/** @deprecated Prefer DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT — kept for existing imports. */
+export const DEFAULT_GOVERNANCE_SECTION_CONTENT = DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT;
+
+export {
+  DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
+  PEM_NEAT_GRADING_SECTION_KEYS,
+  PEM_NEAT_GRADING_SECTION_LABELS,
+  assemblePemNeatSystemPromptFromSections,
+} from "./pem-neat-grading-meta";
+
+export function defaultSectionContentForSurface(
+  surface: GovernanceSurface,
+): Record<GovernanceSectionKey, string> {
+  if (surface === "baxter_runtime") {
+    return { ...DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT } as Record<GovernanceSectionKey, string>;
+  }
+  return { ...DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT } as Record<GovernanceSectionKey, string>;
+}

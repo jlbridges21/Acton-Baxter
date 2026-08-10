@@ -65,6 +65,7 @@ export function toCanonicalField(key: string): PemFieldKey {
 /**
  * Detect requested PEM field(s) from natural language.
  * Type 1 and Type 2 are mutually exclusive when the user asks for one specifically.
+ * Unqualified "pain" (and natural variants) returns BOTH types — never a clarification.
  */
 export function detectRequestedPemFields(question: string): PemFieldKey[] {
   const q = question.trim();
@@ -105,6 +106,33 @@ export function detectRequestedPemFields(question: string): PemFieldKey[] {
     return last2 > last1 ? ["type_2_pain"] : ["type_1_pain"];
   }
 
+  // Unqualified pain → both Type 1 and Type 2 (salespeople mean the NEAT pain sections).
+  // Only when pain is the thing being asked about — not narrative mentions inside coaching asks.
+  const askingAboutPain =
+    /\b(?:what(?:'s|\s+is|\s+was|s)|tell me|give me|show me|list)\b[\s\S]{0,80}\bpain(?:\s*points?)?\b/i.test(
+      q,
+    ) ||
+    /\b(?:their|his|her|the prospect'?s?)\s+pain(?:\s*points?)?\b/i.test(q) ||
+    /\b[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2}(?:'s|’s)\s+pain(?:\s*points?)?\b/i.test(
+      q,
+    );
+  const askingMotivation =
+    /\bwhat'?s driving (?:this|them|him|her|the (?:deal|project|adu))\b/i.test(q) ||
+    /\b(?:their|his|her|the prospect'?s?)\s+motivation\b/i.test(q) ||
+    /\bmotivation(?:\s+for (?:the )?adu|\s+to build)\b/i.test(q) ||
+    /\bwhy (?:do they|does (?:he|she)|are they) (?:want|need) (?:an )?adu\b/i.test(q);
+  const coachingNarrative =
+    /\b(disqualif|don'?t recommend|what am i missing|show jesse|how i (?:handled|said)|got her to share)\b/i.test(
+      q,
+    );
+  if (
+    !/\bcustomer pain\b/i.test(q) &&
+    !coachingNarrative &&
+    (askingAboutPain || askingMotivation)
+  ) {
+    return ["type_1_pain", "type_2_pain"];
+  }
+
   // Alias maps — never cross-wire Type 1 ↔ Type 2.
   const patterns: Array<{ key: PemFieldKey; re: RegExp }> = [
     {
@@ -115,42 +143,54 @@ export function detectRequestedPemFields(question: string): PemFieldKey[] {
       key: "type_2_pain",
       re: /\bwhy (?:acton|choose acton|the right (?:builder|partner|contractor))|builder pain|contractor concerns?|partner(?:ship)? concerns?\b/i,
     },
-    { key: "customer_story", re: /\bcustomer story\b/i },
+    {
+      key: "customer_story",
+      re: /\bcustomer story\b|\btheir story\b|\bwhat'?s (?:their|the) story\b/i,
+    },
     { key: "customer_pain", re: /\bcustomer pain\b(?!.*type)/i },
     {
       key: "budget",
-      re: /\bbudget\b|\bhow much\b|\bprice range\b|\bfinancial (?:situation|picture)\b|\bfunding\b|\bceiling\b/i,
+      re: /\bbudget\b|\bhow much\b|\bprice range\b|\bpricing\b|\bfinancial (?:situation|picture)\b|\bfunding\b|\bceiling\b|\bafford\b/i,
     },
     {
       key: "decision_process",
-      re: /\bdecision(?:[- ]making)?(?: process)?\b|\bwho decides\b|\bdecision makers?\b|\bhow are they deciding\b|\bgating\b/i,
+      re: /\bdecision(?:[- ]making)?(?: process)?\b|\bwho decides\b|\bdecision makers?\b|\bhow are they deciding\b|\bgating\b|\bwho(?:'s| is) (?:the )?decision[- ]?maker\b/i,
     },
     {
       key: "schedule",
-      re: /\bschedule\b|\btiming\b|\burgency\b|\bwhen (?:do|did) they (?:want|need)\b/i,
+      re: /\bschedule\b|\btimeline\b|\btiming\b|\burgency\b|\bwhen (?:do|did) they (?:want|need)\b|\bwhen (?:do they|are they) (?:hoping|looking) to\b/i,
     },
     {
       key: "competition",
-      re: /\balternatives?\b|\bcompetition\b|\bother (?:builders?|options?)\b/i,
+      re: /\balternatives?\b|\bcompetition\b|\bother (?:builders?|options?|quotes?)\b|\bcompetitors?\b/i,
     },
     {
       key: "fit",
-      re: /\b(?:acton )?(?:fit|recommendation)\b|\brecommendation\b/i,
+      re: /\b(?:acton )?(?:fit|recommendation)\b|\brecommendation\b|\bdo (?:we|they) fit\b/i,
     },
-    { key: "next_steps", re: /\bnext steps?\b|\bwhat did .+ commit\b|\bcommitments?\b/i },
-    { key: "outcome", re: /\b(?:meeting )?outcome\b/i },
+    {
+      key: "next_steps",
+      re: /\bnext steps?\b|\bwhat did .+ commit\b|\bcommitments?\b|\bwhat'?s next\b|\bfollow[- ]?up (?:plan|step)\b/i,
+    },
+    {
+      key: "outcome",
+      re: /\b(?:meeting )?outcome\b|\bdid they (?:buy|close|sign|commit)\b|\bclosed[-\s]?won\b|\bdid (?:we|they) close\b/i,
+    },
     { key: "qualification", re: /\bqualif/i },
     {
       key: "coaching",
-      re: /\bcoaching\b|\bone thing\b|\bwhat did .+ miss\b|\bimprovements?\b|\bhow did .+ do\b|\bsalesperson do\b|\badvisor do\b/i,
+      re: /\bcoaching\b|\bone thing\b|\bwhat did .+ miss\b|\bimprovements?\b|\bhow did .+ do\b|\bsalesperson do\b|\badvisor do\b|\btop (?:strengths?|improvements?)\b/i,
     },
-    { key: "assessment", re: /\bassessment\b|\bgrading\b|\bsales execution\b|\bpalo\b/i },
+    {
+      key: "assessment",
+      re: /\bassessment\b|\bgrading\b|\bsales execution\b|\bpalo\b|\bscores?\b/i,
+    },
     {
       key: "buildertrend",
       re: /\bbuildertrend\b|\bbt fields?\b|\bcustom fields?\b|\bhandoff notes?\b|\bhandoff\b/i,
     },
     { key: "project", re: /\bproject (?:facts?|intelligence|notes?)\b/i },
-    { key: "salesperson", re: /\bwho (?:conducted|ran|led)\b|\bsalesperson\b|\badvisor\b/i },
+    { key: "salesperson", re: /\bwho (?:conducted|ran|led)\b|\bsalesperson\b|\badvisor name\b/i },
   ];
 
   const hits: PemFieldKey[] = [];

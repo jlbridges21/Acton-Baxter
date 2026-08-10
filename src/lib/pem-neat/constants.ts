@@ -1,6 +1,7 @@
 /**
  * PEM NEAT domain constants.
- * Governing docs: docs/pem-neat/01–03 (versioned product rules).
+ * Live grading wording is maintained in Admin → Baxter Governance (pem_neat_grading surface).
+ * docs/pem-neat/* are reference/background only.
  */
 export const PEM_NEAT_STANDARD_VERSION = "1.0.0" as const;
 

@@ -16,25 +16,43 @@ import {
   listSectionApprovals,
   updateDraftSection,
   GOVERNANCE_DOMAINS,
-  GOVERNANCE_SECTION_KEYS,
+  GOVERNANCE_SURFACES,
+  GOVERNANCE_SURFACE_LABELS,
   SECTION_DOMAIN,
   SECTION_LABELS,
   GOVERNANCE_DOMAIN_LABELS,
   loadActiveGovernanceContent,
+  sectionKeysForSurface,
 } from "@/lib/baxter-ai/governance";
-import type { GovernanceDomain, GovernanceSectionKey } from "@/lib/baxter-ai/governance";
+import type {
+  GovernanceDomain,
+  GovernanceSectionKey,
+  GovernanceSurface,
+} from "@/lib/baxter-ai/governance";
+import { ALL_GOVERNANCE_SECTION_KEYS } from "@/lib/baxter-ai/governance/section-meta";
+
+const surfaceSchema = z.enum(
+  GOVERNANCE_SURFACES as unknown as [GovernanceSurface, ...GovernanceSurface[]],
+);
+
+function parseSurface(raw: string | null | undefined): GovernanceSurface {
+  const parsed = surfaceSchema.safeParse(raw ?? "baxter_runtime");
+  return parsed.success ? parsed.data : "baxter_runtime";
+}
 
 export async function GET(request: Request) {
   try {
     await requireAdmin();
     const { searchParams } = new URL(request.url);
     const view = searchParams.get("view") ?? "overview";
+    const surface = parseSurface(searchParams.get("surface"));
+    const sectionKeys = sectionKeysForSurface(surface);
 
     const [active, versions, owners, loaded] = await Promise.all([
-      getActiveGovernanceVersion(),
-      listGovernanceVersions(),
+      getActiveGovernanceVersion(surface),
+      listGovernanceVersions(surface),
       listDomainOwners(),
-      loadActiveGovernanceContent(),
+      loadActiveGovernanceContent(surface),
     ]);
 
     const activeSections = active ? await getGovernanceVersionSections(active.id) : [];
@@ -53,13 +71,14 @@ export async function GET(request: Request) {
         history.push({
           fromVersion: older.version_number,
           toVersion: newer.version_number,
-          changedSections: diffGovernanceSections(olderSecs, newerSecs),
+          changedSections: diffGovernanceSections(olderSecs, newerSecs, surface),
         });
       }
-      return jsonOk({ history, versions });
+      return jsonOk({ history, versions, surface });
     }
 
     return jsonOk({
+      surface,
       active,
       activeSections,
       draft,
@@ -70,7 +89,10 @@ export async function GET(request: Request) {
       versions,
       loaded,
       meta: {
-        sectionKeys: GOVERNANCE_SECTION_KEYS,
+        surface,
+        surfaceLabels: GOVERNANCE_SURFACE_LABELS,
+        surfaces: GOVERNANCE_SURFACES,
+        sectionKeys,
         sectionLabels: SECTION_LABELS,
         sectionDomains: SECTION_DOMAIN,
         domains: GOVERNANCE_DOMAINS,
@@ -83,7 +105,7 @@ export async function GET(request: Request) {
 }
 
 const sectionKeySchema = z.enum(
-  GOVERNANCE_SECTION_KEYS as unknown as [GovernanceSectionKey, ...GovernanceSectionKey[]],
+  ALL_GOVERNANCE_SECTION_KEYS as unknown as [GovernanceSectionKey, ...GovernanceSectionKey[]],
 );
 const domainSchema = z.enum(
   GOVERNANCE_DOMAINS as unknown as [GovernanceDomain, ...GovernanceDomain[]],
@@ -94,11 +116,15 @@ export async function POST(request: Request) {
     const user = await requireAdmin();
     const body = await request.json();
     const action = z.string().parse(body.action);
+    const surface = parseSurface(
+      typeof body.surface === "string" ? body.surface : "baxter_runtime",
+    );
 
     if (action === "ensure_draft") {
       const draft = await getOrCreateDraftVersion(
         user.id,
         typeof body.rationale === "string" ? body.rationale : null,
+        surface,
       );
       return jsonOk({ draft });
     }

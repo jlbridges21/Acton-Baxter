@@ -193,7 +193,14 @@ export function shouldOfferEntitySourceMenu(
   question: string,
   semantic: SemanticQuestionClassification | null | undefined,
 ): boolean {
-  if (isGenericEntityLookup(semantic)) return true;
+  if (isGenericEntityLookup(semantic)) {
+    // Semantic already typed the entity as a PEM prospect — go retrieve that NEAT
+    // (including content search) instead of asking which system to use.
+    if (semantic?.entityTypeGuess === "pem_prospect") return false;
+    // Content-search asks about a named prospect's meeting — not an open "info" menu.
+    if (semantic?.lookupSpecificity === "content_search") return false;
+    return true;
+  }
   if (isSemanticRoutingConfident(semantic)) {
     // Confident specific / non-entity → do not second-guess.
     return false;

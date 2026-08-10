@@ -70,7 +70,7 @@ export type PemIntentResult = {
 };
 
 const RECORD_SIGNAL =
-  /\b(pem|neat|type\s*[12]|palo|budget|decision|schedule|outcome|qualification|coaching|assessment|handoff|buildertrend|follow[- ]?up email|customer story|customer pain|next steps?|salesperson|advisor)\b/i;
+  /\b(pem|neat|type\s*[12]|palo|budget|decision|schedule|timeline|outcome|qualification|coaching|assessment|handoff|buildertrend|follow[- ]?up email|customer story|customer pain|pain(?:\s*points?)?|motivation|next steps?|salesperson|advisor)\b/i;
 
 const RECORD_REQUEST =
   /\b(show|open|get|pull up|find|look up|fetch|bring up)\b.+\b(pem|neat)\b|\b(pem|neat)\b.+\b(for|about|with)\b|\btell me about\b.+\b(pem|meeting|neat)\b/i;
@@ -79,12 +79,17 @@ const LOOKUP_WITH_PERSON =
   /\b(tell me about|what (was|were)|who (conducted|ran|did)|how did .+ (do|perform)|what did .+ (commit|promise|miss)|handoff notes?|buildertrend (fields?|notes?))\b/i;
 
 const PEM_FIELD_ASK =
-  /\b(type\s*[12]\s*pain|customer story|customer pain|budget|decision process|schedule|meeting outcome|sales assessment|buildertrend|handoff|concerns?|fears?|priorities|next steps?|personality|project intelligence)\b/i;
+  /\b(type\s*[12]\s*pain|customer story|customer pain|pain(?:\s*points?)?|motivation|budget|decision process|schedule|timeline|meeting outcome|sales assessment|buildertrend|handoff|concerns?|fears?|priorities|next steps?|personality|project intelligence)\b/i;
 
 function isStopName(name: string): boolean {
-  if (isReservedConceptToken(name)) return true;
-  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|Meetings|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Their|What|Who|When|Where|How|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again|Many|Several|Few|Some|Most|All|Conducted|Ran|Held|Completed|February|January|March|April|May|June|July|August|September|October|November|December|Bay|Area|KPI|KPIs)$/i.test(
-    name.trim(),
+  const token = name
+    .trim()
+    .replace(/['\u2019]s$/i, "")
+    .replace(/['\u2019]/g, "");
+  if (!token) return true;
+  if (isReservedConceptToken(token)) return true;
+  return /^(Type|Pain|Budget|Acton|Baxter|Partnership|Evaluation|Meeting|Meetings|BuilderTrend|GoHighLevel|Process|Rulebook|Test|His|Her|Him|Them|Their|What|Who|When|Where|How|Why|Tell|Give|Show|Use|Try|Pick|That|This|Is|Are|Was|Were|About|For|With|Regarding|Actually|Do|Does|Did|The|A|An|Me|My|Our|Your|Again|Many|Several|Few|Some|Most|All|Conducted|Ran|Held|Completed|Want|To|By|Got|Said|Saying|Share|More|Needs|Missing|Recommend|Disqualified|February|January|March|April|May|June|July|August|September|October|November|December|Bay|Area|KPI|KPIs)$/i.test(
+    token,
   );
 }
 
@@ -185,14 +190,14 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
     }
   }
 
-  // Possessive: prefer the rightmost valid person name ("Show me Robert Vertin's …")
-  const possessiveMatches = [
-    ...q.matchAll(/\b([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})(?:'s|’s)\b/g),
-  ];
+  // Possessive: prefer the rightmost valid person name ("Show me Robert Vertin's …").
+  // Disallow apostrophes inside name tokens so "what's Sharon Liu's" does not glue
+  // the contraction into the name capture.
+  const possessiveMatches = [...q.matchAll(/\b([A-Za-z]+(?:[\s-]+[A-Za-z]+){0,2})(?:'s|’s)\b/g)];
   for (let i = possessiveMatches.length - 1; i >= 0; i--) {
     const raw = possessiveMatches[i]?.[1];
     if (!raw) continue;
-    const parts = raw.split(/\s+/).filter(Boolean);
+    const parts = raw.split(/[\s-]+/).filter(Boolean);
     while (parts.length && isStopName(parts[0]!)) parts.shift();
     const candidate = parts.join(" ");
     if (looksLikePersonName(candidate)) {
@@ -235,8 +240,11 @@ export function parsePemEntityQuery(question: string): PemEntityParse {
     const fullMatches = [
       ...remainder.matchAll(/\b([A-Za-z][A-Za-z'-]+)\s+([A-Za-z][A-Za-z'-]+)\b/g),
     ];
-    for (const full of fullMatches) {
-      if (!full[1] || !full[2]) continue;
+    // Prefer the rightmost valid person bigram — left-to-right often invents
+    // verb pairs ("want to") before the real prospect name mid-sentence.
+    for (let i = fullMatches.length - 1; i >= 0; i--) {
+      const full = fullMatches[i];
+      if (!full?.[1] || !full[2]) continue;
       const candidate = `${full[1]} ${full[2]}`;
       if (looksLikePersonName(candidate)) {
         const base = titleCaseWords(candidate);

@@ -1,5 +1,7 @@
 # Acton ADU NEAT Standard
 
+> **Live source of truth:** PEM NEAT grading criteria used by generation live in **Admin → Baxter Governance → PEM NEAT grading standard**. This file is reference/background only.
+
 ## Definition
 
 NEAT is the internal sales intelligence artifact produced from a Partnership Evaluation Meeting (PEM) transcript.

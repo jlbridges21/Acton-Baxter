@@ -26,8 +26,8 @@ export default async function BaxterGovernancePage() {
           </Link>
           <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Baxter Governance</h1>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Edit runtime instruction wording through versioned drafts and domain approvals. Section
-            set and precedence order stay code-fixed.
+            Versioned drafts and domain approvals for Baxter chat runtime wording and the PEM NEAT
+            grading standard. Section sets stay code-fixed; only text is editable.
           </p>
         </div>
 

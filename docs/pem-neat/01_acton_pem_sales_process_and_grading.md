@@ -1,5 +1,10 @@
 # Acton ADU Partnership Evaluation Meeting (PEM) Sales Process & Grading Standard
 
+> **Live source of truth:** the PEM NEAT grading standard used at generation time is maintained in
+> the webapp at **Admin → Baxter Governance → PEM NEAT grading standard** (versioned drafts with
+> domain-owner approval). This markdown file is **background / reference only** and may lag the
+> live editor. Do not treat edits here as changing what `generatePemNeat()` uses.
+
 ## Purpose
 
 This document defines the Acton ADU sales process used during a Partnership Evaluation Meeting (PEM) and the standard an AI sales analyst should use to judge how well an advisor executed the meeting.

@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import type { GovernanceDomain, GovernanceSectionKey } from "@/lib/baxter-ai/governance";
+import type {
+  GovernanceDomain,
+  GovernanceSectionKey,
+  GovernanceSurface,
+} from "@/lib/baxter-ai/governance";
 
 type Payload = {
+  surface: GovernanceSurface;
   active: { id: string; version_number: number; status: string } | null;
   activeSections: Array<{ section_key: GovernanceSectionKey; content: string; domain: string }>;
   draft: { id: string; version_number: number; status: string; rationale: string | null } | null;
@@ -20,6 +25,9 @@ type Payload = {
   owners: Array<{ domain: GovernanceDomain; profile_id: string | null }>;
   loaded: { versionNumber: number; usedFallback: boolean };
   meta: {
+    surface: GovernanceSurface;
+    surfaces: GovernanceSurface[];
+    surfaceLabels: Record<GovernanceSurface, string>;
     sectionKeys: GovernanceSectionKey[];
     sectionLabels: Record<GovernanceSectionKey, string>;
     sectionDomains: Record<GovernanceSectionKey, GovernanceDomain>;
@@ -35,17 +43,18 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
   const [editing, setEditing] = useState<GovernanceSectionKey | null>(null);
   const [draftText, setDraftText] = useState("");
   const [tab, setTab] = useState<"active" | "draft" | "owners">("active");
+  const [surface, setSurface] = useState<GovernanceSurface>("baxter_runtime");
 
   const load = useCallback(async () => {
     setError(null);
-    const res = await fetch("/api/admin/baxter/governance");
+    const res = await fetch(`/api/admin/baxter/governance?surface=${encodeURIComponent(surface)}`);
     const body = await res.json();
     if (!res.ok) {
       setError(body.error?.message ?? "Failed to load governance");
       return;
     }
     setData(body as Payload);
-  }, []);
+  }, [surface]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +73,7 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
       const res = await fetch("/api/admin/baxter/governance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, ...payload }),
+        body: JSON.stringify({ action, surface, ...payload }),
       });
       const body = await res.json();
       if (!res.ok && res.status !== 409) {
@@ -89,8 +98,36 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
   const sections = tab === "draft" && data.draft ? data.draftSections : data.activeSections;
   const approved = new Set(data.draftApprovals.map((a) => a.section_key));
 
+  const surfaceLabels = data.meta.surfaceLabels;
+
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        {(
+          data.meta.surfaces ?? (["baxter_runtime", "pem_neat_grading"] as GovernanceSurface[])
+        ).map((s) => (
+          <Button
+            key={s}
+            type="button"
+            variant={surface === s ? "accent" : "secondary"}
+            size="sm"
+            onClick={() => {
+              setSurface(s);
+              setTab("active");
+              setEditing(null);
+            }}
+          >
+            {surfaceLabels?.[s] ?? s}
+          </Button>
+        ))}
+      </div>
+
+      <p className="text-sm text-[var(--acton-muted)]">
+        {surface === "pem_neat_grading"
+          ? "PEM NEAT grading criteria used when generating NEATs. Edits go through draft → domain approval → activation. The Process content domain owns these sections."
+          : "Baxter chat system-prompt wording. Section set and precedence order stay code-fixed."}
+      </p>
+
       <div className="flex flex-wrap gap-2">
         {(["active", "draft", "owners"] as const).map((t) => (
           <Button
@@ -116,9 +153,9 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
       ) : null}
 
       <Card className="p-4">
-        <CardTitle>Versions</CardTitle>
+        <CardTitle>Versions — {surfaceLabels?.[surface] ?? surface}</CardTitle>
         <CardDescription className="mt-2 text-sm">
-          Runtime architecture: code-fixed. Active content v{data.active?.version_number ?? "—"}.{" "}
+          Active content v{data.active?.version_number ?? "—"}.{" "}
           {data.loaded.usedFallback
             ? "Currently using compiled fallback (DB unavailable or incomplete)."
             : `Loaded content v${data.loaded.versionNumber} from the database.`}
@@ -150,7 +187,8 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
           <CardTitle>Domain owners</CardTitle>
           <CardDescription className="mt-2">
             Start unassigned. Only super_admin can assign. Domain owners (or super_admin) must
-            approve changed sections before activation.
+            approve changed sections before activation. PEM grading sections use the Process content
+            domain.
           </CardDescription>
           <ul className="mt-4 space-y-3 text-sm">
             {data.meta.domains.map((domain) => {

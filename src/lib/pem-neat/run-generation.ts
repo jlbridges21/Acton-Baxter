@@ -107,6 +107,8 @@ export async function runPemNeatGenerationJob(pemNeatId: string): Promise<void> 
         ...generated.result.analysisMetadata,
         transcriptStrategy: generated.transcriptStrategy,
         standardVersion: getPemNeatStandardVersion(),
+        gradingContentVersionNumber: generated.gradingContentVersionNumber,
+        usedCompiledGradingFallback: generated.usedCompiledGradingFallback,
         diagnostics: generated.diagnostics,
       },
       meetingOutcome: generated.result.salesIntelligence.meetingOutcome.classification,

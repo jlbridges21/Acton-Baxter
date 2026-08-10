@@ -44,7 +44,13 @@ import {
   buildRecoveryFactPrompt,
   buildSalesIntelligenceCorrectionPrompt,
   buildSalesIntelligenceStagePrompt,
+  type PemNeatPromptContext,
 } from "./prompts";
+import { loadActivePemNeatGradingContent } from "@/lib/baxter-ai/governance/content-store";
+import {
+  DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
+  type PemNeatGradingSectionKey,
+} from "@/lib/baxter-ai/governance/pem-neat-grading-meta";
 import {
   ASSESSMENT_JSON_SCHEMA,
   mapAssessmentStageToCanonical,
@@ -156,6 +162,9 @@ export type GeneratePemNeatOutput = {
   usedMock: boolean;
   stage0Notes: string[];
   transcriptStrategy: "full" | "chunked";
+  /** Active governance content version for pem_neat_grading (0 = compiled fallback). */
+  gradingContentVersionNumber: number;
+  usedCompiledGradingFallback: boolean;
   diagnostics: {
     stages: string[];
     finishReasons: string[];
@@ -467,6 +476,20 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
     : chunkTranscript(input.transcript);
   const strategy: "full" | "chunked" = chunks.length === 1 ? "full" : "chunked";
 
+  // Fresh read per generation — never rely on a warmed request-path cache.
+  const gradingLoaded = await loadActivePemNeatGradingContent();
+  const gradingSections = {} as Record<PemNeatGradingSectionKey, string>;
+  for (const key of Object.keys(
+    DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
+  ) as PemNeatGradingSectionKey[]) {
+    gradingSections[key] =
+      (gradingLoaded.sections[key] as string | undefined) ??
+      DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT[key];
+  }
+  const promptCtx: PemNeatPromptContext = { sections: gradingSections };
+  const gradingContentVersionNumber = gradingLoaded.versionNumber;
+  const usedCompiledGradingFallback = gradingLoaded.usedFallback;
+
   const timestampsDetected = /\b\d{1,2}:\d{2}(:\d{2})?\b/.test(input.transcript);
   const speakersDetected =
     /^(speaker|advisor|salesperson|prospect|homeowner|customer|jesse|client)\b/im.test(
@@ -536,6 +559,8 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
       usedMock: true,
       stage0Notes,
       transcriptStrategy: strategy,
+      gradingContentVersionNumber,
+      usedCompiledGradingFallback,
       diagnostics,
     };
   }
@@ -586,7 +611,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
             ],
           });
           const res = await callStageJson({
-            system: buildFactLedgerStagePrompt(),
+            system: buildFactLedgerStagePrompt(promptCtx),
             user,
             maxTokens: STAGE_BUDGETS.fact_ledger.tokens,
             reasoningEffort: STAGE_BUDGETS.fact_ledger.effort,
@@ -647,7 +672,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
         diagnostics.stages.push("fact_ledger_merge");
         try {
           const res = await callStageJson({
-            system: `${buildFactLedgerStagePrompt()}
+            system: `${buildFactLedgerStagePrompt(promptCtx)}
 
 MERGE / RECONCILE overlapping Fact Ledger fragments chronologically.
 Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Return one Fact Ledger JSON.`,
@@ -700,15 +725,18 @@ Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Retur
         await emitProgress("extracting_facts");
         try {
           const res = await callStageJson({
-            system: buildRecoveryFactPrompt([
-              "customerContext",
-              "motivation",
-              "partnerConcerns",
-              "budget",
-              "decision",
-              "project",
-              "nextSteps",
-            ]),
+            system: buildRecoveryFactPrompt(
+              [
+                "customerContext",
+                "motivation",
+                "partnerConcerns",
+                "budget",
+                "decision",
+                "project",
+                "nextSteps",
+              ],
+              promptCtx,
+            ),
             user: buildPemNeatUserPrompt({
               prospectName: prospectDisplay,
               advisorName: input.advisorName,
@@ -799,7 +827,7 @@ ${input.transcript.slice(0, 40_000)}`;
 
       try {
         const res = await callStageJson({
-          system: buildSalesIntelligenceStagePrompt(),
+          system: buildSalesIntelligenceStagePrompt(promptCtx),
           user: siUser,
           maxTokens: STAGE_BUDGETS.sales_intelligence.tokens,
           reasoningEffort: STAGE_BUDGETS.sales_intelligence.effort,
@@ -835,7 +863,7 @@ ${input.transcript.slice(0, 40_000)}`;
 
           // One structure-only correction pass
           const corrRes = await callStageJson({
-            system: buildSalesIntelligenceCorrectionPrompt(),
+            system: buildSalesIntelligenceCorrectionPrompt(promptCtx),
             user: `Validation issues (paths/types only):
 ${parsed.issues.join("\n")}
 
@@ -936,7 +964,7 @@ ${res.content.slice(0, 60_000)}`,
       diagnostics.stages.push("assessment");
       try {
         const res = await callStageJson({
-          system: buildAssessmentStagePrompt(),
+          system: buildAssessmentStagePrompt(promptCtx),
           user: `${prospectPrompt}
 Advisor: ${input.advisorName}
 TranscriptIncompleteHint: ${siIncomplete}
@@ -980,7 +1008,7 @@ ${input.transcript.slice(0, FULL_TRANSCRIPT_CHAR_LIMIT)}`,
           diagnostics.validationIssues.push(...parsed.issues.map((i) => `assessment: ${i}`));
 
           const corrRes = await callStageJson({
-            system: buildAssessmentCorrectionPrompt(),
+            system: buildAssessmentCorrectionPrompt(promptCtx),
             user: `Validation issues (paths/types only):
 ${parsed.issues.join("\n")}
 
@@ -1065,7 +1093,7 @@ ${res.content.slice(0, 60_000)}`,
       diagnostics.stages.push("email");
       try {
         const res = await callStageJson({
-          system: buildEmailStagePrompt(),
+          system: buildEmailStagePrompt(promptCtx),
           user: `${prospectPrompt}
 Advisor: ${input.advisorName}
 
@@ -1134,7 +1162,7 @@ ${JSON.stringify({
       diagnostics.stages.push("handoff");
       try {
         const res = await callStageJson({
-          system: buildHandoffStagePrompt(),
+          system: buildHandoffStagePrompt(promptCtx),
           user: `${prospectPrompt}
 Advisor: ${input.advisorName}
 
@@ -1239,7 +1267,7 @@ ${JSON.stringify(shell.salesIntelligence).slice(0, 40_000)}`,
     if (!review) {
       try {
         const res = await callStageJson({
-          system: buildQualityReviewStagePrompt(),
+          system: buildQualityReviewStagePrompt(promptCtx),
           user: `Fact Ledger:
 ${JSON.stringify(ledger).slice(0, 60_000)}
 
@@ -1332,7 +1360,7 @@ ${JSON.stringify({
         diagnostics.stages.push("correction");
         try {
           const res = await callStageJson({
-            system: buildCorrectionStagePrompt(),
+            system: buildCorrectionStagePrompt(promptCtx),
             user: `Issues to fix:
 ${JSON.stringify(material).slice(0, 20_000)}
 
@@ -1492,6 +1520,8 @@ ${JSON.stringify({
       usedMock: false,
       stage0Notes,
       transcriptStrategy: strategy,
+      gradingContentVersionNumber,
+      usedCompiledGradingFallback,
       diagnostics,
     };
   } catch (error) {

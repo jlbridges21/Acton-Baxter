@@ -30,15 +30,29 @@ export type { ClaimedCapabilities } from "./capabilities";
 export type { BaxterRuntimeAssembly, CanonicalSource } from "./types";
 export {
   DEFAULT_GOVERNANCE_SECTION_CONTENT,
+  DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT,
+  DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
   GOVERNANCE_SECTION_KEYS,
+  PEM_NEAT_GRADING_SECTION_KEYS,
   GOVERNANCE_DOMAINS,
   GOVERNANCE_DOMAIN_LABELS,
+  GOVERNANCE_SURFACES,
+  GOVERNANCE_SURFACE_LABELS,
   SECTION_DOMAIN,
   SECTION_LABELS,
+  sectionKeysForSurface,
+  assemblePemNeatSystemPromptFromSections,
 } from "./section-meta";
-export type { GovernanceSectionKey, GovernanceDomain } from "./section-meta";
+export type {
+  GovernanceSectionKey,
+  GovernanceDomain,
+  GovernanceSurface,
+  PemNeatGradingSectionKey,
+  BaxterRuntimeSectionKey,
+} from "./section-meta";
 export {
   loadActiveGovernanceContent,
+  loadActivePemNeatGradingContent,
   resetGovernanceMemoryForTests,
   getOrCreateDraftVersion,
   updateDraftSection,
@@ -53,3 +67,4 @@ export {
   getActiveGovernanceVersion,
   diffGovernanceSections,
 } from "./content-store";
+export type { ActiveGovernanceContent } from "./content-store";
