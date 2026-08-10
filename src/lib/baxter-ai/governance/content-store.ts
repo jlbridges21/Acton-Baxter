@@ -8,9 +8,11 @@ import {
   DEFAULT_BAXTER_RUNTIME_SECTION_CONTENT,
   DEFAULT_PEM_NEAT_GRADING_SECTION_CONTENT,
   GOVERNANCE_DOMAINS,
+  GOVERNANCE_DOMAIN_LABELS,
   GOVERNANCE_SECTION_KEYS,
   GOVERNANCE_SURFACES,
   SECTION_DOMAIN,
+  SECTION_LABELS,
   defaultSectionContentForSurface,
   isGovernanceSectionKey,
   sectionKeysForSurface,
@@ -609,9 +611,61 @@ export type ActivationGateResult =
       error: string;
       missingApprovals: Array<{
         sectionKey: GovernanceSectionKey;
+        sectionLabel: string;
         domain: GovernanceDomain;
+        domainLabel: string;
+        ownerAssigned: boolean;
       }>;
+      /** Domains that need approval but have no owner assigned. */
+      unassignedDomains: Array<{ domain: GovernanceDomain; domainLabel: string }>;
     };
+
+/**
+ * Human-readable activation-blocked copy for API clients and the admin UI.
+ * Always uses section/domain display titles — never raw keys.
+ */
+export function formatActivationBlockedMessage(
+  missing: Array<{
+    sectionKey: GovernanceSectionKey;
+    sectionLabel: string;
+    domain: GovernanceDomain;
+    domainLabel: string;
+    ownerAssigned: boolean;
+  }>,
+): string {
+  if (missing.length === 0) {
+    return "Activation blocked — approvals are incomplete.";
+  }
+
+  const byDomain = new Map<
+    GovernanceDomain,
+    { domainLabel: string; ownerAssigned: boolean; sections: string[] }
+  >();
+  for (const m of missing) {
+    const existing = byDomain.get(m.domain);
+    if (existing) {
+      existing.sections.push(m.sectionLabel);
+      existing.ownerAssigned = existing.ownerAssigned && m.ownerAssigned;
+    } else {
+      byDomain.set(m.domain, {
+        domainLabel: m.domainLabel,
+        ownerAssigned: m.ownerAssigned,
+        sections: [m.sectionLabel],
+      });
+    }
+  }
+
+  const parts: string[] = [];
+  for (const group of byDomain.values()) {
+    const bullets = group.sections.map((s) => `• ${s}`).join("\n");
+    let block = `The following sections were changed and need ${group.domainLabel} approval before this draft can activate:\n${bullets}`;
+    if (!group.ownerAssigned) {
+      block += `\nNo owner is assigned for ${group.domainLabel} yet. A super-admin can assign one under Domain owners on this page.`;
+    }
+    parts.push(block);
+  }
+  return parts.join("\n\n");
+}
 
 export async function getActivationGate(versionId: string): Promise<ActivationGateResult> {
   const draftSections = await getGovernanceVersionSections(versionId);
@@ -631,7 +685,12 @@ export async function getActivationGate(versionId: string): Promise<ActivationGa
   const keys = sectionKeysForSurface(surface);
   const active = await getActiveGovernanceVersion(surface);
   if (!active) {
-    return { ok: false, error: "No active version to compare against", missingApprovals: [] };
+    return {
+      ok: false,
+      error: "No active version to compare against",
+      missingApprovals: [],
+      unassignedDomains: [],
+    };
   }
   const activeSections = await getGovernanceVersionSections(active.id);
   const activeByKey = new Map(activeSections.map((s) => [s.section_key, s.content]));
@@ -647,20 +706,35 @@ export async function getActivationGate(versionId: string): Promise<ActivationGa
 
   const approvals = await listSectionApprovals(versionId);
   const approvedKeys = new Set(approvals.map((a) => a.section_key));
+  const owners = await listDomainOwners();
+  const ownerByDomain = new Map(owners.map((o) => [o.domain, o.profile_id]));
+
   const missing = changed
     .filter((key) => !approvedKeys.has(key))
-    .map((sectionKey) => ({
-      sectionKey,
-      domain: SECTION_DOMAIN[sectionKey],
-    }));
+    .map((sectionKey) => {
+      const domain = SECTION_DOMAIN[sectionKey];
+      return {
+        sectionKey,
+        sectionLabel: SECTION_LABELS[sectionKey],
+        domain,
+        domainLabel: GOVERNANCE_DOMAIN_LABELS[domain],
+        ownerAssigned: Boolean(ownerByDomain.get(domain)),
+      };
+    });
 
   if (missing.length > 0) {
+    const unassignedMap = new Map<GovernanceDomain, string>();
+    for (const m of missing) {
+      if (!m.ownerAssigned) unassignedMap.set(m.domain, m.domainLabel);
+    }
     return {
       ok: false,
-      error: `Activation blocked — missing approvals for: ${missing
-        .map((m) => `${m.sectionKey} (${m.domain})`)
-        .join(", ")}`,
+      error: formatActivationBlockedMessage(missing),
       missingApprovals: missing,
+      unassignedDomains: [...unassignedMap.entries()].map(([domain, domainLabel]) => ({
+        domain,
+        domainLabel,
+      })),
     };
   }
 
@@ -673,7 +747,12 @@ export async function activateGovernanceVersion(
   role: string,
 ): Promise<ActivationGateResult & { version?: GovernanceVersion }> {
   if (!isAdminRole(role)) {
-    return { ok: false, error: "Admin access required", missingApprovals: [] };
+    return {
+      ok: false,
+      error: "Admin access required",
+      missingApprovals: [],
+      unassignedDomains: [],
+    };
   }
 
   const gate = await getActivationGate(versionId);
@@ -683,7 +762,12 @@ export async function activateGovernanceVersion(
     const mem = getMemory();
     const draft = mem.versions.get(versionId);
     if (!draft || draft.status !== "draft") {
-      return { ok: false, error: "Version is not a draft", missingApprovals: [] };
+      return {
+        ok: false,
+        error: "Version is not a draft",
+        missingApprovals: [],
+        unassignedDomains: [],
+      };
     }
     const prior = [...mem.versions.values()].find(
       (v) => v.status === "active" && v.surface === draft.surface,
@@ -712,7 +796,12 @@ export async function activateGovernanceVersion(
     .eq("id", versionId)
     .single();
   if (!draft || draft.status !== "draft") {
-    return { ok: false, error: "Version is not a draft", missingApprovals: [] };
+    return {
+      ok: false,
+      error: "Version is not a draft",
+      missingApprovals: [],
+      unassignedDomains: [],
+    };
   }
 
   const surface = (draft.surface as GovernanceSurface) ?? "baxter_runtime";
@@ -740,7 +829,7 @@ export async function activateGovernanceVersion(
     .single();
 
   if (error) {
-    return { ok: false, error: error.message, missingApprovals: [] };
+    return { ok: false, error: error.message, missingApprovals: [], unassignedDomains: [] };
   }
 
   return {

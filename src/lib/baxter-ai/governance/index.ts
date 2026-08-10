@@ -59,6 +59,7 @@ export {
   approveDraftSection,
   activateGovernanceVersion,
   getActivationGate,
+  formatActivationBlockedMessage,
   listGovernanceVersions,
   getGovernanceVersionSections,
   listDomainOwners,
@@ -68,3 +69,4 @@ export {
   diffGovernanceSections,
 } from "./content-store";
 export type { ActiveGovernanceContent } from "./content-store";
+export { listGovernanceOwnerCandidates, type GovernanceOwnerCandidate } from "./owner-candidates";

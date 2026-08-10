@@ -16,7 +16,7 @@ export default async function BaxterGovernancePage() {
 
   return (
     <AppShell user={user}>
-      <div className="space-y-6">
+      <div className="space-y-8">
         <div>
           <Link
             href="/admin/baxter/diagnostics"
@@ -25,29 +25,30 @@ export default async function BaxterGovernancePage() {
             ← Back to Diagnostics
           </Link>
           <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Baxter Governance</h1>
-          <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Versioned drafts and domain approvals for Baxter chat runtime wording and the PEM NEAT
-            grading standard. Section sets stay code-fixed; only text is editable.
+          <p className="mt-1 max-w-2xl text-sm text-[var(--acton-muted)]">
+            Read and propose changes to Baxter&apos;s live chat wording and the PEM NEAT grading
+            standard. Drafts are reviewed by domain owners before they go live — you do not need to
+            touch the codebase.
           </p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Card className="p-4">
-            <CardTitle>Runtime architecture</CardTitle>
+            <CardTitle>App runtime</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
               v{summary.runtimeVersion}
             </CardDescription>
             <p className="mt-1 text-xs text-[var(--acton-muted)]">
-              Code/deploy version (BAXTER_RUNTIME_VERSION)
+              Deployed software version (not the editable content version below)
             </p>
           </Card>
           <Card className="p-4">
-            <CardTitle>Governance doc</CardTitle>
+            <CardTitle>Governance handbook</CardTitle>
             <CardDescription className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">
               v{summary.governanceVersion}
             </CardDescription>
             <p className="mt-1 text-xs text-[var(--acton-muted)]">
-              Governance document version (change-control handbook)
+              Change-control document version for architects
             </p>
           </Card>
         </div>
@@ -86,28 +87,39 @@ export default async function BaxterGovernancePage() {
           </ul>
         </Card>
 
-        <Card className="p-4">
-          <CardTitle>Open decisions (PLACEHOLDER)</CardTitle>
-          <p className="mt-1 text-xs text-[var(--acton-muted)]">{summary.note}</p>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-[var(--acton-navy)]">
-            {summary.openDecisions.length === 0 ? (
-              <li>None parsed</li>
-            ) : (
-              summary.openDecisions.map((item, i) => <li key={`p-${i}`}>{item.text}</li>)
-            )}
-          </ul>
-        </Card>
-
-        <Card className="p-4">
-          <CardTitle>Unresolved risks (RED FLAG)</CardTitle>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-[var(--acton-navy)]">
-            {summary.unresolvedRisks.length === 0 ? (
-              <li>None parsed</li>
-            ) : (
-              summary.unresolvedRisks.map((item, i) => <li key={`r-${i}`}>{item.text}</li>)
-            )}
-          </ul>
-        </Card>
+        {/* Historical planning notes — de-emphasized, collapsed by default */}
+        <details className="rounded-md border border-dashed border-[var(--acton-border)] bg-[var(--acton-gray-50)]/50 p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-[var(--acton-muted)]">
+            Historical planning notes (not live policy)
+          </summary>
+          <p className="mt-2 text-xs text-[var(--acton-muted)]">{summary.note}</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+                Open decisions (PLACEHOLDER)
+              </p>
+              <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[var(--acton-muted)]">
+                {summary.openDecisions.length === 0 ? (
+                  <li>None parsed</li>
+                ) : (
+                  summary.openDecisions.map((item, i) => <li key={`p-${i}`}>{item.text}</li>)
+                )}
+              </ul>
+            </div>
+            <div>
+              <p className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+                Unresolved risks (RED FLAG)
+              </p>
+              <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[var(--acton-muted)]">
+                {summary.unresolvedRisks.length === 0 ? (
+                  <li>None parsed</li>
+                ) : (
+                  summary.unresolvedRisks.map((item, i) => <li key={`r-${i}`}>{item.text}</li>)
+                )}
+              </ul>
+            </div>
+          </div>
+        </details>
       </div>
     </AppShell>
   );

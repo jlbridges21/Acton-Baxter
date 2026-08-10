@@ -12,6 +12,7 @@ import {
   getGovernanceVersionSections,
   getOrCreateDraftVersion,
   listDomainOwners,
+  listGovernanceOwnerCandidates,
   listGovernanceVersions,
   listSectionApprovals,
   updateDraftSection,
@@ -48,11 +49,12 @@ export async function GET(request: Request) {
     const surface = parseSurface(searchParams.get("surface"));
     const sectionKeys = sectionKeysForSurface(surface);
 
-    const [active, versions, owners, loaded] = await Promise.all([
+    const [active, versions, owners, loaded, ownerCandidates] = await Promise.all([
       getActiveGovernanceVersion(surface),
       listGovernanceVersions(surface),
       listDomainOwners(),
       loadActiveGovernanceContent(surface),
+      listGovernanceOwnerCandidates(),
     ]);
 
     const activeSections = active ? await getGovernanceVersionSections(active.id) : [];
@@ -86,6 +88,7 @@ export async function GET(request: Request) {
       draftApprovals,
       gate,
       owners,
+      ownerCandidates,
       versions,
       loaded,
       meta: {
