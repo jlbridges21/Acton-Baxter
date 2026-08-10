@@ -651,10 +651,38 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       registry.earlyAnswer.modelName === "entity-source-menu";
     if (!liveProjectLookup || isSourceMenu) {
       const early = registry.earlyAnswer;
-      const sources = early.sources.map((item) => contextItemToSourceReference(item));
+      let answerText = early.answer;
+      let sources = early.sources.map((item) => contextItemToSourceReference(item));
+
+      // Combined answers: PEM content-search leads; strong KB guidance may follow, attributed.
+      const isPemContentSearch =
+        early.modelProvider === "pem-neats" &&
+        early.sources.some((s) => (s.tags ?? []).includes("content_search"));
+      if (isPemContentSearch && contextItems.length > 0) {
+        const kbBits = contextItems
+          .filter((item) => item.sourceType !== "slack" && (item.relevanceScore ?? 0) >= 40)
+          .slice(0, 2);
+        if (kbBits.length > 0) {
+          const kbBlock = kbBits
+            .map((item) => {
+              const excerpt = (item.contentExcerpt || item.summary || "").trim();
+              const clipped =
+                excerpt.length > 420 ? `${excerpt.slice(0, 419).trimEnd()}…` : excerpt;
+              return `• ${item.citationLabel || item.title}${clipped ? `\n  ${clipped}` : ""}`;
+            })
+            .join("\n");
+          answerText = `${answerText}\n\nRelated guidance from Knowledge Base:\n${kbBlock}`;
+          sources = [...sources, ...kbBits.map((item) => contextItemToSourceReference(item))];
+        }
+      }
+
+      if (registry.softMissNotes?.length) {
+        answerText = `${registry.softMissNotes.join("\n\n")}\n\n${answerText}`;
+      }
+
       const message = await appendAssistantMessage({
         conversationId: conversation.id,
-        content: early.answer,
+        content: answerText,
         insufficientKnowledge: early.insufficientKnowledge,
         confidence: early.confidence,
         modelProvider: early.modelProvider,
@@ -669,7 +697,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       return toPublicAnswer({
         conversationId: conversation.id,
         messageId: message.id,
-        answer: early.answer,
+        answer: answerText,
         sources,
         confidence: early.confidence,
         insufficientKnowledge: early.insufficientKnowledge,
@@ -1299,6 +1327,10 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     let answerMode: BaxterAnswerMode = llm.answerMode;
     let insufficientKnowledge = false;
     let answerText = llm.answer.trim();
+
+    if (registry.softMissNotes?.length && answerText) {
+      answerText = `${registry.softMissNotes.join("\n\n")}\n\n${answerText}`;
+    }
 
     if (questionClass === "baxter_identity" && sources.length === 0) {
       answerMode = "identity";

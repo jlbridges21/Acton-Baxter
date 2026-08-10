@@ -34,6 +34,7 @@ import {
   isOperationalPemMetricQuestion,
   isStructuredMetricQuestion,
 } from "@/lib/baxter/concept-vocabulary";
+import { formatPemContentSearchAnswer, searchPemNeatContent } from "./content-search";
 import { decideConversationContext } from "@/lib/baxter-ai/conversation-context";
 
 export type PemAnswerMode =
@@ -226,9 +227,34 @@ function groupByBaseName(rows: PemNeatListItem[]): Map<string, PemNeatListItem[]
   return map;
 }
 
+/** Fields that must stay deterministic field-lookup (not replaced by content search). */
+const STRICT_FIELD_KEYS = new Set<PemFieldKey>([
+  "type_1_pain",
+  "type_2_pain",
+  "budget",
+  "decision_process",
+  "schedule",
+  "competition",
+  "fit",
+  "next_steps",
+  "outcome",
+  "qualification",
+  "customer_story",
+  "customer_pain",
+  "buildertrend",
+  "project",
+  "salesperson",
+]);
+
+function wantsStrictFieldLookup(fields: PemFieldKey[]): boolean {
+  return fields.some((f) => STRICT_FIELD_KEYS.has(f));
+}
+
 async function loadAndAnswer(input: {
   recordId: string;
   fields: PemFieldKey[];
+  question: string;
+  contentSeeking: boolean;
   staleNote?: string | null;
   inherited: boolean;
   explicitOverride: boolean;
@@ -303,6 +329,114 @@ async function loadAndAnswer(input: {
       : (input.staleNote ?? null);
 
   const citationLabel = citationFor(full);
+
+  // Content search only when explicitly content-seeking (semantic content_search).
+  // Strict field lookups and plain record/summary lookups keep the deterministic field path.
+  if (input.contentSeeking && !wantsStrictFieldLookup(input.fields)) {
+    const searched = searchPemNeatContent(full, input.question, { limit: 4 });
+    if (searched.passages.length > 0) {
+      let deterministicAnswer = formatPemContentSearchAnswer({
+        prospectName: full.prospect_name,
+        meetingDate: full.meeting_date,
+        citationLabel,
+        passages: searched.passages,
+      });
+      if (staleWarning) deterministicAnswer = `${staleWarning}\n\n${deterministicAnswer}`;
+
+      const item: BaxterContextItem = {
+        number: 1,
+        id: full.id,
+        title: citationLabel,
+        summary: `${full.prospect_name} — PEM content search`,
+        contentExcerpt: searched.passages
+          .map((p) =>
+            p.kind === "transcript"
+              ? `[Transcript ${p.timestamp ?? ""}] ${p.excerpt}`
+              : `[${p.label}] ${p.excerpt}`,
+          )
+          .join("\n\n"),
+        category: "PEM NEAT",
+        tags: ["pem_neat", "content_search", ...searched.passages.map((p) => p.sectionId)],
+        sourceName: "Partnership Evaluation Meeting NEAT",
+        sourceUrl: pemNeatAbsoluteUrl(full.id),
+        sourceType: "pem_neat",
+        mimeType: null,
+        updatedAt: full.generated_at ?? full.updated_at,
+        citationLabel,
+        relevanceScore: 100,
+      };
+
+      const nextActive: PemActiveContext = {
+        type: "pem_active",
+        activePemId: full.id,
+        activeProspectName: full.prospect_name,
+        lastRequestedFields: input.fields,
+        baseProspectHint: stripDiscriminator(full.prospect_name) || full.prospect_name,
+      };
+
+      return {
+        items: [item],
+        clarification: null,
+        staleWarning,
+        deterministicAnswer,
+        answerMode: "deterministic_structured",
+        diagnostics: emptyDiagnostics({
+          detectedProspect: full.prospect_name,
+          candidateCount: 1,
+          resolvedPemId: full.id,
+          resolvedPemTitle: full.prospect_name,
+          requestedFields: input.fields,
+          inheritedFromConversation: input.inherited,
+          explicitOverride: input.explicitOverride,
+          answerMode: "deterministic_structured",
+          matchedProspect: full.prospect_name,
+          pemLookupSkipped: false,
+          pemSkipReason: null,
+        }),
+        nextConversationState: { pending: null, active: nextActive },
+      };
+    }
+
+    // Honest searched-empty note — PEM source soft-misses so KB can still answer.
+    const emptyNote = formatPemContentSearchAnswer({
+      prospectName: full.prospect_name,
+      meetingDate: full.meeting_date,
+      citationLabel,
+      passages: [],
+      searchedButEmpty: true,
+    });
+    return {
+      items: [],
+      clarification: null,
+      staleWarning,
+      deterministicAnswer: emptyNote,
+      answerMode: "not_determinable",
+      diagnostics: emptyDiagnostics({
+        detectedProspect: full.prospect_name,
+        candidateCount: 1,
+        resolvedPemId: full.id,
+        resolvedPemTitle: full.prospect_name,
+        requestedFields: input.fields,
+        inheritedFromConversation: input.inherited,
+        explicitOverride: input.explicitOverride,
+        answerMode: "not_determinable",
+        matchedProspect: full.prospect_name,
+        pemLookupSkipped: false,
+        pemSkipReason: "pem_content_no_match",
+      }),
+      nextConversationState: {
+        pending: null,
+        active: {
+          type: "pem_active",
+          activePemId: full.id,
+          activeProspectName: full.prospect_name,
+          lastRequestedFields: input.fields,
+          baseProspectHint: stripDiscriminator(full.prospect_name) || full.prospect_name,
+        },
+      },
+    };
+  }
+
   const primaryField = input.fields[0] ?? "summary";
   const fieldValue: PemFieldValue = getPemField(structured, primaryField, {
     salespersonName: full.salesperson_display_name,
@@ -428,6 +562,14 @@ export async function retrievePemEvidence(input: {
   role?: string | null;
   channel?: "web" | "slack";
   conversationMetadata?: Record<string, unknown> | null;
+  /** From semantic lookupSpecificity === "content_search" (or PEM source inference). */
+  contentSeeking?: boolean;
+  /**
+   * Original user wording for lexical passage scoring.
+   * When set (content-seeking after adaptQuestionForPemLookup), intent uses `question`
+   * but content search scores against this string.
+   */
+  contentSearchQuestion?: string;
 }): Promise<PemEvidenceResult> {
   const none = (): PemEvidenceResult => ({
     items: [],
@@ -446,6 +588,8 @@ export async function retrievePemEvidence(input: {
   const pemState = readPemConversationState(input.conversationMetadata);
   const intent: PemIntentResult = detectPemIntent(input.question);
   const q = input.question.trim();
+  const contentSeeking = Boolean(input.contentSeeking);
+  const contentQuestion = (input.contentSearchQuestion ?? input.question).trim();
   const contextDecision = decideConversationContext(q, input.history ?? []);
   const operationalMetric =
     intent.operationalMetric || isOperationalPemMetricQuestion(q) || isStructuredMetricQuestion(q);
@@ -517,6 +661,8 @@ export async function retrievePemEvidence(input: {
     ) as PemFieldKey[];
 
     return loadAndAnswer({
+      question: contentSeeking ? contentQuestion : q,
+      contentSeeking,
       recordId: chosen.id,
       fields: fields.length ? fields : ["summary"],
       inherited: true,
@@ -564,6 +710,8 @@ export async function retrievePemEvidence(input: {
             ? askedFields
             : fields;
         return loadAndAnswer({
+          question: contentSeeking ? contentQuestion : q,
+          contentSeeking,
           recordId: chosen.id,
           fields: resolvedFields.length ? resolvedFields : ["summary"],
           inherited: true,
@@ -731,6 +879,8 @@ export async function retrievePemEvidence(input: {
 
   if (candidates.length === 0 && pemState.active && !explicitOverride) {
     return loadAndAnswer({
+      question: contentSeeking ? contentQuestion : q,
+      contentSeeking,
       recordId: pemState.active.activePemId,
       fields: intent.fields.length ? intent.fields : ["summary"],
       inherited: true,
@@ -766,6 +916,8 @@ export async function retrievePemEvidence(input: {
     });
     if (exact.length === 1) {
       return loadAndAnswer({
+        question: contentSeeking ? contentQuestion : q,
+        contentSeeking,
         recordId: exact[0]!.id,
         fields: intent.fields.length ? intent.fields : ["summary"],
         inherited,
@@ -824,6 +976,8 @@ export async function retrievePemEvidence(input: {
       const still = personRows.find((r) => r.id === pemState.active!.activePemId);
       if (still) {
         return loadAndAnswer({
+          question: contentSeeking ? contentQuestion : q,
+          contentSeeking,
           recordId: still.id,
           fields: intent.fields.length ? intent.fields : ["summary"],
           inherited: true,
@@ -874,6 +1028,8 @@ export async function retrievePemEvidence(input: {
   }
 
   return loadAndAnswer({
+    question: contentSeeking ? contentQuestion : q,
+    contentSeeking,
     recordId: chosen.id,
     fields: intent.fields.length ? intent.fields : ["summary"],
     staleNote:

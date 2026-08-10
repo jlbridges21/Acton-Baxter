@@ -26,7 +26,8 @@ beforeEach(() => {
   process.env.BAXTER_LLM_PROVIDER = "openai";
   process.env.OPENAI_API_KEY = "test-key";
   process.env.ENABLE_GHL_INTEGRATION = "false";
-  process.env.BAXTER_ROUTING_TIMEOUT_MS = "4000";
+  // Fake key — keep semantic routing fail-fast so answerBaxterQuestion stays under testTimeout.
+  process.env.BAXTER_ROUTING_TIMEOUT_MS = "100";
   resetEnvCacheForTests();
   resetKnowledgeMemoryForTests();
   resetBaxterConversationMemoryForTests();
@@ -119,7 +120,7 @@ describe("Baxter AI grounding and citations", () => {
     expect(result.sources).toEqual([]);
     expect(result.answer.toLowerCase()).toContain("approved acton source");
     expect(result.conversationId).toBeTruthy();
-  });
+  }, 20_000);
 
   it("validates structured OpenAI-like JSON and rejects malformed payloads", () => {
     const ok = parseBaxterLlmJson(

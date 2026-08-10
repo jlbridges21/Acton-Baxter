@@ -2,6 +2,7 @@
 
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DEMO_PROSPECT_NAME } from "@/lib/demo-identity";
 import { formatProspectDisplayName } from "@/lib/pem-neat/prospect-names";
 
 /**
@@ -52,7 +53,7 @@ export function ProspectNamesEditor({
                 next[index] = e.target.value;
                 onChange(next);
               }}
-              placeholder={index === 0 ? "First homeowner (required)" : "Additional homeowner"}
+              placeholder={index === 0 ? DEMO_PROSPECT_NAME : "Additional homeowner"}
               disabled={disabled}
               required={index === 0}
               aria-label={index === 0 ? "Primary prospect name" : `Prospect name ${index + 1}`}

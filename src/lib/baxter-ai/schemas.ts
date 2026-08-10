@@ -66,8 +66,8 @@ export const semanticQuestionClassificationSchema = z.object({
    * null when not entity_lookup or classifier omitted the field.
    */
   lookupSpecificity: z
-    .union([z.enum(["generic", "specific"]), z.null(), z.undefined()])
-    .transform((v) => (v === "generic" || v === "specific" ? v : null))
+    .union([z.enum(["generic", "specific", "content_search"]), z.null(), z.undefined()])
+    .transform((v) => (v === "generic" || v === "specific" || v === "content_search" ? v : null))
     .optional()
     .default(null),
   confidence: z.number().min(0).max(1),

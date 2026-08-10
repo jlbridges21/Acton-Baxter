@@ -68,6 +68,11 @@ export type RegistryRunResult = {
   /** Items to prepend/merge into KB context when no early answer. */
   contextItems: BaxterContextItem[];
   conversationMetadata: Record<string, unknown>;
+  /**
+   * Soft-miss notes that should prefix a later KB/Slack answer (e.g. PEM content
+   * searched but empty) without becoming a registry not-found short-circuit.
+   */
+  softMissNotes?: string[];
   diagnostics: {
     entity: EntityResolutionResult;
     preferredSource: PreferredEntitySource | null;
@@ -80,7 +85,7 @@ export type RegistryRunResult = {
       model: string | null;
       error?: string;
       skippedEntityLookup: boolean;
-      lookupSpecificity?: "generic" | "specific" | null;
+      lookupSpecificity?: "generic" | "specific" | "content_search" | null;
     };
   };
 };

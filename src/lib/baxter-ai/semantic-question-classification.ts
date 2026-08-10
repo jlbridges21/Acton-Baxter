@@ -55,6 +55,7 @@ entityName: only for entity_lookup — the clean core proper-noun identifier onl
   Do NOT include generic descriptor/category words that commonly trail or lead a name in natural phrasing: project, opportunity, deal, customer, contact, account, record, file, pipeline, stage.
   Examples: "give me information about the katie liniger project" → entityName "Katie Liniger" (not "katie liniger project"); "Robert Vertin's opportunity" → "Robert Vertin"; "customer Denis Kornilov" → "Denis Kornilov"; "#l01-24027-mcadams" → "l01-24027-mcadams" or the channel as written.
 entityTypeGuess: only for entity_lookup — ghl_contact | ghl_opportunity | pem_prospect | rulebook_step_or_role | unknown. Otherwise null.
+  Prefer pem_prospect when the question is about a Partnership Evaluation Meeting / PEM / NEAT / salesperson coaching moment with a named homeowner/prospect (even if "PEM" is not spelled out — e.g. disqualifying a prospect by not recommending an ADU).
 
 lookupSpecificity: only for entity_lookup — otherwise null.
 - generic: open-ended ask that does NOT name a specific information category. Examples: "give me information about the Katie Liniger project", "what can you tell me about Denis Kornilov", "tell me about the Vertin project", "who is X / what do we know about X".
@@ -63,7 +64,8 @@ lookupSpecificity: only for entity_lookup — otherwise null.
   • GHL / CRM: phone, email, address, stage, pipeline, opportunity status, tags, owner
   • Slack: latest update, recent activity, what someone said in a channel, project status from Slack
   Examples: "what's Katie's email", "Denis Type 1 Pain", "latest update in #l01-26019-liniger", "what's the stage of Robert's opportunity"
-- When unsure between generic and specific for entity_lookup, prefer specific only if a concrete category word is clearly the ask; otherwise generic.
+- content_search: wants a passage/exchange/coaching moment FROM a named prospect's PEM NEAT (transcript or assessment), not a single typed field. Examples: "how I disqualified Sharon Liu by saying I don't recommend an ADU", "what did the advisor say about budget in Robert's PEM", "find where they discussed the timeline in Cindy's meeting", "show how the advisor handled the pricing objection with Jeannie". Prefer content_search over specific when the ask is about what was said/done in the meeting rather than a labeled NEAT field.
+- When unsure between generic and specific for entity_lookup, prefer specific only if a concrete category word is clearly the ask; otherwise generic. Prefer content_search when the ask is about an exchange, quote, technique, or "what am I missing" tied to a named PEM prospect.
 
 confidence: 0 to 1.
 

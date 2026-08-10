@@ -35,6 +35,8 @@ beforeEach(() => {
   process.env.SLACK_REPORT_USER_ID = "00000000-0000-4000-8000-000000000099";
   process.env.BAXTER_CHAT_ENABLED = "true";
   process.env.OPENAI_API_KEY = "test-key";
+  // Fake key — keep semantic routing fail-fast so shared answer-path tests stay under timeout.
+  process.env.BAXTER_ROUTING_TIMEOUT_MS = "100";
   delete process.env.GOOGLE_CLIENT_EMAIL;
   delete process.env.GOOGLE_PRIVATE_KEY;
   resetEnvCacheForTests();
@@ -199,5 +201,5 @@ describe("Slack verification and events", () => {
     });
     expect(result.insufficientKnowledge).toBe(true);
     expect(result.conversationId).toBeTruthy();
-  });
+  }, 20_000);
 });

@@ -42,10 +42,15 @@ describe("demo identity hygiene (user-facing)", () => {
   });
 
   it("PEM create form placeholder is fictional", () => {
-    const src = read("src/components/pem-neat/pem-neat-create-client.tsx");
-    expect(src).toContain(`placeholder="${DEMO_PROSPECT_NAME}"`);
-    expect(src).not.toContain("Robert Vertin");
-    expect(src).not.toContain("Betsy Smith");
+    const createSrc = read("src/components/pem-neat/pem-neat-create-client.tsx");
+    const editorSrc = read("src/components/pem-neat/prospect-names-editor.tsx");
+    expect(createSrc).toContain("ProspectNamesEditor");
+    expect(editorSrc).toContain("DEMO_PROSPECT_NAME");
+    expect(editorSrc).toContain("placeholder={index === 0 ? DEMO_PROSPECT_NAME");
+    expect(createSrc).not.toContain("Robert Vertin");
+    expect(createSrc).not.toContain("Betsy Smith");
+    expect(editorSrc).not.toContain("Robert Vertin");
+    expect(editorSrc).not.toContain("Betsy Smith");
   });
 
   it("PEM clarification examples use fictional prospect", () => {

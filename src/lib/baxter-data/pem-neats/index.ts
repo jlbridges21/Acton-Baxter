@@ -46,3 +46,11 @@ export {
   type PemProspectIndexEntry,
   type PemProspectMatch,
 } from "./prospect-index";
+export {
+  formatPemContentSearchAnswer,
+  scorePassageAgainstQuery,
+  searchPemNeatContent,
+  splitTranscriptIntoPassages,
+  type PemContentPassage,
+  type PemContentSearchResult,
+} from "./content-search";

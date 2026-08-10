@@ -296,6 +296,7 @@ export async function runEvidenceRegistry(input: {
   const tried: RegistryRunResult["diagnostics"]["tried"] = [];
   const priorMisses: EvidenceSourceKey[] = [];
   const softMissAnswers: Array<{ key: EvidenceSourceKey; answer: string }> = [];
+  const softMissNotes: string[] = [];
   let mergedItems: BaxterContextItem[] = [];
 
   for (const { source, confidence } of ranked) {
@@ -324,7 +325,13 @@ export async function runEvidenceRegistry(input: {
 
     if (result.softMiss) {
       priorMisses.push(source.key);
-      if (result.deterministicAnswer || result.clarification) {
+      const diag = result.diagnostics as { pemSkipReason?: string | null } | undefined;
+      const isContentEmpty = diag?.pemSkipReason === "pem_content_no_match";
+      if (isContentEmpty && result.deterministicAnswer) {
+        // Prospect NEAT was found and searched — keep the honest note for KB composition,
+        // but do not treat this as "person not found in PEM" (that would short-circuit KB).
+        softMissNotes.push(result.deterministicAnswer);
+      } else if (result.deterministicAnswer || result.clarification) {
         softMissAnswers.push({
           key: source.key,
           answer: result.deterministicAnswer || result.clarification || "",
@@ -439,6 +446,7 @@ export async function runEvidenceRegistry(input: {
       },
       contextItems: [],
       conversationMetadata: metadata,
+      softMissNotes: softMissNotes.length ? softMissNotes : undefined,
       diagnostics: {
         entity,
         preferredSource,
@@ -452,6 +460,7 @@ export async function runEvidenceRegistry(input: {
     earlyAnswer: null,
     contextItems: mergedItems,
     conversationMetadata: metadata,
+    softMissNotes: softMissNotes.length ? softMissNotes : undefined,
     diagnostics: {
       entity,
       preferredSource,
