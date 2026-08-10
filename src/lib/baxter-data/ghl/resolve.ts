@@ -5,6 +5,7 @@ import {
   findContactByEmail,
   findContactByPhone,
   findContactsFuzzy,
+  getContactById,
 } from "@/lib/connectors/ghl/resources/contacts";
 import {
   listOpportunitiesByContact,
@@ -15,6 +16,10 @@ import { findTagByName } from "@/lib/connectors/ghl/resources/tags";
 import { getCustomFieldByKey } from "@/lib/connectors/ghl/resources/custom-fields";
 import type { GhlContact, GhlOpportunity, GhlPipeline } from "@/lib/connectors/ghl/types";
 import { normalizeGhlQuestionText, stripContactNamePossessive } from "@/lib/baxter-ai/ghl-intent";
+import {
+  extractProjectReferenceName,
+  resolveUniqueProjectSetupByName,
+} from "@/lib/dossier/project-setup-name-resolve";
 
 export type EntityResolutionResult<T> = {
   resolved: boolean;
@@ -35,11 +40,15 @@ export type EntityResolutionResult<T> = {
 /**
  * Resolve a contact by name, email, or phone.
  * Returns ambiguity list if multiple matches found - never guesses.
+ * When the query looks like a project name ("Yeh" from "the Yeh project"),
+ * try Project Setup linkage before fuzzy surname search.
  */
 export async function resolveContact(input: {
   name?: string;
   email?: string;
   phone?: string;
+  /** Full user question — used to detect "the X project" for Project Setup resolution. */
+  question?: string | null;
 }): Promise<EntityResolutionResult<GhlContact>> {
   if (!isGhlConfigured()) {
     return { resolved: false, ambiguous: false, notFound: true };
@@ -81,6 +90,33 @@ export async function resolveContact(input: {
             selectionReason: "phone_exact",
           },
         };
+      }
+    }
+
+    // Project Setup linkage before fuzzy name search ("the Yeh project" → linked contact).
+    const projectName =
+      extractProjectReferenceName(input.question ?? "") ||
+      (input.question && /\bproject\b/i.test(input.question) && input.name
+        ? stripContactNamePossessive(normalizeGhlQuestionText(input.name))
+        : null);
+    if (projectName) {
+      const linked = await resolveUniqueProjectSetupByName(projectName).catch(() => null);
+      if (linked?.ghlContactId) {
+        const contact = await getContactById(linked.ghlContactId).catch(() => null);
+        if (contact) {
+          return {
+            resolved: true,
+            entity: contact,
+            ambiguous: false,
+            notFound: false,
+            diagnostics: {
+              searchAttempted: true,
+              matchCount: 1,
+              selectedContactId: contact.id,
+              selectionReason: "project_setup_link",
+            },
+          };
+        }
       }
     }
 
@@ -156,12 +192,12 @@ export async function resolveContact(input: {
         };
       }
 
-      // Multiple matches - return ambiguity
+      // Multiple matches - return ambiguity (names only — never a contact dump as the answer).
       return {
         resolved: false,
         candidates: contacts,
         ambiguous: true,
-        ambiguityMessage: formatContactAmbiguity(contacts),
+        ambiguityMessage: formatContactAmbiguity(contacts, cleanedName),
         notFound: false,
         diagnostics: {
           searchAttempted: true,
@@ -424,15 +460,20 @@ export async function resolveCustomField(
   }
 }
 
-function formatContactAmbiguity(contacts: GhlContact[]): string {
-  return contacts
-    .map((c) => {
-      const parts = [c.name || `${c.firstName} ${c.lastName}`.trim()];
-      if (c.email) parts.push(c.email);
-      if (c.companyName) parts.push(`(${c.companyName})`);
-      return parts.join(" - ");
-    })
-    .join("; ");
+function formatContactAmbiguity(contacts: GhlContact[], queryHint?: string): string {
+  const names = contacts
+    .map((c) => (c.name || `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim()).trim())
+    .filter(Boolean);
+  const unique = [...new Set(names)];
+  const cap = 6;
+  const shown = unique.slice(0, cap);
+  const more = unique.length > cap ? ` (${unique.length - cap} more)` : "";
+  const list =
+    shown.length <= 2
+      ? shown.join(" or ")
+      : `${shown.slice(0, -1).join(", ")}, or ${shown[shown.length - 1]}`;
+  const hint = queryHint?.trim() ? ` matching “${queryHint.trim()}”` : "";
+  return `I found ${unique.length} contacts${hint}. Which one do you mean — ${list}${more}?`;
 }
 
 function formatOpportunityAmbiguity(opportunities: GhlOpportunity[]): string {

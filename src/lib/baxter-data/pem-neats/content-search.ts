@@ -578,12 +578,11 @@ export function pickRelevantSentencesFromField(
   const familyAsk = /\b(kid|kids|child|children|son|daughter|living situation)\b/i.test(question);
   const good = scored.filter((x) => x.score >= 8);
   const preferred =
-    familyAsk && good.some((x) => /\b(son|daughter|child|children|kid|apartment|college)\b/i.test(x.s))
+    familyAsk &&
+    good.some((x) => /\b(son|daughter|child|children|kid|apartment|college)\b/i.test(x.s))
       ? good.filter((x) => /\b(son|daughter|child|children|kid|apartment|college)\b/i.test(x.s))
       : good;
-  const picked = (preferred.length > 0 ? preferred : scored)
-    .slice(0, maxSentences)
-    .map((x) => x.s);
+  const picked = (preferred.length > 0 ? preferred : scored).slice(0, maxSentences).map((x) => x.s);
   // Preserve original field order for readability.
   const order = new Map(sentences.map((s, i) => [s, i]));
   picked.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));

@@ -70,6 +70,8 @@ export async function resolveGhlEntityGraph(
     contactId?: string;
     /** Ranking policy for opportunity selection. */
     opportunityRankPolicy?: OpportunityRankPolicy;
+    /** Full user question — enables "the X project" → Project Setup linkage. */
+    question?: string | null;
   } = {},
 ): Promise<GhlEntityGraph> {
   const retrievedAt = new Date().toISOString();
@@ -110,6 +112,7 @@ export async function resolveGhlEntityGraph(
     email: looksLikeEmail(trimmed) ? trimmed : undefined,
     phone: looksLikePhone(trimmed) ? trimmed : undefined,
     name: !looksLikeEmail(trimmed) && !looksLikePhone(trimmed) ? trimmed : undefined,
+    question: options.question ?? null,
   });
 
   if (resolution.ambiguous) {

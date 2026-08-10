@@ -16,6 +16,8 @@ import {
   resolveProjectSlackChannelForContact,
   type ResolveProjectSlackChannelDeps,
 } from "@/lib/dossier/project-slack-channel-resolve";
+import { resolveUniqueProjectSetupByName } from "@/lib/dossier/project-setup-name-resolve";
+import { getContactById } from "@/lib/connectors/ghl/resources/contacts";
 import type { GhlContact } from "@/lib/connectors/ghl/types";
 
 export type EntitySourceAvailability = {
@@ -32,6 +34,8 @@ export type EntitySourceAvailability = {
 export type ProbeEntitySourcesDeps = ResolveProjectSlackChannelDeps & {
   ghlConfigured?: () => boolean;
   searchGhlContacts?: (query: string) => Promise<GhlContact[]>;
+  getGhlContactById?: (id: string) => Promise<GhlContact | null>;
+  resolveProjectByName?: typeof resolveUniqueProjectSetupByName;
   listPemIndex?: () => Promise<
     Array<{ pemId: string; prospectName: string; normalizedName: string; baseName: string }>
   >;
@@ -96,8 +100,29 @@ export async function probeEntitySourceAvailability(
   let ghlContact: GhlContact | null = null;
   if (ghlConfigured()) {
     try {
-      const contacts = await searchGhl(displayName);
-      ghlContact = pickBestGhlContact(contacts, displayName);
+      // Prefer Project Setup linkage when the entity looks like a project name.
+      const resolveProject =
+        deps.resolveProjectByName ??
+        ((name: string) =>
+          resolveUniqueProjectSetupByName(name, {
+            listSetupRuns: deps.listSetupRuns,
+          }));
+      const linked = await resolveProject(displayName).catch(() => null);
+      if (linked?.ghlContactId) {
+        const getById = deps.getGhlContactById ?? getContactById;
+        ghlContact = await getById(linked.ghlContactId).catch(() => null);
+        if (ghlContact) {
+          const resolvedName =
+            ghlContact.name?.trim() ||
+            [ghlContact.firstName, ghlContact.lastName].filter(Boolean).join(" ").trim() ||
+            linked.displayName;
+          if (resolvedName) empty.displayName = resolvedName;
+        }
+      }
+      if (!ghlContact) {
+        const contacts = await searchGhl(displayName);
+        ghlContact = pickBestGhlContact(contacts, displayName);
+      }
     } catch {
       ghlContact = null;
     }

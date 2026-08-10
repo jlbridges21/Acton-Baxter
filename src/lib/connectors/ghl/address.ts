@@ -280,7 +280,13 @@ export function buildDeterministicGhlContactFieldAnswer(
 
   if (wantsCityOnly) {
     if (contact.city?.trim()) {
-      return `${name} is in ${contact.city.trim()} in GoHighLevel.`;
+      const projectLabel = question.match(
+        /\bthe\s+([A-Za-z][A-Za-z'-]{1,40}(?:\s+[A-Za-z][A-Za-z'-]{1,40}){0,3})\s+project\b/i,
+      )?.[1];
+      if (projectLabel?.trim()) {
+        return `The ${projectLabel.trim()} project (${name}) is in ${contact.city.trim()} (GoHighLevel — contact record).`;
+      }
+      return `${name} is in ${contact.city.trim()} (GoHighLevel — contact record).`;
     }
     if (address.present) {
       return `I checked the full GoHighLevel contact record for ${name}. It has address details, but no city is saved.`;

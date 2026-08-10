@@ -864,7 +864,7 @@ export async function retrieveGhlLiveEvidence(
     };
   }
 
-  const name =
+  let resolvedName =
     plan.entityName ||
     plan.entityEmail ||
     plan.entityPhone ||
@@ -872,9 +872,26 @@ export async function retrieveGhlLiveEvidence(
     effectiveIntent.entities.opportunityName ||
     effectiveIntent.entities.contactEmail ||
     effectiveIntent.entities.contactPhone;
+  let resolvedContactId = plan.entityContactId;
+
+  // "the Yeh project" → Project Setup linked contact before fuzzy surname search.
+  if (!resolvedContactId) {
+    const { extractProjectReferenceName, resolveUniqueProjectSetupByName } =
+      await import("@/lib/dossier/project-setup-name-resolve");
+    const projectName = extractProjectReferenceName(question);
+    if (projectName) {
+      const linked = await resolveUniqueProjectSetupByName(projectName).catch(() => null);
+      if (linked?.ghlContactId) {
+        resolvedContactId = linked.ghlContactId;
+        resolvedName = linked.displayName || resolvedName || projectName;
+      }
+    }
+  }
+
+  const name = resolvedName;
 
   const forceEntityGraph =
-    Boolean(name || plan.entityContactId) &&
+    Boolean(name || resolvedContactId) &&
     (intent.explicitGhl ||
       plan.intent === "contact_lookup" ||
       plan.intent === "opportunity_lookup" ||
@@ -884,7 +901,7 @@ export async function retrieveGhlLiveEvidence(
       effectiveIntent.intent === "calendar_query" ||
       requestedFields.some((f) => isContactField(f) || isOpportunityField(f)));
 
-  if ((name || plan.entityContactId) && forceEntityGraph) {
+  if ((name || resolvedContactId) && forceEntityGraph) {
     const { resolveGhlEntityGraph, formatCustomerSnapshot } =
       await import("@/lib/connectors/ghl/entity-graph");
     const {
@@ -899,14 +916,15 @@ export async function retrieveGhlLiveEvidence(
 
     const wantsOpp =
       requestedFields.some(isOpportunityField) || plan.intent === "opportunity_lookup";
-    const graph = await resolveGhlEntityGraph(name || plan.entityContactId || "", {
+    const graph = await resolveGhlEntityGraph(name || resolvedContactId || "", {
       includeAppointments: false,
       includeConversations: false,
-      contactId: plan.entityContactId || undefined,
+      contactId: resolvedContactId || undefined,
       opportunityRankPolicy: wantsOpp ? STAGE_QUESTION_RANK_POLICY : undefined,
+      question,
     }).catch(() => null);
 
-    if (graph?.contact && plan.entityContactId && graph.contact.id !== plan.entityContactId) {
+    if (graph?.contact && resolvedContactId && graph.contact.id !== resolvedContactId) {
       return {
         items: [],
         contextText: "",
@@ -956,7 +974,7 @@ export async function retrieveGhlLiveEvidence(
     }
 
     const diagnostics = {
-      query: name || plan.entityContactId || "",
+      query: name || resolvedContactId || "",
       intent: String(plan.intent),
       entityType: (graph?.contact ? "contact" : "none") as "contact" | "none",
       resolvedContactName: contactName,
@@ -965,7 +983,11 @@ export async function retrieveGhlLiveEvidence(
       ghlContactSearchAttempted: true,
       matchesFound: graph?.ambiguous ? 2 : graph?.contact ? 1 : 0,
       selectedContactId: graph?.contact?.id ?? null,
-      resolutionMethod: plan.entityContactId ? "contact_id" : plan.diagnostics.resolutionMethod,
+      resolutionMethod: resolvedContactId
+        ? plan.entityContactId
+          ? "contact_id"
+          : "project_setup_link"
+        : plan.diagnostics.resolutionMethod,
       activeEntityInherited: plan.followupEntityInherited,
       fullContactHydrated: graph?.contact ? true : null,
       addressPresent: address ? address.present : null,

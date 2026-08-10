@@ -70,7 +70,7 @@ export async function buildGhlContext(question: string): Promise<GhlContextResul
   try {
     switch (intent.intent) {
       case "contact_lookup":
-        return buildContactContext(intent);
+        return buildContactContext(intent, question);
       case "contact_list":
         return buildContactListContext(intent);
       case "opportunity_lookup":
@@ -104,13 +104,17 @@ export async function buildGhlContext(question: string): Promise<GhlContextResul
   }
 }
 
-async function buildContactContext(intent: GhlIntentDetection): Promise<GhlContextResult> {
+async function buildContactContext(
+  intent: GhlIntentDetection,
+  question?: string,
+): Promise<GhlContextResult> {
   const { contactName, contactEmail, contactPhone } = intent.entities;
 
   const result = await resolveContact({
     name: contactName,
     email: contactEmail,
     phone: contactPhone,
+    question: question ?? null,
   });
 
   if (result.ambiguous && result.candidates) {

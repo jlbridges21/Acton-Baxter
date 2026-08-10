@@ -84,9 +84,10 @@ lookupSpecificity: only for entity_lookup — otherwise null.
 - generic: open-ended ask that does NOT name a specific information category. Examples: "give me information about the Katie Liniger project", "what can you tell me about Denis Kornilov", "tell me about the Vertin project", "who is X / what do we know about X", "tell me everything about X".
 - specific: clearly wants one category of data:
   • PEM / sales intelligence: Type 1/2 Pain, budget, decision process, NEAT summary, reason for building, salesperson notes
-  • GHL / CRM: phone, email, address, stage, pipeline, opportunity status, tags, owner
+  • GHL / CRM: phone, email, address, city, stage, pipeline, opportunity status, tags, owner
   • Slack: latest update, recent activity, what someone said in a channel, project status from Slack
-  Examples: "what's Katie's email", "Denis Type 1 Pain", "latest update in #l01-26019-liniger", "what's the stage of Robert's opportunity"
+  Examples: "what's Katie's email", "What city is the Yeh project", "Denis Type 1 Pain", "latest update in #l01-26019-liniger", "what's the stage of Robert's opportunity"
+  IMPORTANT: If the question names city/email/phone/address/stage/budget/timeline (etc.), it is ALWAYS specific — never generic — even when the entity is only a surname or "the X project".
 - content_search: wants a passage/exchange/coaching moment FROM a named prospect's PEM NEAT (transcript or assessment), not a single typed field. Examples: "how I disqualified Sharon Liu by saying I don't recommend an ADU", "what did the advisor say about budget in Robert's PEM", "find where they discussed the timeline in Cindy's meeting", "show how the advisor handled the pricing objection with Jeannie". Prefer content_search over specific when the ask is about what was said/done in the meeting rather than a labeled NEAT field.
 - When unsure between generic and specific for entity_lookup, prefer specific only if a concrete category word is clearly the ask; otherwise generic. Prefer content_search when the ask is about an exchange, quote, technique, or "what am I missing" tied to a named PEM prospect.
 
@@ -203,6 +204,18 @@ export function hasMultipleInformationNeeds(
 }
 
 /**
+ * True when the question clearly names a single information category
+ * (city, email, phone, budget, stage, …) — never treat as open-ended info menu.
+ */
+export function looksLikeSpecificFieldAsk(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  return /\b(e-?mail|phone|address|city|zip|postal(?:\s*code)?|stage|pipeline|tag|tags|owner|source|budget|pricing|timeline|schedule|type\s*[12]\s*pain|pain\s*points?|latest\s+update|recent\s+activity|what(?:'s| is) (?:the )?city)\b/i.test(
+    q,
+  );
+}
+
+/**
  * True when semantic routing is confident this is an open-ended entity ask
  * (clarifying source menu), not a category-specific direct answer.
  */
@@ -229,12 +242,7 @@ export function looksLikeOpenEndedEntityInfoAsk(question: string): boolean {
   if (/^(who|what)\s+(are|is)\s+(you|baxter)\b/i.test(q)) return false;
   if (/\bwhat can you (do|help)\b/i.test(q) && q.length < 80) return false;
   // Named field / category → specific, not menu.
-  if (
-    /\b(e-?mail|phone|address|city|zip|postal|stage|pipeline|tag|type\s*1\s*pain|pain\s*points?|latest\s+update|recent\s+activity)\b/i.test(
-      q,
-    ) &&
-    !/\b(information|info|details)\b/i.test(q)
-  ) {
+  if (looksLikeSpecificFieldAsk(q) && !/\b(information|info|details)\b/i.test(q)) {
     return false;
   }
   if (/#[a-z0-9_-]+/i.test(q) && /\b(latest|recent|update|activity|said|message)\b/i.test(q)) {
@@ -254,11 +262,18 @@ export function looksLikeOpenEndedEntityInfoAsk(question: string): boolean {
  * Menu gate: confident LLM "generic", or routing unavailable + deterministic
  * open-ended phrasing. Never overrides a confident "specific" / non-entity type.
  * Never treats intentional skips (greetings / Baxter identity) as menu-eligible.
+ * Never offers the information-type menu when the ask names a concrete field —
+ * entity ambiguity is a different failure mode (disambiguate names, don't menu sources).
  */
 export function shouldOfferEntitySourceMenu(
   question: string,
   semantic: SemanticQuestionClassification | null | undefined,
 ): boolean {
+  // Specific field asks (city, email, stage, …) are never information-type menus,
+  // even if the routing LLM wrongly labeled lookupSpecificity as generic.
+  if (looksLikeSpecificFieldAsk(question) && !/\b(information|info|details)\b/i.test(question)) {
+    return false;
+  }
   if (isGenericEntityLookup(semantic)) {
     // Semantic already typed the entity as a PEM prospect — go retrieve that NEAT
     // (including content search) instead of asking which system to use.

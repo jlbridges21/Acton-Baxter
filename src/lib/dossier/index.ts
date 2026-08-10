@@ -18,3 +18,9 @@ export {
 export type { LinkedProjectSetupRun } from "./project-setup-for-contact";
 export { resolveProjectSlackChannelForContact } from "./project-slack-channel-resolve";
 export type { ResolvedProjectSlackChannel } from "./project-slack-channel-resolve";
+export {
+  extractProjectReferenceName,
+  resolveProjectSetupRunsByName,
+  resolveUniqueProjectSetupByName,
+} from "./project-setup-name-resolve";
+export type { ProjectSetupNameMatch } from "./project-setup-name-resolve";
