@@ -89,7 +89,7 @@ function isSemanticContentSeeking(input: {
  */
 function looksLikeContentSeekingQuestion(question: string): boolean {
   return (
-    /\b(what did|how did|find (?:the )?part|find where|look in .{0,60}\b(?:pem|neat)\b|where (?:did|do) they|show (?:me )?how|disqualif\w*|what am i missing|transcript|said about|handled|objection|got (?:her|him|them) to|share more|open up more|caused (?:her|him|them) to)\b/i.test(
+    /\b(what did|how did|find (?:the )?part|find where|look in .{0,60}\b(?:pem|neat)\b|part of the transcript|where (?:did|do) they|show (?:me )?how|disqualif\w*|what am i missing|transcript|said about|saying that|handled|objection|got (?:her|him|them) to|share more|open up more|caused (?:her|him|them) to)\b/i.test(
       question,
     ) || /\b(quote|passage|discussed|conversation about)\b/i.test(question)
   );
@@ -101,6 +101,18 @@ function inferContentSeeking(input: {
 }): boolean {
   if (isSemanticContentSeeking(input)) return true;
 
+  // Transcript / exchange framing dominates field-adjacent words in the same sentence
+  // (e.g. parenthetical "reason for building an ADU" must not force Type 1 Pain).
+  if (looksLikeContentSeekingQuestion(input.question)) {
+    const fields = detectRequestedPemFields(input.question);
+    // Only an explicit typed field ask ("what is Type 1 Pain") stays on the field path.
+    const explicitTyped =
+      /\b(?:type\s*[12]|type (?:one|two))\s*pain\b/i.test(input.question) &&
+      /\b(?:what (?:is|was|about)|tell me|give me|show me)\b/i.test(input.question);
+    if (explicitTyped && fields.some((f) => STRICT_FIELD_KEYS.has(f))) return false;
+    return true;
+  }
+
   const fields = detectRequestedPemFields(input.question);
   // Explicit typed field asks stay on the field path (even if phrasing mentions a name).
   if (fields.some((f) => STRICT_FIELD_KEYS.has(f))) return false;
@@ -111,12 +123,6 @@ function inferContentSeeking(input: {
   }
   if (/\b(summary|overview|tell me about)\b[\s\S]{0,40}\b(pem|neat)\b/i.test(input.question)) {
     return false;
-  }
-
-  // Content-seeking shapes (transcript / technique / exchange) — whether or not
-  // intent already fired record_lookup (e.g. "Look in Sharon Liu neat and find…").
-  if (looksLikeContentSeekingQuestion(input.question)) {
-    return fields.length === 0 || (fields.length === 1 && fields[0] === "summary");
   }
 
   // Adapted opportunity / status / open asks without content cues stay on field/summary.

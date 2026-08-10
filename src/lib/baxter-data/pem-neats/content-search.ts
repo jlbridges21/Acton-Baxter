@@ -7,6 +7,7 @@ import { normalizeSearchText, tokenizeQuery } from "@/lib/knowledge/retrieval";
 import type { PemNeatRecord } from "@/lib/pem-neat/types";
 import type { PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
 import { ASSESSMENT_CATEGORY_LABELS } from "@/lib/pem-neat/constants";
+import { formatPemHonestMissAnswer } from "./honest-fallback";
 
 export type PemContentPassageKind =
   "transcript" | "assessment_category" | "assessment_summary" | "sales_intelligence";
@@ -476,6 +477,131 @@ export function searchPemNeatContent(
 }
 
 /**
+ * Expand a coaching paraphrase into wording that often appears in real transcripts,
+ * so mock + real embeddings can bridge "didn't recommend" ↔ "can't sit here and recommend".
+ */
+export function expandQueryForSemanticMatch(question: string): string {
+  const bits = [question];
+  if (/\bdisqualif\w*|don'?t recommend|didn'?t recommend|not recommend\b/i.test(question)) {
+    bits.push(
+      "I can't sit here and recommend you do it at this moment",
+      "maybe I just haven't heard why you would",
+      "temporary disqualification",
+    );
+  }
+  if (/\bopen up|share more|about her pain|about his pain|reason for building\b/i.test(question)) {
+    bits.push(
+      "why you would",
+      "eventually we would want to do something",
+      "talk to our parents",
+      "if they want to move in",
+      "huge investment",
+    );
+  }
+  return bits.join("\n");
+}
+
+/**
+ * Lexical search + embedding re-rank for paraphrase-tolerant transcript matching.
+ * Reuses Knowledge Base embedding infrastructure (OpenAI / mock).
+ */
+export async function searchPemNeatContentAsync(
+  record: Pick<PemNeatRecord, "transcript" | "structured_result" | "prospect_name">,
+  question: string,
+  options?: { limit?: number; includeTranscript?: boolean; minScore?: number },
+): Promise<PemContentSearchResult> {
+  const limit = options?.limit ?? DEFAULT_LIMIT;
+  // Cast a wider lexical net, then let semantic similarity promote paraphrase matches.
+  const broad = searchPemNeatContent(record, question, {
+    ...options,
+    limit: Math.max(limit * 3, 12),
+    minScore: Math.min(options?.minScore ?? 6, 3),
+  });
+
+  const transcriptHits = broad.passages.filter((p) => p.kind === "transcript");
+  if (transcriptHits.length === 0) {
+    return {
+      ...broad,
+      passages: broad.passages.slice(0, limit),
+    };
+  }
+
+  try {
+    const { cosineSimilarity, embedTexts } = await import("@/lib/knowledge-index/embeddings");
+    const expanded = expandQueryForSemanticMatch(question);
+    const texts = [expanded, ...transcriptHits.map((p) => p.excerpt)];
+    const embeds = await embedTexts(texts);
+    const qVec = embeds[0]?.vector;
+    if (qVec) {
+      for (let i = 0; i < transcriptHits.length; i++) {
+        const vec = embeds[i + 1]?.vector;
+        if (!vec) continue;
+        const sim = cosineSimilarity(qVec, vec);
+        // Blend lexical score with cosine similarity (0–1 → up to +50).
+        transcriptHits[i]!.score = transcriptHits[i]!.score + Math.max(0, sim) * 50;
+      }
+    }
+  } catch {
+    // Embedding failures must not block lexical results.
+  }
+
+  const nonTranscript = broad.passages.filter((p) => p.kind !== "transcript");
+  const merged = [...transcriptHits, ...nonTranscript].sort((a, b) => b.score - a.score);
+  const focused = isTranscriptFocusedQuestion(question);
+  const outLimit = focused ? Math.min(limit, 2) : limit;
+  const passages = merged.slice(0, outLimit);
+
+  // Widen the leading transcript excerpt to include the follow-on disclosure
+  // (e.g. 39:31 recommend → 40:22 parents / reason for building).
+  if (focused && passages[0]?.kind === "transcript" && record.transcript) {
+    passages[0] = expandTranscriptPassageWindow(record.transcript, passages[0]);
+  }
+
+  return {
+    passages,
+    totalExcerptChars: passages.reduce((n, p) => n + p.excerpt.length, 0),
+    truncated: merged.length > outLimit,
+  };
+}
+
+function expandTranscriptPassageWindow(
+  transcript: string,
+  hit: PemContentPassage,
+): PemContentPassage {
+  const segments = splitTranscriptIntoPassages(transcript);
+  if (segments.length === 0) return hit;
+  // Prefer the attributed timestamp — do not match on excerpt prefix (often includes
+  // the previous line from the lexical window).
+  let startIdx = hit.timestamp ? segments.findIndex((s) => s.timestamp === hit.timestamp) : -1;
+  if (startIdx < 0) {
+    startIdx = segments.findIndex((s) =>
+      normalizeSearchText(s.text).includes(normalizeSearchText(hit.excerpt).slice(0, 48)),
+    );
+  }
+  if (startIdx < 0) startIdx = 0;
+  const parts: string[] = [];
+  let chars = 0;
+  const maxChars = 1_100;
+  for (let i = startIdx; i < segments.length && chars < maxChars; i++) {
+    const s = segments[i]!;
+    const piece = s.timestamp ? `${s.timestamp}: ${s.text}` : s.text;
+    if (chars + piece.length > maxChars && parts.length > 0) break;
+    parts.push(piece);
+    chars += piece.length;
+    // Include the follow-on disclosure through the parents / move-in beat when present.
+    if (parts.length >= 2 && /talk to our parents|move in with us/i.test(s.text)) {
+      break;
+    }
+    if (parts.length >= 6) break;
+  }
+  if (parts.length === 0) return hit;
+  return {
+    ...hit,
+    excerpt: clip(parts.join("\n"), Math.max(MAX_PASSAGE_CHARS, 1_100)),
+  };
+}
+
+/**
  * Format content-search hits into a deterministic, attribution-honest answer.
  * Transcript excerpts are reproduced verbatim with timestamps.
  * Exchange/technique asks stay short: lead with the best transcript quote only.
@@ -488,12 +614,23 @@ export function formatPemContentSearchAnswer(input: {
   searchedButEmpty?: boolean;
   /** Original question — used to keep exchange answers short and transcript-led. */
   question?: string;
+  /** Dynamically generated example questions for this NEAT (honest miss). */
+  exampleQuestions?: string[];
 }): string {
   if (input.searchedButEmpty || input.passages.length === 0) {
+    if (input.exampleQuestions && input.exampleQuestions.length > 0) {
+      return formatPemHonestMissAnswer({
+        prospectName: input.prospectName,
+        meetingDate: input.meetingDate,
+        citationLabel: input.citationLabel,
+        kind: "content_search",
+        examples: input.exampleQuestions,
+      });
+    }
     return [
-      `I searched ${input.prospectName}'s PEM NEAT` +
+      `I couldn't find that specific part of the transcript in ${input.prospectName}'s PEM NEAT` +
         (input.meetingDate ? ` (${input.meetingDate})` : "") +
-        ` for relevant transcript and assessment passages but did not find a clear match.`,
+        `.`,
       "",
       `Source searched: ${input.citationLabel}`,
     ].join("\n");

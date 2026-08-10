@@ -34,7 +34,8 @@ import {
   isOperationalPemMetricQuestion,
   isStructuredMetricQuestion,
 } from "@/lib/baxter/concept-vocabulary";
-import { formatPemContentSearchAnswer, searchPemNeatContent } from "./content-search";
+import { formatPemContentSearchAnswer, searchPemNeatContentAsync } from "./content-search";
+import { buildPemAnswerableExampleQuestions, formatPemHonestMissAnswer } from "./honest-fallback";
 import { decideConversationContext } from "@/lib/baxter-ai/conversation-context";
 
 export type PemAnswerMode =
@@ -227,29 +228,6 @@ function groupByBaseName(rows: PemNeatListItem[]): Map<string, PemNeatListItem[]
   return map;
 }
 
-/** Fields that must stay deterministic field-lookup (not replaced by content search). */
-const STRICT_FIELD_KEYS = new Set<PemFieldKey>([
-  "type_1_pain",
-  "type_2_pain",
-  "budget",
-  "decision_process",
-  "schedule",
-  "competition",
-  "fit",
-  "next_steps",
-  "outcome",
-  "qualification",
-  "customer_story",
-  "customer_pain",
-  "buildertrend",
-  "project",
-  "salesperson",
-]);
-
-function wantsStrictFieldLookup(fields: PemFieldKey[]): boolean {
-  return fields.some((f) => STRICT_FIELD_KEYS.has(f));
-}
-
 async function loadAndAnswer(input: {
   recordId: string;
   fields: PemFieldKey[];
@@ -330,10 +308,10 @@ async function loadAndAnswer(input: {
 
   const citationLabel = citationFor(full);
 
-  // Content search only when explicitly content-seeking (semantic content_search).
-  // Strict field lookups and plain record/summary lookups keep the deterministic field path.
-  if (input.contentSeeking && !wantsStrictFieldLookup(input.fields)) {
-    const searched = searchPemNeatContent(full, input.question, { limit: 4 });
+  // Content search when content-seeking — never silently substitute a field answer
+  // just because the question mentions a field-adjacent word (e.g. "pain").
+  if (input.contentSeeking) {
+    const searched = await searchPemNeatContentAsync(full, input.question, { limit: 4 });
     if (searched.passages.length > 0) {
       let deterministicAnswer = formatPemContentSearchAnswer({
         prospectName: full.prospect_name,
@@ -398,13 +376,15 @@ async function loadAndAnswer(input: {
       };
     }
 
-    // Honest searched-empty note — PEM source soft-misses so KB can still answer.
+    // Honest searched-empty note — never substitute Type1Pain / other fields.
+    const examples = buildPemAnswerableExampleQuestions(full);
     const emptyNote = formatPemContentSearchAnswer({
       prospectName: full.prospect_name,
       meetingDate: full.meeting_date,
       citationLabel,
       passages: [],
       searchedButEmpty: true,
+      exampleQuestions: examples,
     });
     return {
       items: [],
@@ -448,12 +428,24 @@ async function loadAndAnswer(input: {
   let deterministicAnswer: string;
   let answerMode: PemAnswerMode;
   if (input.fields.length === 1) {
-    deterministicAnswer = formatDeterministicPemAnswer({
-      prospectName: full.prospect_name,
-      field: fieldValue,
-      citationLabel,
-    });
-    answerMode = fieldValue.determinable ? "deterministic_structured" : "not_determinable";
+    if (!fieldValue.determinable) {
+      deterministicAnswer = formatPemHonestMissAnswer({
+        prospectName: full.prospect_name,
+        meetingDate: full.meeting_date,
+        citationLabel,
+        kind: "field_lookup",
+        fieldLabel: fieldValue.label,
+        examples: buildPemAnswerableExampleQuestions(full),
+      });
+      answerMode = "not_determinable";
+    } else {
+      deterministicAnswer = formatDeterministicPemAnswer({
+        prospectName: full.prospect_name,
+        field: fieldValue,
+        citationLabel,
+      });
+      answerMode = "deterministic_structured";
+    }
   } else {
     const sections = input.fields.map((f) =>
       getPemField(structured, f, {

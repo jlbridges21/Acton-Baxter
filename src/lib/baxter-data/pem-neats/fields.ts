@@ -67,6 +67,16 @@ export function toCanonicalField(key: string): PemFieldKey {
  * Type 1 and Type 2 are mutually exclusive when the user asks for one specifically.
  * Unqualified "pain" (and natural variants) returns BOTH types — never a clarification.
  */
+export function isPemTranscriptContentAsk(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  return (
+    /\b(find (?:the )?part|find where|look (?:in|for|up).{0,80}\b(?:pem|neat|transcript)\b|part of the transcript|in the transcript|transcript (?:where|quote|passage)|show (?:me )?how|what did (?:they|he|she|the advisor|kevin)\b|how did (?:they|he|she|the advisor|kevin)\b|disqualif\w*|what am i missing|got (?:her|him|them) to|open up more|caused (?:her|him|them) to|quote|passage|said that|saying that)\b/i.test(
+      q,
+    ) || /\b(?:pem|neat)\b.{0,40}\bfind\b/i.test(q)
+  );
+}
+
 export function detectRequestedPemFields(question: string): PemFieldKey[] {
   const q = question.trim();
   if (!q) return [];
@@ -104,6 +114,12 @@ export function detectRequestedPemFields(question: string): PemFieldKey[] {
       q.toLowerCase().lastIndexOf("type two"),
     );
     return last2 > last1 ? ["type_2_pain"] : ["type_1_pain"];
+  }
+
+  // Transcript / exchange asks dominate — parenthetical clarifications like
+  // "(reason for building an ADU)" must not steal the path into Type 1 Pain.
+  if (isPemTranscriptContentAsk(q)) {
+    return [];
   }
 
   // Unqualified pain → both Type 1 and Type 2 (salespeople mean the NEAT pain sections).

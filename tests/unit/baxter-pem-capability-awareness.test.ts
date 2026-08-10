@@ -506,7 +506,9 @@ describe("Robert Vertin Test 8 / Test 2 production regressions", () => {
       channel: "slack",
       externalUserId: "U_TEST",
     });
-    expect(answered.answer).toMatch(/does not contain a determinable Type 1 Pain/i);
+    expect(answered.answer).toMatch(
+      /couldn'?t find a clear Type 1 Pain|does not contain a determinable Type 1 Pain/i,
+    );
     expect(answered.answer).not.toMatch(/Communication and coordination/i);
   });
 

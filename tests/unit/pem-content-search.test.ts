@@ -25,6 +25,9 @@ const REPORTED_Q =
 const REPORTED_Q_A =
   "Look in Sharon Liu neat and find the part of the transcript where Kevin disqualified her by saying that he didn't recommend an ADU and this caused her to open up more about her pain";
 
+const REPORTED_Q_A_PAREN =
+  "Look in Sharon Liu neat and find the part of the transcript where Kevin disqualified her by saying that he didn't recommend an ADU and this caused her to open up more about her pain (reason for building an ADU).";
+
 const REPORTED_Q_B =
   "@Baxter I want to show Jesse how I disqualified Sharon liu by saying I don't recommend an ADU 'what am i missing' and how that got her to share more pain about why she needs the adu";
 
@@ -36,8 +39,10 @@ const DISQUALIFY_TRANSCRIPT = `
 39:10: Advisor: I hear you. Before we talk floor plans, can I be honest with you?
 39:31: I, I, I can't sit here and recommend you do it at this moment.
 39:35: But maybe I just haven't heard, Why you would?
-39:48: Sharon: Well… my mom is alone and I keep worrying about her at night. That's the pain I haven't said out loud.
-40:05: Advisor: Thank you for sharing that. That why-now matters more than the square footage.
+39:42: Well, I think partly I feel like eventually we would want to do something, so I'm like why not do it now and then if we can rent it out, because we have renters now and that helps a lot, and I think we know enough people that we would rent to we wouldn't necessarily rent to strangers because it's like in our backyard so we would want to trust the people who live there and I think, so I think that's part of it.
+40:10: I know it's like a huge investment at this time, but I'm like, if we just keep putting it off, but if we're eventually going to do it, trying to figure out like when, I don't know if there is a best time.
+40:22: And like you said, we, we, you know, we'll have to talk to our parents about it because eventually they'll be, you know, if they want to move in with us, so.
+40:35: Advisor: Thank you for sharing that. That why-now matters more than the square footage.
 `.trim();
 
 beforeEach(() => {
@@ -185,6 +190,79 @@ describe("searchPemNeatContent", () => {
     }
   });
 
+  it("parenthetical reason-for-building does not steal Type 1 Pain field path", async () => {
+    const { detectRequestedPemFields, isPemTranscriptContentAsk } =
+      await import("@/lib/baxter-data/pem-neats");
+    expect(isPemTranscriptContentAsk(REPORTED_Q_A_PAREN)).toBe(true);
+    expect(detectRequestedPemFields(REPORTED_Q_A_PAREN)).toEqual([]);
+    expect(detectRequestedPemFields("What is Sharon Liu's Type 1 Pain?")).toEqual(["type_1_pain"]);
+    expect(
+      detectRequestedPemFields(
+        "Look in Sharon Liu neat and find the part of the transcript where they discussed budget concerns",
+      ),
+    ).toEqual([]);
+    expect(detectRequestedPemFields("What is Sharon Liu's budget?")).toEqual(["budget"]);
+  });
+
+  it("exact reported parenthetical question returns transcript 39:31, not Type 1 Pain bullets", async () => {
+    await seedSharonLiuNeat({
+      prospectName: "Sharon Liu & Jeff Liu",
+      prospectNames: ["Sharon Liu", "Jeff Liu"],
+    });
+    const ghlMiss: EvidenceSource = {
+      key: "ghl",
+      canHandle: () => ({ plausible: true, confidence: 0.7 }),
+      resolve: async () => ({ items: [], softMiss: true, confidence: 0.1 }),
+    };
+    const result = await runEvidenceRegistry({
+      question: REPORTED_Q_A_PAREN,
+      history: [],
+      conversationMetadata: {},
+      role: "admin",
+      channel: "slack",
+      ghlConfigured: true,
+      semantic: {
+        questionType: "entity_lookup",
+        entityName: "Sharon Liu",
+        entityTypeGuess: "pem_prospect",
+        lookupSpecificity: "generic",
+        confidence: 0.9,
+        source: "llm",
+        latencyMs: 1,
+        model: "test",
+      },
+      sources: [ghlMiss, pemEvidenceSource],
+    });
+    expect(result.earlyAnswer?.winningSource).toBe("pem_neat");
+    expect(result.earlyAnswer?.answer).toMatch(/39:31/);
+    expect(result.earlyAnswer?.answer).toMatch(/can'?t sit here and recommend/i);
+    expect(result.earlyAnswer?.answer).not.toMatch(/Type 1 Pain — Why Build/i);
+    expect(result.earlyAnswer?.answer).not.toMatch(/'s Type 1 Pain was:/i);
+    console.log("\n--- AFTER REPORTED PAREN ---\n" + result.earlyAnswer?.answer + "\n---\n");
+  });
+
+  it("honest fallback lists NEAT-specific examples when content search misses", async () => {
+    await seedSharonLiuNeat({
+      transcript: "10:00: Hello there. ".repeat(40),
+      emptyAssessmentExtras: true,
+    });
+    const evidence = await retrievePemEvidence({
+      question: "Tell me about Sharon Liu's PEM",
+      contentSearchQuestion:
+        "find the part where they discussed commercial zoning variance appeals in downtown Oakland",
+      contentSeeking: true,
+      role: "admin",
+      channel: "web",
+    });
+    expect(evidence.answerMode).toBe("not_determinable");
+    expect(evidence.deterministicAnswer).toMatch(
+      /couldn'?t find that specific part of the transcript/i,
+    );
+    expect(evidence.deterministicAnswer).toMatch(/I can answer questions like/i);
+    expect(evidence.deterministicAnswer).toMatch(/Type 1 Pain|budget|Customer Story|Who ran/i);
+    console.log("\n--- HONEST FALLBACK ---\n" + evidence.deterministicAnswer + "\n---\n");
+  });
+
   it("gates KB combine: Culture Guide out; technique playbook in", async () => {
     const { isKnowledgeBaseRelevantToPemContentQuestion } =
       await import("@/lib/baxter-data/pem-neats");
@@ -319,7 +397,10 @@ describe("retrievePemEvidence content search", () => {
     });
     expect(evidence.answerMode).toBe("not_determinable");
     expect(evidence.diagnostics.pemSkipReason).toBe("pem_content_no_match");
-    expect(evidence.deterministicAnswer).toMatch(/did not find a clear match/i);
+    expect(evidence.deterministicAnswer).toMatch(
+      /couldn'?t find that specific part of the transcript/i,
+    );
+    expect(evidence.deterministicAnswer).toMatch(/I can answer questions like/i);
   });
 });
 
@@ -456,7 +537,9 @@ describe("registry routing priority for PEM content search", () => {
     });
 
     expect(result.earlyAnswer).toBeNull();
-    expect(result.softMissNotes?.join(" ")).toMatch(/did not find a clear match/i);
+    expect(result.softMissNotes?.join(" ")).toMatch(
+      /couldn'?t find that specific part of the transcript/i,
+    );
     expect(
       result.diagnostics.tried.some((t) => t.key === "pem_neat" && t.outcome === "soft_miss"),
     ).toBe(true);

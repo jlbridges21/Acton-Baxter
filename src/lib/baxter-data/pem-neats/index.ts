@@ -25,6 +25,7 @@ export {
   detectRequestedPemFields,
   formatDeterministicPemAnswer,
   getPemField,
+  isPemTranscriptContentAsk,
   type PemFieldKey,
   type PemFieldValue,
 } from "./fields";
@@ -48,11 +49,14 @@ export {
 } from "./prospect-index";
 export {
   formatPemContentSearchAnswer,
+  expandQueryForSemanticMatch,
   isKnowledgeBaseRelevantToPemContentQuestion,
   isTranscriptFocusedQuestion,
   scorePassageAgainstQuery,
   searchPemNeatContent,
+  searchPemNeatContentAsync,
   splitTranscriptIntoPassages,
   type PemContentPassage,
   type PemContentSearchResult,
 } from "./content-search";
+export { buildPemAnswerableExampleQuestions, formatPemHonestMissAnswer } from "./honest-fallback";
