@@ -256,7 +256,7 @@ describe("searchPemNeatContent", () => {
     });
     expect(evidence.answerMode).toBe("not_determinable");
     expect(evidence.deterministicAnswer).toMatch(
-      /couldn'?t find that specific part of the transcript/i,
+      /couldn'?t find (?:that specific part of the transcript|any mention of)/i,
     );
     expect(evidence.deterministicAnswer).toMatch(/I can answer questions like/i);
     expect(evidence.deterministicAnswer).toMatch(/Type 1 Pain|budget|Customer Story|Who ran/i);
@@ -398,7 +398,7 @@ describe("retrievePemEvidence content search", () => {
     expect(evidence.answerMode).toBe("not_determinable");
     expect(evidence.diagnostics.pemSkipReason).toBe("pem_content_no_match");
     expect(evidence.deterministicAnswer).toMatch(
-      /couldn'?t find that specific part of the transcript/i,
+      /couldn'?t find (?:that specific part of the transcript|any mention of)/i,
     );
     expect(evidence.deterministicAnswer).toMatch(/I can answer questions like/i);
   });
@@ -538,7 +538,7 @@ describe("registry routing priority for PEM content search", () => {
 
     expect(result.earlyAnswer).toBeNull();
     expect(result.softMissNotes?.join(" ")).toMatch(
-      /couldn'?t find that specific part of the transcript/i,
+      /couldn'?t find (?:that specific part of the transcript|any mention of)/i,
     );
     expect(
       result.diagnostics.tried.some((t) => t.key === "pem_neat" && t.outcome === "soft_miss"),

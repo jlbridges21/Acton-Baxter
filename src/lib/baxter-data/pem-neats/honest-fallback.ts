@@ -81,14 +81,22 @@ export function formatPemHonestMissAnswer(input: {
   kind: "content_search" | "field_lookup";
   fieldLabel?: string | null;
   examples: string[];
+  /** Optional topic the user asked about (e.g. "solar") for a clearer miss line. */
+  soughtTopic?: string | null;
 }): string {
   const when = input.meetingDate ? ` (${input.meetingDate})` : "";
   const lines: string[] = [];
 
   if (input.kind === "content_search") {
-    lines.push(
-      `I couldn't find that specific part of the transcript in ${input.prospectName}'s PEM NEAT${when}.`,
-    );
+    if (input.soughtTopic) {
+      lines.push(
+        `I couldn't find any mention of ${input.soughtTopic} in ${input.prospectName}'s transcript${when}.`,
+      );
+    } else {
+      lines.push(
+        `I couldn't find that specific part of the transcript in ${input.prospectName}'s PEM NEAT${when}.`,
+      );
+    }
   } else {
     const label = input.fieldLabel?.trim() || "that field";
     lines.push(

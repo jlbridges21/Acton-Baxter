@@ -385,7 +385,28 @@ export function searchPemNeatContent(
       const ownHaystack =
         cur.text.length < 140 && next?.text ? `${cur.text}\n${next.text}` : cur.text;
       let ownScore = scorePassageAgainstQuery(ownHaystack, question);
-      if (transcriptFocused && ownScore > 0) ownScore += 24;
+      // Only boost transcript windows that actually carry distinctive question topic
+      // terms (timeline/solar/recommend…) — weak name/"discussed" overlaps stay weak.
+      if (transcriptFocused && ownScore > 0) {
+        const topicTerms = tokenizeQuery(question).filter(
+          (t) =>
+            t.length > 3 &&
+            !QUERY_NOISE.has(t) &&
+            !/^(neat|pem|transcript|robert|vertin|leslie|kita|sharon|liu|jeff|jesse|kevin|talks|talk|discussed|discuss)$/i.test(
+              t,
+            ),
+        );
+        const hay = normalizeSearchText(ownHaystack);
+        const topicHit =
+          topicTerms.length === 0 ||
+          topicTerms.some((t) => {
+            if (hay.includes(t)) return true;
+            if (t === "timeline" && /timing|schedule|months|rush/.test(hay)) return true;
+            if (t === "solar" && /photovoltaic|\bpv\b/.test(hay)) return true;
+            return false;
+          });
+        if (topicHit) ownScore += 24;
+      }
       if (ownScore < minScore) continue;
       const prevText = prev && prev.text.length <= 280 ? prev.text : null;
       const nextText = next && next.text.length <= 280 ? next.text : null;
@@ -616,6 +637,8 @@ export function formatPemContentSearchAnswer(input: {
   question?: string;
   /** Dynamically generated example questions for this NEAT (honest miss). */
   exampleQuestions?: string[];
+  soughtTopic?: string | null;
+  uncertain?: boolean;
 }): string {
   if (input.searchedButEmpty || input.passages.length === 0) {
     if (input.exampleQuestions && input.exampleQuestions.length > 0) {
@@ -625,12 +648,17 @@ export function formatPemContentSearchAnswer(input: {
         citationLabel: input.citationLabel,
         kind: "content_search",
         examples: input.exampleQuestions,
+        soughtTopic: input.soughtTopic,
       });
     }
     return [
-      `I couldn't find that specific part of the transcript in ${input.prospectName}'s PEM NEAT` +
-        (input.meetingDate ? ` (${input.meetingDate})` : "") +
-        `.`,
+      input.soughtTopic
+        ? `I couldn't find any mention of ${input.soughtTopic} in ${input.prospectName}'s transcript` +
+          (input.meetingDate ? ` (${input.meetingDate})` : "") +
+          `.`
+        : `I couldn't find that specific part of the transcript in ${input.prospectName}'s PEM NEAT` +
+          (input.meetingDate ? ` (${input.meetingDate})` : "") +
+          `.`,
       "",
       `Source searched: ${input.citationLabel}`,
     ].join("\n");
@@ -638,18 +666,30 @@ export function formatPemContentSearchAnswer(input: {
 
   const focused = input.question ? isTranscriptFocusedQuestion(input.question) : false;
   let passages = input.passages;
-  if (focused) {
-    const bestTranscript = passages.find((p) => p.kind === "transcript");
-    // Exchange / technique asks: exact transcript quote only (short and sweet).
-    passages = bestTranscript ? [bestTranscript] : passages.slice(0, 1);
+  // Lead with the strongest candidate (transcript OR structured field). Only
+  // collapse to a single transcript quote when the top hit is a transcript exchange.
+  if (focused && passages[0]?.kind === "transcript") {
+    passages = [passages[0]];
+  } else if (focused) {
+    passages = passages.slice(0, 2);
   }
 
-  const blocks: string[] = [
-    `From ${input.prospectName}'s PEM NEAT` +
-      (input.meetingDate ? ` (${input.meetingDate})` : "") +
-      ":",
-    "",
-  ];
+  const blocks: string[] = [];
+  if (input.uncertain) {
+    blocks.push(
+      `I found something related in ${input.prospectName}'s PEM NEAT` +
+        (input.meetingDate ? ` (${input.meetingDate})` : "") +
+        `, but I'm not fully certain it matches what you asked:`,
+      "",
+    );
+  } else {
+    blocks.push(
+      `From ${input.prospectName}'s PEM NEAT` +
+        (input.meetingDate ? ` (${input.meetingDate})` : "") +
+        ":",
+      "",
+    );
+  }
 
   for (const p of passages) {
     if (p.kind === "transcript") {

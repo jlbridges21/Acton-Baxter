@@ -36,6 +36,7 @@ import {
 } from "@/lib/baxter/concept-vocabulary";
 import { formatPemContentSearchAnswer, searchPemNeatContentAsync } from "./content-search";
 import { buildPemAnswerableExampleQuestions, formatPemHonestMissAnswer } from "./honest-fallback";
+import { scoreStructuredFieldCandidates, selectPemLadderCandidates } from "./pem-answer-ladder";
 import { decideConversationContext } from "@/lib/baxter-ai/conversation-context";
 
 export type PemAnswerMode =
@@ -308,17 +309,27 @@ async function loadAndAnswer(input: {
 
   const citationLabel = citationFor(full);
 
-  // Content search when content-seeking — never silently substitute a field answer
-  // just because the question mentions a field-adjacent word (e.g. "pain").
+  // Content-seeking ladder: gated transcript → relevant structured fields → honest miss.
+  // Never present a below-threshold transcript chunk as a confident answer.
   if (input.contentSeeking) {
-    const searched = await searchPemNeatContentAsync(full, input.question, { limit: 4 });
-    if (searched.passages.length > 0) {
+    const searched = await searchPemNeatContentAsync(full, input.question, { limit: 8 });
+    const fieldHits = scoreStructuredFieldCandidates(full, input.question);
+    const ladder = selectPemLadderCandidates({
+      question: input.question,
+      transcriptPassages: searched.passages,
+      fieldPassages: fieldHits,
+      limit: 3,
+    });
+
+    if (ladder.candidates.length > 0) {
       let deterministicAnswer = formatPemContentSearchAnswer({
         prospectName: full.prospect_name,
         meetingDate: full.meeting_date,
         citationLabel,
-        passages: searched.passages,
+        passages: ladder.candidates,
         question: input.question,
+        uncertain: ladder.uncertain,
+        soughtTopic: ladder.soughtTopic,
       });
       if (staleWarning) deterministicAnswer = `${staleWarning}\n\n${deterministicAnswer}`;
 
@@ -327,7 +338,7 @@ async function loadAndAnswer(input: {
         id: full.id,
         title: citationLabel,
         summary: `${full.prospect_name} — PEM content search`,
-        contentExcerpt: searched.passages
+        contentExcerpt: ladder.candidates
           .map((p) =>
             p.kind === "transcript"
               ? `[Transcript ${p.timestamp ?? ""}] ${p.excerpt}`
@@ -335,14 +346,14 @@ async function loadAndAnswer(input: {
           )
           .join("\n\n"),
         category: "PEM NEAT",
-        tags: ["pem_neat", "content_search", ...searched.passages.map((p) => p.sectionId)],
+        tags: ["pem_neat", "content_search", ...ladder.candidates.map((p) => p.sectionId)],
         sourceName: "Partnership Evaluation Meeting NEAT",
         sourceUrl: pemNeatAbsoluteUrl(full.id),
         sourceType: "pem_neat",
         mimeType: null,
         updatedAt: full.generated_at ?? full.updated_at,
         citationLabel,
-        relevanceScore: 100,
+        relevanceScore: ladder.uncertain ? 70 : 100,
       };
 
       const nextActive: PemActiveContext = {
@@ -376,7 +387,7 @@ async function loadAndAnswer(input: {
       };
     }
 
-    // Honest searched-empty note — never substitute Type1Pain / other fields.
+    // Honest searched-empty note — never substitute an unrelated passage or field.
     const examples = buildPemAnswerableExampleQuestions(full);
     const emptyNote = formatPemContentSearchAnswer({
       prospectName: full.prospect_name,
@@ -385,6 +396,7 @@ async function loadAndAnswer(input: {
       passages: [],
       searchedButEmpty: true,
       exampleQuestions: examples,
+      soughtTopic: ladder.soughtTopic,
     });
     return {
       items: [],
