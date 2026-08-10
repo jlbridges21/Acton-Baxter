@@ -13,7 +13,10 @@ import {
   hasConfidentProspectMatch,
 } from "@/lib/baxter-data/pem-neats/prospect-index";
 import { readPemConversationState } from "@/lib/baxter-data/pem-neats/conversation-state";
-import { isSemanticRoutingConfident } from "@/lib/baxter-ai/semantic-question-classification";
+import {
+  isSemanticRoutingConfident,
+  isPemAggregateSemantic,
+} from "@/lib/baxter-ai/semantic-question-classification";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
 
 const OPPORTUNITY_OR_STATUS =
@@ -134,6 +137,10 @@ export const pemEvidenceSource: EvidenceSource = {
 
   canHandle(input) {
     if (input.entity.skipEntityLookup) {
+      return { plausible: false, confidence: 0 };
+    }
+    // Cross-record PEM aggregates are owned by pem_aggregate — never claim them here.
+    if (isPemAggregateSemantic(input.entity.semantic)) {
       return { plausible: false, confidence: 0 };
     }
     const semantic = input.entity.semantic;

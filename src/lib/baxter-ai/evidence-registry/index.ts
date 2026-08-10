@@ -24,6 +24,8 @@ export {
   isGenericEntityLookup,
   shouldOfferEntitySourceMenu,
   looksLikeOpenEndedEntityInfoAsk,
+  hasMultipleInformationNeeds,
+  isPemAggregateSemantic,
   SEMANTIC_ROUTING_CONFIDENCE_THRESHOLD,
 } from "@/lib/baxter-ai/semantic-question-classification";
 export type {
@@ -31,9 +33,14 @@ export type {
   SemanticQuestionType,
   SemanticEntityTypeGuess,
   SemanticLookupSpecificity,
+  SemanticInformationNeed,
+  SemanticPemAggregateQuery,
 } from "@/lib/baxter-ai/semantic-question-classification";
 export {
   decideEntitySourceClarifyingMenu,
   probeEntitySourceAvailability,
 } from "./entity-source-menu";
 export type { EntitySourceAvailability } from "./entity-source-menu";
+export { composeMultiNeedAnswer, resolveMultiNeedQuestion } from "./multi-need";
+export type { MultiNeedResolvers, MultiNeedPartResolution } from "./multi-need";
+export { pemAggregateEvidenceSource } from "./sources/pem-aggregate";

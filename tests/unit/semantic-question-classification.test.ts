@@ -15,7 +15,6 @@ import {
 import { ghlEvidenceSource as ghlSource } from "@/lib/baxter-ai/evidence-registry/sources/ghl";
 import { answerCapabilityHelp } from "@/lib/baxter/capability-help";
 import type { EvidenceSourceHandleInput } from "@/lib/baxter-ai/evidence-registry/types";
-import type { SemanticQuestionClassificationParsed } from "@/lib/baxter-ai/schemas";
 import { parseSemanticQuestionClassificationJson } from "@/lib/baxter-ai/schemas";
 
 const INCIDENT =
@@ -499,7 +498,7 @@ describe("measured latency (injected classifier with controlled delay)", () => {
               entityTypeGuess: "ghl_opportunity",
               lookupSpecificity: null,
               confidence: 0.9,
-            } satisfies SemanticQuestionClassificationParsed;
+            };
           },
         },
       );

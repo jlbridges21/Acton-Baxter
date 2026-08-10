@@ -123,6 +123,6 @@ export function preferredSourceForFollowUp(input: {
 
 export function sourceKeyToPreferred(key: EvidenceSourceKey): PreferredEntitySource | null {
   if (key === "ghl") return "ghl";
-  if (key === "pem_neat") return "pem";
+  if (key === "pem_neat" || key === "pem_aggregate") return "pem";
   return null;
 }

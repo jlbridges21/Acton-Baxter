@@ -66,8 +66,10 @@ import { isKnowledgeBaseRelevantToPemContentQuestion } from "@/lib/baxter-data/p
 import { runEvidenceRegistry } from "@/lib/baxter-ai/evidence-registry";
 import {
   classifyQuestionSemantically,
+  hasMultipleInformationNeeds,
   isSemanticRoutingConfident,
 } from "@/lib/baxter-ai/semantic-question-classification";
+import type { SemanticInformationNeed } from "@/lib/baxter-ai/semantic-question-classification";
 import {
   hasBaxterCapabilitySignal,
   questionHasSpecificNamedEntity,
@@ -541,7 +543,8 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     slackIntentEarly === "latest_update" ||
     slackIntentEarly === "latest_message";
   const semanticWantsEntity =
-    isSemanticRoutingConfident(semantic) && semantic.questionType === "entity_lookup";
+    isSemanticRoutingConfident(semantic) &&
+    (semantic.questionType === "entity_lookup" || semantic.questionType === "pem_aggregate");
 
   const capabilityHelp =
     slackWouldRunEarly || semanticWantsEntity
@@ -604,6 +607,63 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
   // Confidence-ordered evidence registry (GHL / PEM / Rulebook). Soft misses do not
   // hard-stop; KB remains the post-registry fallback below.
   // Semantic already computed above — pass through (do not classify twice).
+  const multiNeedResolvers = hasMultipleInformationNeeds(semantic)
+    ? {
+        slack: async (need: SemanticInformationNeed) => {
+          const slack = await retrieveSlackForAnswer({
+            question: need.partQuestion,
+            requester: {
+              baxterUserId: input.userId,
+              slackUserId: input.externalUserId,
+              slackTeamId: input.slackTeamId ?? null,
+              actionToken: input.slackActionToken ?? null,
+              allowPublicOnlyFallback: input.channel === "slack" || Boolean(input.externalUserId),
+            },
+            conversationMetadata: conversation.metadata ?? {},
+            hasOtherStrongEvidence: false,
+            roleOverride: "primary",
+          }).catch(() => null);
+          if (!slack) return null;
+          if (slack.selected.length > 0) {
+            const answer = slack.selected
+              .slice(0, 2)
+              .map((item) => {
+                const excerpt = (item.text || "").trim();
+                const clipped =
+                  excerpt.length > 280 ? `${excerpt.slice(0, 279).trimEnd()}…` : excerpt;
+                const label = item.channelName ? `#${item.channelName}` : item.permalink || "Slack";
+                return `• ${label}${clipped ? `\n  ${clipped}` : ""}`;
+              })
+              .join("\n");
+            return {
+              answer: `${answer}\n\nSource: Slack Search`,
+              items: slack.items ?? [],
+            };
+          }
+          const miss = slack.authNote || slack.noResultsNote || slack.incompleteNote || null;
+          return miss ? { answer: miss, softMiss: true } : null;
+        },
+        knowledge: async (need: SemanticInformationNeed) => {
+          const kb = await retrieveBaxterEvidence(need.partQuestion, historyEarly).catch(
+            () => null,
+          );
+          const items = (kb?.contextItems ?? [])
+            .filter((item) => (item.relevanceScore ?? 0) >= 40)
+            .slice(0, 2);
+          if (items.length === 0) return null;
+          const bullets = items
+            .map((item) => {
+              const excerpt = (item.contentExcerpt || item.summary || "").trim();
+              const clipped =
+                excerpt.length > 280 ? `${excerpt.slice(0, 279).trimEnd()}…` : excerpt;
+              return `• ${item.citationLabel || item.title}${clipped ? `\n  ${clipped}` : ""}`;
+            })
+            .join("\n");
+          return { answer: `${bullets}\n\nSource: Knowledge Base`, items };
+        },
+      }
+    : undefined;
+
   const registry = await runEvidenceRegistry({
     question: routingQuestion,
     history: historyEarly,
@@ -615,6 +675,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     userId: input.userId,
     externalUserId: input.externalUserId ?? null,
     slackTeamId: input.slackTeamId ?? null,
+    multiNeedResolvers,
   });
 
   if (registry.conversationMetadata) {

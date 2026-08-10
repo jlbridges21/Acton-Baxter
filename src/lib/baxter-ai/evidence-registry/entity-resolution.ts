@@ -231,6 +231,20 @@ export function resolveQuestionEntity(input: {
     };
   }
 
+  // PEM aggregate reporting — no prospect entity; aggregate source owns retrieval.
+  if (isSemanticRoutingConfident(semantic) && semantic!.questionType === "pem_aggregate") {
+    return {
+      primary: null,
+      candidates: [],
+      ambiguousAcrossTypes: false,
+      extractedName: null,
+      isFollowUp,
+      semantic,
+      skipEntityLookup: false,
+      questionType: "pem_aggregate",
+    };
+  }
+
   const candidates: EntityCandidate[] = [];
   let usedSemanticEntity = false;
 

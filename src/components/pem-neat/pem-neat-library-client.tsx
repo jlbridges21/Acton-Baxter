@@ -56,6 +56,14 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
     );
   }, [initialItems, query]);
 
+  const filterSummary = useMemo(() => {
+    let yes = 0;
+    for (const item of items) {
+      if (item.meeting_outcome === "YES") yes += 1;
+    }
+    return { total: items.length, yes };
+  }, [items]);
+
   async function confirmDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -118,6 +126,11 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
             placeholder="Search by prospect or salesperson…"
             className="h-10 w-full max-w-md rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm text-[var(--acton-navy)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--acton-navy)]"
           />
+          <p className="mt-2 text-sm text-[var(--acton-muted)]">
+            {filterSummary.total} PEM{filterSummary.total === 1 ? "" : "s"}
+            {filterSummary.total > 0 ? ` · ${filterSummary.yes} YES` : null}
+            {query.trim() ? " (filtered)" : null}
+          </p>
         </div>
       ) : null}
 

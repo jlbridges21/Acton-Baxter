@@ -38,6 +38,10 @@ export const ghlEvidenceSource: EvidenceSource = {
     if (input.entity.skipEntityLookup) {
       return { plausible: false, confidence: 0 };
     }
+    // PEM aggregate reporting is never a CRM lookup.
+    if (input.entity.semantic && input.entity.semantic.questionType === "pem_aggregate") {
+      return { plausible: false, confidence: 0 };
+    }
     // Primary: trust confident semantic entity-type guess.
     const semantic = input.entity.semantic;
     if (isSemanticRoutingConfident(semantic) && semantic!.questionType === "entity_lookup") {

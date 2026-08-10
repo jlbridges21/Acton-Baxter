@@ -19,10 +19,12 @@ import {
 import { ghlEvidenceSource } from "./sources/ghl";
 import { rulebookEvidenceSource } from "./sources/rulebook";
 import { pemEvidenceSource } from "./sources/pem";
+import { pemAggregateEvidenceSource } from "./sources/pem-aggregate";
 import { dossierEvidenceSource } from "./sources/dossier";
 import {
   classifyQuestionSemantically,
   shouldOfferEntitySourceMenu,
+  hasMultipleInformationNeeds,
   type ClassifyQuestionSemanticallyOptions,
   type SemanticQuestionClassification,
 } from "@/lib/baxter-ai/semantic-question-classification";
@@ -31,6 +33,7 @@ import {
   probeEntitySourceAvailability,
   type ProbeEntitySourcesDeps,
 } from "./entity-source-menu";
+import { resolveMultiNeedQuestion, type MultiNeedResolvers } from "./multi-need";
 import type {
   EvidenceSource,
   EvidenceSourceKey,
@@ -40,6 +43,7 @@ import type {
 } from "./types";
 
 const DEFAULT_SOURCES: EvidenceSource[] = [
+  pemAggregateEvidenceSource,
   ghlEvidenceSource,
   pemEvidenceSource,
   rulebookEvidenceSource,
@@ -52,6 +56,7 @@ function formatSourceAgnosticNotFound(tried: EvidenceSourceKey[], name: string |
   const labels: Record<EvidenceSourceKey, string> = {
     ghl: "GHL",
     pem_neat: "PEM",
+    pem_aggregate: "PEM NEAT records",
     rulebook: "the Process Rulebook",
     customer_dossier: "the customer center",
   };
@@ -88,7 +93,7 @@ function toEarlyFromResult(
     modelProvider:
       source === "ghl"
         ? "ghl-resolve"
-        : source === "pem_neat"
+        : source === "pem_neat" || source === "pem_aggregate"
           ? "pem-neats"
           : source === "customer_dossier"
             ? "customer-dossier"
@@ -98,11 +103,13 @@ function toEarlyFromResult(
         ? "entity-resolution"
         : source === "ghl"
           ? "deterministic-crm"
-          : source === "pem_neat"
-            ? "deterministic-structured"
-            : source === "customer_dossier"
-              ? "deterministic-dossier"
-              : "rulebook-evidence",
+          : source === "pem_aggregate"
+            ? "deterministic-aggregate"
+            : source === "pem_neat"
+              ? "deterministic-structured"
+              : source === "customer_dossier"
+                ? "deterministic-dossier"
+                : "rulebook-evidence",
     winningSource: source,
   };
 }
@@ -121,6 +128,7 @@ function semanticDiag(
     error: semantic.error,
     skippedEntityLookup,
     lookupSpecificity: semantic.lookupSpecificity ?? null,
+    informationNeedsCount: semantic.informationNeeds?.length ?? 0,
   };
 }
 
@@ -142,6 +150,8 @@ export async function runEvidenceRegistry(input: {
   slackTeamId?: string | null;
   /** Test inject for clarifying-menu existence probes. */
   menuProbeDeps?: ProbeEntitySourcesDeps;
+  /** Optional Slack / Knowledge resolvers for multi-need compound questions. */
+  multiNeedResolvers?: MultiNeedResolvers;
 }): Promise<RegistryRunResult> {
   let metadata: Record<string, unknown> = { ...(input.conversationMetadata ?? {}) };
   const history = input.history ?? [];
@@ -163,6 +173,8 @@ export async function runEvidenceRegistry(input: {
       entityName: null,
       entityTypeGuess: null,
       lookupSpecificity: null,
+      informationNeeds: [],
+      aggregateQuery: null,
       confidence: 0,
       source: "skipped",
       latencyMs: 0,
@@ -204,6 +216,40 @@ export async function runEvidenceRegistry(input: {
         semantic: semanticDiag(semantic, true),
       },
     };
+  }
+
+  const sources = input.sources ?? DEFAULT_SOURCES;
+
+  // Compound questions with 2–3 distinct needs: resolve each part independently so a
+  // deterministic hit on one source cannot silently drop the other parts.
+  if (semantic && hasMultipleInformationNeeds(semantic)) {
+    const multi = await resolveMultiNeedQuestion({
+      question: input.question,
+      history,
+      conversationMetadata: metadata,
+      role: input.role,
+      channel: input.channel,
+      ghlConfigured: input.ghlConfigured,
+      userId: input.userId,
+      externalUserId: input.externalUserId,
+      slackTeamId: input.slackTeamId,
+      semantic,
+      sources,
+      resolvers: input.multiNeedResolvers,
+    });
+    if (multi) {
+      return {
+        earlyAnswer: multi.earlyAnswer,
+        contextItems: multi.earlyAnswer.sources,
+        conversationMetadata: multi.conversationMetadata,
+        diagnostics: {
+          entity,
+          preferredSource,
+          tried: multi.tried,
+          semantic: semanticDiag(semantic, false),
+        },
+      };
+    }
   }
 
   // Open-ended entity ask → clarifying source menu (existence only; no full dumps).
@@ -284,7 +330,6 @@ export async function runEvidenceRegistry(input: {
     }
   }
 
-  const sources = input.sources ?? DEFAULT_SOURCES;
   const ranked = sources
     .map((source) => {
       const handle = source.canHandle(handleInput);

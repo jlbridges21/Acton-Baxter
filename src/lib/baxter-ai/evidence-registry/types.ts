@@ -7,7 +7,8 @@ import type { BaxterContextItem, BaxterHistoryMessage } from "@/lib/baxter-ai/ty
 import type { EntityResolutionResult } from "./entity-resolution";
 import type { PreferredEntitySource } from "./conversation-arbitration";
 
-export type EvidenceSourceKey = "ghl" | "rulebook" | "pem_neat" | "customer_dossier";
+export type EvidenceSourceKey =
+  "ghl" | "rulebook" | "pem_neat" | "pem_aggregate" | "customer_dossier";
 
 export type EvidenceSourceHandleInput = {
   question: string;
@@ -86,6 +87,7 @@ export type RegistryRunResult = {
       error?: string;
       skippedEntityLookup: boolean;
       lookupSpecificity?: "generic" | "specific" | "content_search" | null;
+      informationNeedsCount?: number;
     };
   };
 };
