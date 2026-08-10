@@ -135,6 +135,7 @@ Return JSON matching the stage schema. Prefer substantive grounded fields over e
 
 export function buildPemNeatUserPrompt(input: {
   prospectName: string;
+  prospectNames?: string[];
   advisorName: string;
   meetingDate: string | null;
   transcript: string;
@@ -145,9 +146,15 @@ export function buildPemNeatUserPrompt(input: {
       ? `\nStage 0 notes from Baxter preprocessing:\n${input.transcriptNotes.map((n) => `- ${n}`).join("\n")}\n`
       : "";
 
+  const names = (input.prospectNames ?? []).map((n) => n.trim()).filter(Boolean);
+  const prospectBlock =
+    names.length > 1
+      ? `Prospects: ${names.join(" & ")}\nIndividual homeowner names: ${names.join("; ")}`
+      : `Prospect Name: ${input.prospectName}`;
+
   return `Analyze this Partnership Evaluation Meeting.
 
-Prospect Name: ${input.prospectName}
+${prospectBlock}
 Advisor / Salesperson: ${input.advisorName}
 Meeting Date: ${input.meetingDate ?? "not provided"}
 ${notes}

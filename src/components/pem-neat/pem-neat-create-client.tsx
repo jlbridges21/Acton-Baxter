@@ -7,7 +7,12 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { MIN_TRANSCRIPT_CHARS } from "@/lib/pem-neat/constants";
+import {
+  formatProspectDisplayName,
+  normalizeProspectNamesList,
+} from "@/lib/pem-neat/prospect-names";
 import type { SalespersonOption } from "@/lib/pem-neat/salespeople";
+import { ProspectNamesEditor } from "@/components/pem-neat/prospect-names-editor";
 
 export function PemNeatCreateClient({
   salespeople,
@@ -17,7 +22,7 @@ export function PemNeatCreateClient({
   defaultSalespersonId?: string;
 }) {
   const router = useRouter();
-  const [prospectName, setProspectName] = useState("");
+  const [prospectNames, setProspectNames] = useState<string[]>([""]);
   const [salespersonUserId, setSalespersonUserId] = useState(
     defaultSalespersonId && salespeople.some((s) => s.id === defaultSalespersonId)
       ? defaultSalespersonId
@@ -33,8 +38,9 @@ export function PemNeatCreateClient({
     setError(null);
 
     const compact = transcript.replace(/\s+/g, " ").trim();
-    if (!prospectName.trim()) {
-      setError("Prospect name is required.");
+    const names = normalizeProspectNamesList(prospectNames);
+    if (names.length === 0) {
+      setError("At least one prospect name is required.");
       return;
     }
     if (!salespersonUserId) {
@@ -54,7 +60,8 @@ export function PemNeatCreateClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prospectName: prospectName.trim(),
+          prospectNames: names,
+          prospectName: formatProspectDisplayName(names),
           salespersonUserId,
           meetingDate: meetingDate || null,
           transcript,
@@ -107,23 +114,11 @@ export function PemNeatCreateClient({
 
       <Card>
         <form onSubmit={onSubmit} className="space-y-5">
-          <div>
-            <label
-              htmlFor="prospect-name"
-              className="block text-sm font-medium text-[var(--acton-navy)]"
-            >
-              Prospect Name
-            </label>
-            <input
-              id="prospect-name"
-              value={prospectName}
-              onChange={(e) => setProspectName(e.target.value)}
-              placeholder="John Doe"
-              disabled={submitting}
-              className="mt-1 h-10 w-full rounded-md border border-[var(--acton-border)] bg-white px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--acton-navy)]"
-              required
-            />
-          </div>
+          <ProspectNamesEditor
+            names={prospectNames}
+            onChange={setProspectNames}
+            disabled={submitting}
+          />
 
           <div>
             <label

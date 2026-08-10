@@ -7,6 +7,7 @@ import { getPublicEnv } from "@/lib/env.public";
 import type { BaxterContextItem, BaxterHistoryMessage } from "@/lib/baxter-ai/types";
 import type { PemNeatStructuredResult } from "@/lib/pem-neat/schemas";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
+import { prospectNamesForMatching } from "@/lib/pem-neat/prospect-names";
 import type { PemNeatListItem, PemNeatRecord } from "@/lib/pem-neat/types";
 import {
   extractDiscriminatorHint,
@@ -142,6 +143,26 @@ export function scoreNameMatch(prospectName: string, query: string): number {
   if (overlap === qt.length) return 90;
   if (overlap > 0) return 40 + overlap * 10;
   return 0;
+}
+
+/** Best score of a query against any structured/split name on a PEM row. */
+export function scorePemRowNameMatch(
+  row: Pick<PemNeatListItem, "prospect_name" | "prospect_names">,
+  query: string,
+): number {
+  const names = prospectNamesForMatching({
+    prospectName: row.prospect_name,
+    prospectNames: row.prospect_names,
+  });
+  let best = 0;
+  for (const name of names) {
+    best = Math.max(
+      best,
+      scoreNameMatch(name, query),
+      scoreNameMatch(stripDiscriminator(name) || name, query),
+    );
+  }
+  return best;
 }
 
 function discriminatorMatches(prospectName: string, hint: string): boolean {
@@ -457,6 +478,7 @@ export async function retrievePemEvidence(input: {
         candidates.push({
           id: row.id,
           prospect_name: row.prospect_name,
+          prospect_names: row.prospect_names ?? [],
           salesperson_user_id: row.salesperson_user_id,
           salesperson_display_name: row.salesperson_display_name,
           meeting_date: row.meeting_date,
@@ -690,9 +712,8 @@ export async function retrievePemEvidence(input: {
       : [];
   let candidates = [...listed, ...staleListed].filter(
     (row) =>
-      scoreNameMatch(row.prospect_name, searchQuery) >= 40 ||
-      scoreNameMatch(stripDiscriminator(row.prospect_name), searchQuery) >= 40 ||
-      (nameQuery ? scoreNameMatch(row.prospect_name, nameQuery) >= 40 : false),
+      scorePemRowNameMatch(row, searchQuery) >= 40 ||
+      (nameQuery ? scorePemRowNameMatch(row, nameQuery) >= 40 : false),
   );
 
   // If full nameQuery includes discriminator, prefer exact-ish matches first
@@ -734,11 +755,15 @@ export async function retrievePemEvidence(input: {
     };
   }
 
-  // Exact full-name match wins (Robert Vertin Test 8)
+  // Exact full-name match wins (Robert Vertin Test 8) — also any individual prospect name.
   if (nameQuery) {
-    const exact = candidates.filter(
-      (c) => normalizeName(c.prospect_name) === normalizeName(nameQuery!),
-    );
+    const exact = candidates.filter((c) => {
+      const names = prospectNamesForMatching({
+        prospectName: c.prospect_name,
+        prospectNames: c.prospect_names,
+      });
+      return names.some((n) => normalizeName(n) === normalizeName(nameQuery!));
+    });
     if (exact.length === 1) {
       return loadAndAnswer({
         recordId: exact[0]!.id,

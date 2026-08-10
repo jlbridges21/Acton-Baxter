@@ -210,6 +210,7 @@ export function PemNeatResultClient({
       {canExportPdf ? (
         <PemNeatPrintHeader
           prospectName={item.prospect_name}
+          prospectNames={item.prospect_names}
           salespersonDisplayName={item.salesperson_display_name}
           meetingDate={item.meeting_date}
           meetingOutcome={item.meeting_outcome}
@@ -232,6 +233,11 @@ export function PemNeatResultClient({
         <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
             <h1 className="text-2xl font-bold text-[var(--acton-navy)]">{item.prospect_name}</h1>
+            {(item.prospect_names?.length ?? 0) > 1 ? (
+              <p className="text-sm text-[var(--acton-muted)]">
+                Homeowners: {item.prospect_names!.join(" · ")}
+              </p>
+            ) : null}
             <p className="text-sm text-[var(--acton-muted)]">Partnership Evaluation Meeting NEAT</p>
 
             <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">

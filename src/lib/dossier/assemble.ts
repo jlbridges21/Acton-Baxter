@@ -13,6 +13,7 @@ import {
 } from "@/lib/baxter-data/pem-neats/prospect-index";
 import { canAccessPemEvidence, pemNeatPath } from "@/lib/baxter-data/pem-neats/evidence";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
+import { prospectNamesForMatching } from "@/lib/pem-neat/prospect-names";
 import { listProjectSetupRuns, getProjectSetupSteps } from "@/lib/project-setup/store";
 import type { ProjectSetupRun } from "@/lib/project-setup/types";
 import { listFindings } from "@/lib/monitoring/findings";
@@ -66,6 +67,7 @@ function emptyGhl(
     ambiguous: false,
     clarificationMessage: null,
     error,
+    additionalMatchedContacts: [],
   };
 }
 
@@ -113,6 +115,7 @@ function mapGhlSection(graph: GhlEntityGraph): DossierGhlSection {
     ambiguous: false,
     clarificationMessage: null,
     error: null,
+    additionalMatchedContacts: [],
   };
 }
 
@@ -125,6 +128,7 @@ export type AssembleCustomerDossierDeps = {
   getPemById?: (id: string) => Promise<{
     id: string;
     prospect_name: string;
+    prospect_names?: string[];
     meeting_date: string | null;
     meeting_outcome: string | null;
     qualification: string | null;
@@ -158,6 +162,7 @@ export async function assembleCustomerDossier(
       return {
         id: row.id,
         prospect_name: row.prospect_name,
+        prospect_names: row.prospect_names,
         meeting_date: row.meeting_date,
         meeting_outcome: row.meeting_outcome,
         qualification: row.qualification,
@@ -168,12 +173,19 @@ export async function assembleCustomerDossier(
   let displayName: string | null = input.name?.trim() || null;
   let ghlContactId: string | null = input.contactId?.trim() || null;
   const pemNeatId = input.pemNeatId?.trim() || null;
+  let seededPemProspectNames: string[] = [];
 
   // Seed identity from an explicit PEM id when provided.
   if (pemNeatId && !displayName) {
     try {
       const pem = await getPemById(pemNeatId);
-      if (pem) displayName = pem.prospect_name;
+      if (pem) {
+        displayName = pem.prospect_name;
+        seededPemProspectNames = prospectNamesForMatching({
+          prospectName: pem.prospect_name,
+          prospectNames: pem.prospect_names,
+        });
+      }
     } catch {
       // PEM section will surface the error.
     }
@@ -191,6 +203,42 @@ export async function assembleCustomerDossier(
     ghl = mapGhlSection(graph);
     if (ghl.contactId) ghlContactId = ghl.contactId;
     if (ghl.contactName) displayName = ghl.contactName;
+
+    // Multi-prospect NEAT → try each individual name against GHL and surface extras.
+    const namesToTry =
+      seededPemProspectNames.length > 0
+        ? seededPemProspectNames
+        : prospectNamesForMatching({ prospectName: query });
+    if (namesToTry.length > 1) {
+      const seen = new Set<string>(ghl.contactId ? [ghl.contactId] : []);
+      const additional: DossierGhlSection["additionalMatchedContacts"] = [];
+      for (const name of namesToTry) {
+        try {
+          const extra = await resolveGhl(name, {
+            includeAppointments: false,
+            includeConversations: false,
+          });
+          const id = extra.contact?.id;
+          if (!id || seen.has(id) || extra.ambiguous) continue;
+          seen.add(id);
+          // If primary was empty, promote the first hit.
+          if (!ghl.contactId) {
+            ghl = mapGhlSection(extra);
+            ghlContactId = id;
+            if (ghl.contactName) displayName = ghl.contactName;
+          } else {
+            additional.push({
+              contactId: id,
+              contactName: extra.contact?.name ?? null,
+              matchedViaProspectName: name,
+            });
+          }
+        } catch {
+          // Independent — skip failed lookups.
+        }
+      }
+      ghl = { ...ghl, additionalMatchedContacts: additional };
+    }
   } catch (err) {
     ghl = emptyGhl(err instanceof Error ? err.message : "Unable to load GoHighLevel data");
   }
@@ -214,6 +262,7 @@ export async function assembleCustomerDossier(
           records.push({
             id: row.id,
             prospectName: row.prospect_name,
+            prospectNames: row.prospect_names,
             meetingDate: row.meeting_date,
             meetingOutcome: row.meeting_outcome,
             qualification: row.qualification,
@@ -265,6 +314,7 @@ export async function assembleCustomerDossier(
         synthetic.push({
           pemId: run.id,
           prospectName: snapName,
+          matchNames: [snapName],
           normalizedName: snapName.toLowerCase(),
           baseName: snapName,
           normalizedBase: snapName.toLowerCase(),
@@ -277,6 +327,7 @@ export async function assembleCustomerDossier(
         synthetic.push({
           pemId: `${run.id}:last`,
           prospectName: last,
+          matchNames: [last],
           normalizedName: last.toLowerCase(),
           baseName: last,
           normalizedBase: last.toLowerCase(),
@@ -396,6 +447,7 @@ async function enrichPemFromIndex(
       return {
         id: row.id,
         prospectName: row.prospect_name,
+        prospectNames: row.prospect_names,
         meetingDate: row.meeting_date,
         meetingOutcome: row.meeting_outcome,
         qualification: row.qualification,
@@ -410,6 +462,7 @@ async function enrichPemFromIndex(
   return {
     id: entry.pemId,
     prospectName: entry.prospectName,
+    prospectNames: entry.matchNames,
     meetingDate: entry.meetingDate,
     meetingOutcome: null,
     qualification: null,

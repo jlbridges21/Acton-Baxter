@@ -92,9 +92,16 @@ import {
   type PemGenerationTrace,
 } from "./trace";
 import { runDeterministicNeatChecks } from "./validate";
+import {
+  formatProspectDisplayName,
+  formatProspectPromptBlock,
+  normalizeProspectNamesList,
+} from "./prospect-names";
 
 export type GeneratePemNeatInput = {
   prospectName: string;
+  /** Individual homeowner names when available — preferred for prompts. */
+  prospectNames?: string[];
   advisorName: string;
   meetingDate?: string | null;
   transcript: string;
@@ -437,6 +444,12 @@ function applyIncompleteEndingAssessmentGuard(shell: PemNeatStructuredResult, in
  * Fact Ledger → Sales Intelligence → Assessment → Email → Handoff → Quality Review → (optional correction)
  */
 export async function generatePemNeat(input: GeneratePemNeatInput): Promise<GeneratePemNeatOutput> {
+  const prospectNames = normalizeProspectNamesList(
+    input.prospectNames?.length ? input.prospectNames : [input.prospectName],
+  );
+  const prospectDisplay = formatProspectDisplayName(prospectNames) || input.prospectName.trim();
+  const prospectPrompt = formatProspectPromptBlock(prospectNames);
+
   const started = Date.now();
   const generationId = randomUUID();
   const stage0 = stage0ValidateTranscript(input.transcript);
@@ -496,7 +509,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
     const result = normalizeCategoryLabels(
       parsePemNeatStructuredResult(
         buildMockPemNeatResult({
-          prospectName: input.prospectName,
+          prospectName: prospectDisplay,
           advisorName: input.advisorName,
           meetingDate: input.meetingDate,
         }),
@@ -531,7 +544,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
   let inputTokens = 0;
   let outputTokens = 0;
   const shell = emptyPemNeatShell({
-    prospectName: input.prospectName,
+    prospectName: prospectDisplay,
     advisorName: input.advisorName,
     meetingDate: input.meetingDate,
   });
@@ -561,7 +574,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
         diagnostics.stages.push("fact_ledger");
         try {
           const user = buildPemNeatUserPrompt({
-            prospectName: input.prospectName,
+            prospectName: prospectDisplay,
             advisorName: input.advisorName,
             meetingDate: input.meetingDate ?? null,
             transcript: chunk.text,
@@ -638,7 +651,7 @@ export async function generatePemNeat(input: GeneratePemNeatInput): Promise<Gene
 
 MERGE / RECONCILE overlapping Fact Ledger fragments chronologically.
 Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Return one Fact Ledger JSON.`,
-            user: `Prospect: ${input.prospectName}\nAdvisor: ${input.advisorName}\n\nFragments:\n${JSON.stringify(ledgerParts).slice(0, 100_000)}`,
+            user: `${prospectPrompt}\nAdvisor: ${input.advisorName}\n\nFragments:\n${JSON.stringify(ledgerParts).slice(0, 100_000)}`,
             maxTokens: STAGE_BUDGETS.fact_ledger_merge.tokens,
             reasoningEffort: STAGE_BUDGETS.fact_ledger_merge.effort,
           });
@@ -697,7 +710,7 @@ Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Retur
               "nextSteps",
             ]),
             user: buildPemNeatUserPrompt({
-              prospectName: input.prospectName,
+              prospectName: prospectDisplay,
               advisorName: input.advisorName,
               meetingDate: input.meetingDate ?? null,
               transcript: input.transcript.slice(0, FULL_TRANSCRIPT_CHAR_LIMIT),
@@ -772,7 +785,7 @@ Keep distinct budget meanings (ideal vs stretch). Deduplicate paraphrases. Retur
       const ledgerCounts = factLedgerSemanticCounts(ledger);
       diagnostics.validationIssues.push(`fact_ledger_counts: ${JSON.stringify(ledgerCounts)}`);
 
-      const siUser = `Prospect: ${input.prospectName}
+      const siUser = `${prospectPrompt}
 Advisor: ${input.advisorName}
 
 Budget candidates extracted from Fact Ledger (interpret; do not invent):
@@ -924,7 +937,7 @@ ${res.content.slice(0, 60_000)}`,
       try {
         const res = await callStageJson({
           system: buildAssessmentStagePrompt(),
-          user: `Prospect: ${input.prospectName}
+          user: `${prospectPrompt}
 Advisor: ${input.advisorName}
 TranscriptIncompleteHint: ${siIncomplete}
 
@@ -1053,7 +1066,7 @@ ${res.content.slice(0, 60_000)}`,
       try {
         const res = await callStageJson({
           system: buildEmailStagePrompt(),
-          user: `Prospect: ${input.prospectName}
+          user: `${prospectPrompt}
 Advisor: ${input.advisorName}
 
 Validated sales intelligence (customer-safe facts only):
@@ -1122,7 +1135,7 @@ ${JSON.stringify({
       try {
         const res = await callStageJson({
           system: buildHandoffStagePrompt(),
-          user: `Prospect: ${input.prospectName}
+          user: `${prospectPrompt}
 Advisor: ${input.advisorName}
 
 Fact Ledger:
@@ -1441,7 +1454,7 @@ ${JSON.stringify({
       },
       metadata: {
         ...result.metadata,
-        prospectName: input.prospectName,
+        prospectName: prospectDisplay,
         advisorName: input.advisorName,
         meetingDate: input.meetingDate ?? result.metadata.meetingDate ?? null,
       },

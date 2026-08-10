@@ -4,6 +4,8 @@ import type { BuildertrendFields, PemNeatStructuredResult } from "./schemas";
 export type PemNeatListItem = {
   id: string;
   prospect_name: string;
+  /** Structured individual prospect names (authoritative for matching). */
+  prospect_names: string[];
   salesperson_user_id: string | null;
   salesperson_display_name: string;
   meeting_date: string | null;
@@ -70,7 +72,10 @@ export type PemNeatGenerationRow = {
 };
 
 export type CreatePemNeatRecordInput = {
+  /** Display label; derived from prospectNames when omitted. */
   prospectName: string;
+  /** Structured individual names (preferred). */
+  prospectNames?: string[];
   salespersonUserId: string;
   salespersonDisplayName: string;
   meetingDate?: string | null;
@@ -80,6 +85,7 @@ export type CreatePemNeatRecordInput = {
 
 export type UpdatePemNeatSourceInput = {
   prospectName: string;
+  prospectNames?: string[];
   salespersonUserId: string;
   salespersonDisplayName: string;
   meetingDate?: string | null;

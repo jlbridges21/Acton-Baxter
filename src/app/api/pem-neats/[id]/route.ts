@@ -2,6 +2,7 @@ import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { AppError, NotFoundError } from "@/lib/errors";
 import { updatePemNeatInputSchema } from "@/lib/pem-neat/schemas";
+import { resolveProspectNamesInput } from "@/lib/pem-neat/prospect-names";
 import { resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
 
@@ -45,8 +46,14 @@ export async function PATCH(request: Request, context: RouteContext) {
       }
     }
 
-    const result = await getPemNeatStore().updateSource(id, {
+    const { prospectName, prospectNames } = resolveProspectNamesInput({
       prospectName: parsed.prospectName,
+      prospectNames: parsed.prospectNames,
+    });
+
+    const result = await getPemNeatStore().updateSource(id, {
+      prospectName,
+      prospectNames,
       salespersonUserId: parsed.salespersonUserId,
       salespersonDisplayName: displayName,
       meetingDate: parsed.meetingDate ?? null,

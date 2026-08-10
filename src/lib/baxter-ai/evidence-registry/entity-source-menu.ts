@@ -121,6 +121,7 @@ export async function probeEntitySourceAvailability(
         ? (await deps.listPemIndex()).map((e) => ({
             pemId: e.pemId,
             prospectName: e.prospectName,
+            matchNames: [e.prospectName, e.baseName].filter(Boolean),
             normalizedName: e.normalizedName,
             baseName: e.baseName,
             normalizedBase: e.baseName.toLowerCase(),

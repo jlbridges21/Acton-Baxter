@@ -3,6 +3,7 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { RateLimitError, AppError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createPemNeatInputSchema } from "@/lib/pem-neat/schemas";
+import { resolveProspectNamesInput } from "@/lib/pem-neat/prospect-names";
 import { getPemNeatStore } from "@/lib/pem-neat/store";
 import { startPemNeatGeneration } from "@/lib/pem-neat/run-generation";
 import { resolveSalespersonDisplayName } from "@/lib/pem-neat/salespeople";
@@ -35,6 +36,10 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const parsed = createPemNeatInputSchema.parse(body);
+    const { prospectName, prospectNames } = resolveProspectNamesInput({
+      prospectName: parsed.prospectName,
+      prospectNames: parsed.prospectNames,
+    });
     const salesperson = await resolveSalespersonDisplayName(parsed.salespersonUserId);
     if (!salesperson) {
       throw new AppError("Select a valid salesperson from the Sales department", {
@@ -45,7 +50,8 @@ export async function POST(request: Request) {
 
     const store = getPemNeatStore();
     const record = await store.create({
-      prospectName: parsed.prospectName,
+      prospectName,
+      prospectNames,
       salespersonUserId: parsed.salespersonUserId,
       salespersonDisplayName: salesperson.displayName,
       meetingDate: parsed.meetingDate ?? null,

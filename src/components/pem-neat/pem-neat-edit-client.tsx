@@ -7,8 +7,14 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { MIN_TRANSCRIPT_CHARS } from "@/lib/pem-neat/constants";
+import {
+  formatProspectDisplayName,
+  normalizeProspectNamesList,
+  resolveProspectNamesInput,
+} from "@/lib/pem-neat/prospect-names";
 import type { SalespersonOption } from "@/lib/pem-neat/salespeople";
 import type { PemNeatRecord } from "@/lib/pem-neat/types";
+import { ProspectNamesEditor } from "@/components/pem-neat/prospect-names-editor";
 
 export function PemNeatEditClient({
   item,
@@ -18,7 +24,13 @@ export function PemNeatEditClient({
   salespeople: SalespersonOption[];
 }) {
   const router = useRouter();
-  const [prospectName, setProspectName] = useState(item.prospect_name);
+  const initialNames = resolveProspectNamesInput({
+    prospectName: item.prospect_name,
+    prospectNames: item.prospect_names,
+  }).prospectNames;
+  const [prospectNames, setProspectNames] = useState<string[]>(
+    initialNames.length > 0 ? initialNames : [item.prospect_name],
+  );
   const [salespersonUserId, setSalespersonUserId] = useState(
     item.salesperson_user_id ?? salespeople[0]?.id ?? "",
   );
@@ -35,8 +47,9 @@ export function PemNeatEditClient({
     setSavedBanner(null);
 
     const compact = transcript.replace(/\s+/g, " ").trim();
-    if (!prospectName.trim()) {
-      setError("Prospect name is required.");
+    const names = normalizeProspectNamesList(prospectNames);
+    if (names.length === 0) {
+      setError("At least one prospect name is required.");
       return;
     }
     if (!salespersonUserId) {
@@ -56,7 +69,8 @@ export function PemNeatEditClient({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prospectName: prospectName.trim(),
+          prospectNames: names,
+          prospectName: formatProspectDisplayName(names),
           salespersonUserId,
           meetingDate: meetingDate || null,
           transcript,
@@ -145,22 +159,11 @@ export function PemNeatEditClient({
 
       <Card>
         <form onSubmit={onSave} className="space-y-5">
-          <div>
-            <label
-              htmlFor="edit-prospect-name"
-              className="block text-sm font-medium text-[var(--acton-navy)]"
-            >
-              Prospect Name
-            </label>
-            <input
-              id="edit-prospect-name"
-              value={prospectName}
-              onChange={(e) => setProspectName(e.target.value)}
-              className="mt-1 h-10 w-full rounded-md border border-[var(--acton-border)] px-3 text-sm"
-              required
-              disabled={saving || regenerating || savedBanner === "transcript"}
-            />
-          </div>
+          <ProspectNamesEditor
+            names={prospectNames}
+            onChange={setProspectNames}
+            disabled={saving || regenerating || savedBanner === "transcript"}
+          />
 
           <div>
             <label

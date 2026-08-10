@@ -39,6 +39,7 @@ function dossier(overrides?: Partial<CustomerDossier["ghl"]>): CustomerDossier {
       ambiguous: false,
       clarificationMessage: null,
       error: null,
+      additionalMatchedContacts: [],
       ...overrides,
     },
     pemNeats: { status: "empty", records: [], error: null },

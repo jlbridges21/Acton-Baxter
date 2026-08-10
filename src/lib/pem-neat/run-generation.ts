@@ -86,6 +86,7 @@ export async function runPemNeatGenerationJob(pemNeatId: string): Promise<void> 
   try {
     const generated = await generatePemNeat({
       prospectName: existing.prospect_name,
+      prospectNames: existing.prospect_names,
       advisorName: existing.salesperson_display_name,
       meetingDate: existing.meeting_date,
       transcript: existing.transcript,

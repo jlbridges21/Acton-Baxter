@@ -5,11 +5,15 @@
 import "server-only";
 
 import { getPemNeatStore } from "@/lib/pem-neat/store";
+import { prospectNamesForMatching } from "@/lib/pem-neat/prospect-names";
 import type { PemNeatListItem } from "@/lib/pem-neat/types";
 
 export type PemProspectIndexEntry = {
   pemId: string;
+  /** Display label (joined names). */
   prospectName: string;
+  /** Individual names used for matching (structured + query-time split of display). */
+  matchNames: string[];
   normalizedName: string;
   baseName: string;
   normalizedBase: string;
@@ -62,11 +66,33 @@ function scoreNameMatch(prospectName: string, query: string): number {
   return 0;
 }
 
+function bestScoreAgainstNames(names: string[], query: string): number {
+  const q = query.trim();
+  if (!q) return 0;
+  const strippedQ = stripDiscriminator(q) || q;
+  let best = 0;
+  for (const name of names) {
+    best = Math.max(
+      best,
+      scoreNameMatch(name, q),
+      scoreNameMatch(stripDiscriminator(name) || name, q),
+      scoreNameMatch(name, strippedQ),
+    );
+  }
+  return best;
+}
+
 export function toProspectIndexEntry(row: PemNeatListItem): PemProspectIndexEntry {
-  const base = stripDiscriminator(row.prospect_name) || row.prospect_name;
+  const matchNames = prospectNamesForMatching({
+    prospectName: row.prospect_name,
+    prospectNames: row.prospect_names,
+  });
+  const primary = matchNames[0] ?? row.prospect_name;
+  const base = stripDiscriminator(primary) || primary;
   return {
     pemId: row.id,
     prospectName: row.prospect_name,
+    matchNames,
     normalizedName: normalizeName(row.prospect_name),
     baseName: base,
     normalizedBase: normalizeName(base),
@@ -100,6 +126,7 @@ export async function buildPemProspectIndex(options?: {
 /**
  * Match a candidate person name against the saved PEM prospect index.
  * Returns confident matches only — rejects generic phrases.
+ * Scores against ANY individual name on the NEAT (structured list + display split).
  */
 export function matchProspectInIndex(
   candidateName: string | null | undefined,
@@ -111,11 +138,11 @@ export function matchProspectInIndex(
 
   const scored: PemProspectMatch[] = [];
   for (const entry of index) {
-    const score = Math.max(
-      scoreNameMatch(entry.prospectName, q),
-      scoreNameMatch(entry.baseName, q),
-      scoreNameMatch(entry.prospectName, stripDiscriminator(q) || q),
-    );
+    const names =
+      entry.matchNames?.length > 0
+        ? entry.matchNames
+        : prospectNamesForMatching({ prospectName: entry.prospectName });
+    const score = bestScoreAgainstNames(names, q);
     if (score >= threshold) {
       scored.push({ entry, score });
     }

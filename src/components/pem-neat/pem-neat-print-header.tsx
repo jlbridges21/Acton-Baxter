@@ -14,6 +14,7 @@ import { formatDate } from "@/lib/utils";
  */
 export function PemNeatPrintHeader({
   prospectName,
+  prospectNames,
   salespersonDisplayName,
   meetingDate,
   meetingOutcome,
@@ -24,6 +25,7 @@ export function PemNeatPrintHeader({
   logoAlt = "Acton ADU logo",
 }: {
   prospectName: string;
+  prospectNames?: string[];
   salespersonDisplayName: string | null;
   meetingDate: string | null;
   meetingOutcome: string | null;
@@ -34,6 +36,8 @@ export function PemNeatPrintHeader({
   logoAlt?: string;
 }) {
   const exportedOn = formatDate(new Date().toISOString());
+  const homeowners =
+    (prospectNames?.length ?? 0) > 1 ? prospectNames!.filter((n) => n.trim()) : null;
 
   return (
     <section
@@ -60,6 +64,11 @@ export function PemNeatPrintHeader({
             </p>
             <p className="mt-0.5 text-xs text-[var(--acton-muted)]">{companyName}</p>
             <h1 className="mt-1 text-2xl font-bold text-[var(--acton-navy)]">{prospectName}</h1>
+            {homeowners ? (
+              <p className="mt-1 text-sm text-[var(--acton-muted)]">
+                Homeowners: {homeowners.join(" · ")}
+              </p>
+            ) : null}
           </div>
         </div>
         <p className="rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-2 py-1 text-[11px] font-semibold tracking-wide text-[var(--acton-navy)] uppercase">

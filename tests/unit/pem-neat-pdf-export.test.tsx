@@ -33,6 +33,7 @@ function completedRecord(overrides: Partial<PemNeatRecord> = {}): PemNeatRecord 
   return {
     id: "11111111-1111-4111-8111-111111111111",
     prospect_name: "Alex Prospect",
+    prospect_names: ["Alex Prospect"],
     salesperson_user_id: "user-1",
     salesperson_display_name: "Jamie Advisor",
     meeting_date: "2026-03-15",

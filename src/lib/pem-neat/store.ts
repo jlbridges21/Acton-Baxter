@@ -4,6 +4,7 @@ import { AppError, NotFoundError } from "@/lib/errors";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { PEM_NEAT_STANDARD_VERSION } from "./constants";
 import { getPemNeatProviderTimeoutMs, pemNeatStoreError } from "./errors";
+import { resolveProspectNamesInput } from "./prospect-names";
 import type {
   CreatePemNeatRecordInput,
   PemNeatGenerationRow,
@@ -132,6 +133,7 @@ function toListItem(row: PemNeatRecord): PemNeatListItem {
   return {
     id: row.id,
     prospect_name: row.prospect_name,
+    prospect_names: row.prospect_names ?? [],
     salesperson_user_id: row.salesperson_user_id,
     salesperson_display_name: row.salesperson_display_name,
     meeting_date: row.meeting_date,
@@ -145,13 +147,39 @@ function toListItem(row: PemNeatRecord): PemNeatListItem {
   };
 }
 
+function resolveNamesFromInput(input: { prospectName: string; prospectNames?: string[] }): {
+  prospectName: string;
+  prospectNames: string[];
+} {
+  return resolveProspectNamesInput({
+    prospectName: input.prospectName,
+    prospectNames: input.prospectNames,
+  });
+}
+
+function namesChanged(existing: PemNeatRecord, nextNames: string[], nextDisplay: string): boolean {
+  if (existing.prospect_name.trim() !== nextDisplay.trim()) return true;
+  const prev = (existing.prospect_names ?? []).map((n) => n.trim().toLowerCase()).sort();
+  const next = nextNames.map((n) => n.trim().toLowerCase()).sort();
+  if (prev.length !== next.length) return true;
+  return prev.some((n, i) => n !== next[i]);
+}
+
+function rowMatchesQuery(row: PemNeatRecord, q: string): boolean {
+  if (row.prospect_name.toLowerCase().includes(q)) return true;
+  if (row.salesperson_display_name.toLowerCase().includes(q)) return true;
+  return (row.prospect_names ?? []).some((n) => n.toLowerCase().includes(q));
+}
+
 class MemoryPemNeatStore implements PemNeatStore {
   async create(input: CreatePemNeatRecordInput): Promise<PemNeatRecord> {
     const id = randomUUID();
     const timestamp = nowIso();
+    const { prospectName, prospectNames } = resolveNamesFromInput(input);
     const record: PemNeatRecord = {
       id,
-      prospect_name: input.prospectName.trim(),
+      prospect_name: prospectName,
+      prospect_names: prospectNames,
       salesperson_user_id: input.salespersonUserId,
       salesperson_display_name: input.salespersonDisplayName.trim(),
       meeting_date: input.meetingDate ?? null,
@@ -207,11 +235,7 @@ class MemoryPemNeatStore implements PemNeatStore {
     let rows = Array.from(getMemoryState().neats.values()).filter(isActive);
     const q = options?.query?.trim().toLowerCase();
     if (q) {
-      rows = rows.filter(
-        (r) =>
-          r.prospect_name.toLowerCase().includes(q) ||
-          r.salesperson_display_name.toLowerCase().includes(q),
-      );
+      rows = rows.filter((r) => rowMatchesQuery(r, q));
     }
     if (options?.salespersonUserId) {
       rows = rows.filter((r) => r.salesperson_user_id === options.salespersonUserId);
@@ -239,10 +263,11 @@ class MemoryPemNeatStore implements PemNeatStore {
       });
     }
 
+    const { prospectName, prospectNames } = resolveNamesFromInput(input);
     const nextTranscript = input.transcript;
     const nextHash = hashTranscript(nextTranscript);
     const transcriptChanged = nextHash !== existing.transcript_hash;
-    const prospectNameChanged = existing.prospect_name.trim() !== input.prospectName.trim();
+    const prospectNameChanged = namesChanged(existing, prospectNames, prospectName);
     const timestamp = nowIso();
 
     let status = existing.status;
@@ -262,7 +287,8 @@ class MemoryPemNeatStore implements PemNeatStore {
 
     const updated: PemNeatRecord = {
       ...existing,
-      prospect_name: input.prospectName.trim(),
+      prospect_name: prospectName,
+      prospect_names: prospectNames,
       salesperson_user_id: input.salespersonUserId,
       salesperson_display_name: input.salespersonDisplayName.trim(),
       meeting_date: input.meetingDate ?? null,
@@ -474,9 +500,19 @@ class MemoryPemNeatStore implements PemNeatStore {
 }
 
 function mapRow(row: Record<string, unknown>): PemNeatRecord {
+  const prospectName = String(row.prospect_name ?? "");
+  const rawNames = Array.isArray(row.prospect_names)
+    ? (row.prospect_names as unknown[]).map((n) => String(n ?? "").trim()).filter(Boolean)
+    : [];
+  const resolved = resolveProspectNamesInput({
+    prospectName,
+    prospectNames: rawNames.length > 0 ? rawNames : undefined,
+  });
   return {
     id: String(row.id),
-    prospect_name: String(row.prospect_name),
+    prospect_name: resolved.prospectName || prospectName,
+    prospect_names:
+      resolved.prospectNames.length > 0 ? resolved.prospectNames : [prospectName].filter(Boolean),
     salesperson_user_id: row.salesperson_user_id ? String(row.salesperson_user_id) : null,
     salesperson_display_name: String(row.salesperson_display_name),
     meeting_date: row.meeting_date ? String(row.meeting_date) : null,
@@ -550,10 +586,12 @@ function mapGenerationRow(row: Record<string, unknown>): PemNeatGenerationRow {
 class SupabasePemNeatStore implements PemNeatStore {
   async create(input: CreatePemNeatRecordInput): Promise<PemNeatRecord> {
     const supabase = createServiceClient();
+    const { prospectName, prospectNames } = resolveNamesFromInput(input);
     const { data, error } = await supabase
       .from("pem_neats")
       .insert({
-        prospect_name: input.prospectName.trim(),
+        prospect_name: prospectName,
+        prospect_names: prospectNames,
         salesperson_user_id: input.salespersonUserId,
         salesperson_display_name: input.salespersonDisplayName.trim(),
         meeting_date: input.meetingDate ?? null,
@@ -593,7 +631,7 @@ class SupabasePemNeatStore implements PemNeatStore {
     let query = supabase
       .from("pem_neats")
       .select(
-        "id, prospect_name, salesperson_user_id, salesperson_display_name, meeting_date, status, meeting_outcome, qualification, analysis_stale, created_at, updated_at, generated_at",
+        "id, prospect_name, prospect_names, salesperson_user_id, salesperson_display_name, meeting_date, status, meeting_outcome, qualification, analysis_stale, created_at, updated_at, generated_at",
       )
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -608,14 +646,23 @@ class SupabasePemNeatStore implements PemNeatStore {
     if (options?.outcome) {
       query = query.eq("meeting_outcome", options.outcome);
     }
-    if (options?.query?.trim()) {
-      const q = options.query.trim();
-      query = query.or(`prospect_name.ilike.%${q}%,salesperson_display_name.ilike.%${q}%`);
-    }
 
     const { data, error } = await query;
     if (error) throw pemNeatStoreError(error);
-    return (data ?? []).map((row) => toListItem(mapRow(row as Record<string, unknown>)));
+    let items = (data ?? []).map((row) => toListItem(mapRow(row as Record<string, unknown>)));
+    const q = options?.query?.trim().toLowerCase();
+    if (q) {
+      items = items.filter((item) =>
+        rowMatchesQuery(
+          {
+            ...item,
+            prospect_names: item.prospect_names,
+          } as PemNeatRecord,
+          q,
+        ),
+      );
+    }
+    return items;
   }
 
   async updateSource(
@@ -631,10 +678,11 @@ class SupabasePemNeatStore implements PemNeatStore {
       });
     }
 
+    const { prospectName, prospectNames } = resolveNamesFromInput(input);
     const nextTranscript = input.transcript;
     const nextHash = hashTranscript(nextTranscript);
     const transcriptChanged = nextHash !== existing.transcript_hash;
-    const prospectNameChanged = existing.prospect_name.trim() !== input.prospectName.trim();
+    const prospectNameChanged = namesChanged(existing, prospectNames, prospectName);
     const timestamp = nowIso();
 
     let status = existing.status;
@@ -656,7 +704,8 @@ class SupabasePemNeatStore implements PemNeatStore {
     const { data, error } = await supabase
       .from("pem_neats")
       .update({
-        prospect_name: input.prospectName.trim(),
+        prospect_name: prospectName,
+        prospect_names: prospectNames,
         salesperson_user_id: input.salespersonUserId,
         salesperson_display_name: input.salespersonDisplayName.trim(),
         meeting_date: input.meetingDate ?? null,

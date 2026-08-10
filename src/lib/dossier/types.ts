@@ -14,6 +14,13 @@ export type DossierGhlOpportunity = {
   status: string | null;
 };
 
+export type DossierGhlMatchedContact = {
+  contactId: string;
+  contactName: string | null;
+  /** Prospect name from the PEM that matched this GHL contact. */
+  matchedViaProspectName: string;
+};
+
 export type DossierGhlSection = {
   status: DossierSectionStatus;
   contactId: string | null;
@@ -36,11 +43,18 @@ export type DossierGhlSection = {
   ambiguous: boolean;
   clarificationMessage: string | null;
   error: string | null;
+  /**
+   * Additional GHL contacts matched via other prospect names on a multi-prospect NEAT.
+   * Primary contact remains contactId/contactName; these are surfaced, not silently dropped.
+   */
+  additionalMatchedContacts: DossierGhlMatchedContact[];
 };
 
 export type DossierPemRecord = {
   id: string;
   prospectName: string;
+  /** Individual prospect names when available. */
+  prospectNames?: string[];
   meetingDate: string | null;
   meetingOutcome: string | null;
   qualification: string | null;

@@ -164,6 +164,22 @@ function DossierView({ dossier }: { dossier: CustomerDossier }) {
                 {dossier.ghl.ownerName}
               </p>
             ) : null}
+            {(dossier.ghl.additionalMatchedContacts?.length ?? 0) > 0 ? (
+              <div data-testid="dossier-ghl-additional-contacts">
+                <p className="font-semibold">Also matched from other prospect names</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {dossier.ghl.additionalMatchedContacts.map((c) => (
+                    <li key={c.contactId}>
+                      {c.contactName ?? c.contactId}
+                      <span className="text-[var(--acton-muted)]">
+                        {" "}
+                        (via {c.matchedViaProspectName})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div>
               <p className="font-semibold">Opportunities</p>
               {dossier.ghl.opportunities.length === 0 ? (
@@ -205,6 +221,11 @@ function DossierView({ dossier }: { dossier: CustomerDossier }) {
                 >
                   {pem.prospectName}
                 </Link>
+                {(pem.prospectNames?.length ?? 0) > 1 ? (
+                  <p className="text-xs text-[var(--acton-muted)]">
+                    {pem.prospectNames!.join(" · ")}
+                  </p>
+                ) : null}
                 <p className="text-[var(--acton-muted)]">
                   Outcome: {pem.meetingOutcome ?? "n/a"} · Qualification:{" "}
                   {pem.qualification ?? "n/a"} · Status: {pem.status}

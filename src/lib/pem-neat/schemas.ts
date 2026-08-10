@@ -457,28 +457,42 @@ export type PemNeatStructuredResult = z.infer<typeof pemNeatStructuredResultSche
 export type BuildertrendFields = z.infer<typeof buildertrendFieldsSchema>;
 export type AssessmentCategory = z.infer<typeof assessmentCategorySchema>;
 
-export const createPemNeatInputSchema = z.object({
-  prospectName: z.string().trim().min(1, "Prospect name is required").max(300),
-  salespersonUserId: z.string().uuid("Select a valid salesperson"),
-  meetingDate: z
-    .preprocess(
-      emptyToNull,
-      z
-        .string()
-        .regex(/^\d{4}-\d{2}-\d{2}$/)
-        .nullable(),
-    )
-    .optional()
-    .nullable(),
-  transcript: z
-    .string()
-    .trim()
-    .min(1, "Transcript is required")
-    .refine((t) => t.replace(/\s+/g, " ").length >= 200, {
-      message:
-        "Transcript appears too short for a Partnership Evaluation Meeting. Paste the full meeting transcript.",
-    }),
-});
+export const createPemNeatInputSchema = z
+  .object({
+    /** Legacy single field — still accepted; derived from prospectNames when that is sent. */
+    prospectName: z.string().trim().max(300).optional(),
+    prospectNames: z.array(z.string().trim().max(200)).max(10).optional(),
+    salespersonUserId: z.string().uuid("Select a valid salesperson"),
+    meetingDate: z
+      .preprocess(
+        emptyToNull,
+        z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .nullable(),
+      )
+      .optional()
+      .nullable(),
+    transcript: z
+      .string()
+      .trim()
+      .min(1, "Transcript is required")
+      .refine((t) => t.replace(/\s+/g, " ").length >= 200, {
+        message:
+          "Transcript appears too short for a Partnership Evaluation Meeting. Paste the full meeting transcript.",
+      }),
+  })
+  .superRefine((val, ctx) => {
+    const names = (val.prospectNames ?? []).map((n) => n.trim()).filter(Boolean);
+    const single = (val.prospectName ?? "").trim();
+    if (names.length === 0 && !single) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["prospectNames"],
+        message: "At least one prospect name is required",
+      });
+    }
+  });
 
 export type CreatePemNeatInput = z.infer<typeof createPemNeatInputSchema>;
 

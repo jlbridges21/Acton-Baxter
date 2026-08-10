@@ -51,6 +51,7 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
     return initialItems.filter(
       (item) =>
         item.prospect_name.toLowerCase().includes(q) ||
+        (item.prospect_names ?? []).some((n) => n.toLowerCase().includes(q)) ||
         item.salesperson_display_name.toLowerCase().includes(q),
     );
   }, [initialItems, query]);
@@ -157,7 +158,14 @@ export function PemNeatLibraryClient({ initialItems }: { initialItems: PemNeatLi
             <tbody className="divide-y divide-[var(--acton-border)]">
               {items.map((item) => (
                 <tr key={item.id} className="text-[var(--acton-navy)]">
-                  <td className="px-4 py-3 font-medium">{item.prospect_name}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <div>{item.prospect_name}</div>
+                    {(item.prospect_names?.length ?? 0) > 1 ? (
+                      <div className="mt-0.5 text-xs font-normal text-[var(--acton-muted)]">
+                        {item.prospect_names!.join(" · ")}
+                      </div>
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3">
                     {formatHumanDisplayName(item.salesperson_display_name)}
                   </td>

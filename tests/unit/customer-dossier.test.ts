@@ -74,6 +74,7 @@ function pemIndex(): PemProspectIndexEntry[] {
     {
       pemId: "pem-1",
       prospectName: "Jane Smith",
+      matchNames: ["Jane Smith"],
       normalizedName: "jane smith",
       baseName: "Jane Smith",
       normalizedBase: "jane smith",
