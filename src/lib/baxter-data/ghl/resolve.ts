@@ -20,6 +20,7 @@ import {
   extractProjectReferenceName,
   resolveUniqueProjectSetupByName,
 } from "@/lib/dossier/project-setup-name-resolve";
+import { resolveCustomerNameFromProjectRegistry } from "@/lib/baxter-ai/evidence-registry/sources/project-registry";
 
 export type EntityResolutionResult<T> = {
   resolved: boolean;
@@ -93,7 +94,42 @@ export async function resolveContact(input: {
       }
     }
 
-    // Project Setup linkage before fuzzy name search ("the Yeh project" → linked contact).
+    // Master Project Log → customer name before fuzzy surname search.
+    // Covers projects that never went through Baxter Project Setup.
+    const registryBridge = await resolveCustomerNameFromProjectRegistry(
+      input.question?.trim() || input.name || "",
+    ).catch(() => null);
+    if (registryBridge?.customerName) {
+      const matches = await findContactsFuzzy(registryBridge.customerName, { limit: 8 });
+      const exact = matches.filter(
+        (m) =>
+          m.matchedOn.includes("name_exact") ||
+          (m.matchedOn.includes("firstName_exact") && m.matchedOn.includes("lastName_exact")) ||
+          m.confidence === "high",
+      );
+      const pick =
+        exact.length === 1
+          ? exact[0]!.contact
+          : matches.length === 1
+            ? matches[0]!.contact
+            : (exact[0]?.contact ?? null);
+      if (pick) {
+        return {
+          resolved: true,
+          entity: pick,
+          ambiguous: false,
+          notFound: false,
+          diagnostics: {
+            searchAttempted: true,
+            matchCount: matches.length,
+            selectedContactId: pick.id,
+            selectionReason: "project_registry_bridge",
+          },
+        };
+      }
+    }
+
+    // Project Setup linkage (Drive/channel runs) before fuzzy name search.
     const projectName =
       extractProjectReferenceName(input.question ?? "") ||
       (input.question && /\bproject\b/i.test(input.question) && input.name

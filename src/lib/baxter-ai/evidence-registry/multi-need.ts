@@ -100,6 +100,7 @@ function sourceLabelForKey(key: EvidenceSourceKey | "slack" | "knowledge" | "non
   if (key === "ghl") return "GoHighLevel";
   if (key === "rulebook") return "Process Rulebook";
   if (key === "customer_dossier") return "Customer Center";
+  if (key === "project_registry") return "Master Project Log";
   if (key === "slack") return "Slack";
   if (key === "knowledge") return "Knowledge Base";
   return "sources";

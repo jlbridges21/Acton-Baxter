@@ -21,6 +21,7 @@ import { rulebookEvidenceSource } from "./sources/rulebook";
 import { pemEvidenceSource } from "./sources/pem";
 import { pemAggregateEvidenceSource } from "./sources/pem-aggregate";
 import { dossierEvidenceSource } from "./sources/dossier";
+import { projectRegistryEvidenceSource } from "./sources/project-registry";
 import {
   classifyQuestionSemantically,
   shouldOfferEntitySourceMenu,
@@ -44,6 +45,7 @@ import type {
 
 const DEFAULT_SOURCES: EvidenceSource[] = [
   pemAggregateEvidenceSource,
+  projectRegistryEvidenceSource,
   ghlEvidenceSource,
   pemEvidenceSource,
   rulebookEvidenceSource,
@@ -59,6 +61,7 @@ function formatSourceAgnosticNotFound(tried: EvidenceSourceKey[], name: string |
     pem_aggregate: "PEM NEAT records",
     rulebook: "the Process Rulebook",
     customer_dossier: "the customer center",
+    project_registry: "the Master Project Log",
   };
   const unique = [...new Set(tried)];
   const named = name?.trim() || "that";
@@ -97,7 +100,9 @@ function toEarlyFromResult(
           ? "pem-neats"
           : source === "customer_dossier"
             ? "customer-dossier"
-            : "rulebook",
+            : source === "project_registry"
+              ? "project-registry"
+              : "rulebook",
     modelName:
       kind === "clarification"
         ? "entity-resolution"
@@ -109,7 +114,9 @@ function toEarlyFromResult(
               ? "deterministic-structured"
               : source === "customer_dossier"
                 ? "deterministic-dossier"
-                : "rulebook-evidence",
+                : source === "project_registry"
+                  ? "deterministic-project-log"
+                  : "rulebook-evidence",
     winningSource: source,
   };
 }

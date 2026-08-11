@@ -874,7 +874,16 @@ export async function retrieveGhlLiveEvidence(
     effectiveIntent.entities.contactPhone;
   let resolvedContactId = plan.entityContactId;
 
-  // "the Yeh project" → Project Setup linked contact before fuzzy surname search.
+  // "the Yeh project" → Master Project Log / Project Setup linked contact before fuzzy surname search.
+  if (!resolvedContactId) {
+    const { resolveCustomerNameFromProjectRegistry } =
+      await import("@/lib/baxter-ai/evidence-registry/sources/project-registry");
+    const bridged = await resolveCustomerNameFromProjectRegistry(question).catch(() => null);
+    if (bridged?.customerName) {
+      resolvedName = bridged.customerName;
+    }
+  }
+
   if (!resolvedContactId) {
     const { extractProjectReferenceName, resolveUniqueProjectSetupByName } =
       await import("@/lib/dossier/project-setup-name-resolve");

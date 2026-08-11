@@ -124,5 +124,6 @@ export function preferredSourceForFollowUp(input: {
 export function sourceKeyToPreferred(key: EvidenceSourceKey): PreferredEntitySource | null {
   if (key === "ghl") return "ghl";
   if (key === "pem_neat" || key === "pem_aggregate") return "pem";
+  if (key === "project_registry") return "ghl"; // project log bridges to CRM identity
   return null;
 }

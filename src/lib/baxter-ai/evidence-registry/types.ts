@@ -8,7 +8,7 @@ import type { EntityResolutionResult } from "./entity-resolution";
 import type { PreferredEntitySource } from "./conversation-arbitration";
 
 export type EvidenceSourceKey =
-  "ghl" | "rulebook" | "pem_neat" | "pem_aggregate" | "customer_dossier";
+  "ghl" | "rulebook" | "pem_neat" | "pem_aggregate" | "customer_dossier" | "project_registry";
 
 export type EvidenceSourceHandleInput = {
   question: string;
