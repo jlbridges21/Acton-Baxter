@@ -326,6 +326,76 @@ async function slackReactionRequest(
   }
 }
 
+export type SlackPublishHomeViewInput = {
+  userId: string;
+  view: { type: "home"; blocks: unknown[] };
+};
+
+/**
+ * Publish a Home tab view via views.publish.
+ * Soft helper — never throws. Callers must check `result.ok` and log `result.error`.
+ * Slack returns HTTP 200 with `{ ok: false, error }` on most failures.
+ */
+export async function publishSlackHomeView(
+  input: SlackPublishHomeViewInput,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const env = getEnv();
+    if (!env.SLACK_BOT_TOKEN) {
+      return { ok: false, error: "missing_bot_token" };
+    }
+    if (!input.userId) {
+      return { ok: false, error: "missing_user_id" };
+    }
+
+    const maxAttempts = 3;
+    let lastError: string | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const response = await fetch("https://slack.com/api/views.publish", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
+          "Content-Type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          user_id: input.userId,
+          view: input.view,
+        }),
+      });
+
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const retryAfter = retryAfterHeader ? Number(retryAfterHeader) : null;
+      const data = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+      } | null;
+
+      // Slack often returns HTTP 200 with ok:false — check the body, not status alone.
+      if (data?.ok) {
+        return { ok: true };
+      }
+
+      lastError = data?.error ?? (response.ok ? "request_failed" : `http_${response.status}`);
+
+      if ((response.status === 429 || lastError === "ratelimited") && attempt < maxAttempts) {
+        const waitSeconds = Math.min(
+          Math.max(Number.isFinite(retryAfter) ? retryAfter! : 2, 1),
+          10,
+        );
+        await sleep(waitSeconds * 1000);
+        continue;
+      }
+
+      return { ok: false, error: lastError };
+    }
+
+    return { ok: false, error: lastError ?? "request_failed" };
+  } catch {
+    return { ok: false, error: "views_publish_exception" };
+  }
+}
+
 export async function authTestSlack(): Promise<{
   ok: boolean;
   error?: string;

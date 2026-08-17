@@ -58,6 +58,8 @@ export type SlackIncomingEvent = {
   event_ts?: string;
   /** Present on AI-enabled app message / app_mention events for Real-time Search. */
   action_token?: string;
+  /** App Home: `home` or `messages`. */
+  tab?: string;
 };
 
 export type SlackBaxterReplyPayload = {

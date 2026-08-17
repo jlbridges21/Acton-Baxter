@@ -5,6 +5,9 @@ display_information:
     procedures, processes, and general employee assistance.
   background_color: "#0B1F33"
 features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
   bot_user:
     display_name: Baxter
     always_online: true
@@ -94,6 +97,8 @@ settings:
     bot_events:
       - app_mention
       - message.im
+      # Home tab publish (views.publish) — requires Home Tab enabled under App Home
+      - app_home_opened
       # Thumbs feedback on Baxter Q&A replies (+ monitoring already handles finding reactions)
       - reaction_added
       - reaction_removed

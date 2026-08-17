@@ -4,6 +4,7 @@ import { AppError } from "@/lib/errors";
 import { processJob } from "@/lib/jobs/process";
 import { claimJobById } from "@/lib/jobs/queue";
 import { acceptBaxterSlackEvent, type SlackIncomingEvent } from "@/lib/slack/baxter-events";
+import { isAppHomeOpenedEvent } from "@/lib/slack/app-home-view";
 import { getSlackRuntimeConfig, isSlackTeamAllowed } from "@/lib/slack/config";
 import { SLACK_ERROR_CODES } from "@/lib/slack/errors";
 import { verifySlackRequest, SlackSignatureError } from "@/lib/slack/verify";
@@ -71,13 +72,33 @@ export async function POST(request: Request) {
     }
 
     if (payload.type === "event_callback" && payload.event) {
+      const event = payload.event;
+
+      // App Home — ack immediately; publish in after() so the Events API stays under 3s.
+      // Not Q&A: do not enqueue slack_baxter_reply or claim a receipt.
+      if (event.type === "app_home_opened") {
+        if (isAppHomeOpenedEvent(event)) {
+          after(async () => {
+            try {
+              const { handleAppHomeOpened } = await import("@/lib/slack/app-home");
+              await handleAppHomeOpened(event, teamId);
+            } catch (error) {
+              console.error("[slack.app_home.unhandled]", {
+                teamId,
+                slackUserId: event.user ?? null,
+                message: error instanceof Error ? error.message : "unknown",
+              });
+            }
+          });
+        }
+        return jsonOk({ ok: true });
+      }
+
       const eventId = payload.event_id || payload.event.event_ts || payload.event.ts || null;
       if (!eventId) {
         return jsonOk({ ok: true, ignored: true, code: SLACK_ERROR_CODES.EVENT_UNSUPPORTED });
       }
 
-      // Check if this is a reaction event for a monitoring finding
-      const event = payload.event;
       const isReactionEvent = event.type?.startsWith("reaction_");
 
       if (isReactionEvent) {

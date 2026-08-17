@@ -62,21 +62,22 @@ Before you begin, confirm all of the following:
 
 The canonical manifest lives at `docs/slack-app-manifest.yaml`. After creating the app, confirm these values match Slack app settings:
 
-| Setting                 | Value                                                             |
-| ----------------------- | ----------------------------------------------------------------- |
-| App name                | Baxter                                                            |
-| Slash commands          | `/property`, `/clear`, `/help`, `/recall`, `/pem`, `/new-project` |
-| Events request URL      | `https://acton-baxter.vercel.app/api/slack/events`                |
-| `/property` request URL | `https://acton-baxter.vercel.app/api/slack/commands/property`     |
-| `/clear` request URL    | `https://acton-baxter.vercel.app/api/slack/commands/clear`        |
-| `/help` request URL     | `https://acton-baxter.vercel.app/api/slack/commands/help`         |
-| `/recall` request URL   | `https://acton-baxter.vercel.app/api/slack/commands/recall`       |
-| `/pem` request URL      | `https://acton-baxter.vercel.app/api/slack/commands/pem`          |
-| `/new-project` URL      | `https://acton-baxter.vercel.app/api/slack/commands/new-project`  |
-| Interactivity URL       | `https://acton-baxter.vercel.app/api/slack/interactions`          |
-| Bot events              | `app_mention`, `message.im`                                       |
-| Socket Mode             | **Disabled**                                                      |
-| Interactivity           | **Enabled** (required for `/new-project` modals)                  |
+| Setting                 | Value                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| App name                | Baxter                                                                               |
+| Slash commands          | `/property`, `/clear`, `/help`, `/recall`, `/pem`, `/new-project`                    |
+| Events request URL      | `https://acton-baxter.vercel.app/api/slack/events`                                   |
+| `/property` request URL | `https://acton-baxter.vercel.app/api/slack/commands/property`                        |
+| `/clear` request URL    | `https://acton-baxter.vercel.app/api/slack/commands/clear`                           |
+| `/help` request URL     | `https://acton-baxter.vercel.app/api/slack/commands/help`                            |
+| `/recall` request URL   | `https://acton-baxter.vercel.app/api/slack/commands/recall`                          |
+| `/pem` request URL      | `https://acton-baxter.vercel.app/api/slack/commands/pem`                             |
+| `/new-project` URL      | `https://acton-baxter.vercel.app/api/slack/commands/new-project`                     |
+| Interactivity URL       | `https://acton-baxter.vercel.app/api/slack/interactions`                             |
+| Bot events              | `app_mention`, `message.im`, `app_home_opened`, `reaction_added`, `reaction_removed` |
+| App Home                | **Home Tab enabled** (Messages Tab can stay on)                                      |
+| Socket Mode             | **Disabled**                                                                         |
+| Interactivity           | **Enabled** (required for `/new-project` modals)                                     |
 
 If you change scopes or events later, update the manifest file, re-import it, and **reinstall** the app (section 10).
 
@@ -260,8 +261,21 @@ The route `/admin/slack` remains available.
 | ------------------ | ----------------------------------------------------------------- |
 | `app_mention`      | `@Baxter` in an allowed channel → reply **in a thread**           |
 | `message.im`       | DM to Baxter → reply in the DM                                    |
+| `app_home_opened`  | User opens Baxter’s Home tab → publish a fresh Home view          |
 | `reaction_added`   | 👍/👎 on a Baxter Q&A reply → feedback (also monitoring findings) |
 | `reaction_removed` | Removing 👍/👎 clears that user’s feedback row for that answer    |
+
+### App Home (Home Tab)
+
+Slack’s default Home placeholder (“This is still a work in progress… Learn More”) is shown when **Home Tab** is enabled but the app has not published a view. Baxter replaces it via `views.publish` on `app_home_opened`.
+
+**Manual steps at api.slack.com** (these cannot be done from this repo):
+
+1. **App Home → Show Tabs → Home Tab** — turn **On**. Leave Messages Tab as-is.
+2. **Event Subscriptions → Subscribe to bot events** — add `app_home_opened`. Save.
+3. Slack may ask you to **reinstall** after adding the event (same class of miss as the Interactivity toggle and `reaction_added` subscription). No extra OAuth scope is required for `views.publish` beyond the existing bot token.
+
+After that, opening Baxter → Home shows: what Baxter is, slash commands (from the registered catalog), current capabilities (from the capability registry), this user’s Slack Search connection status with a Connect link if needed, and a link to the web app.
 
 > After adding `reaction_added` / `reaction_removed` under **Event Subscriptions → Subscribe to bot events**, save the page. Slack may ask you to reinstall the app for the new event subscription (scopes `reactions:read` / `reactions:write` are already granted on the live app — this reinstall is for events, not new OAuth scopes).
 
