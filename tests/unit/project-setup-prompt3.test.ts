@@ -175,10 +175,116 @@ describe("kickoff message", () => {
       folderLink: "https://drive.google.com/folder",
       charterLink: "https://docs.google.com/charter",
     });
-    expect(text).toContain("New project L01-26020 — Wright");
-    expect(text).toContain("<https://drive.google.com/folder|L01-26020 Wright>");
-    expect(text).toContain("<https://docs.google.com/charter|Wright Project Charter>");
-    expect(text).toContain("Setting up BuilderTrend now.");
+    expect(text).toBe(
+      [
+        "New project L01-26020 — Wright",
+        "• G-Drive: <https://drive.google.com/folder|L01-26020 Wright>",
+        "• Project Charter: <https://docs.google.com/charter|Wright Project Charter>",
+        "• Setting up BuilderTrend now.",
+      ].join("\n"),
+    );
+  });
+
+  it("appends a full address on the headline", () => {
+    const text = buildKickoffMessageText({
+      projectNumber: "L01-26024",
+      projectLastName: "Hitchcock",
+      folderName: "L01-26024 Hitchcock",
+      charterName: "Hitchcock Project Charter",
+      folderLink: null,
+      charterLink: null,
+      address: "1457 Chilco Street, Menlo Park, CA 95027",
+      city: "Menlo Park",
+      state: "CA",
+      postalCode: "95027",
+    });
+    expect(text).toBe(
+      [
+        "New project L01-26024 — Hitchcock - 1457 Chilco Street, Menlo Park, CA 95027",
+        "• G-Drive: L01-26024 Hitchcock",
+        "• Project Charter: Hitchcock Project Charter",
+        "• Setting up BuilderTrend now.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps the legacy headline when no address is on file", () => {
+    const text = buildKickoffMessageText({
+      projectNumber: "L01-26024",
+      projectLastName: "Hitchcock",
+      folderName: "L01-26024 Hitchcock",
+      charterName: "Hitchcock Project Charter",
+      folderLink: null,
+      charterLink: null,
+      address: null,
+      city: null,
+      state: null,
+      postalCode: null,
+    });
+    expect(text.split("\n")[0]).toBe("New project L01-26024 — Hitchcock");
+    expect(text).not.toMatch(/New project L01-26024 — Hitchcock -/);
+  });
+
+  it("formats partial addresses without punctuation artifacts and defaults state to CA", () => {
+    expect(
+      buildKickoffMessageText({
+        projectNumber: "L01-26024",
+        projectLastName: "Hitchcock",
+        folderName: null,
+        charterName: null,
+        folderLink: null,
+        charterLink: null,
+        address: null,
+        city: "Menlo Park",
+        state: "CA",
+        postalCode: null,
+      }).split("\n")[0],
+    ).toBe("New project L01-26024 — Hitchcock - Menlo Park, CA");
+
+    expect(
+      buildKickoffMessageText({
+        projectNumber: "L01-26024",
+        projectLastName: "Hitchcock",
+        folderName: null,
+        charterName: null,
+        folderLink: null,
+        charterLink: null,
+        address: "1457 Chilco Street",
+        city: "Menlo Park",
+        state: "CA",
+        postalCode: null,
+      }).split("\n")[0],
+    ).toBe("New project L01-26024 — Hitchcock - 1457 Chilco Street, Menlo Park, CA");
+
+    expect(
+      buildKickoffMessageText({
+        projectNumber: "L01-26024",
+        projectLastName: "Hitchcock",
+        folderName: null,
+        charterName: null,
+        folderLink: null,
+        charterLink: null,
+        address: null,
+        city: "Menlo Park",
+        state: null,
+        postalCode: null,
+      }).split("\n")[0],
+    ).toBe("New project L01-26024 — Hitchcock - Menlo Park, CA");
+
+    const missingStreet = buildKickoffMessageText({
+      projectNumber: "L01-26024",
+      projectLastName: "Hitchcock",
+      folderName: null,
+      charterName: null,
+      folderLink: null,
+      charterLink: null,
+      address: null,
+      city: "Menlo Park",
+      state: "CA",
+      postalCode: "95027",
+    }).split("\n")[0];
+    expect(missingStreet).toBe("New project L01-26024 — Hitchcock - Menlo Park, CA 95027");
+    expect(missingStreet).not.toMatch(/,\s*,|-\s*-|\s{2,}/);
   });
 });
 

@@ -24,6 +24,7 @@ import { copyTemplateFolderTree } from "./folder-copy";
 import { GOOGLE_SHEET_MIME } from "@/lib/connectors/google/types";
 import { buildCharterListRowValues, charterListAlreadyHasCharter } from "./charter-list";
 import { postSlackMessage } from "@/lib/slack/client";
+import { contactAddressFromGhl } from "@/lib/connectors/ghl/address";
 import {
   createPublicSlackChannel,
   inviteUsersToSlackChannel,
@@ -123,6 +124,36 @@ function streetAddressFromSnapshot(snapshot: {
     }
   }
   return address;
+}
+
+/**
+ * Headline address for the Slack kickoff message.
+ * Rebuilds via contactAddressFromGhl so partials stay clean (no doubled commas).
+ * When any address component is present but state is missing, assume CA.
+ */
+export function formatKickoffHeadlineAddress(snapshot: {
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postalCode?: string | null;
+}): string | null {
+  const street = streetAddressFromSnapshot({
+    address: snapshot.address ?? null,
+    city: snapshot.city ?? null,
+  });
+  const city = snapshot.city?.trim() || null;
+  const postalCode = snapshot.postalCode?.trim() || null;
+  const stateRaw = snapshot.state?.trim() || null;
+  const hasAny = Boolean(street || city || stateRaw || postalCode);
+  if (!hasAny) return null;
+
+  return contactAddressFromGhl({
+    address1: street || null,
+    city,
+    state: stateRaw || "CA",
+    postalCode,
+    country: null,
+  }).formatted;
 }
 
 async function executeAppendMasterLogRow(
@@ -423,6 +454,11 @@ export function buildKickoffMessageText(input: {
   charterName: string | null;
   folderLink: string | null;
   charterLink: string | null;
+  /** Contact snapshot address fields — optional; omit/empty keeps the legacy headline. */
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  postalCode?: string | null;
 }): string {
   const number = input.projectNumber ?? "—";
   const lastName = input.projectLastName ?? "—";
@@ -434,12 +470,16 @@ export function buildKickoffMessageText(input: {
   const charterLine = input.charterLink
     ? `• Project Charter: <${input.charterLink}|${charterLabel}>`
     : `• Project Charter: ${charterLabel}`;
-  return [
-    `New project ${number} — ${lastName}`,
-    folderLine,
-    charterLine,
-    "• Setting up BuilderTrend now.",
-  ].join("\n");
+  const headlineAddress = formatKickoffHeadlineAddress({
+    address: input.address,
+    city: input.city,
+    state: input.state,
+    postalCode: input.postalCode,
+  });
+  const headline = headlineAddress
+    ? `New project ${number} — ${lastName} - ${headlineAddress}`
+    : `New project ${number} — ${lastName}`;
+  return [headline, folderLine, charterLine, "• Setting up BuilderTrend now."].join("\n");
 }
 
 async function executeCreateSlackChannel(
@@ -549,6 +589,7 @@ async function executePostKickoffMessage(
   const channelId =
     (ctx.priorOutputs.create_slack_channel?.channelId as string | undefined) ?? null;
 
+  const snap = ctx.run.contactSnapshot;
   const text = buildKickoffMessageText({
     projectNumber: ctx.run.projectNumber,
     projectLastName: ctx.run.projectLastName,
@@ -556,6 +597,10 @@ async function executePostKickoffMessage(
     charterName: ctx.run.charterName,
     folderLink,
     charterLink,
+    address: snap?.address ?? null,
+    city: snap?.city ?? null,
+    state: snap?.state ?? null,
+    postalCode: snap?.postalCode ?? null,
   });
 
   const planned = {
