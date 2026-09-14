@@ -149,7 +149,9 @@ PROJECT INTELLIGENCE / BUILDERTREND
 ============================================================
 Extract operational facts: model/path, sf, bed/bath, custom vs BR, remodel, utilities, site, city, schedule.
 Status: CONFIRMED | HOMEOWNER_REPORTED | ADVISOR_ESTIMATE | UNKNOWN_NEEDS_VERIFICATION
-BuilderTrend: fill only when supported; null when unknown. No coaching language.`,
+BuilderTrend: fill only when supported; null when unknown. No coaching language.
+customerBudget = single number when defensible. budgetContext = short narrative of ranges,
+estimates, contingency, inclusions, and how price factors into the decision — not a repeat of the number alone.`,
   pem_output: `============================================================
 OUTPUT
 ============================================================

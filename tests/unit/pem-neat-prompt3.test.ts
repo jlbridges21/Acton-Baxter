@@ -40,7 +40,7 @@ describe("PEM NEAT defaults and merge", () => {
       advisorName: "Jesse",
     });
     expect(shell.assessment.categories).toHaveLength(12);
-    expect(BUILDERTREND_FIELD_DEFS).toHaveLength(31);
+    expect(BUILDERTREND_FIELD_DEFS).toHaveLength(32);
     for (const def of BUILDERTREND_FIELD_DEFS) {
       expect(shell.buildertrendFields).toHaveProperty(def.key);
     }
@@ -246,7 +246,7 @@ describe("PEM NEAT mock generation reliability", () => {
     });
     expect(out.usedMock).toBe(true);
     expect(out.result.assessment.categories).toHaveLength(12);
-    expect(BUILDERTREND_FIELD_DEFS).toHaveLength(31);
+    expect(BUILDERTREND_FIELD_DEFS).toHaveLength(32);
     for (const def of BUILDERTREND_FIELD_DEFS) {
       expect(out.result.buildertrendFields).toHaveProperty(def.key);
     }

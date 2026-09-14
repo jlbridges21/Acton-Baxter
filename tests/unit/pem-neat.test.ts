@@ -192,6 +192,20 @@ describe("BuilderTrend display helpers", () => {
     expect(getCopyableValue(fields, def)).toBe("1000000");
   });
 
+  it("displays and copies Budget Context as narrative text", () => {
+    const narrative =
+      "The client’s expected total budget is roughly $400,000–$500,000, and he believes the board will approve the project if it stays in that range.";
+    const fields = buildertrendFieldsSchema.parse({
+      customerBudget: 450000,
+      budgetContext: narrative,
+    });
+    const def = BUILDERTREND_FIELD_DEFS.find((d) => d.key === "budgetContext")!;
+    expect(def.label).toBe("Budget Context");
+    expect(getDisplayValue(fields, def)).toBe(narrative);
+    expect(getCopyableValue(fields, def)).toBe(narrative);
+    expect(buildCopyAllFieldsText(fields)).toContain(`Budget Context:\n${narrative}`);
+  });
+
   it("copies priorities as newline bullets", () => {
     const fields = buildertrendFieldsSchema.parse({
       customerPriorities: ["Communication", "Quality"],

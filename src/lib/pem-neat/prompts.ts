@@ -221,6 +221,10 @@ Code owns all BuilderTrend field KEYS — fill VALUES (null when unknown).
 }
 
 Enums only for: customerPriorities, preferredContactMethod, bedBathCount, projectType.
+customerBudget: a single defensible number when the transcript supports one; else null.
+budgetContext: a short grounded narrative around the budget (ranges, advisor vs customer
+estimates, what is/isn't included, contingency, how price weighs in the decision). Do not
+duplicate only the number — if there is no contextual discussion beyond a bare figure, null.
 UNKNOWN is valid → null. No sales coaching in BuilderTrend fields. No invention.`;
 }
 

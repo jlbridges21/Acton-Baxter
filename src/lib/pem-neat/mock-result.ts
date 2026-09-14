@@ -255,6 +255,8 @@ ${input.advisorName}`,
       notesForInternalUsers: "Parent ADU opportunity; spouse not on call; reconnect in ~2 weeks.",
       squareFeet: null,
       customerBudget: 400000,
+      budgetContext:
+        "The client’s working all-in target is about $400,000. A competitor GC quoted around $380,000. Advisor estimates may run higher once site work and utilities are verified, so budget alignment is still a qualification risk.",
       customerStory: "Evaluating ADU so aging parent can live nearby with independence.",
       customerPain1:
         "Parent living alone is increasingly difficult; family wants proximity and safety.",

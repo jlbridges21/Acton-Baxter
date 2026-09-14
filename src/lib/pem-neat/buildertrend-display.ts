@@ -18,6 +18,11 @@ export const BUILDERTREND_FIELD_DEFS: BuildertrendFieldDef[] = [
   { key: "notesForInternalUsers", label: "Notes for internal users" },
   { key: "squareFeet", label: "Square Feet" },
   { key: "customerBudget", label: "Customer Budget", isBudget: true },
+  {
+    key: "budgetContext",
+    label: "Budget Context",
+    hint: "Narrative around the number — ranges, estimates, contingency, decision weight",
+  },
   { key: "customerStory", label: "Customer Story" },
   {
     key: "customerPain1",

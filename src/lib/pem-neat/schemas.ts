@@ -267,7 +267,7 @@ export const projectFactSchema = z.object({
 });
 
 /**
- * BuilderTrend Custom Fields — 31 fields (Prompt 3 UI; Prompt 1 schema).
+ * BuilderTrend Custom Fields — 32 fields (Prompt 3 UI; Prompt 1 schema).
  * Prefer null / not established over guesses.
  */
 export const buildertrendFieldsSchema = z.object({
@@ -275,6 +275,11 @@ export const buildertrendFieldsSchema = z.object({
   squareFeet: nullableNumberSchema.default(null),
   /** Customer's working/top-end budget as a number when defensible; else null. */
   customerBudget: nullableNumberSchema.default(null),
+  /**
+   * Narrative context around the budget: ranges, advisor estimates, contingency,
+   * what is/isn't included, how price weighs in the decision — not just a number.
+   */
+  budgetContext: z.string().nullable().default(null),
   customerStory: z.string().nullable().default(null),
   customerPain1: z.string().nullable().default(null),
   customerPain: z.string().nullable().default(null),
@@ -411,6 +416,7 @@ export const pemNeatStructuredResultSchema = z.object({
     notesForInternalUsers: null,
     squareFeet: null,
     customerBudget: null,
+    budgetContext: null,
     customerStory: null,
     customerPain1: null,
     customerPain: null,
