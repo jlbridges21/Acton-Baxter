@@ -5,7 +5,11 @@ export type {
   ProjectRegistryLoadResult,
 } from "./types";
 export { parseMasterProjectLogGrid } from "./parse";
-export { loadMasterProjectLog, type LoadProjectRegistryDeps } from "./load";
+export {
+  loadMasterProjectLog,
+  setProjectRegistryLoadDepsForTests,
+  type LoadProjectRegistryDeps,
+} from "./load";
 export { clearProjectLogCacheForTests } from "./cache";
 export {
   lookupProjectRow,

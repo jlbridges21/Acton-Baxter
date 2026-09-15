@@ -11,6 +11,11 @@ import {
 } from "./conversations";
 import { retrieveBaxterEvidence } from "./context";
 import {
+  expandIdentifiedKnowledgeEntries,
+  shouldExpandKnowledgeOnInsufficient,
+  answerSignalsInsufficientExcerpt,
+} from "./knowledge-expand";
+import {
   INSUFFICIENT_KNOWLEDGE_ANSWER,
   GENERAL_KNOWLEDGE_NOTE,
   NO_EVIDENCE_ASK_TEAM_NOTE,
@@ -1414,7 +1419,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
           ]
             .filter(Boolean)
             .join("\n");
-    const llm = await provider.generateAnswer({
+    let llm = await provider.generateAnswer({
       question: routingQuestion,
       contextItems,
       userName: input.userName,
@@ -1424,10 +1429,43 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       history,
     });
 
+    // Part A: when the model reports insufficientKnowledge (or admits the excerpt
+    // is incomplete) but we identified a Knowledge Base entry, expand that entry
+    // once (size-capped) and retry. Never loop.
+    let knowledgeExpanded = false;
+    if (
+      shouldExpandKnowledgeOnInsufficient({
+        llm,
+        contextItems,
+        alreadyExpanded: false,
+      })
+    ) {
+      const expanded = await expandIdentifiedKnowledgeEntries({
+        contextItems,
+        question: routingQuestion,
+      });
+      if (expanded.expandedEntryIds.length > 0) {
+        contextItems = expanded.items;
+        knowledgeExpanded = true;
+        llm = await provider.generateAnswer({
+          question: routingQuestion,
+          contextItems,
+          userName: input.userName,
+          channel: input.channel,
+          questionClass,
+          identityContext,
+          history,
+        });
+      }
+    }
+
     let sources = dedupeSourceReferences(mapUsedSourceNumbers(llm.usedSourceNumbers, contextItems));
     // Never invent sources; only keep mapped ones.
     let answerMode: BaxterAnswerMode = llm.answerMode;
-    let insufficientKnowledge = false;
+    // Honor model insufficientKnowledge only after a bounded expand retry (or when
+    // no expandable KB source was available). Do not clear a true flag blindly when
+    // sources exist if the model still cannot answer from them post-expand.
+    let insufficientKnowledge = Boolean(llm.insufficientKnowledge);
     let answerText = llm.answer.trim();
 
     if (registry.softMissNotes?.length && answerText) {
@@ -1481,7 +1519,20 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     } else if (sources.length > 0) {
       answerMode = answerMode === "general" ? "grounded" : answerMode;
       if (answerMode === "identity") answerMode = "grounded";
-      insufficientKnowledge = false;
+      // After expand retry, allow honest insufficientKnowledge when the full entry
+      // still does not answer. Otherwise treat grounded cites as sufficient.
+      if (knowledgeExpanded && llm.insufficientKnowledge) {
+        insufficientKnowledge = true;
+      } else if (!llm.insufficientKnowledge) {
+        insufficientKnowledge = false;
+      } else if (!knowledgeExpanded) {
+        // Flag was true but we could not expand (or expand found nothing new) —
+        // keep honest insufficient when the answer still reads like an excerpt miss.
+        insufficientKnowledge =
+          Boolean(llm.insufficientKnowledge) || answerSignalsInsufficientExcerpt(answerText);
+      } else {
+        insufficientKnowledge = false;
+      }
     } else {
       // General / conversational with no sources — answer normally.
       insufficientKnowledge = false;

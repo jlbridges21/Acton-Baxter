@@ -62,7 +62,13 @@ export function detectSlackSearchIntent(question: string): SlackSearchIntent {
     return "project_status";
   }
 
-  if (/\bwhat (is|was) the latest\b|\blatest on\b|\blatest update\b/.test(q)) {
+  if (
+    /\bwhat (is|was) the latest\b|\bwhat'?s the latest\b|\blatest on\b|\blatest update\b/.test(q)
+  ) {
+    return "latest_update";
+  }
+  // "latest in the liniger slack channel" — keep before broader channel_search.
+  if (/\blatest\b.+\b(?:slack\s+)?channel\b/.test(q)) {
     return "latest_update";
   }
   // Current-status timing questions ("When will the RACI matrix be ready?")
@@ -313,7 +319,15 @@ export function extractChannelMentions(question: string): string[] {
           if (/^[a-z]\s+/i.test(raw)) continue;
           if (/\b(his|her|their|its|my|your|our)\b/i.test(raw)) continue;
           if (/^project$/i.test(raw)) continue;
-          names.push(raw.replace(/\s+/g, "-").toLowerCase());
+          // "liniger slack channel" / "liniger project channel" → "liniger".
+          // Do not strip hyphenated names like "project-management".
+          const withoutNoise = raw
+            .replace(/\bslack\b/gi, " ")
+            .replace(/(^|\s)project(\s|$)/gi, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          if (!withoutNoise || /^project$/i.test(withoutNoise)) continue;
+          names.push(withoutNoise.replace(/\s+/g, "-").toLowerCase());
         }
       }
     }
@@ -338,9 +352,11 @@ export function extractChannelMentions(question: string): string[] {
             .replace(/^#/, "")
             .toLowerCase()
             .replace(/\bchannels?\b/g, "")
+            .replace(/\bslack\b/g, "")
             .replace(/^(the|a|an)-?/, "")
             .replace(/\s+/g, "-")
             .replace(/-+/g, "-")
+            .replace(/-slack$/g, "")
             .replace(/^-|-$/g, "");
         })
         .filter((n) => n.length >= 2)
@@ -371,6 +387,8 @@ export function isRelationalOrMangledChannelSlug(slug: string): boolean {
   if (/^(his|her|their|its|my|your|our)-/.test(n)) return true;
   // Single-letter possessive remnant: "s-project", "s-foo"
   if (/^[a-z]-/.test(n)) return true;
+  // "liniger-slack" mangled from "liniger slack channel" (not a real channel pattern).
+  if (/-slack$/.test(n) && !/^[a-z]\d{2}-\d{4,6}-/.test(n)) return true;
   return false;
 }
 

@@ -16,6 +16,7 @@ export const ENTITY_DESCRIPTOR_NOISE_WORDS = [
   "file",
   "pipeline",
   "stage",
+  "slack",
 ] as const;
 
 const NOISE = new Set(ENTITY_DESCRIPTOR_NOISE_WORDS.map((w) => w.toLowerCase()));

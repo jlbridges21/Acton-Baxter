@@ -8,6 +8,7 @@ import {
   isProjectRegistryQuestion,
   loadMasterProjectLog,
   lookupProjectRow,
+  setProjectRegistryLoadDepsForTests as setLoadDeps,
   type LoadProjectRegistryDeps,
   type ProjectLogRow,
 } from "@/lib/baxter-data/project-registry";
@@ -16,11 +17,9 @@ import { extractProjectNumbers } from "@/lib/baxter-data/slack/project-status";
 import { isSemanticRoutingConfident } from "@/lib/baxter-ai/semantic-question-classification";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
 
-let loadDepsForTests: LoadProjectRegistryDeps | null = null;
-
 /** Test inject for Master Project Log rows / settings. */
 export function setProjectRegistryLoadDepsForTests(deps: LoadProjectRegistryDeps | null): void {
-  loadDepsForTests = deps;
+  setLoadDeps(deps);
 }
 
 function contextItemForRow(row: ProjectLogRow, tabName: string, excerpt: string) {
@@ -91,7 +90,7 @@ export const projectRegistryEvidenceSource: EvidenceSource = {
     }
 
     try {
-      const loaded = await loadMasterProjectLog(loadDepsForTests ?? {});
+      const loaded = await loadMasterProjectLog();
       if (loaded.rows.length === 0) {
         return {
           items: [],
@@ -164,7 +163,7 @@ export async function resolveCustomerNameFromProjectRegistry(
     questionOrName.trim();
   if (!query) return null;
   try {
-    const loaded = await loadMasterProjectLog(deps ?? loadDepsForTests ?? {});
+    const loaded = await loadMasterProjectLog(deps ?? {});
     const hit = lookupProjectRow(loaded.rows, query);
     if (hit.kind !== "unique") return null;
     const customer = hit.row.customerName.trim();

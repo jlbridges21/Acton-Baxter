@@ -19,6 +19,13 @@ export type LoadProjectRegistryDeps = {
   ttlMs?: number;
 };
 
+let loadDepsForTests: LoadProjectRegistryDeps | null = null;
+
+/** Test inject for Master Project Log rows / settings (shared by registry + Slack derive). */
+export function setProjectRegistryLoadDepsForTests(deps: LoadProjectRegistryDeps | null): void {
+  loadDepsForTests = deps;
+}
+
 /**
  * Live/short-cached read of the Master Project Log.
  * Prefer this over Knowledge Base structured index for project facts so new
@@ -27,9 +34,10 @@ export type LoadProjectRegistryDeps = {
 export async function loadMasterProjectLog(
   deps: LoadProjectRegistryDeps = {},
 ): Promise<ProjectRegistryLoadResult> {
-  if (deps.rowsOverride != null) {
+  const effective = { ...(loadDepsForTests ?? {}), ...deps };
+  if (effective.rowsOverride != null) {
     return {
-      rows: deps.rowsOverride,
+      rows: effective.rowsOverride,
       spreadsheetId: "test-sheet",
       tabName: "Master Project Log",
       fetchedAt: new Date().toISOString(),
@@ -37,7 +45,18 @@ export async function loadMasterProjectLog(
     };
   }
 
-  const getSettings = deps.getSettings ?? getProjectSetupSettings;
+  // Unit tests must inject rowsOverride — never hang on live Supabase/Google.
+  if (process.env.VITEST === "true" && !loadDepsForTests) {
+    return {
+      rows: [],
+      spreadsheetId: "",
+      tabName: "",
+      fetchedAt: new Date().toISOString(),
+      fromCache: false,
+    };
+  }
+
+  const getSettings = effective.getSettings ?? getProjectSetupSettings;
   const settings = await getSettings();
   const spreadsheetId = settings.masterCharterSpreadsheetId?.trim() || "";
   const tabName = settings.masterLogTabName?.trim() || "";
@@ -62,7 +81,7 @@ export async function loadMasterProjectLog(
     };
   }
 
-  const readSheet = deps.readSheet ?? readSheetValues;
+  const readSheet = effective.readSheet ?? readSheetValues;
   const grid = await readSheet({
     spreadsheetId,
     tabName,
@@ -74,7 +93,7 @@ export async function loadMasterProjectLog(
     rows,
     spreadsheetId,
     tabName,
-    ttlMs: deps.ttlMs,
+    ttlMs: effective.ttlMs,
   });
 
   return {

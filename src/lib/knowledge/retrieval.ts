@@ -1,4 +1,5 @@
 import type { KnowledgeEntry, KnowledgeSearchInput, KnowledgeSearchResult } from "./types";
+import { preferSuggestedAnswerExcerpt, extractSuggestedAnswerSection } from "./suggested-answer";
 
 const STOP_WORDS = new Set([
   "a",
@@ -139,6 +140,9 @@ export function tokenizeQuery(query: string): string[] {
 }
 
 function excerpt(content: string, query: string, maxLen = 280): string {
+  const suggested = preferSuggestedAnswerExcerpt(content, query, maxLen);
+  if (suggested) return suggested;
+
   const normalized = content.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   const hay = normalizeSearchText(normalized);
@@ -253,6 +257,11 @@ function scoreTerms(entry: KnowledgeEntry, terms: string[], fullQuery: string): 
     ) {
       score += 14;
     }
+  }
+
+  // Prefer entries that include author guidance for Baxter when the ask matches.
+  if (extractSuggestedAnswerSection(entry.content)) {
+    score += 18;
   }
 
   return score;

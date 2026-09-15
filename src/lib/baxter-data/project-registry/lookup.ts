@@ -3,6 +3,7 @@
  */
 
 import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
+import { sanitizeSlackChannelSegment } from "@/lib/project-setup/names";
 import type { ProjectLogRow } from "./types";
 
 function norm(s: string): string {
@@ -97,14 +98,11 @@ export function countProjects(
   return { count: filtered.length, rows: filtered };
 }
 
-/** Slack channel slug convention: l01-26016-yeh */
+/** Slack channel slug convention: l01-26016-yeh (same sanitization as Project Setup). */
 export function expectedSlackChannelSlug(row: ProjectLogRow): string | null {
-  const num = row.projectNumber.trim().toLowerCase();
-  const short = row.shortName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  const num = row.projectNumber.trim();
+  const short = row.shortName.trim();
   if (!num || !short) return null;
-  return `${num}-${short}`;
+  const slug = sanitizeSlackChannelSegment(`${num}-${short}`);
+  return slug || null;
 }

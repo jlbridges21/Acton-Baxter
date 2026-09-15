@@ -16,6 +16,10 @@ import {
   extractProjectNumbers,
   isStructuralProjectKeyword,
 } from "./project-status";
+import {
+  deriveProjectSlackChannelFromRegistry,
+  isNamedProjectChannelAsk,
+} from "./project-channel-derive";
 import type {
   SlackQueryPlan,
   SlackChannelAmbiguity,
@@ -34,6 +38,13 @@ export type PlanSlackSearchResult = {
     people: string[];
     channels: string[];
   };
+  /** Canonical slug derived from Master Project Log when applicable. */
+  derivedProjectChannel?: {
+    slug: string;
+    projectNumber: string;
+    shortName: string;
+    customerName: string;
+  } | null;
 };
 
 /**
@@ -48,21 +59,57 @@ export async function planSlackSearch(input: {
   now?: Date;
 }): Promise<PlanSlackSearchResult> {
   const now = input.now ?? input.deps?.now?.() ?? new Date();
-  const intent = input.intent ?? detectSlackSearchIntent(input.question);
+  let intent = input.intent ?? detectSlackSearchIntent(input.question);
   const personQueries = extractPersonQueries(input.question);
   const projectNumbers = extractProjectNumbers(input.question);
   const projectNames =
-    intent === "project_status" || intent === "latest_update"
+    intent === "project_status" ||
+    intent === "latest_update" ||
+    isNamedProjectChannelAsk(input.question)
       ? extractProjectNameQueries(input.question)
       : [];
+
+  // Master Project Log → canonical {number}-{shortName} slug (cold, no conversation needed).
+  // Skip when the user already named an explicit #l01-… channel — no registry round-trip.
+  let derivedProjectChannel: PlanSlackSearchResult["derivedProjectChannel"] = null;
+  const explicitProjectChannelSlug = extractChannelMentions(input.question).find((n) =>
+    /^[a-z]\d{2}-\d{4,6}-[a-z0-9-]+$/i.test(n),
+  );
+  const explicitHashChannel = /#[\w-]{2,}/.test(input.question) || /<#[CG]/i.test(input.question);
+  const shouldDeriveProjectChannel =
+    !explicitHashChannel && !explicitProjectChannelSlug && isNamedProjectChannelAsk(input.question);
+
+  if (shouldDeriveProjectChannel) {
+    try {
+      const derived = await deriveProjectSlackChannelFromRegistry(input.question);
+      if (derived) {
+        derivedProjectChannel = {
+          slug: derived.slug,
+          projectNumber: derived.projectNumber,
+          shortName: derived.shortName,
+          customerName: derived.customerName,
+        };
+        // Prefer project-status scoping once we have a real project channel.
+        if (intent === "topic_search" || intent === "channel_search") {
+          intent = "latest_update";
+        }
+      }
+    } catch {
+      // Registry unavailable — fall through to literal / fuzzy mentions.
+    }
+  }
+
   const channelQueries = [
+    ...(derivedProjectChannel ? [derivedProjectChannel.slug] : []),
     ...extractChannelMentions(input.question),
-    ...(intent === "project_status" || intent === "latest_update"
+    ...(!derivedProjectChannel && (intent === "project_status" || intent === "latest_update")
       ? [
           ...projectNumbers.map((n) => n.toLowerCase()),
           ...projectNames.map((n) => n.toLowerCase().replace(/\s+/g, "-")),
         ]
-      : []),
+      : derivedProjectChannel
+        ? [...projectNumbers.map((n) => n.toLowerCase())]
+        : []),
   ];
 
   const [peopleResult, channelsResult] = await Promise.all([
@@ -70,12 +117,31 @@ export async function planSlackSearch(input: {
     resolveChannels([...new Set(channelQueries)], input.teamId, input.deps),
   ]);
 
+  // When we derived a canonical slug and it wasn't found, surface that name (not a mangled literal).
+  let notFoundChannels = channelsResult.notFound;
+  if (
+    derivedProjectChannel &&
+    channelsResult.channels.length === 0 &&
+    !notFoundChannels.includes(derivedProjectChannel.slug)
+  ) {
+    notFoundChannels = [derivedProjectChannel.slug, ...notFoundChannels];
+  }
+  // Drop mangled leftovers like "liniger-slack" from notFound when we have a derived slug.
+  if (derivedProjectChannel) {
+    notFoundChannels = notFoundChannels.filter(
+      (c) => c === derivedProjectChannel!.slug || !/-slack$/i.test(c),
+    );
+    if (channelsResult.channels.length === 0 && notFoundChannels.length === 0) {
+      notFoundChannels = [derivedProjectChannel.slug];
+    }
+  }
+
   const dropNames = [
     ...personQueries,
     ...peopleResult.people.flatMap((p) => [p.displayName, p.realName ?? "", p.username ?? ""]),
     ...channelQueries,
-    ...(intent === "project_status" || intent === "latest_update"
-      ? [...projectNumbers, ...projectNames]
+    ...(intent === "project_status" || intent === "latest_update" || derivedProjectChannel
+      ? [...projectNumbers, ...projectNames, derivedProjectChannel?.shortName ?? ""]
       : []),
   ];
 
@@ -95,7 +161,7 @@ export async function planSlackSearch(input: {
       intent === "latest_update" ||
       intent === "channel_search" ||
       intent === "conversation_recall");
-  if (exactChannelScoped || intent === "project_status") {
+  if (exactChannelScoped || intent === "project_status" || derivedProjectChannel) {
     keywords = keywords.filter((k) => !isStructuralProjectKeyword(k));
     const channelTokens = new Set(
       channelsResult.channels.flatMap((c) =>
@@ -105,6 +171,12 @@ export async function planSlackSearch(input: {
           .filter((t) => t.length >= 2),
       ),
     );
+    if (derivedProjectChannel) {
+      for (const t of derivedProjectChannel.slug.split("-")) {
+        if (t.length >= 2) channelTokens.add(t);
+      }
+      channelTokens.add(derivedProjectChannel.shortName.toLowerCase());
+    }
     keywords = keywords.filter((k) => !channelTokens.has(k.toLowerCase()));
   }
 
@@ -163,8 +235,9 @@ export async function planSlackSearch(input: {
     },
     notFound: {
       people: peopleResult.notFound,
-      channels: channelsResult.notFound,
+      channels: notFoundChannels,
     },
+    derivedProjectChannel,
   };
 }
 

@@ -31,9 +31,12 @@ export function normalizeChannelQuery(value: string): string {
   n = n.replace(/^(the|a|an)\s+/, "");
   n = n
     .replace(/\bchannels?\b/g, " ")
+    .replace(/\bslack\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   n = n.replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  // Strip trailing "-slack" mangled from "X slack channel" phrasing.
+  n = n.replace(/-slack$/i, "").replace(/^-|-$/g, "");
   return n;
 }
 

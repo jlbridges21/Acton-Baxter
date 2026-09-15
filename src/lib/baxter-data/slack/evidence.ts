@@ -174,6 +174,11 @@ export async function retrieveSlackEvidence(
   ) {
     const channelLabel = planned.notFound.channels[0]!;
     const isId = /^[CG][A-Z0-9_]+$/i.test(channelLabel);
+    const derived = planned.derivedProjectChannel;
+    const derivedNote =
+      derived && derived.slug.replace(/^#/, "") === channelLabel.replace(/^#/, "")
+        ? ` (derived from the ${derived.shortName || derived.customerName || derived.projectNumber} project in the Master Project Log as #${derived.slug})`
+        : "";
     return {
       plan: planned.plan,
       results: [],
@@ -184,7 +189,7 @@ export async function retrieveSlackEvidence(
         code: SLACK_SEARCH_ERROR_CODES.CHANNEL_NOT_FOUND,
         message: isId
           ? `I recognized Slack channel ID ${channelLabel.toUpperCase()}, but I couldn't load its metadata from Slack right now.`
-          : `I couldn't find a Slack channel matching “#${channelLabel.replace(/^#/, "")}”.`,
+          : `I looked for Slack channel “#${channelLabel.replace(/^#/, "")}”${derivedNote}, but that channel was not found.`,
         retryable: false,
       },
       diagnostics: {

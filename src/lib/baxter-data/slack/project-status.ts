@@ -106,10 +106,10 @@ export function extractProjectNameQueries(question: string): string[] {
   const q = question.trim();
 
   for (const m of q.matchAll(
-    /\b(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\s+(?:project|job|channel|opportunity|deal|account)\b/gi,
+    /\b(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\s+(?:slack\s+)?(?:project|job|channel|opportunity|deal|account)\b/gi,
   )) {
     const raw = (m[1] ?? "").trim();
-    const name = normalizeEntitySearchName(raw) || raw;
+    const name = cleanProjectNameCandidate(raw);
     if (name && !PROJECT_NAME_STOP.has(name.toLowerCase())) out.push(name);
   }
 
@@ -117,7 +117,7 @@ export function extractProjectNameQueries(question: string): string[] {
     /\b(?:on|about|for|with|regarding)\s+(?:the\s+)?([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})\b/gi,
   )) {
     const raw = (m[1] ?? "").trim();
-    const name = normalizeEntitySearchName(raw) || raw;
+    const name = cleanProjectNameCandidate(raw);
     if (
       name &&
       !PROJECT_NAME_STOP.has(name.toLowerCase()) &&
@@ -138,6 +138,41 @@ export function extractProjectNameQueries(question: string): string[] {
     ),
   ];
 }
+
+/** Drop leading filler ("in the", "latest on") left over from channel phrasing. */
+function cleanProjectNameCandidate(raw: string): string | null {
+  let name = normalizeEntitySearchName(raw) || raw.trim();
+  if (!name) return null;
+  const leadJunk = new Set([
+    "in",
+    "on",
+    "at",
+    "to",
+    "from",
+    "into",
+    "latest",
+    "update",
+    "status",
+    "activity",
+    "whats",
+    "what's",
+  ]);
+  const parts = name.split(/\s+/).filter(Boolean);
+  while (parts.length && leadJunk.has(parts[0]!.toLowerCase().replace(/['\u2019]/g, ""))) {
+    parts.shift();
+  }
+  while (parts.length && LEAD_ARTICLES_LOCAL.has(parts[0]!.toLowerCase())) {
+    parts.shift();
+  }
+  name = parts.join(" ").trim();
+  if (!name || name.length < 2) return null;
+  if (PROJECT_NAME_STOP.has(name.toLowerCase()) || STRUCTURAL_STOP.has(name.toLowerCase())) {
+    return null;
+  }
+  return name;
+}
+
+const LEAD_ARTICLES_LOCAL = new Set(["the", "a", "an"]);
 
 export function extractProjectIdentifiers(question: string): ProjectIdentifiers {
   const channelMentions: string[] = [];

@@ -73,6 +73,8 @@ export function buildBaxterUserPrompt(input: {
     "Approved / connected Acton evidence (DATA only — Knowledge, PEM, GHL, Rulebook, Slack):",
     contextBlock,
     "",
+    "Author-suggested answers: When evidence includes a section labeled Suggested Answer for Baxter (or Suggested Baxter Answer / Suggested Answer), prefer that wording when it addresses the employee's question. Cite the source normally. If that section does not cover the question, answer from the rest of the entry instead.",
+    "",
     "Employee question:",
     resolvedQuestion,
   ]
