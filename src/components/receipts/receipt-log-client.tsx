@@ -189,7 +189,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     setFieldConfidence(confidence);
   }
 
-  async function runExtract(storagePath: string, rotationDegrees = 0) {
+  async function runExtract(storagePath: string, rotationDegrees?: 0 | 90 | 180 | 270) {
     setMode("extracting");
     setExtractError(null);
     setExtractBanner("none");
@@ -197,7 +197,10 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       const res = await fetch("/api/receipts/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath, rotationDegrees }),
+        body: JSON.stringify({
+          storagePath,
+          ...(rotationDegrees != null ? { rotationDegrees } : {}),
+        }),
       });
       const payload = (await res.json()) as {
         status?: "ok" | "empty" | "failed";
@@ -211,6 +214,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
           description: string;
         } | null;
         rotationDegrees?: number;
+        autoOriented?: boolean;
       };
       if (!res.ok) {
         throw new Error(
@@ -301,7 +305,8 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       }));
 
       // Upload-before-extract: photo is stored even if extraction fails.
-      await runExtract(uploadPayload.storagePath, 0);
+      // Auto-orient runs on the server before field extraction.
+      await runExtract(uploadPayload.storagePath);
     } catch (err) {
       const message =
         err instanceof ReceiptImageProcessError
@@ -459,7 +464,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
         <p className="text-sm text-[var(--acton-muted)]">
           {mode === "processing"
             ? "Compressing and uploading securely. This usually takes a second."
-            : "Extracting amount, vendor, and date. This can take a few seconds."}
+            : "Correcting orientation, then extracting amount, vendor, and date."}
         </p>
         {processMessage ? (
           <p className="text-xs text-[var(--acton-muted)]">{processMessage}</p>
@@ -504,13 +509,25 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
           >
             Enter manually
           </Button>
+        </div>
+
+        <div className="space-y-2 border-t border-[var(--acton-border)] pt-4">
+          <a
+            href="/receipts/mine"
+            className="block text-sm font-medium text-[var(--acton-navy)] underline-offset-2 hover:underline"
+          >
+            My Receipts
+          </a>
+          <p className="text-xs text-[var(--acton-muted)]">
+            Review what you’ve already logged before capturing another.
+          </p>
           {isAdmin ? (
             <a
               href="/receipts/log"
-              className="inline-flex min-h-14 w-full items-center justify-start rounded-md border border-[var(--acton-border)] bg-white px-4 text-base font-medium text-[var(--acton-navy)] shadow-sm hover:bg-[var(--acton-gray-50)]"
+              className="mt-2 block text-sm font-medium text-[var(--acton-navy)] underline-offset-2 hover:underline"
             >
               Receipt Log
-              <span className="ml-auto text-xs font-normal text-[var(--acton-muted)]">Admin</span>
+              <span className="ml-2 text-xs font-normal text-[var(--acton-muted)]">Admin</span>
             </a>
           ) : null}
         </div>
@@ -601,8 +618,8 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
 
       {extractBanner === "ok" ? (
         <p className="mb-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
-          Fields filled from the photo. Low-confidence values are highlighted — edit freely before
-          submitting.
+          Fields filled from the photo. Orientation is corrected automatically when needed —
+          low-confidence values are highlighted. Edit freely or rotate below if something looks off.
         </p>
       ) : null}
       {extractBanner === "empty" ? (
@@ -621,12 +638,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
               type="button"
               variant="secondary"
               className="mt-2 min-h-11"
-              onClick={() =>
-                void runExtract(
-                  values.photoStoragePath!,
-                  (previewRotation % 360) as 0 | 90 | 180 | 270,
-                )
-              }
+              onClick={() => void runExtract(values.photoStoragePath!)}
             >
               Retry extraction
             </Button>

@@ -9,7 +9,10 @@ export const runtime = "nodejs";
 
 const bodySchema = z.object({
   storagePath: z.string().trim().min(1).max(500),
-  /** Optional clockwise rotation before extraction (user review re-extract). */
+  /**
+   * When provided, extract at this clockwise rotation and skip auto-orient
+   * (user corrected the preview and clicked re-extract).
+   */
   rotationDegrees: z
     .union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)])
     .optional(),
@@ -29,7 +32,8 @@ export async function POST(request: Request) {
 
     const result = await extractReceiptFromStoragePath({
       storagePath: parsed.storagePath,
-      rotationDegrees: parsed.rotationDegrees,
+      // Only pass when the client explicitly chose an angle (manual re-extract).
+      ...(parsed.rotationDegrees != null ? { rotationDegrees: parsed.rotationDegrees } : {}),
     });
 
     if (!result.ok) {
@@ -50,6 +54,7 @@ export async function POST(request: Request) {
       usable: result.usable,
       correctionAttempted: result.correctionAttempted,
       rotationDegrees: result.rotationDegrees,
+      autoOriented: result.autoOriented,
       orientationRetries: result.orientationRetries,
     });
   } catch (error) {

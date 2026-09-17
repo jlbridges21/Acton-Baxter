@@ -1,6 +1,5 @@
 /**
- * Pure URL / filter-state helpers for the Receipt Log admin list (`/receipts/log`).
- * Mirrors feedback-filter-url.ts — no React / server-only so page + client panel share it.
+ * Pure URL / filter-state helpers for Receipt Log lists (`/receipts/log`, `/receipts/mine`).
  */
 
 import type { FeedbackRangePreset } from "@/lib/baxter-ai/feedback-date-ranges";
@@ -12,6 +11,8 @@ export type { FeedbackRangePreset };
 
 export const RECEIPT_LOG_PATH = "/receipts/log";
 export const RECEIPT_LOG_EXPORT_PATH = "/receipts/log/export";
+export const MY_RECEIPTS_PATH = "/receipts/mine";
+export const MY_RECEIPTS_EXPORT_PATH = "/receipts/mine/export";
 
 export type ReceiptLogDateField = "logged" | "purchased";
 export type ReceiptLogEntryType = "all" | "photo" | "manual";
@@ -50,11 +51,14 @@ export const DEFAULT_RECEIPT_LOG_FILTERS: ReceiptLogFiltersState = {
   dir: "desc",
 };
 
-export function countActiveReceiptLogFilters(state: ReceiptLogFiltersState): number {
+export function countActiveReceiptLogFilters(
+  state: ReceiptLogFiltersState,
+  options?: { ignoreUserFilter?: boolean },
+): number {
   let n = 0;
   if (state.range !== "this_month") n += 1;
   if (state.dateField !== "logged") n += 1;
-  n += state.userIds.length;
+  if (!options?.ignoreUserFilter) n += state.userIds.length;
   n += state.jobIds.length;
   n += state.vendors.length;
   if (state.amountMin.trim()) n += 1;
@@ -62,7 +66,6 @@ export function countActiveReceiptLogFilters(state: ReceiptLogFiltersState): num
   if (state.entryType !== "all") n += 1;
   if (state.q.trim()) n += 1;
   if (state.range === "custom" && (state.customStart || state.customEnd)) n += 1;
-  // Sort is not counted as a "filter" (same as feedback treating default sort lightly)
   return n;
 }
 
@@ -120,4 +123,46 @@ export function parseReceiptLogSortField(raw: string | null | undefined): Receip
 
 export function parseReceiptLogSortDir(raw: string | null | undefined): ReceiptLogSortDir {
   return raw === "asc" ? "asc" : "desc";
+}
+
+/** Parse Next.js / URLSearchParams-style receipt log filters (shared by page + export). */
+export function parseReceiptLogFiltersFromParams(
+  get: (key: string) => string | null | undefined,
+  getAll?: (key: string) => string[],
+): ReceiptLogFiltersState {
+  const list = (key: string): string[] => {
+    const values = getAll
+      ? getAll(key)
+      : (() => {
+          const single = get(key);
+          return single ? [single] : [];
+        })();
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const value of values) {
+      for (const part of value.split(",")) {
+        const trimmed = part.trim();
+        if (!trimmed || seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        out.push(trimmed);
+      }
+    }
+    return out;
+  };
+
+  return {
+    range: parseFeedbackRangePreset(get("range")),
+    dateField: parseReceiptLogDateField(get("dateField")),
+    customStart: get("start") ?? "",
+    customEnd: get("end") ?? "",
+    userIds: list("user"),
+    jobIds: list("job"),
+    vendors: list("vendor"),
+    amountMin: get("amountMin") ?? "",
+    amountMax: get("amountMax") ?? "",
+    entryType: parseReceiptLogEntryType(get("entryType")),
+    q: get("q") ?? "",
+    sort: parseReceiptLogSortField(get("sort")),
+    dir: parseReceiptLogSortDir(get("dir")),
+  };
 }

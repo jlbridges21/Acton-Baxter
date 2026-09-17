@@ -100,6 +100,13 @@ export class MockBaxterVisionProvider implements BaxterVisionProvider {
   }): Promise<{ content: string }> {
     void input.mimeType;
     void input.filename;
+    // Orientation detect: default upright for mock / unit tests without a custom provider.
+    if (
+      input.prompt.includes("rotationDegrees") &&
+      input.prompt.includes("printed text reads upright")
+    ) {
+      return { content: JSON.stringify({ rotationDegrees: 0, confidence: 1 }) };
+    }
     void input.prompt;
     // Test hook: base64 payload may itself be UTF-8 JSON for the extraction schema.
     if (input.base64Data.startsWith("eyJ")) {
@@ -124,6 +131,8 @@ export class MockBaxterVisionProvider implements BaxterVisionProvider {
         purchasedOn: null,
         items: null,
         description: null,
+        lineItemAmountsCents: [],
+        crossCheckAmountsCents: [],
         confidence: {
           amount: 0,
           vendor: 0,

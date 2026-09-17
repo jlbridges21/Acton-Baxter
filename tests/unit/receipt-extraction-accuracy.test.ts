@@ -11,7 +11,6 @@ import {
 import {
   expandTwoDigitYear,
   normalizePrintedReceiptDate,
-  scoreReceiptExtraction,
   shouldRetryReceiptExtractionOrientation,
   validateReceiptExtraction,
 } from "@/lib/receipts/extraction-validate";
@@ -264,7 +263,7 @@ describe("fixture ground truth regression (mocked vision)", () => {
   });
 });
 
-describe("orientation retry picks better-scoring rotation", () => {
+describe("auto-orient before extract", () => {
   beforeEach(() => {
     process.env.ENABLE_MOCK_RESEARCH = "true";
     resetEnvCacheForTests();
@@ -273,9 +272,10 @@ describe("orientation retry picks better-scoring rotation", () => {
     setBaxterVisionProviderForTests(null);
   });
 
-  it("retries rotated passes when upright read is low-confidence and keeps the better result", async () => {
+  it("auto-orients before extract, then keeps the upright result", async () => {
     const gt = getReceiptFixtureGroundTruth("costco-gas");
-    let call = 0;
+    let detectCalls = 0;
+    let extractCalls = 0;
     const provider: BaxterVisionProvider = {
       key: "rot",
       name: "Rot",
@@ -284,10 +284,18 @@ describe("orientation retry picks better-scoring rotation", () => {
         throw new Error("unused");
       },
       async analyzeImageJson(input) {
-        call += 1;
-        const rotatedHint = input.prompt.includes("ORIENTATION OVERRIDE");
-        if (!rotatedHint) {
-          // Sideways misread: per-unit price + wrong year
+        if (
+          input.prompt.includes("rotationDegrees") &&
+          input.prompt.includes("printed text reads upright")
+        ) {
+          detectCalls += 1;
+          // Sideways receipt — need 90° clockwise to upright.
+          return { content: JSON.stringify({ rotationDegrees: 90, confidence: 0.92 }) };
+        }
+        extractCalls += 1;
+        const alreadyOriented = input.prompt.includes("already been rotated 90");
+        if (!alreadyOriented && !input.prompt.includes("ORIENTATION OVERRIDE")) {
+          // Should not be the primary path when auto-orient works.
           return {
             content: JSON.stringify(
               fixtureExtraction({
@@ -306,7 +314,6 @@ describe("orientation retry picks better-scoring rotation", () => {
             ),
           };
         }
-        // After rotation: correct total + date
         return {
           content: JSON.stringify(
             fixtureExtraction({
@@ -337,34 +344,14 @@ describe("orientation retry picks better-scoring rotation", () => {
       now: NOW,
     });
     expect(result.ok).toBe(true);
+    expect(detectCalls).toBe(1);
+    expect(extractCalls).toBeGreaterThanOrEqual(1);
     if (result.ok) {
-      expect(result.orientationRetries).toBeGreaterThan(0);
+      expect(result.autoOriented).toBe(true);
+      expect(result.rotationDegrees).toBe(90);
       expect(result.extraction.amountCents).toBe(6310);
       expect(result.extraction.purchasedOn).toBe("2025-09-11");
-      expect(result.rotationDegrees).toBeGreaterThan(0);
-      expect(scoreReceiptExtraction(result.extraction)).toBeGreaterThan(
-        scoreReceiptExtraction(
-          validateReceiptExtraction(
-            receiptExtractionSchema.parse(
-              fixtureExtraction({
-                amountCents: 318,
-                vendor: "Costco",
-                purchasedOn: "2023-09-11",
-                confidence: {
-                  amount: 0.5,
-                  vendor: 0.8,
-                  purchasedOn: 0.5,
-                  items: 0,
-                  description: 0,
-                },
-              }),
-            ),
-            { now: NOW },
-          ),
-        ),
-      );
     }
-    expect(call).toBeGreaterThan(1);
   });
 });
 

@@ -1,9 +1,11 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { ReceiptLogClient } from "@/components/receipts/receipt-log-client";
+
+afterEach(() => cleanup());
 
 describe("ReceiptLogClient mobile layout", () => {
   it("renders Log Expense chooser with all three actions at phone width", () => {
@@ -22,13 +24,28 @@ describe("ReceiptLogClient mobile layout", () => {
     expect(container.innerHTML).not.toMatch(/min-w-\[\d{3,}px\]/);
   });
 
-  it("shows admin-only Receipt Log fourth action", () => {
+  it("shows My Receipts secondary link for everyone", () => {
+    render(
+      <div style={{ width: 375 }}>
+        <ReceiptLogClient initialJobs={[]} />
+      </div>,
+    );
+    const mine = screen.getByRole("link", { name: /^My Receipts$/i });
+    expect(mine.getAttribute("href")).toBe("/receipts/mine");
+    expect(screen.queryByRole("link", { name: /Receipt Log/i })).toBeNull();
+  });
+
+  it("shows Receipt Log admin link alongside My Receipts for admins", () => {
     render(
       <div style={{ width: 375 }}>
         <ReceiptLogClient initialJobs={[]} isAdmin />
       </div>,
     );
-    const link = screen.getByRole("link", { name: /Receipt Log/i });
-    expect(link.getAttribute("href")).toBe("/receipts/log");
+    expect(screen.getByRole("link", { name: /^My Receipts$/i }).getAttribute("href")).toBe(
+      "/receipts/mine",
+    );
+    expect(screen.getByRole("link", { name: /Receipt Log/i }).getAttribute("href")).toBe(
+      "/receipts/log",
+    );
   });
 });

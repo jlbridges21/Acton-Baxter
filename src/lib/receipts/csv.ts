@@ -1,5 +1,5 @@
 /**
- * CSV export for the admin Receipt Log — decimal dollars + durable photo permalinks.
+ * CSV export for Receipt Log lists — decimal dollars + durable photo permalinks.
  */
 
 import { formatCentsAsDecimalDollars } from "./amount";
@@ -12,10 +12,14 @@ function csvEscape(value: string): string {
   return value;
 }
 
-export function buildReceiptLogCsv(rows: ReceiptLogRow[], origin?: string): string {
+export function buildReceiptLogCsv(
+  rows: ReceiptLogRow[],
+  origin?: string,
+  options?: { includeSubmitter?: boolean },
+): string {
+  const includeSubmitter = options?.includeSubmitter ?? true;
   const header = [
-    "Submitter",
-    "Submitter email",
+    ...(includeSubmitter ? (["Submitter", "Submitter email"] as const) : []),
     "Date logged",
     "Date purchased",
     "Photo",
@@ -35,8 +39,12 @@ export function buildReceiptLogCsv(rows: ReceiptLogRow[], origin?: string): stri
       : "";
     lines.push(
       [
-        csvEscape(row.submitterLabel || row.submitterName),
-        csvEscape(row.submitterEmail ?? ""),
+        ...(includeSubmitter
+          ? [
+              csvEscape(row.submitterLabel || row.submitterName),
+              csvEscape(row.submitterEmail ?? ""),
+            ]
+          : []),
         csvEscape(row.createdAt.slice(0, 10)),
         csvEscape(row.purchasedOn),
         csvEscape(photo),

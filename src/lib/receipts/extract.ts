@@ -1,12 +1,13 @@
 /**
- * Receipt field extraction via Baxter vision — schema validate + correction +
- * post-validation + orientation retry when confidence/validation fails.
+ * Receipt field extraction via Baxter vision — auto-orient → extract →
+ * optional multi-orientation fallback when confidence/validation is still poor.
  */
 
 import "server-only";
 
 import { getBaxterVisionProvider } from "@/lib/baxter-ai/vision";
 import { formatCentsAsUsd } from "./amount";
+import { detectReceiptUprightRotation, isOrientationDetectPrompt } from "./detect-orientation";
 import {
   RECEIPT_EXTRACTION_CORRECTION_PROMPT,
   buildReceiptExtractionPrompt,
@@ -29,8 +30,11 @@ export type ReceiptExtractResult =
       usable: boolean;
       extraction: ReceiptExtraction;
       correctionAttempted: boolean;
-      /** Degrees applied to the winning orientation pass. */
+      /** Degrees applied to the winning orientation (clockwise). */
       rotationDegrees: ReceiptRotationDegrees;
+      /** True when vision auto-detect chose the starting orientation. */
+      autoOriented: boolean;
+      /** Extra full-extract passes after the first oriented extract. */
       orientationRetries: number;
     }
   | {
@@ -57,7 +61,6 @@ function normalizeRawExtraction(raw: unknown, now: Date): unknown {
   if (!raw || typeof raw !== "object") return raw;
   const o = { ...(raw as Record<string, unknown>) };
 
-  // Tolerate amount as dollar string / float — coerce toward integer cents.
   if (typeof o.amountCents === "string") {
     const cleaned = o.amountCents.replace(/[^0-9.]/g, "");
     if (cleaned.includes(".")) {
@@ -125,6 +128,24 @@ async function runVisionPass(input: {
     prompt,
   });
 
+  // Defensive: if a mock/provider returns orientation JSON to an extract call, fail soft.
+  if (isOrientationDetectPrompt(prompt) === false) {
+    try {
+      const peek = parseJsonObject(first.content) as Record<string, unknown>;
+      if (
+        peek &&
+        typeof peek === "object" &&
+        "rotationDegrees" in peek &&
+        !("amountCents" in peek) &&
+        !("vendor" in peek)
+      ) {
+        return { error: "Orientation response received during field extraction." };
+      }
+    } catch {
+      // continue — normal parse path handles it
+    }
+  }
+
   let parsed = receiptExtractionSchema.safeParse(
     normalizeRawExtraction(parseJsonObject(first.content), input.now),
   );
@@ -158,15 +179,24 @@ ${prompt}`,
 }
 
 /**
- * Download stored photo → vision JSON → Zod validate → validation → orientation retries.
+ * Download stored photo → auto-orient (unless user-forced) → extract →
+ * multi-orientation fallback when still low-confidence.
  */
 export async function extractReceiptFromStoragePath(input: {
   storagePath: string;
   filename?: string;
-  /** Optional forced rotation before the first pass (user rotate + re-extract). */
+  /**
+   * When set, use this clockwise rotation and skip auto-detect
+   * (user "Re-extract at this orientation").
+   */
   rotationDegrees?: ReceiptRotationDegrees;
   now?: Date;
-  /** Disable orientation retries (unit tests). */
+  /**
+   * When false, skip auto orientation detect (tests / forced angle).
+   * Defaults to true when rotationDegrees is omitted.
+   */
+  autoOrient?: boolean;
+  /** Skip auto-orient and multi-orientation fallback (unit tests). */
   skipOrientationRetry?: boolean;
 }): Promise<ReceiptExtractResult> {
   const downloaded = await downloadReceiptPhoto(input.storagePath);
@@ -187,19 +217,38 @@ export async function extractReceiptFromStoragePath(input: {
 
   const now = input.now ?? new Date();
   const filename = input.filename ?? "receipt.jpg";
-  const forced = input.rotationDegrees ?? 0;
+  const userForced = input.rotationDegrees != null;
+  const autoOrient = !input.skipOrientationRetry && (input.autoOrient ?? !userForced);
 
   try {
-    const initialBuffer =
-      forced === 0 ? downloaded.buffer : await rotateReceiptImageBuffer(downloaded.buffer, forced);
-    const initialMime = forced === 0 ? mimeType : "image/jpeg";
-    const initialBase64 = initialBuffer.toString("base64");
+    let appliedRotation: ReceiptRotationDegrees = input.rotationDegrees ?? 0;
+    let autoOriented = false;
+
+    if (autoOrient) {
+      const detected = await detectReceiptUprightRotation({
+        mimeType,
+        base64Data: downloaded.buffer.toString("base64"),
+        filename,
+      });
+      appliedRotation = detected.rotationDegrees;
+      autoOriented = detected.rotationDegrees !== 0 || detected.confidence > 0;
+    }
+
+    const orientedBuffer =
+      appliedRotation === 0
+        ? downloaded.buffer
+        : await rotateReceiptImageBuffer(downloaded.buffer, appliedRotation);
+    const orientedMime = appliedRotation === 0 ? mimeType : "image/jpeg";
 
     const firstPass = await runVisionPass({
-      mimeType: initialMime,
-      base64Data: initialBase64,
+      mimeType: orientedMime,
+      base64Data: orientedBuffer.toString("base64"),
       filename,
       now,
+      orientationHint:
+        appliedRotation === 0
+          ? undefined
+          : `ORIENTATION: This image has already been rotated ${appliedRotation}° clockwise so printed text should read upright. Extract fields from the upright text.`,
     });
     if ("error" in firstPass) {
       return { ok: false, error: firstPass.error, extraction: null };
@@ -208,23 +257,28 @@ export async function extractReceiptFromStoragePath(input: {
     let best = {
       extraction: firstPass.extraction,
       correctionAttempted: firstPass.correctionAttempted,
-      rotationDegrees: forced as ReceiptRotationDegrees,
+      rotationDegrees: appliedRotation,
     };
     let orientationRetries = 0;
 
-    const shouldRetry =
-      !input.skipOrientationRetry && shouldRetryReceiptExtractionOrientation(best.extraction);
+    const allowFallback =
+      !userForced &&
+      !input.skipOrientationRetry &&
+      shouldRetryReceiptExtractionOrientation(best.extraction);
 
-    if (shouldRetry) {
-      const candidates: ReceiptRotationDegrees[] = [90, 180, 270].filter(
-        (d) => d !== forced,
-      ) as ReceiptRotationDegrees[];
+    if (allowFallback) {
+      const candidates: ReceiptRotationDegrees[] = ([0, 90, 180, 270] as const).filter(
+        (d) => d !== appliedRotation,
+      );
 
       for (const degrees of candidates) {
         orientationRetries += 1;
-        const rotated = await rotateReceiptImageBuffer(downloaded.buffer, degrees);
+        const rotated =
+          degrees === 0
+            ? downloaded.buffer
+            : await rotateReceiptImageBuffer(downloaded.buffer, degrees);
         const pass = await runVisionPass({
-          mimeType: "image/jpeg",
+          mimeType: degrees === 0 ? mimeType : "image/jpeg",
           base64Data: rotated.toString("base64"),
           filename,
           now,
@@ -247,6 +301,7 @@ export async function extractReceiptFromStoragePath(input: {
       extraction: best.extraction,
       correctionAttempted: best.correctionAttempted,
       rotationDegrees: best.rotationDegrees,
+      autoOriented,
       orientationRetries,
     };
   } catch (error) {

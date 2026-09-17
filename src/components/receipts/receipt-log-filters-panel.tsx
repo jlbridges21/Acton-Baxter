@@ -17,13 +17,21 @@ export function ReceiptLogFiltersPanel({
   userOptions,
   jobOptions,
   vendorOptions,
+  basePath = RECEIPT_LOG_PATH,
+  showUserFilter = true,
 }: {
   initial: ReceiptLogFiltersState;
   userOptions: Array<{ id: string; label: string }>;
   jobOptions: Array<{ id: string; label: string }>;
   vendorOptions: string[];
+  /** Form action + reset/link base (admin `/receipts/log` or mine `/receipts/mine`). */
+  basePath?: string;
+  showUserFilter?: boolean;
 }) {
-  const activeCount = useMemo(() => countActiveReceiptLogFilters(initial), [initial]);
+  const activeCount = useMemo(
+    () => countActiveReceiptLogFilters(initial, { ignoreUserFilter: !showUserFilter }),
+    [initial, showUserFilter],
+  );
   const [open, setOpen] = useState(activeCount > 0);
   const [showCustomDates, setShowCustomDates] = useState(initial.range === "custom");
   const [userQuery, setUserQuery] = useState("");
@@ -46,6 +54,13 @@ export function ReceiptLogFiltersPanel({
   function toggle(list: string[], value: string, setter: (next: string[]) => void) {
     setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
   }
+
+  const hrefFilters = {
+    ...initial,
+    userIds: showUserFilter ? selectedUsers : [],
+    jobIds: selectedJobs,
+    vendors: selectedVendors,
+  };
 
   return (
     <div className="space-y-3">
@@ -71,7 +86,7 @@ export function ReceiptLogFiltersPanel({
         </div>
 
         {open ? (
-          <form method="get" action={RECEIPT_LOG_PATH} className="mt-4 space-y-4">
+          <form method="get" action={basePath} className="mt-4 space-y-4">
             <input type="hidden" name="sort" value={initial.sort} />
             <input type="hidden" name="dir" value={initial.dir} />
 
@@ -81,15 +96,15 @@ export function ReceiptLogFiltersPanel({
                 {FEEDBACK_RANGE_PRESET_LINKS.map((preset) => (
                   <Link
                     key={preset.value}
-                    href={buildReceiptLogHref({
-                      ...initial,
-                      range: preset.value,
-                      customStart: "",
-                      customEnd: "",
-                      userIds: selectedUsers,
-                      jobIds: selectedJobs,
-                      vendors: selectedVendors,
-                    })}
+                    href={buildReceiptLogHref(
+                      {
+                        ...hrefFilters,
+                        range: preset.value,
+                        customStart: "",
+                        customEnd: "",
+                      },
+                      basePath,
+                    )}
                     className={`rounded-md border px-2.5 py-1.5 text-xs font-medium ${
                       initial.range === preset.value
                         ? "border-[var(--acton-navy)] bg-[var(--acton-navy)] text-white"
@@ -203,37 +218,39 @@ export function ReceiptLogFiltersPanel({
               </label>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3">
-              <fieldset>
-                <legend className="mb-1 text-sm font-medium text-[var(--acton-navy)]">
-                  Submitting user
-                </legend>
-                <input
-                  type="search"
-                  value={userQuery}
-                  onChange={(e) => setUserQuery(e.target.value)}
-                  placeholder="Filter users"
-                  className="mb-2 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
-                />
-                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[var(--acton-border)] p-2">
-                  {filteredUsers.length === 0 ? (
-                    <p className="text-xs text-[var(--acton-muted)]">No users</p>
-                  ) : (
-                    filteredUsers.map((u) => (
-                      <label key={u.id} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          name="user"
-                          value={u.id}
-                          checked={selectedUsers.includes(u.id)}
-                          onChange={() => toggle(selectedUsers, u.id, setSelectedUsers)}
-                        />
-                        <span className="truncate">{u.label}</span>
-                      </label>
-                    ))
-                  )}
-                </div>
-              </fieldset>
+            <div className={`grid gap-4 ${showUserFilter ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+              {showUserFilter ? (
+                <fieldset>
+                  <legend className="mb-1 text-sm font-medium text-[var(--acton-navy)]">
+                    Submitting user
+                  </legend>
+                  <input
+                    type="search"
+                    value={userQuery}
+                    onChange={(e) => setUserQuery(e.target.value)}
+                    placeholder="Filter users"
+                    className="mb-2 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+                  />
+                  <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[var(--acton-border)] p-2">
+                    {filteredUsers.length === 0 ? (
+                      <p className="text-xs text-[var(--acton-muted)]">No users</p>
+                    ) : (
+                      filteredUsers.map((u) => (
+                        <label key={u.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            name="user"
+                            value={u.id}
+                            checked={selectedUsers.includes(u.id)}
+                            onChange={() => toggle(selectedUsers, u.id, setSelectedUsers)}
+                          />
+                          <span className="truncate">{u.label}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </fieldset>
+              ) : null}
 
               <fieldset>
                 <legend className="mb-1 text-sm font-medium text-[var(--acton-navy)]">Job</legend>
@@ -301,7 +318,7 @@ export function ReceiptLogFiltersPanel({
                 Apply filters
               </Button>
               <Link
-                href={RECEIPT_LOG_PATH}
+                href={basePath}
                 className="inline-flex min-h-11 items-center rounded-md border border-[var(--acton-border)] px-4 text-sm font-medium text-[var(--acton-navy)]"
               >
                 Reset

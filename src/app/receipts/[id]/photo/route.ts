@@ -2,27 +2,36 @@ import { NextResponse } from "next/server";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { AuthorizationError, ValidationError } from "@/lib/errors";
-import { createReceiptPhotoSignedUrl, getReceiptById } from "@/lib/receipts";
+import {
+  createReceiptPhotoSignedUrl,
+  filterReceiptVisibleToViewer,
+  getReceiptById,
+} from "@/lib/receipts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Durable authenticated photo permalink for CSV export / admin viewing.
- * Checks admin auth, then redirects to a freshly signed private-bucket URL.
+ * Durable authenticated photo permalink for CSV export / list viewing.
+ * Allows the receipt owner or an admin; refuses everyone else.
  */
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireActiveUser();
-    if (!isAdminRole(user.profile.role)) {
-      throw new AuthorizationError("Admin access required");
-    }
-
     const { id } = await context.params;
     const receipt = await getReceiptById(id);
     if (!receipt || receipt.deletedAt) {
       throw new ValidationError("Receipt not found");
     }
+
+    const visible = filterReceiptVisibleToViewer(receipt, {
+      id: user.id,
+      isAdmin: isAdminRole(user.profile.role),
+    });
+    if (!visible) {
+      throw new AuthorizationError("You do not have access to this receipt photo");
+    }
+
     if (!receipt.photoStoragePath) {
       throw new ValidationError("This receipt has no photo");
     }

@@ -402,7 +402,7 @@ describe("upload-before-extract + vision scenarios", () => {
   });
 
   it("self-corrects once when first JSON fails schema", async () => {
-    let calls = 0;
+    let extractCalls = 0;
     setBaxterVisionProviderForTests({
       key: "retry",
       name: "Retry",
@@ -410,15 +410,21 @@ describe("upload-before-extract + vision scenarios", () => {
       async analyzeImage(): Promise<ImageAnalysisResult> {
         throw new Error("unused");
       },
-      async analyzeImageJson() {
-        calls += 1;
-        if (calls === 1) return { content: '{"amountCents":"not-a-number"}' };
+      async analyzeImageJson(input) {
+        if (
+          input.prompt.includes("rotationDegrees") &&
+          input.prompt.includes("printed text reads upright")
+        ) {
+          return { content: JSON.stringify({ rotationDegrees: 0, confidence: 1 }) };
+        }
+        extractCalls += 1;
+        if (extractCalls === 1) return { content: '{"amountCents":"not-a-number"}' };
         return { content: JSON.stringify(extractionFixture({ amountCents: 1999 })) };
       },
     });
     const uploaded = await uploadReceiptPhoto({ userId: "u", buffer: minimalJpeg() });
     const result = await extractReceiptFromStoragePath({ storagePath: uploaded.storagePath });
-    expect(calls).toBe(2);
+    expect(extractCalls).toBe(2);
     expect(result.ok && result.extraction.amountCents).toBe(1999);
     if (result.ok) expect(result.correctionAttempted).toBe(true);
   });

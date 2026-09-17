@@ -64,8 +64,14 @@ export {
   type ReceiptExtractResult,
 } from "./extract";
 export {
+  detectReceiptUprightRotation,
+  RECEIPT_ORIENTATION_DETECT_PROMPT,
+} from "./detect-orientation";
+export {
   RECEIPT_LOG_PATH,
   RECEIPT_LOG_EXPORT_PATH,
+  MY_RECEIPTS_PATH,
+  MY_RECEIPTS_EXPORT_PATH,
   DEFAULT_RECEIPT_LOG_FILTERS,
   buildReceiptLogHref,
   countActiveReceiptLogFilters,
@@ -73,6 +79,7 @@ export {
   parseReceiptLogEntryType,
   parseReceiptLogSortField,
   parseReceiptLogSortDir,
+  parseReceiptLogFiltersFromParams,
   type ReceiptLogFiltersState,
   type ReceiptLogSortField,
   type ReceiptLogSortDir,
@@ -86,7 +93,12 @@ export {
   type ReceiptLogRow,
   type ReceiptLogQueryResult,
 } from "./log-query";
-export { getReceiptLogDashboard, loadReceiptLogCorpus } from "./log-dashboard";
+export {
+  getReceiptLogDashboard,
+  loadReceiptLogCorpus,
+  getMyReceiptLogDashboard,
+  loadMyReceiptLogCorpus,
+} from "./log-dashboard";
 export { buildReceiptLogCsv } from "./csv";
 export {
   compareExpenseJobsForList,
