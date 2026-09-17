@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ROLE_LABELS } from "@/lib/auth/roles";
+import { resolveProfileDisplayName } from "@/lib/auth/profile-display";
 import type { Profile } from "@/lib/research/db-types";
 import type { UserRole } from "@/lib/research/types";
 import type { Department } from "@/lib/org/department-types";
@@ -11,6 +12,13 @@ import type { Department } from "@/lib/org/department-types";
 type ProfileWithEmail = Profile & { email?: string | null };
 
 const ASSIGNABLE_ROLES: UserRole[] = ["new_user", "user", "admin", "super_admin"];
+
+function profilePrimaryName(profile: ProfileWithEmail): string {
+  return resolveProfileDisplayName(
+    { id: profile.id, fullName: profile.full_name, email: profile.email },
+    { fallback: "Unnamed user" },
+  );
+}
 
 export function AdminUsersClient({
   initialProfiles,
@@ -214,7 +222,7 @@ export function AdminUsersClient({
               >
                 <div>
                   <p className="text-sm font-semibold text-[var(--acton-navy)]">
-                    {profile.full_name || "Unnamed user"}
+                    {profilePrimaryName(profile)}
                   </p>
                   <p className="text-xs text-[var(--acton-muted)]">
                     {profile.email || profile.id} · Department: {departmentLabel(profile)}
@@ -267,7 +275,7 @@ export function AdminUsersClient({
                 <tr key={profile.id}>
                   <td className="px-2 py-3 align-top">
                     <p className="font-semibold text-[var(--acton-navy)]">
-                      {profile.full_name || "Unnamed user"}
+                      {profilePrimaryName(profile)}
                       {profile.email?.toLowerCase() === "baxter@actonadu.com" ? (
                         <span className="ml-2 text-xs font-semibold text-emerald-800">
                           super-admin

@@ -12,7 +12,7 @@ export default async function AdminExpenseJobsPage() {
   const user = await requireActiveUser();
   if (!isAdminRole(user.profile.role)) redirect("/");
 
-  // Read-only load — sync is cron + explicit admin "Refresh" button.
+  // Read-only load — sync is manual Refresh or post–Project Setup only.
   const jobs = await listExpenseJobs({ includeInactive: true });
 
   return (
@@ -24,8 +24,8 @@ export default async function AdminExpenseJobsPage() {
         <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Expense jobs</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
           Jobs employees can pick when logging a receipt. Project rows sync from the Master Project
-          Log on a schedule; custom rows are admin-managed. Hide and reorder are preserved across
-          syncs.
+          Log when you refresh below or after a Project Setup run completes. Custom rows are
+          admin-managed. Hide and reorder are preserved across syncs.
         </p>
       </div>
       <ExpenseJobsAdminClient initialJobs={jobs} />

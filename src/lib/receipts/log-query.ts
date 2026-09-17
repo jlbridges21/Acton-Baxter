@@ -20,7 +20,12 @@ import type {
 export type ReceiptLogRow = {
   id: string;
   submittedBy: string;
+  /** Primary display: full_name → email → truncated id. */
   submitterName: string;
+  /** Auth email when known (disambiguates same-name accounts). */
+  submitterEmail: string | null;
+  /** Filter/CSV label — name with email when both exist. */
+  submitterLabel: string;
   jobId: string | null;
   customJobLabel: string | null;
   /** Display label — expense job label or custom one-off text. */
@@ -208,7 +213,7 @@ export function queryReceiptLogRows(
   const jobMap = new Map<string, string>();
   const vendorSet = new Set<string>();
   for (const row of facetBase) {
-    userMap.set(row.submittedBy, row.submitterName);
+    userMap.set(row.submittedBy, row.submitterLabel || row.submitterName);
     if (row.isCustomJob && row.customJobLabel) {
       jobMap.set(customJobFilterId(row.customJobLabel), `${row.customJobLabel} (custom)`);
     } else if (row.jobId) {

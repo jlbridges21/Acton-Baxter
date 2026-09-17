@@ -13,6 +13,7 @@ type Props = {
 export function ExpenseJobsAdminClient({ initialJobs }: Props) {
   const [jobs, setJobs] = useState<ExpenseJob[]>(initialJobs);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState("");
@@ -37,7 +38,12 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
       const payload = (await res.json()) as {
         jobs?: ExpenseJob[];
         job?: ExpenseJob;
-        sync?: { upserted: number };
+        sync?: {
+          upserted: number;
+          added: number;
+          updated: number;
+          deactivatedMissing: number;
+        };
         error?: { message?: string };
       };
       if (!res.ok) {
@@ -123,19 +129,43 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
   }
 
   async function handleSync() {
-    const result = await post({ action: "sync_projects" });
-    if (result?.sync) {
-      setMessage(`Synced ${result.sync.upserted} project job(s) from Master Project Log.`);
+    setSyncing(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await post({ action: "sync_projects" });
+      if (result?.sync) {
+        const { added, updated, deactivatedMissing } = result.sync;
+        const parts = [`${added} job${added === 1 ? "" : "s"} added`, `${updated} updated`];
+        if (deactivatedMissing > 0) {
+          parts.push(`${deactivatedMissing} missing from log (left as-is)`);
+        }
+        setMessage(parts.join(", ") + ".");
+      }
+    } finally {
+      setSyncing(false);
     }
   }
+
+  const actionBusy = busy || syncing;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="secondary" disabled={busy} onClick={() => void handleSync()}>
-          Refresh from Master Project Log
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={actionBusy}
+          onClick={() => void handleSync()}
+        >
+          {syncing ? "Refreshing…" : "Refresh from Master Project Log"}
         </Button>
-        <Button type="button" variant="secondary" disabled={busy} onClick={() => void reload()}>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={actionBusy}
+          onClick={() => void reload()}
+        >
           Reload
         </Button>
       </div>
@@ -150,6 +180,11 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
           {message}
         </p>
       ) : null}
+      {syncing ? (
+        <p className="text-sm text-[var(--acton-muted)]">
+          Reading the Master Project Log — this can take several seconds…
+        </p>
+      ) : null}
 
       <form onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-2 sm:flex-row">
         <Input
@@ -159,7 +194,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
           className="min-h-11"
           required
         />
-        <Button type="submit" disabled={busy || !newLabel.trim()}>
+        <Button type="submit" disabled={actionBusy || !newLabel.trim()}>
           Add custom job
         </Button>
       </form>
@@ -196,7 +231,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
                   <Button
                     type="button"
                     size="sm"
-                    disabled={busy}
+                    disabled={actionBusy}
                     onClick={() => void handleSaveEdit(job.id)}
                   >
                     Save
@@ -216,7 +251,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={busy}
+                    disabled={actionBusy}
                     onClick={() => {
                       setEditId(job.id);
                       setEditLabel(job.label);
@@ -228,7 +263,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={busy}
+                    disabled={actionBusy}
                     onClick={() => void handleToggleActive(job)}
                   >
                     {job.isActive ? "Hide" : "Show"}
@@ -237,7 +272,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={busy}
+                    disabled={actionBusy}
                     onClick={() => void handleMove(job, -1)}
                   >
                     Up
@@ -246,7 +281,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={busy}
+                    disabled={actionBusy}
                     onClick={() => void handleMove(job, 1)}
                   >
                     Down

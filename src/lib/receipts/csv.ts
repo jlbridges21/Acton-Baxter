@@ -15,6 +15,7 @@ function csvEscape(value: string): string {
 export function buildReceiptLogCsv(rows: ReceiptLogRow[], origin?: string): string {
   const header = [
     "Submitter",
+    "Submitter email",
     "Date logged",
     "Date purchased",
     "Photo",
@@ -34,7 +35,8 @@ export function buildReceiptLogCsv(rows: ReceiptLogRow[], origin?: string): stri
       : "";
     lines.push(
       [
-        csvEscape(row.submitterName),
+        csvEscape(row.submitterLabel || row.submitterName),
+        csvEscape(row.submitterEmail ?? ""),
         csvEscape(row.createdAt.slice(0, 10)),
         csvEscape(row.purchasedOn),
         csvEscape(photo),

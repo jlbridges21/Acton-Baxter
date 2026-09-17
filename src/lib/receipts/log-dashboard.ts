@@ -4,8 +4,7 @@
 
 import "server-only";
 
-import { getEnv } from "@/lib/env";
-import { createServiceClient } from "@/lib/supabase/admin";
+import { loadProfileDisplayByIds } from "@/lib/auth/load-profile-display";
 import type { ReceiptLogFiltersState } from "./log-filter-url";
 import {
   queryReceiptLogRows,
@@ -15,50 +14,6 @@ import {
 } from "./log-query";
 import { createReceiptPhotoSignedUrlMap } from "./storage";
 import { getExpenseJob, listAllReceipts, listExpenseJobs } from "./store";
-
-function shouldUseMemory(): boolean {
-  try {
-    const env = getEnv();
-    return Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";
-  } catch {
-    return true;
-  }
-}
-
-async function loadSubmitterNames(userIds: string[]): Promise<Map<string, string>> {
-  const unique = Array.from(new Set(userIds.filter(Boolean)));
-  const map = new Map<string, string>();
-  if (unique.length === 0) return map;
-
-  if (shouldUseMemory()) {
-    for (const id of unique) {
-      map.set(
-        id,
-        id.startsWith("user-") ? id.replace(/^user-/, "User ") : `User ${id.slice(0, 8)}`,
-      );
-    }
-    return map;
-  }
-
-  try {
-    const supabase = createServiceClient();
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id, full_name, email")
-      .in("id", unique);
-    if (error) throw error;
-    for (const row of data ?? []) {
-      const id = String(row.id);
-      const name = String(row.full_name || row.email || "").trim();
-      map.set(id, name || `User ${id.slice(0, 8)}`);
-    }
-  } catch {
-    for (const id of unique) {
-      if (!map.has(id)) map.set(id, `User ${id.slice(0, 8)}`);
-    }
-  }
-  return map;
-}
 
 export async function loadReceiptLogCorpus(options?: {
   /** When true, skip signed URL generation (CSV export). */
@@ -75,7 +30,7 @@ export async function loadReceiptLogCorpus(options?: {
     }
   }
 
-  const names = await loadSubmitterNames(receipts.map((r) => r.submittedBy));
+  const displays = await loadProfileDisplayByIds(receipts.map((r) => r.submittedBy));
   const photoPaths = receipts.map((r) => r.photoStoragePath).filter((p): p is string => Boolean(p));
   const signedMap = options?.skipSignedUrls
     ? new Map<string, string>()
@@ -86,10 +41,13 @@ export async function loadReceiptLogCorpus(options?: {
     const jobLabel = isCustomJob
       ? (r.customJobLabel ?? "Custom")
       : (jobLabelById.get(r.jobId ?? "") ?? "Unknown job");
+    const display = displays.get(r.submittedBy);
     return {
       id: r.id,
       submittedBy: r.submittedBy,
-      submitterName: names.get(r.submittedBy) ?? `User ${r.submittedBy.slice(0, 8)}`,
+      submitterName: display?.displayName ?? `User ${r.submittedBy.slice(0, 8)}`,
+      submitterEmail: display?.email ?? null,
+      submitterLabel: display?.label ?? `User ${r.submittedBy.slice(0, 8)}`,
       jobId: r.jobId,
       customJobLabel: r.customJobLabel,
       jobLabel,

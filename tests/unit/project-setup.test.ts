@@ -43,6 +43,15 @@ vi.mock("@/lib/project-setup/notify-slack", () => ({
   notifyProjectSetupSlackInitiator: vi.fn(async () => undefined),
 }));
 
+const syncAfterSetup = vi.fn(async (_runId: string) => undefined);
+vi.mock("@/lib/receipts/sync-jobs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/receipts/sync-jobs")>();
+  return {
+    ...actual,
+    syncExpenseJobsAfterProjectSetup: (runId: string) => syncAfterSetup(runId),
+  };
+});
+
 beforeEach(() => {
   process.env.E2E_TEST_AUTH_BYPASS = "true";
   process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
@@ -53,6 +62,8 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
   resetEnvCacheForTests();
   resetProjectSetupMemoryForTests();
+  syncAfterSetup.mockClear();
+  syncAfterSetup.mockImplementation(async () => undefined);
 });
 
 describe("project number parse / increment", () => {
@@ -340,5 +351,59 @@ describe("step runner resume + idempotency", () => {
     expect(ensured.find((s) => s.stepKey === "append_charter_list_row")?.status).toBe("pending");
     expect(ensured).toHaveLength(PROJECT_SETUP_STEPS.length);
     expect(ensured.find((s) => s.stepKey === "create_slack_channel")?.orderIndex).toBe(5);
+  });
+
+  it("triggers expense_jobs sync after live completion only; sync errors never fail the run", async () => {
+    const contact = {
+      id: "c-sync",
+      name: "Sync Test",
+      firstName: "Sync",
+      lastName: "Test",
+      email: null,
+      phone: null,
+      address: null,
+      city: null,
+      state: null,
+      postalCode: null,
+      assignedUserId: null,
+      assignedUserName: "Jesse Soares",
+    };
+
+    const { run: dryRun } = await createProjectSetupRun({
+      initiatedBy: "user-1",
+      ghlContactId: "c-sync-dry",
+      contactSnapshot: contact,
+      salesRep: "Jesse Soares",
+      projectNumber: "L01-26990",
+      projectLastName: "Dry",
+      folderName: "L01-26990 Dry",
+      charterName: "Dry Project Charter",
+      slackChannelName: "l01-26990-dry",
+      fpPaidDate: "2026-07-31",
+      dryRun: true,
+    });
+    const dryResult = await runProjectSetupJob(dryRun.id);
+    expect(dryResult.status).toBe("complete");
+    expect(syncAfterSetup).not.toHaveBeenCalled();
+
+    const { run: liveRun } = await createProjectSetupRun({
+      initiatedBy: "user-1",
+      ghlContactId: "c-sync-live",
+      contactSnapshot: contact,
+      salesRep: "Jesse Soares",
+      projectNumber: "L01-26991",
+      projectLastName: "Live",
+      folderName: "L01-26991 Live",
+      charterName: "Live Project Charter",
+      slackChannelName: "l01-26991-live",
+      fpPaidDate: "2026-07-31",
+      dryRun: false,
+    });
+    syncAfterSetup.mockImplementationOnce(async () => {
+      throw new Error("simulated sync failure");
+    });
+    const liveResult = await runProjectSetupJob(liveRun.id);
+    expect(liveResult.status).toBe("complete");
+    expect(syncAfterSetup).toHaveBeenCalledWith(liveRun.id);
   });
 });

@@ -3,8 +3,6 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { resetEnvCacheForTests } from "@/lib/env";
-import { resetMemoryJobsForTests, claimNextJob } from "@/lib/jobs/queue";
-import { processJob } from "@/lib/jobs/process";
 import { setProjectRegistryLoadDepsForTests } from "@/lib/baxter-data/project-registry";
 import { clearProjectLogCacheForTests } from "@/lib/baxter-data/project-registry";
 import type { ProjectLogRow } from "@/lib/baxter-data/project-registry";
@@ -15,7 +13,6 @@ import {
   customJobFilterId,
   listExpenseJobs,
   listAllReceipts,
-  maybeEnqueueScheduledExpenseJobsSync,
   queryReceiptLogRows,
   receiptSubmitSchema,
   resetReceiptLogMemoryForTests,
@@ -194,35 +191,47 @@ describe("Part A — /receipts load diagnosis + fix", () => {
     );
   });
 
-  it("schedules expense_jobs_sync via queue and processes it off the page path", async () => {
-    process.env.E2E_TEST_AUTH_BYPASS = "true";
-    process.env.ENABLE_MOCK_RESEARCH = "true";
-    process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "test-anon-key";
-    process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role-key";
-    resetEnvCacheForTests();
-    resetMemoryJobsForTests();
-    resetReceiptLogMemoryForTests();
-    setProjectRegistryLoadDepsForTests({ rowsOverride: FIXTURE_ROWS });
+  it("does not schedule expense_jobs_sync on process-jobs cron; sync is event-triggered only", () => {
+    const processJobsRoute = readFileSync(
+      join(process.cwd(), "src/app/api/internal/process-jobs/route.ts"),
+      "utf8",
+    );
+    expect(processJobsRoute).not.toContain("maybeEnqueueScheduledExpenseJobsSync");
+    expect(processJobsRoute).not.toContain("expenseJobs");
 
-    const first = await maybeEnqueueScheduledExpenseJobsSync();
-    expect(first.enqueued).toBe(true);
+    const receiptsPage = readFileSync(join(process.cwd(), "src/app/receipts/page.tsx"), "utf8");
+    expect(receiptsPage).not.toContain("syncExpenseJobsFromMasterProjectLog");
+    expect(receiptsPage).toContain("listExpenseJobs");
 
-    const second = await maybeEnqueueScheduledExpenseJobsSync();
-    expect(second.enqueued).toBe(false);
-    expect(second.reason).toMatch(/pending|interval/i);
+    const runner = readFileSync(join(process.cwd(), "src/lib/project-setup/runner.ts"), "utf8");
+    expect(runner).toContain("syncExpenseJobsAfterProjectSetup");
+    expect(runner).toContain("!run.dryRun");
+  });
 
-    const job = await claimNextJob({ jobTypes: ["expense_jobs_sync"] });
-    expect(job?.jobType).toBe("expense_jobs_sync");
-    const result = await processJob(job!);
-    expect(result).toBe("complete");
+  it("reports added vs updated counts from Master Project Log sync", async () => {
+    const first = await syncExpenseJobsFromMasterProjectLog();
+    expect(first.added).toBe(3);
+    expect(first.updated).toBe(0);
 
-    const jobs = await listExpenseJobs({ includeInactive: false });
-    expect(jobs.some((j) => j.projectNumber === "L01-26019")).toBe(true);
+    const second = await syncExpenseJobsFromMasterProjectLog();
+    expect(second.added).toBe(0);
+    expect(second.updated).toBe(3);
+  });
 
-    const third = await maybeEnqueueScheduledExpenseJobsSync();
-    expect(third.enqueued).toBe(false);
-    expect(third.reason).toMatch(/interval/i);
+  it("syncExpenseJobsAfterProjectSetup swallows Master Project Log failures", async () => {
+    const { syncExpenseJobsAfterProjectSetup } = await import("@/lib/receipts/sync-jobs");
+    setProjectRegistryLoadDepsForTests({
+      rowsOverride: null,
+      getSettings: async () =>
+        ({
+          masterCharterSpreadsheetId: "sheet",
+          masterLogTabName: "Master Project Log",
+        }) as never,
+      readSheet: async () => {
+        throw new Error("simulated sheets failure");
+      },
+    });
+    await expect(syncExpenseJobsAfterProjectSetup("run-test")).resolves.toBeUndefined();
   });
 });
 
@@ -337,6 +346,8 @@ describe("Part C — free-text custom job labels", () => {
       id: r.id,
       submittedBy: r.submittedBy,
       submitterName: "User",
+      submitterEmail: null,
+      submitterLabel: "User",
       jobId: r.jobId,
       customJobLabel: r.customJobLabel,
       jobLabel: r.customJobLabel ?? "Vehicle",

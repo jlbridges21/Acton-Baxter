@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Fast path: auth + Postgres expense_jobs only.
- * Master Project Log sync runs on the process-jobs cron (expense_jobs_sync),
- * not on this render path.
+ * Master Project Log sync is manual (/admin/expense-jobs) or after Project Setup —
+ * never on this render path.
  */
 export default async function ReceiptsPage() {
   const user = await requireActiveUser();

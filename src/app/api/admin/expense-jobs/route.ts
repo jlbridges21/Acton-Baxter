@@ -77,7 +77,12 @@ export async function POST(request: Request) {
     const jobs = await listExpenseJobs({ includeInactive: true });
     return jsonOk({
       jobs,
-      sync: { upserted: sync.upserted, deactivatedMissing: sync.deactivatedMissing },
+      sync: {
+        upserted: sync.upserted,
+        added: sync.added,
+        updated: sync.updated,
+        deactivatedMissing: sync.deactivatedMissing,
+      },
     });
   } catch (error) {
     return jsonError(error, "POST /api/admin/expense-jobs");

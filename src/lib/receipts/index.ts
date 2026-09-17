@@ -16,7 +16,6 @@ export {
   type ReceiptSubmitInput,
 } from "./schemas";
 export { formatProjectExpenseJobLabel } from "./job-label";
-export { syncExpenseJobsFromMasterProjectLog, projectRowsToLabels } from "./sync-jobs";
 export {
   listExpenseJobs,
   listExpenseJobsRaw,
@@ -86,4 +85,8 @@ export {
   compareProjectNumberDesc,
   PROJECT_JOB_SORT_BAND,
 } from "./job-sort";
-export { maybeEnqueueScheduledExpenseJobsSync, EXPENSE_JOBS_SYNC_INTERVAL_MS } from "./schedule";
+export {
+  syncExpenseJobsFromMasterProjectLog,
+  syncExpenseJobsAfterProjectSetup,
+  projectRowsToLabels,
+} from "./sync-jobs";

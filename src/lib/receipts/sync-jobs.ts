@@ -1,8 +1,11 @@
 /**
  * Sync project-sourced expense_jobs from the Master Project Log.
  *
- * Strategy: scheduled job queue (every ~15m via process-jobs cron) + admin
- * "Refresh from Master Project Log" button. Never on the `/receipts` render path.
+ * Triggers only:
+ * 1. Admin "Refresh from Master Project Log" on /admin/expense-jobs
+ * 2. After a successful live (non-dry-run) Project Setup run completes
+ *
+ * Never on the `/receipts` render path. Never on a scheduled cron.
  */
 
 import "server-only";
@@ -27,6 +30,8 @@ export type SyncExpenseJobsTimings = {
 
 export type SyncExpenseJobsResult = {
   upserted: number;
+  added: number;
+  updated: number;
   deactivatedMissing: number;
   rows: ExpenseJobRow[];
   timings: SyncExpenseJobsTimings;
@@ -73,8 +78,17 @@ export async function syncExpenseJobsFromMasterProjectLog(
 
   const projects = loaded.rows.filter((row) => row.projectNumber.trim());
 
+  const existingBefore = await listExpenseJobsRaw({ includeInactive: true });
+  const existingProjectKeys = new Set(
+    existingBefore
+      .filter((j) => j.source === "project" && j.project_number)
+      .map((j) => j.project_number!.trim().toUpperCase()),
+  );
+
   const upsertStart = Date.now();
-  await mapPool(projects, UPSERT_CONCURRENCY, async (row) => {
+  const outcomes = await mapPool(projects, UPSERT_CONCURRENCY, async (row) => {
+    const key = row.projectNumber.trim().toUpperCase();
+    const existed = existingProjectKeys.has(key);
     const label = formatProjectExpenseJobLabel(row);
     await upsertProjectExpenseJob({
       projectNumber: row.projectNumber.trim(),
@@ -83,8 +97,11 @@ export async function syncExpenseJobsFromMasterProjectLog(
       /** New rows land in the project band; existing sort_order is preserved. */
       defaultSortOrder: PROJECT_JOB_SORT_BAND,
     });
+    return existed ? ("updated" as const) : ("added" as const);
   });
   const upsertLoopMs = Date.now() - upsertStart;
+  const added = outcomes.filter((o) => o === "added").length;
+  const updated = outcomes.filter((o) => o === "updated").length;
   const upserted = projects.length;
 
   const existing = await listExpenseJobsRaw({ includeInactive: true });
@@ -102,6 +119,8 @@ export async function syncExpenseJobsFromMasterProjectLog(
 
   return {
     upserted,
+    added,
+    updated,
     deactivatedMissing: orphaned.length,
     rows,
     timings: {
@@ -113,6 +132,38 @@ export async function syncExpenseJobsFromMasterProjectLog(
       fromCache: loaded.fromCache,
     },
   };
+}
+
+/**
+ * Best-effort sync after Project Setup — never throws; logs outcomes for diagnosis.
+ */
+export async function syncExpenseJobsAfterProjectSetup(runId: string): Promise<void> {
+  try {
+    const result = await syncExpenseJobsFromMasterProjectLog({
+      updatedBy: null,
+    });
+    console.info(
+      JSON.stringify({
+        event: "expense_jobs_sync_after_project_setup",
+        runId,
+        ok: true,
+        added: result.added,
+        updated: result.updated,
+        upserted: result.upserted,
+        deactivatedMissing: result.deactivatedMissing,
+        totalMs: result.timings.totalMs,
+      }),
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "expense_jobs_sync_after_project_setup",
+        runId,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 }
 
 export function projectRowsToLabels(

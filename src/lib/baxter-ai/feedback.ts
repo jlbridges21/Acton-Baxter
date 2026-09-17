@@ -444,9 +444,19 @@ async function enrichFeedbackRows(
   ];
   const profileCache = new Map<string, string>();
   if (supabase && profileIds.length > 0) {
+    const { resolveProfileDisplayName } = await import("@/lib/auth/profile-display");
     const { data } = await supabase.from("profiles").select("id, full_name").in("id", profileIds);
     for (const row of data ?? []) {
-      profileCache.set(String(row.id), (row.full_name as string | undefined)?.trim() || "Web user");
+      profileCache.set(
+        String(row.id),
+        resolveProfileDisplayName(
+          {
+            id: String(row.id),
+            fullName: (row.full_name as string | undefined) ?? null,
+          },
+          { fallback: "Web user" },
+        ),
+      );
     }
   }
 

@@ -28,6 +28,8 @@ function row(partial: Partial<ReceiptLogRow> & Pick<ReceiptLogRow, "id">): Recei
   return {
     submittedBy: "user-a",
     submitterName: "Alice",
+    submitterEmail: "alice@example.com",
+    submitterLabel: "Alice (alice@example.com)",
     jobId: "job-1",
     customJobLabel: null,
     jobLabel: "L01 Liniger",
@@ -60,6 +62,8 @@ const CORPUS: ReceiptLogRow[] = [
     id: "r2",
     submittedBy: "user-b",
     submitterName: "Bob",
+    submitterEmail: "bob@example.com",
+    submitterLabel: "Bob (bob@example.com)",
     jobId: "job-2",
     jobLabel: "L01 Yeh",
     amountCents: 8000,
@@ -204,12 +208,16 @@ describe("receipt log query", () => {
       },
     });
     expect(byUser.rows[0]?.submitterName).toBe("Alice");
+    expect(byUser.facets.users.some((u) => u.label.includes("alice@example.com"))).toBe(true);
   });
 });
 
 describe("CSV export", () => {
   it("exports decimal dollars and durable photo permalinks (not signed URLs)", () => {
     const csv = buildReceiptLogCsv([CORPUS[0]!, CORPUS[1]!], "https://acton-baxter.vercel.app");
+    expect(csv).toContain("Submitter email");
+    expect(csv).toContain("Alice (alice@example.com)");
+    expect(csv).toContain("alice@example.com");
     expect(csv).toContain("25.00");
     expect(csv).toContain("80.00");
     expect(csv).not.toContain("2500");

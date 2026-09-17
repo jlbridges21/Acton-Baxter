@@ -173,6 +173,26 @@ async function executeProjectSetupSteps(
 
   const result = { status: "complete" as const, completedSteps };
   await notifyProjectSetupSlackInitiator(runId, result);
+
+  // Refresh expense_jobs so the new project appears without cron or page load.
+  // Isolated: sync failure must never fail/retry/mark this run unsuccessful.
+  if (!run.dryRun) {
+    try {
+      const { syncExpenseJobsAfterProjectSetup } = await import("@/lib/receipts/sync-jobs");
+      await syncExpenseJobsAfterProjectSetup(runId);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "expense_jobs_sync_after_project_setup",
+          runId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          note: "isolated_from_project_setup_result",
+        }),
+      );
+    }
+  }
+
   return result;
 }
 

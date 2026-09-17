@@ -189,8 +189,16 @@ export function ReceiptLogAdminClient({
             ) : (
               rows.map((row) => (
                 <tr key={row.id} className="border-b border-[var(--acton-border)]/70 align-top">
-                  <td className="py-3 pr-3 font-medium text-[var(--acton-navy)]">
-                    {row.submitterName}
+                  <td
+                    className="py-3 pr-3 font-medium text-[var(--acton-navy)]"
+                    title={row.submitterEmail ?? row.submitterLabel}
+                  >
+                    <span className="block">{row.submitterName}</span>
+                    {row.submitterEmail ? (
+                      <span className="mt-0.5 block text-xs font-normal text-[var(--acton-muted)]">
+                        {row.submitterEmail}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="py-3 pr-3 text-[var(--acton-muted)]">
                     {row.createdAt.slice(0, 10)}
@@ -250,8 +258,11 @@ export function ReceiptLogAdminClient({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-[var(--acton-navy)]">{row.vendor}</p>
-                  <p className="mt-0.5 text-xs text-[var(--acton-muted)]">
-                    {row.submitterName} · purchased {row.purchasedOn}
+                  <p
+                    className="mt-0.5 text-xs text-[var(--acton-muted)]"
+                    title={row.submitterEmail ?? undefined}
+                  >
+                    {row.submitterLabel || row.submitterName} · purchased {row.purchasedOn}
                   </p>
                   <p className="mt-0.5 text-xs text-[var(--acton-muted)]">
                     Logged {row.createdAt.slice(0, 10)} · {row.jobLabel}
