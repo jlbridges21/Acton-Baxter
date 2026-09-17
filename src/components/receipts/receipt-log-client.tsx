@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCentsAsUsd } from "@/lib/receipts/amount";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { isLowConfidence, type ReceiptExtraction } from "@/lib/receipts/extraction-schema";
+import { shouldOfferCreateCustomJob, normalizeCustomJobLabel } from "@/lib/receipts/job-select";
 import type { ExpenseJob } from "@/lib/receipts/types";
 
 export type ReceiptFormValues = {
@@ -90,6 +91,8 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     return initialJobs.find((j) => j.id === jobId)?.label ?? "";
   });
   const [jobOpen, setJobOpen] = useState(false);
+  /** -1 = nothing highlighted (default). Create option is the last index when offered. */
+  const [jobHighlight, setJobHighlight] = useState(-1);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [previewRotation, setPreviewRotation] = useState(0);
   const [extractBanner, setExtractBanner] = useState<ExtractBanner>("none");
@@ -119,13 +122,71 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     );
   }, [jobs, jobQuery]);
 
-  const canCreateCustomJob =
-    jobQuery.trim().length > 0 &&
-    filteredJobs.length === 0 &&
-    !values.jobId &&
-    values.customJobLabel.trim().toLowerCase() !== jobQuery.trim().toLowerCase();
+  const canCreateCustomJob = shouldOfferCreateCustomJob(
+    jobQuery,
+    jobs.map((j) => j.label),
+  );
+
+  const jobOptionCount = filteredJobs.length + (canCreateCustomJob ? 1 : 0);
+  const createOptionIndex = canCreateCustomJob ? filteredJobs.length : -1;
 
   const jobReady = Boolean(values.jobId || values.customJobLabel.trim());
+
+  function selectJob(job: ExpenseJob) {
+    patch({ jobId: job.id, customJobLabel: "" });
+    setJobQuery(job.label);
+    setJobOpen(false);
+    setJobHighlight(-1);
+  }
+
+  function selectCreateCustomJob() {
+    const label = normalizeCustomJobLabel(jobQuery);
+    if (
+      !label ||
+      !shouldOfferCreateCustomJob(
+        label,
+        jobs.map((j) => j.label),
+      )
+    )
+      return;
+    patch({ jobId: "", customJobLabel: label });
+    setJobQuery(label);
+    setJobOpen(false);
+    setJobHighlight(-1);
+  }
+
+  function handleJobKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") {
+      setJobOpen(false);
+      setJobHighlight(-1);
+      return;
+    }
+    if (!jobOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      setJobOpen(true);
+      return;
+    }
+    if (!jobOpen || jobOptionCount === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setJobHighlight((i) => (i < 0 ? 0 : Math.min(i + 1, jobOptionCount - 1)));
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setJobHighlight((i) => (i <= 0 ? -1 : i - 1));
+      return;
+    }
+    if (e.key === "Enter" && jobHighlight >= 0) {
+      e.preventDefault();
+      if (canCreateCustomJob && jobHighlight === createOptionIndex) {
+        selectCreateCustomJob();
+        return;
+      }
+      const job = filteredJobs[jobHighlight];
+      if (job) selectJob(job);
+    }
+  }
 
   const patch = useCallback((partial: Partial<ReceiptFormValues>, editedKeys?: FieldKey[]) => {
     setValues((prev) => ({ ...prev, ...partial }));
@@ -728,6 +789,9 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
             aria-expanded={jobOpen}
             aria-controls={`${jobListId}-list`}
             aria-autocomplete="list"
+            aria-activedescendant={
+              jobHighlight >= 0 ? `${jobListId}-option-${jobHighlight}` : undefined
+            }
             autoComplete="off"
             placeholder="Search projects or type a one-off label"
             className="min-h-12 text-base"
@@ -735,68 +799,88 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
             onChange={(e) => {
               setJobQuery(e.target.value);
               setJobOpen(true);
+              setJobHighlight(-1);
               if (values.jobId || values.customJobLabel) {
                 patch({ jobId: "", customJobLabel: "" });
               }
             }}
             onFocus={() => setJobOpen(true)}
+            onKeyDown={handleJobKeyDown}
             onBlur={() => {
-              window.setTimeout(() => setJobOpen(false), 150);
+              window.setTimeout(() => {
+                setJobOpen(false);
+                setJobHighlight(-1);
+              }, 150);
             }}
           />
           {jobOpen ? (
-            <ul
-              id={`${jobListId}-list`}
-              role="listbox"
-              className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-[var(--acton-border)] bg-white shadow-md"
+            <div
+              className="absolute z-20 mt-1 flex max-h-56 w-full flex-col overflow-hidden rounded-md border border-[var(--acton-border)] bg-white shadow-md"
+              id={`${jobListId}-listbox`}
             >
-              {filteredJobs.map((job) => (
-                <li key={job.id} role="option" aria-selected={job.id === values.jobId}>
-                  <button
-                    type="button"
-                    className="min-h-11 w-full px-3 py-2 text-left text-sm text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      patch({ jobId: job.id, customJobLabel: "" });
-                      setJobQuery(job.label);
-                      setJobOpen(false);
-                    }}
+              <ul
+                id={`${jobListId}-list`}
+                role="listbox"
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
+                {filteredJobs.map((job, index) => (
+                  <li
+                    key={job.id}
+                    id={`${jobListId}-option-${index}`}
+                    role="option"
+                    aria-selected={jobHighlight === index}
                   >
-                    {job.label}
-                  </button>
-                </li>
-              ))}
+                    <button
+                      type="button"
+                      className={`min-h-11 w-full px-3 py-2 text-left text-sm text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] ${
+                        jobHighlight === index ? "bg-[var(--acton-gray-50)]" : ""
+                      }`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onMouseEnter={() => setJobHighlight(index)}
+                      onClick={() => selectJob(job)}
+                    >
+                      {job.label}
+                    </button>
+                  </li>
+                ))}
+                {filteredJobs.length === 0 && !canCreateCustomJob ? (
+                  <li className="px-3 py-3 text-sm text-[var(--acton-muted)]">
+                    Type a name to create a one-off job label
+                  </li>
+                ) : null}
+              </ul>
               {canCreateCustomJob ? (
-                <li role="option" aria-selected={false}>
+                <div
+                  id={`${jobListId}-option-${createOptionIndex}`}
+                  role="option"
+                  aria-selected={jobHighlight === createOptionIndex}
+                  className="shrink-0 border-t border-[var(--acton-border)] bg-[var(--acton-gray-50)]"
+                >
                   <button
                     type="button"
-                    className="min-h-11 w-full border-t border-[var(--acton-border)] px-3 py-2 text-left text-sm font-medium text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+                    className={`min-h-11 w-full px-3 py-2 text-left text-sm font-medium text-[var(--acton-navy)] hover:bg-white ${
+                      jobHighlight === createOptionIndex ? "bg-white" : ""
+                    }`}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      const label = jobQuery.trim();
-                      patch({ jobId: "", customJobLabel: label });
-                      setJobQuery(label);
-                      setJobOpen(false);
-                    }}
+                    onMouseEnter={() => setJobHighlight(createOptionIndex)}
+                    onClick={() => selectCreateCustomJob()}
                   >
-                    + Create &ldquo;{jobQuery.trim()}&rdquo;
+                    + Create &ldquo;{normalizeCustomJobLabel(jobQuery)}&rdquo;
                     <span className="mt-0.5 block text-xs font-normal text-[var(--acton-muted)]">
                       For this receipt only — not added to the shared job list
                     </span>
                   </button>
-                </li>
+                </div>
               ) : null}
-              {filteredJobs.length === 0 && !canCreateCustomJob ? (
-                <li className="px-3 py-3 text-sm text-[var(--acton-muted)]">
-                  Type a name to create a one-off job label
-                </li>
-              ) : null}
-            </ul>
+            </div>
           ) : null}
-          {!jobReady && jobQuery.trim() ? (
+          {!jobReady && jobQuery.trim() && canCreateCustomJob ? (
             <p className="mt-1 text-xs text-amber-800">
-              Select a job or create &ldquo;{jobQuery.trim()}&rdquo;
+              Select a job or create &ldquo;{normalizeCustomJobLabel(jobQuery)}&rdquo;
             </p>
+          ) : null}
+          {!jobReady && jobQuery.trim() && !canCreateCustomJob ? (
+            <p className="mt-1 text-xs text-amber-800">Select a job from the list</p>
           ) : null}
         </div>
 
