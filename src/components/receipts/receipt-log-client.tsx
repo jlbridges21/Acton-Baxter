@@ -46,6 +46,8 @@ export function emptyReceiptFormValues(overrides?: Partial<ReceiptFormValues>): 
 type Props = {
   initialJobs: ExpenseJob[];
   initialValues?: Partial<ReceiptFormValues>;
+  /** Admin/super_admin — shows Receipt Log entry inside PWA scope. */
+  isAdmin?: boolean;
 };
 
 type Mode = "chooser" | "processing" | "extracting" | "manual" | "success";
@@ -60,7 +62,7 @@ type DuplicateInfo = {
   createdAt: string;
 };
 
-export function ReceiptLogClient({ initialJobs, initialValues }: Props) {
+export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }: Props) {
   const [mode, setMode] = useState<Mode>(
     initialValues?.jobId || initialValues?.amount || initialValues?.vendor ? "manual" : "chooser",
   );
@@ -471,6 +473,15 @@ export function ReceiptLogClient({ initialJobs, initialValues }: Props) {
           >
             Enter manually
           </Button>
+          {isAdmin ? (
+            <a
+              href="/receipts/log"
+              className="inline-flex min-h-14 w-full items-center justify-start rounded-md border border-[var(--acton-border)] bg-white px-4 text-base font-medium text-[var(--acton-navy)] shadow-sm hover:bg-[var(--acton-gray-50)]"
+            >
+              Receipt Log
+              <span className="ml-auto text-xs font-normal text-[var(--acton-muted)]">Admin</span>
+            </a>
+          ) : null}
         </div>
         <input
           ref={captureInputRef}

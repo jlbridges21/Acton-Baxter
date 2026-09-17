@@ -544,6 +544,48 @@ export async function listAllReceipts(): Promise<Receipt[]> {
   return ((data as ReceiptRow[]) ?? []).map(mapReceipt);
 }
 
+export async function getReceiptById(id: string): Promise<Receipt | null> {
+  if (shouldUseMemory()) {
+    const row = getMemory().receipts.get(id);
+    return row ? mapReceipt(row) : null;
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.from("receipts").select("*").eq("id", id).maybeSingle();
+  if (error) {
+    if (isMissingTable(error)) return null;
+    throw error;
+  }
+  return data ? mapReceipt(data as ReceiptRow) : null;
+}
+
+/** Soft-delete a receipt (admin). Excluded from list / totals / export thereafter. */
+export async function softDeleteReceipt(id: string): Promise<Receipt> {
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    const existing = mem.receipts.get(id);
+    if (!existing || existing.deleted_at) throw new ValidationError("Receipt not found");
+    const next: ReceiptRow = {
+      ...existing,
+      deleted_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    mem.receipts.set(id, next);
+    return mapReceipt(next);
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("receipts")
+    .update({ deleted_at: nowIso(), updated_at: nowIso() })
+    .eq("id", id)
+    .is("deleted_at", null)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new ValidationError("Receipt not found");
+  return mapReceipt(data as ReceiptRow);
+}
+
 /**
  * Application-level ownership check mirroring RLS (for tests / defense in depth).
  * Returns null when the viewer may not see the row.

@@ -16,16 +16,19 @@ describe("ReceiptLogClient mobile layout", () => {
     expect(screen.getByRole("button", { name: /Enter manually/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Take photo of receipt/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Upload photo of receipt/i })).toBeTruthy();
-    expect(
-      (screen.getByRole("button", { name: /Take photo of receipt/i }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false);
-    expect(
-      (screen.getByRole("button", { name: /Upload photo of receipt/i }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false);
+    expect(screen.queryByRole("link", { name: /Receipt Log/i })).toBeNull();
     const root = container.firstElementChild as HTMLElement;
     expect(root.style.width).toBe("375px");
     expect(container.innerHTML).not.toMatch(/min-w-\[\d{3,}px\]/);
+  });
+
+  it("shows admin-only Receipt Log fourth action", () => {
+    render(
+      <div style={{ width: 375 }}>
+        <ReceiptLogClient initialJobs={[]} isAdmin />
+      </div>,
+    );
+    const link = screen.getByRole("link", { name: /Receipt Log/i });
+    expect(link.getAttribute("href")).toBe("/receipts/log");
   });
 });

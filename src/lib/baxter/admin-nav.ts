@@ -81,6 +81,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       match: (pathname) => pathname.startsWith("/admin/expense-jobs"),
     },
     {
+      href: "/receipts/log",
+      label: "Receipt Log",
+      icon: ClipboardList,
+      match: (pathname) => pathname === "/receipts/log" || pathname.startsWith("/receipts/log/"),
+    },
+    {
       href: "/projects/setup",
       label: "New Project Setup",
       icon: FolderKanban,

@@ -56,3 +56,12 @@ export function formatCentsAsUsd(cents: number): string {
   const rem = abs % 100;
   return `${sign}$${dollars}.${String(rem).padStart(2, "0")}`;
 }
+
+/** Format cents for spreadsheet export (e.g. 4250 → "42.50"). */
+export function formatCentsAsDecimalDollars(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const dollars = Math.floor(abs / 100);
+  const rem = abs % 100;
+  return `${sign}${dollars}.${String(rem).padStart(2, "0")}`;
+}

@@ -159,3 +159,22 @@ export async function createReceiptPhotoSignedUrl(
   if (error) return null;
   return data.signedUrl;
 }
+
+/** Batch signed URLs for the visible page — one round-trip pattern, not N client requests. */
+export async function createReceiptPhotoSignedUrlMap(
+  storagePaths: string[],
+  expiresInSeconds = 600,
+): Promise<Map<string, string>> {
+  const unique = Array.from(new Set(storagePaths.map((p) => p.trim()).filter(Boolean)));
+  const entries = await Promise.all(
+    unique.map(async (path) => {
+      const url = await createReceiptPhotoSignedUrl(path, expiresInSeconds);
+      return [path, url] as const;
+    }),
+  );
+  const map = new Map<string, string>();
+  for (const [path, url] of entries) {
+    if (url) map.set(path, url);
+  }
+  return map;
+}

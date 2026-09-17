@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { ReceiptLogClient } from "@/components/receipts/receipt-log-client";
+import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { listExpenseJobs, syncExpenseJobsFromMasterProjectLog } from "@/lib/receipts";
 
@@ -12,7 +13,7 @@ export default async function ReceiptsPage() {
 
   return (
     <AppShell user={user}>
-      <ReceiptLogClient initialJobs={jobs} />
+      <ReceiptLogClient initialJobs={jobs} isAdmin={isAdminRole(user.profile.role)} />
     </AppShell>
   );
 }

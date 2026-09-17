@@ -94,6 +94,7 @@ describe("getAdminNavSections", () => {
       "Customer Center",
       "Jurisdictions & Codes",
       "Expense Jobs",
+      "Receipt Log",
       "New Project Setup",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([
