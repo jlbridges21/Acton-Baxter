@@ -15,6 +15,7 @@ import {
 } from "@/lib/receipts/client-image";
 import {
   RECEIPT_EXTRACTION_PROMPT,
+  buildReceiptExtractionPrompt,
   receiptExtractionSchema,
   extractionHasUsableFields,
   isLowConfidence,
@@ -92,6 +93,8 @@ function extractionFixture(overrides: Record<string, unknown> = {}) {
     purchasedOn: "2026-03-12",
     items: "Screws",
     description: null,
+    lineItemAmountsCents: [],
+    crossCheckAmountsCents: [],
     confidence: {
       amount: 0.92,
       vendor: 0.95,
@@ -153,13 +156,17 @@ describe("amount cents across formats", () => {
 });
 
 describe("extraction schema + prompt", () => {
-  it("embeds the subtotal-vs-total rule verbatim", () => {
-    expect(RECEIPT_EXTRACTION_PROMPT).toContain(
-      'Amount must be the final total actually charged — not the subtotal, not the tax line, not the pre-tip amount, not "amount due" on an unpaid invoice.',
-    );
-    expect(RECEIPT_EXTRACTION_PROMPT).toContain(
-      "grabbing the subtotal is the single most common receipt-OCR error",
-    );
+  it("embeds total, per-unit, date-literal, and arithmetic rules", () => {
+    const prompt = buildReceiptExtractionPrompt({ now: new Date("2026-09-17T12:00:00.000Z") });
+    expect(prompt).toContain("Today's date for reference is 2026-09-17");
+    expect(prompt).toContain("Transcribe the printed year literally and exactly as shown");
+    expect(prompt).toContain("PER-UNIT PRICE IS NEVER THE AMOUNT");
+    expect(prompt).toContain("ARITHMETIC SELF-CHECK");
+    expect(prompt).toContain("PLEASE PAY THIS AMOUNT");
+    expect(prompt).toContain("grabbing the subtotal is a common receipt-OCR error");
+    expect(prompt).not.toContain('not "amount due" on an unpaid invoice');
+    // Static export still present for older imports
+    expect(RECEIPT_EXTRACTION_PROMPT).toContain("PER-UNIT PRICE IS NEVER THE AMOUNT");
   });
 
   it("validates extraction and flags low confidence", () => {

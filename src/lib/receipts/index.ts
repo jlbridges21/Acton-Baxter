@@ -46,10 +46,18 @@ export {
   RECEIPT_EXTRACTION_PROMPT,
   RECEIPT_EXTRACTION_JSON_SCHEMA,
   RECEIPT_LOW_CONFIDENCE,
+  buildReceiptExtractionPrompt,
   isLowConfidence,
   extractionHasUsableFields,
   type ReceiptExtraction,
 } from "./extraction-schema";
+export {
+  expandTwoDigitYear,
+  normalizePrintedReceiptDate,
+  validateReceiptExtraction,
+  scoreReceiptExtraction,
+  shouldRetryReceiptExtractionOrientation,
+} from "./extraction-validate";
 export {
   extractReceiptFromStoragePath,
   extractionToFormPrefill,

@@ -91,6 +91,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
   });
   const [jobOpen, setJobOpen] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [previewRotation, setPreviewRotation] = useState(0);
   const [extractBanner, setExtractBanner] = useState<ExtractBanner>("none");
   const [extractError, setExtractError] = useState<string | null>(null);
   const [fieldSource, setFieldSource] = useState<Partial<Record<FieldKey, "auto" | "edited">>>({});
@@ -188,7 +189,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     setFieldConfidence(confidence);
   }
 
-  async function runExtract(storagePath: string) {
+  async function runExtract(storagePath: string, rotationDegrees = 0) {
     setMode("extracting");
     setExtractError(null);
     setExtractBanner("none");
@@ -196,7 +197,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       const res = await fetch("/api/receipts/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storagePath }),
+        body: JSON.stringify({ storagePath, rotationDegrees }),
       });
       const payload = (await res.json()) as {
         status?: "ok" | "empty" | "failed";
@@ -209,12 +210,17 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
           items: string;
           description: string;
         } | null;
+        rotationDegrees?: number;
       };
       if (!res.ok) {
         throw new Error(
           (payload as { error?: { message?: string } }).error?.message ??
             "Extraction request failed",
         );
+      }
+
+      if (typeof payload.rotationDegrees === "number") {
+        setPreviewRotation(((payload.rotationDegrees % 360) + 360) % 360);
       }
 
       if (payload.status === "ok" && payload.extraction && payload.prefill) {
@@ -286,6 +292,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       } else {
         setPhotoPreviewUrl(URL.createObjectURL(processed.blob));
       }
+      setPreviewRotation(0);
 
       setValues((prev) => ({
         ...prev,
@@ -294,7 +301,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       }));
 
       // Upload-before-extract: photo is stored even if extraction fails.
-      await runExtract(uploadPayload.storagePath);
+      await runExtract(uploadPayload.storagePath, 0);
     } catch (err) {
       const message =
         err instanceof ReceiptImageProcessError
@@ -555,12 +562,41 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       </header>
 
       {photoPreviewUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element -- signed / blob URL preview
-        <img
-          src={photoPreviewUrl}
-          alt="Receipt preview"
-          className="mb-4 max-h-48 w-full rounded-md border border-[var(--acton-border)] bg-white object-contain"
-        />
+        <div className="mb-4">
+          <div className="overflow-hidden rounded-md border border-[var(--acton-border)] bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element -- signed / blob URL preview */}
+            <img
+              src={photoPreviewUrl}
+              alt="Receipt preview"
+              className="mx-auto max-h-56 w-full object-contain transition-transform duration-200"
+              style={{ transform: `rotate(${previewRotation}deg)` }}
+            />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="min-h-11"
+              onClick={() => setPreviewRotation((r) => (r + 90) % 360)}
+            >
+              Rotate 90°
+            </Button>
+            {values.photoStoragePath ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="min-h-11"
+                onClick={() =>
+                  void runExtract(values.photoStoragePath!, previewRotation as 0 | 90 | 180 | 270)
+                }
+              >
+                Re-extract at this orientation
+              </Button>
+            ) : null}
+          </div>
+        </div>
       ) : null}
 
       {extractBanner === "ok" ? (
@@ -585,7 +621,12 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
               type="button"
               variant="secondary"
               className="mt-2 min-h-11"
-              onClick={() => void runExtract(values.photoStoragePath!)}
+              onClick={() =>
+                void runExtract(
+                  values.photoStoragePath!,
+                  (previewRotation % 360) as 0 | 90 | 180 | 270,
+                )
+              }
             >
               Retry extraction
             </Button>

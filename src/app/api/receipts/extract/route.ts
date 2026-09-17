@@ -9,6 +9,10 @@ export const runtime = "nodejs";
 
 const bodySchema = z.object({
   storagePath: z.string().trim().min(1).max(500),
+  /** Optional clockwise rotation before extraction (user review re-extract). */
+  rotationDegrees: z
+    .union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)])
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -25,6 +29,7 @@ export async function POST(request: Request) {
 
     const result = await extractReceiptFromStoragePath({
       storagePath: parsed.storagePath,
+      rotationDegrees: parsed.rotationDegrees,
     });
 
     if (!result.ok) {
@@ -44,6 +49,8 @@ export async function POST(request: Request) {
       prefill: extractionToFormPrefill(result.extraction),
       usable: result.usable,
       correctionAttempted: result.correctionAttempted,
+      rotationDegrees: result.rotationDegrees,
+      orientationRetries: result.orientationRetries,
     });
   } catch (error) {
     return jsonError(error, "POST /api/receipts/extract");
