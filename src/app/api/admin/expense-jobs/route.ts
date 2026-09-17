@@ -15,7 +15,6 @@ import { z } from "zod";
 export async function GET() {
   try {
     await requireAdmin();
-    await syncExpenseJobsFromMasterProjectLog();
     const jobs = await listExpenseJobs({ includeInactive: true });
     return jsonOk({ jobs });
   } catch (error) {

@@ -9,6 +9,7 @@ export const JOB_TYPES = [
   "pem_neat_generate",
   "project_setup",
   "knowledge_drive_ingest",
+  "expense_jobs_sync",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

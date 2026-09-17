@@ -23,7 +23,10 @@ export type ExpenseJob = {
 export type Receipt = {
   id: string;
   submittedBy: string;
-  jobId: string;
+  /** Null when customJobLabel is set (xor). */
+  jobId: string | null;
+  /** One-off label for this receipt only — never an expense_jobs row. */
+  customJobLabel: string | null;
   amountCents: number;
   vendor: string;
   purchasedOn: string;
@@ -37,7 +40,8 @@ export type Receipt = {
 };
 
 export type ReceiptCreateInput = {
-  jobId: string;
+  jobId?: string | null;
+  customJobLabel?: string | null;
   amountCents: number;
   vendor: string;
   purchasedOn: string;

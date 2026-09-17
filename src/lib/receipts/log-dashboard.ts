@@ -69,7 +69,7 @@ export async function loadReceiptLogCorpus(options?: {
   const jobLabelById = new Map(jobs.map((j) => [j.id, j.label]));
   // Fill any missing job labels individually (defensive)
   for (const receipt of receipts) {
-    if (!jobLabelById.has(receipt.jobId)) {
+    if (receipt.jobId && !jobLabelById.has(receipt.jobId)) {
       const job = await getExpenseJob(receipt.jobId);
       if (job) jobLabelById.set(job.id, job.label);
     }
@@ -81,23 +81,31 @@ export async function loadReceiptLogCorpus(options?: {
     ? new Map<string, string>()
     : await createReceiptPhotoSignedUrlMap(photoPaths, 600);
 
-  return receipts.map((r) => ({
-    id: r.id,
-    submittedBy: r.submittedBy,
-    submitterName: names.get(r.submittedBy) ?? `User ${r.submittedBy.slice(0, 8)}`,
-    jobId: r.jobId,
-    jobLabel: jobLabelById.get(r.jobId) ?? "Unknown job",
-    amountCents: r.amountCents,
-    vendor: r.vendor,
-    purchasedOn: r.purchasedOn,
-    items: r.items,
-    description: r.description,
-    photoStoragePath: r.photoStoragePath,
-    photoSignedUrl: r.photoStoragePath ? (signedMap.get(r.photoStoragePath) ?? null) : null,
-    photoPermalink: `/receipts/${r.id}/photo`,
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
+  return receipts.map((r) => {
+    const isCustomJob = Boolean(r.customJobLabel && !r.jobId);
+    const jobLabel = isCustomJob
+      ? (r.customJobLabel ?? "Custom")
+      : (jobLabelById.get(r.jobId ?? "") ?? "Unknown job");
+    return {
+      id: r.id,
+      submittedBy: r.submittedBy,
+      submitterName: names.get(r.submittedBy) ?? `User ${r.submittedBy.slice(0, 8)}`,
+      jobId: r.jobId,
+      customJobLabel: r.customJobLabel,
+      jobLabel,
+      isCustomJob,
+      amountCents: r.amountCents,
+      vendor: r.vendor,
+      purchasedOn: r.purchasedOn,
+      items: r.items,
+      description: r.description,
+      photoStoragePath: r.photoStoragePath,
+      photoSignedUrl: r.photoStoragePath ? (signedMap.get(r.photoStoragePath) ?? null) : null,
+      photoPermalink: `/receipts/${r.id}/photo`,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    };
+  });
 }
 
 export async function getReceiptLogDashboard(input: {

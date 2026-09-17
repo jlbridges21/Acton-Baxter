@@ -201,6 +201,11 @@ export function ReceiptLogAdminClient({
                   </td>
                   <td className="max-w-[180px] py-3 pr-3 text-[var(--acton-navy)]">
                     <span className="line-clamp-2">{row.jobLabel}</span>
+                    {row.isCustomJob ? (
+                      <span className="mt-0.5 block text-[10px] font-medium tracking-wide text-amber-800 uppercase">
+                        Custom
+                      </span>
+                    ) : null}
                   </td>
                   <td className="py-3 pr-3 text-[var(--acton-navy)]">{row.vendor}</td>
                   <td className="py-3 pr-3 text-right font-medium text-[var(--acton-navy)] tabular-nums">
@@ -250,6 +255,7 @@ export function ReceiptLogAdminClient({
                   </p>
                   <p className="mt-0.5 text-xs text-[var(--acton-muted)]">
                     Logged {row.createdAt.slice(0, 10)} · {row.jobLabel}
+                    {row.isCustomJob ? " (custom)" : ""}
                   </p>
                 </div>
                 <div className="shrink-0 text-right">

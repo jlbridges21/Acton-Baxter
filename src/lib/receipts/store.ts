@@ -15,6 +15,7 @@ import type {
   Receipt,
   ReceiptCreateInput,
 } from "./types";
+import { compareExpenseJobsForList, PROJECT_JOB_SORT_BAND } from "./job-sort";
 
 export type ExpenseJobRow = {
   id: string;
@@ -32,7 +33,8 @@ export type ExpenseJobRow = {
 export type ReceiptRow = {
   id: string;
   submitted_by: string;
-  job_id: string;
+  job_id: string | null;
+  custom_job_label: string | null;
   amount_cents: number;
   vendor: string;
   purchased_on: string;
@@ -104,6 +106,7 @@ export function mapReceipt(row: ReceiptRow): Receipt {
     id: row.id,
     submittedBy: row.submitted_by,
     jobId: row.job_id,
+    customJobLabel: row.custom_job_label,
     amountCents: row.amount_cents,
     vendor: row.vendor,
     purchasedOn: row.purchased_on,
@@ -136,7 +139,22 @@ export async function listExpenseJobsRaw(options?: {
     const rows = Array.from(getMemory().jobs.values()).filter(
       (j) => options?.includeInactive || j.is_active,
     );
-    return rows.sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label));
+    return rows.sort((a, b) =>
+      compareExpenseJobsForList(
+        {
+          source: a.source,
+          sortOrder: a.sort_order,
+          projectNumber: a.project_number,
+          label: a.label,
+        },
+        {
+          source: b.source,
+          sortOrder: b.sort_order,
+          projectNumber: b.project_number,
+          label: b.label,
+        },
+      ),
+    );
   }
 
   const supabase = createServiceClient();
@@ -144,14 +162,29 @@ export async function listExpenseJobsRaw(options?: {
   if (!options?.includeInactive) {
     query = query.eq("is_active", true);
   }
-  const { data, error } = await query
-    .order("sort_order", { ascending: true })
-    .order("label", { ascending: true });
+  // Fetch then sort in app — project-number desc + custom grouping need richer compare than SQL alone.
+  const { data, error } = await query;
   if (error) {
     if (isMissingTable(error)) return [];
     throw error;
   }
-  return (data as ExpenseJobRow[]) ?? [];
+  const rows = (data as ExpenseJobRow[]) ?? [];
+  return rows.sort((a, b) =>
+    compareExpenseJobsForList(
+      {
+        source: a.source,
+        sortOrder: a.sort_order,
+        projectNumber: a.project_number,
+        label: a.label,
+      },
+      {
+        source: b.source,
+        sortOrder: b.sort_order,
+        projectNumber: b.project_number,
+        label: b.label,
+      },
+    ),
+  );
 }
 
 export async function listExpenseJobs(options?: {
@@ -187,12 +220,15 @@ export async function upsertProjectExpenseJob(input: {
   projectNumber: string;
   label: string;
   updatedBy?: string | null;
+  /** Used only when inserting a new row (existing sort_order is preserved). */
+  defaultSortOrder?: number;
 }): Promise<ExpenseJobRow> {
   const projectNumber = input.projectNumber.trim();
   const label = input.label.trim();
   if (!projectNumber || !label) {
     throw new ValidationError("Project number and label are required");
   }
+  const defaultSort = input.defaultSortOrder ?? PROJECT_JOB_SORT_BAND;
 
   if (shouldUseMemory()) {
     const mem = getMemory();
@@ -210,14 +246,13 @@ export async function upsertProjectExpenseJob(input: {
       mem.jobs.set(existing.id, next);
       return next;
     }
-    const maxSort = Array.from(mem.jobs.values()).reduce((m, j) => Math.max(m, j.sort_order), 0);
     const row: ExpenseJobRow = {
       id: randomUUID(),
       label,
       project_number: projectNumber,
       source: "project",
       is_active: true,
-      sort_order: maxSort + 10,
+      sort_order: defaultSort,
       created_by: input.updatedBy ?? null,
       updated_by: input.updatedBy ?? null,
       created_at: nowIso(),
@@ -251,14 +286,6 @@ export async function upsertProjectExpenseJob(input: {
     return data as ExpenseJobRow;
   }
 
-  const { data: maxRow } = await supabase
-    .from("expense_jobs")
-    .select("sort_order")
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const nextSort = ((maxRow as { sort_order?: number } | null)?.sort_order ?? 0) + 10;
-
   const { data, error } = await supabase
     .from("expense_jobs")
     .insert({
@@ -266,7 +293,7 @@ export async function upsertProjectExpenseJob(input: {
       project_number: projectNumber,
       source: "project",
       is_active: true,
-      sort_order: nextSort,
+      sort_order: defaultSort,
       created_by: input.updatedBy ?? null,
       updated_by: input.updatedBy ?? null,
     })
@@ -284,14 +311,17 @@ export async function createCustomExpenseJob(
 
   if (shouldUseMemory()) {
     const mem = getMemory();
-    const maxSort = Array.from(mem.jobs.values()).reduce((m, j) => Math.max(m, j.sort_order), 0);
+    const customMax = Array.from(mem.jobs.values())
+      .filter((j) => j.source === "custom")
+      .reduce((m, j) => Math.max(m, j.sort_order), 0);
     const row: ExpenseJobRow = {
       id: randomUUID(),
       label,
       project_number: null,
       source: "custom",
       is_active: input.isActive ?? true,
-      sort_order: input.sortOrder ?? maxSort + 10,
+      // Keep customs in the low band (before PROJECT_JOB_SORT_BAND) by default.
+      sort_order: input.sortOrder ?? Math.min(customMax + 10, PROJECT_JOB_SORT_BAND - 10),
       created_by: input.createdBy,
       updated_by: input.createdBy,
       created_at: nowIso(),
@@ -302,6 +332,16 @@ export async function createCustomExpenseJob(
   }
 
   const supabase = createServiceClient();
+  const { data: maxCustom } = await supabase
+    .from("expense_jobs")
+    .select("sort_order")
+    .eq("source", "custom")
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const customMax = (maxCustom as { sort_order?: number } | null)?.sort_order ?? 0;
+  const nextSort = input.sortOrder ?? Math.min(customMax + 10, PROJECT_JOB_SORT_BAND - 10);
+
   const { data, error } = await supabase
     .from("expense_jobs")
     .insert({
@@ -309,7 +349,7 @@ export async function createCustomExpenseJob(
       project_number: null,
       source: "custom",
       is_active: input.isActive ?? true,
-      sort_order: input.sortOrder ?? 0,
+      sort_order: nextSort,
       created_by: input.createdBy,
       updated_by: input.createdBy,
     })
@@ -388,7 +428,16 @@ export async function reorderExpenseJobs(orderedIds: string[], updatedBy: string
 }
 
 export async function createReceipt(input: ReceiptCreateInput): Promise<Receipt> {
-  if (!input.jobId) throw new ValidationError("Job is required");
+  const customLabel = input.customJobLabel?.trim() || null;
+  const jobId = input.jobId?.trim() || null;
+
+  if (jobId && customLabel) {
+    throw new ValidationError("Choose a job or enter a custom label — not both");
+  }
+  if (!jobId && !customLabel) {
+    throw new ValidationError("Select a job or create a custom label");
+  }
+
   if (!input.amountCents || input.amountCents <= 0) {
     throw new ValidationError("Amount must be greater than zero");
   }
@@ -401,9 +450,11 @@ export async function createReceipt(input: ReceiptCreateInput): Promise<Receipt>
     throw new ValidationError("Date purchased is required");
   }
 
-  const job = await getExpenseJob(input.jobId);
-  if (!job || !job.isActive) {
-    throw new ValidationError("Select an active job");
+  if (jobId) {
+    const job = await getExpenseJob(jobId);
+    if (!job || !job.isActive) {
+      throw new ValidationError("Select an active job");
+    }
   }
 
   const items = input.items?.trim() || null;
@@ -413,7 +464,8 @@ export async function createReceipt(input: ReceiptCreateInput): Promise<Receipt>
     const row: ReceiptRow = {
       id: randomUUID(),
       submitted_by: input.submittedBy,
-      job_id: input.jobId,
+      job_id: jobId,
+      custom_job_label: customLabel,
       amount_cents: input.amountCents,
       vendor,
       purchased_on: input.purchasedOn,
@@ -434,7 +486,8 @@ export async function createReceipt(input: ReceiptCreateInput): Promise<Receipt>
     .from("receipts")
     .insert({
       submitted_by: input.submittedBy,
-      job_id: input.jobId,
+      job_id: jobId,
+      custom_job_label: customLabel,
       amount_cents: input.amountCents,
       vendor,
       purchased_on: input.purchasedOn,

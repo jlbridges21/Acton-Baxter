@@ -15,7 +15,8 @@ export async function POST(request: Request) {
     const amountCents = parseAmountToCents(parsed.amount);
 
     const receipt = await createReceipt({
-      jobId: parsed.jobId,
+      jobId: parsed.jobId ?? null,
+      customJobLabel: parsed.customJobLabel ?? null,
       amountCents,
       vendor: parsed.vendor,
       purchasedOn: parsed.purchasedOn,

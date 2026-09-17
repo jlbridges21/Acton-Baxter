@@ -74,8 +74,16 @@ export {
   queryReceiptLogRows,
   rowMatchesReceiptLogFilters,
   resolveReceiptLogRange,
+  customJobFilterId,
+  parseCustomJobFilterId,
   type ReceiptLogRow,
   type ReceiptLogQueryResult,
 } from "./log-query";
 export { getReceiptLogDashboard, loadReceiptLogCorpus } from "./log-dashboard";
 export { buildReceiptLogCsv } from "./csv";
+export {
+  compareExpenseJobsForList,
+  compareProjectNumberDesc,
+  PROJECT_JOB_SORT_BAND,
+} from "./job-sort";
+export { maybeEnqueueScheduledExpenseJobsSync, EXPENSE_JOBS_SYNC_INTERVAL_MS } from "./schedule";

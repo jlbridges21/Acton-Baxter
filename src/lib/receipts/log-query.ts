@@ -21,8 +21,12 @@ export type ReceiptLogRow = {
   id: string;
   submittedBy: string;
   submitterName: string;
-  jobId: string;
+  jobId: string | null;
+  customJobLabel: string | null;
+  /** Display label — expense job label or custom one-off text. */
   jobLabel: string;
+  /** True when this receipt used a free-text custom_job_label. */
+  isCustomJob: boolean;
   amountCents: number;
   vendor: string;
   purchasedOn: string;
@@ -36,6 +40,17 @@ export type ReceiptLogRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Facet / filter id for a one-off custom label. */
+export function customJobFilterId(label: string): string {
+  return `custom:${label.trim()}`;
+}
+
+export function parseCustomJobFilterId(id: string): string | null {
+  if (!id.startsWith("custom:")) return null;
+  const label = id.slice("custom:".length).trim();
+  return label || null;
+}
 
 export type ReceiptLogQueryInput = {
   filters: ReceiptLogFiltersState;
@@ -92,7 +107,19 @@ export function rowMatchesReceiptLogFilters(
   }
 
   if (filters.userIds.length > 0 && !filters.userIds.includes(row.submittedBy)) return false;
-  if (filters.jobIds.length > 0 && !filters.jobIds.includes(row.jobId)) return false;
+  if (filters.jobIds.length > 0) {
+    const matchesJob = filters.jobIds.some((id) => {
+      const custom = parseCustomJobFilterId(id);
+      if (custom != null) {
+        return (
+          row.isCustomJob &&
+          (row.customJobLabel ?? "").trim().toLowerCase() === custom.toLowerCase()
+        );
+      }
+      return row.jobId === id;
+    });
+    if (!matchesJob) return false;
+  }
   if (filters.vendors.length > 0) {
     const vendorKey = row.vendor.trim().toLowerCase();
     if (!filters.vendors.some((v) => v.trim().toLowerCase() === vendorKey)) return false;
@@ -182,7 +209,11 @@ export function queryReceiptLogRows(
   const vendorSet = new Set<string>();
   for (const row of facetBase) {
     userMap.set(row.submittedBy, row.submitterName);
-    jobMap.set(row.jobId, row.jobLabel);
+    if (row.isCustomJob && row.customJobLabel) {
+      jobMap.set(customJobFilterId(row.customJobLabel), `${row.customJobLabel} (custom)`);
+    } else if (row.jobId) {
+      jobMap.set(row.jobId, row.jobLabel);
+    }
     if (row.vendor.trim()) vendorSet.add(row.vendor.trim());
   }
 

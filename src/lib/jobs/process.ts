@@ -163,6 +163,12 @@ async function processKnowledgeDriveIngest(job: ReportJob): Promise<void> {
   await runKnowledgeDriveIngestJob(job.id);
 }
 
+async function processExpenseJobsSync(job: ReportJob): Promise<void> {
+  const { syncExpenseJobsFromMasterProjectLog } = await import("@/lib/receipts/sync-jobs");
+  const updatedBy = typeof job.metadata.updatedBy === "string" ? job.metadata.updatedBy : null;
+  await syncExpenseJobsFromMasterProjectLog({ updatedBy });
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -185,6 +191,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processProjectSetup(job);
     } else if (job.jobType === "knowledge_drive_ingest") {
       await processKnowledgeDriveIngest(job);
+    } else if (job.jobType === "expense_jobs_sync") {
+      await processExpenseJobsSync(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

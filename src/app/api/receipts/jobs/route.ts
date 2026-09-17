@@ -1,12 +1,11 @@
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
-import { listExpenseJobs, syncExpenseJobsFromMasterProjectLog } from "@/lib/receipts";
+import { listExpenseJobs } from "@/lib/receipts";
 
-/** Active jobs for the employee dropdown (syncs Master Project Log on read). */
+/** Active jobs for the employee dropdown — reads expense_jobs only (no Google). */
 export async function GET() {
   try {
     await requireActiveUser();
-    await syncExpenseJobsFromMasterProjectLog();
     const jobs = await listExpenseJobs({ includeInactive: false });
     return jsonOk({ jobs });
   } catch (error) {

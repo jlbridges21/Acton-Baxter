@@ -10,6 +10,8 @@ import type { ExpenseJob } from "@/lib/receipts/types";
 
 export type ReceiptFormValues = {
   jobId: string;
+  /** One-off label for this receipt only (xor with jobId). */
+  customJobLabel: string;
   amount: string;
   vendor: string;
   purchasedOn: string;
@@ -32,6 +34,7 @@ function todayIsoDate(): string {
 export function emptyReceiptFormValues(overrides?: Partial<ReceiptFormValues>): ReceiptFormValues {
   return {
     jobId: "",
+    customJobLabel: "",
     amount: "",
     vendor: "",
     purchasedOn: todayIsoDate(),
@@ -64,7 +67,12 @@ type DuplicateInfo = {
 
 export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }: Props) {
   const [mode, setMode] = useState<Mode>(
-    initialValues?.jobId || initialValues?.amount || initialValues?.vendor ? "manual" : "chooser",
+    initialValues?.jobId ||
+      initialValues?.customJobLabel ||
+      initialValues?.amount ||
+      initialValues?.vendor
+      ? "manual"
+      : "chooser",
   );
   const [jobs, setJobs] = useState(initialJobs);
   const [values, setValues] = useState<ReceiptFormValues>(() =>
@@ -74,7 +82,9 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
   const [error, setError] = useState<string | null>(null);
   const [processMessage, setProcessMessage] = useState<string | null>(null);
   const [lastAmountCents, setLastAmountCents] = useState<number | null>(null);
+  const [lastJobLabel, setLastJobLabel] = useState<string | null>(null);
   const [jobQuery, setJobQuery] = useState(() => {
+    if (initialValues?.customJobLabel) return initialValues.customJobLabel;
     const jobId = initialValues?.jobId;
     if (!jobId) return "";
     return initialJobs.find((j) => j.id === jobId)?.label ?? "";
@@ -98,6 +108,8 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     [jobs, values.jobId],
   );
 
+  const selectedJobDisplay = selectedJob?.label || values.customJobLabel || null;
+
   const filteredJobs = useMemo(() => {
     const q = jobQuery.trim().toLowerCase();
     if (!q) return jobs;
@@ -105,6 +117,14 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
       (j) => j.label.toLowerCase().includes(q) || (j.projectNumber ?? "").toLowerCase().includes(q),
     );
   }, [jobs, jobQuery]);
+
+  const canCreateCustomJob =
+    jobQuery.trim().length > 0 &&
+    filteredJobs.length === 0 &&
+    !values.jobId &&
+    values.customJobLabel.trim().toLowerCase() !== jobQuery.trim().toLowerCase();
+
+  const jobReady = Boolean(values.jobId || values.customJobLabel.trim());
 
   const patch = useCallback((partial: Partial<ReceiptFormValues>, editedKeys?: FieldKey[]) => {
     setValues((prev) => ({ ...prev, ...partial }));
@@ -151,6 +171,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     };
     const next = emptyReceiptFormValues({
       jobId: values.jobId,
+      customJobLabel: values.customJobLabel,
       amount: prefill.amount,
       vendor: prefill.vendor,
       purchasedOn: prefill.purchasedOn || todayIsoDate(),
@@ -323,7 +344,8 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     }
 
     const body = {
-      jobId: values.jobId,
+      jobId: values.jobId || null,
+      customJobLabel: values.customJobLabel.trim() ? values.customJobLabel.trim() : null,
       amount: values.amount,
       vendor: values.vendor,
       purchasedOn: values.purchasedOn,
@@ -347,6 +369,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
         throw new Error(payload.error?.message ?? "Could not save expense");
       }
       setLastAmountCents(payload.receipt?.amountCents ?? null);
+      setLastJobLabel(selectedJobDisplay);
       setSubmitState("success");
       setMode("success");
     } catch (err) {
@@ -359,6 +382,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
     setValues(emptyReceiptFormValues());
     setJobQuery("");
     setLastAmountCents(null);
+    setLastJobLabel(null);
     setError(null);
     setProcessMessage(null);
     setSubmitState("idle");
@@ -405,7 +429,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
           <h1 className="text-xl font-semibold text-emerald-950">Expense logged</h1>
           <p className="mt-2 text-sm text-emerald-900">
             {lastAmountCents != null ? formatCentsAsUsd(lastAmountCents) : "Your expense"} was saved
-            {selectedJob ? ` to ${selectedJob.label}` : ""}.
+            {lastJobLabel ? ` to ${lastJobLabel}` : ""}.
           </p>
         </div>
         <Button type="button" className="min-h-12 w-full text-base" onClick={startAnother}>
@@ -620,6 +644,30 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
           >
             Job <span className="text-red-600">*</span>
           </label>
+          {selectedJobDisplay ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--acton-navy)] bg-[var(--acton-gray-50)] px-3 py-2 text-sm font-medium text-[var(--acton-navy)]">
+                <span className="truncate">{selectedJobDisplay}</span>
+                {values.customJobLabel ? (
+                  <span className="text-[10px] font-semibold tracking-wide text-amber-800 uppercase">
+                    Custom
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="text-[var(--acton-muted)] hover:text-[var(--acton-navy)]"
+                  aria-label="Clear job"
+                  onClick={() => {
+                    patch({ jobId: "", customJobLabel: "" });
+                    setJobQuery("");
+                    jobInputRef.current?.focus();
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+          ) : null}
           <Input
             id={jobListId}
             ref={jobInputRef}
@@ -628,19 +676,20 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
             aria-controls={`${jobListId}-list`}
             aria-autocomplete="list"
             autoComplete="off"
-            placeholder="Search projects or custom jobs"
+            placeholder="Search projects or type a one-off label"
             className="min-h-12 text-base"
             value={jobQuery}
             onChange={(e) => {
               setJobQuery(e.target.value);
               setJobOpen(true);
-              if (values.jobId) patch({ jobId: "" });
+              if (values.jobId || values.customJobLabel) {
+                patch({ jobId: "", customJobLabel: "" });
+              }
             }}
             onFocus={() => setJobOpen(true)}
             onBlur={() => {
               window.setTimeout(() => setJobOpen(false), 150);
             }}
-            required
           />
           {jobOpen ? (
             <ul
@@ -648,30 +697,53 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
               role="listbox"
               className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-[var(--acton-border)] bg-white shadow-md"
             >
-              {filteredJobs.length === 0 ? (
-                <li className="px-3 py-3 text-sm text-[var(--acton-muted)]">No matching jobs</li>
-              ) : (
-                filteredJobs.map((job) => (
-                  <li key={job.id} role="option" aria-selected={job.id === values.jobId}>
-                    <button
-                      type="button"
-                      className="min-h-11 w-full px-3 py-2 text-left text-sm text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        patch({ jobId: job.id });
-                        setJobQuery(job.label);
-                        setJobOpen(false);
-                      }}
-                    >
-                      {job.label}
-                    </button>
-                  </li>
-                ))
-              )}
+              {filteredJobs.map((job) => (
+                <li key={job.id} role="option" aria-selected={job.id === values.jobId}>
+                  <button
+                    type="button"
+                    className="min-h-11 w-full px-3 py-2 text-left text-sm text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      patch({ jobId: job.id, customJobLabel: "" });
+                      setJobQuery(job.label);
+                      setJobOpen(false);
+                    }}
+                  >
+                    {job.label}
+                  </button>
+                </li>
+              ))}
+              {canCreateCustomJob ? (
+                <li role="option" aria-selected={false}>
+                  <button
+                    type="button"
+                    className="min-h-11 w-full border-t border-[var(--acton-border)] px-3 py-2 text-left text-sm font-medium text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const label = jobQuery.trim();
+                      patch({ jobId: "", customJobLabel: label });
+                      setJobQuery(label);
+                      setJobOpen(false);
+                    }}
+                  >
+                    + Create &ldquo;{jobQuery.trim()}&rdquo;
+                    <span className="mt-0.5 block text-xs font-normal text-[var(--acton-muted)]">
+                      For this receipt only — not added to the shared job list
+                    </span>
+                  </button>
+                </li>
+              ) : null}
+              {filteredJobs.length === 0 && !canCreateCustomJob ? (
+                <li className="px-3 py-3 text-sm text-[var(--acton-muted)]">
+                  Type a name to create a one-off job label
+                </li>
+              ) : null}
             </ul>
           ) : null}
-          {!values.jobId && jobQuery.trim() ? (
-            <p className="mt-1 text-xs text-amber-800">Select a job from the list</p>
+          {!jobReady && jobQuery.trim() ? (
+            <p className="mt-1 text-xs text-amber-800">
+              Select a job or create &ldquo;{jobQuery.trim()}&rdquo;
+            </p>
           ) : null}
         </div>
 
@@ -803,7 +875,7 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
         <Button
           type="submit"
           className="min-h-12 w-full text-base"
-          disabled={submitState === "pending" || !values.jobId}
+          disabled={submitState === "pending" || !jobReady}
         >
           {submitState === "pending" ? "Saving…" : "Submit expense"}
         </Button>
