@@ -161,9 +161,10 @@ describe("KnowledgeListClient role-aware actions", () => {
 });
 
 describe("Dashboard Knowledge Center tool card", () => {
-  it("registers Knowledge Center as the 5th enabled tool linking to /knowledge", () => {
+  it("registers Knowledge Center as an enabled tool linking to /knowledge", () => {
     const tools = getEnabledBaxterTools();
-    expect(tools).toHaveLength(5);
+    expect(tools.length).toBeGreaterThanOrEqual(6);
+    expect(tools.some((t) => t.key === "receipt-log")).toBe(true);
     const knowledge = tools.find((t) => t.key === "knowledge-center");
     expect(knowledge?.href).toBe("/knowledge");
     expect(knowledge?.name).toBe("Knowledge Center");

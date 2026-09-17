@@ -4,6 +4,7 @@ import {
   FolderKanban,
   LayoutDashboard,
   Plug,
+  Receipt,
   Search,
   Settings,
   UsersRound,
@@ -26,7 +27,7 @@ export type AppNavLink = {
 
 /**
  * Persistent primary nav for the standard app-access role (`user`).
- * Always the same 8 items — not context-scoped by pathname.
+ * Always the same items — not context-scoped by pathname.
  */
 export function getEmployeeNavLinks(): AppNavLink[] {
   return [
@@ -53,6 +54,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "New Project Setup",
       icon: FolderKanban,
       match: (pathname) => pathname.startsWith("/projects/setup"),
+    },
+    {
+      href: "/receipts",
+      label: "Receipt Log",
+      icon: Receipt,
+      match: (pathname) => pathname.startsWith("/receipts"),
     },
     {
       href: "/dashboard",

@@ -11,6 +11,7 @@ const EMPLOYEE_NAV = [
   "Knowledge Center",
   "PEM NEAT",
   "New Project Setup",
+  "Receipt Log",
   "Property Research",
   "Customer Center",
   "Integrations",
@@ -44,7 +45,7 @@ describe("getAppNavLinksForRole", () => {
     expect(superAdminLabels).toContain("Diagnostics");
   });
 
-  it("gives the standard user role a persistent 8-item primary nav on every page", () => {
+  it("gives the standard user role a persistent primary nav on every page", () => {
     for (const pathname of [
       "/",
       "/dashboard",
@@ -52,6 +53,7 @@ describe("getAppNavLinksForRole", () => {
       "/reports/abc",
       "/customers/lookup",
       "/knowledge",
+      "/receipts",
       "/settings",
     ]) {
       expect(labels("user", pathname)).toEqual([...EMPLOYEE_NAV]);
@@ -91,6 +93,7 @@ describe("getAdminNavSections", () => {
       "PEM NEAT",
       "Customer Center",
       "Jurisdictions & Codes",
+      "Expense Jobs",
       "New Project Setup",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([

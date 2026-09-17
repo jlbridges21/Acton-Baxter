@@ -65,8 +65,13 @@ export async function middleware(request: NextRequest) {
       return supabaseResponse;
     }
 
-    // Authenticated employees land on Baxter Dashboard (`/`), not Property Research.
+    // Authenticated employees land on Baxter Dashboard (`/`), not Property Research —
+    // unless login carried a safe same-origin `next` (e.g. standalone Receipts PWA).
     if (isAppAccessRole(role) && (isPublic || isPendingPath)) {
+      const next = request.nextUrl.searchParams.get("next");
+      if (next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login")) {
+        return NextResponse.redirect(new URL(next, request.url));
+      }
       return NextResponse.redirect(new URL("/", request.url));
     }
   }

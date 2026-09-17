@@ -1,5 +1,13 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, Cloud, ClipboardList, FolderKanban, House, UsersRound } from "lucide-react";
+import {
+  BookOpen,
+  Cloud,
+  ClipboardList,
+  FolderKanban,
+  House,
+  Receipt,
+  UsersRound,
+} from "lucide-react";
 
 export type BaxterTool = {
   key: string;
@@ -61,6 +69,18 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     icon: FolderKanban,
     ctaLabel: "Start project setup",
     aliases: ["project setup", "new project", "feasibility package", "project number"],
+  },
+  {
+    key: "receipt-log",
+    name: "Receipt Log",
+    description:
+      "Photograph or enter job receipts on your phone — amount, vendor, and job in under 30 seconds.",
+    href: "/receipts",
+    createHref: "/receipts",
+    enabled: true,
+    icon: Receipt,
+    ctaLabel: "Log an expense",
+    aliases: ["receipt", "receipts", "expense", "expenses", "reimbursement photo"],
   },
   {
     key: "customer-dossier",
@@ -149,6 +169,9 @@ export function getNavContext(pathname: string): NavContext {
   }
   if (pathname.startsWith("/customers")) {
     return "customer-dossier";
+  }
+  if (pathname.startsWith("/receipts")) {
+    return "platform";
   }
   return "platform";
 }

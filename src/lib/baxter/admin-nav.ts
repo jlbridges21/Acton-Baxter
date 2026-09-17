@@ -11,6 +11,7 @@ import {
   MessageSquare,
   MessageCircle,
   Palette,
+  Receipt,
   Rocket,
   Search,
   Settings,
@@ -72,6 +73,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Jurisdictions & Codes",
       icon: Landmark,
       match: (pathname) => pathname.startsWith("/admin/jurisdictions"),
+    },
+    {
+      href: "/admin/expense-jobs",
+      label: "Expense Jobs",
+      icon: Receipt,
+      match: (pathname) => pathname.startsWith("/admin/expense-jobs"),
     },
     {
       href: "/projects/setup",

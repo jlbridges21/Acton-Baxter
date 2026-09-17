@@ -20,6 +20,16 @@ export interface BaxterVisionProvider {
     base64Data: string;
     filename?: string;
   }): Promise<ImageAnalysisResult>;
+  /**
+   * Vision call returning raw JSON text for schema-validated pipelines
+   * (receipt extraction, etc.). Prefer analyzeImage for free-form document analysis.
+   */
+  analyzeImageJson(input: {
+    mimeType: string;
+    base64Data: string;
+    filename?: string;
+    prompt: string;
+  }): Promise<{ content: string }>;
 }
 
 const EMPTY_ANALYSIS: ImageAnalysisResult = {
@@ -79,6 +89,50 @@ export class MockBaxterVisionProvider implements BaxterVisionProvider {
       entities: [],
       documentType: "image",
       warnings: ["Mock vision provider — no OCR performed."],
+    };
+  }
+
+  async analyzeImageJson(input: {
+    mimeType: string;
+    base64Data: string;
+    filename?: string;
+    prompt: string;
+  }): Promise<{ content: string }> {
+    void input.mimeType;
+    void input.filename;
+    void input.prompt;
+    // Test hook: base64 payload may itself be UTF-8 JSON for the extraction schema.
+    if (input.base64Data.startsWith("eyJ")) {
+      try {
+        const text = Buffer.from(input.base64Data, "base64").toString("utf8");
+        JSON.parse(text);
+        return { content: text };
+      } catch {
+        // fall through
+      }
+    }
+    // Prompt may embed a fixture JSON block after "FIXTURE_JSON:" for unit tests.
+    const fixtureMarker = "FIXTURE_JSON:";
+    const idx = input.prompt.indexOf(fixtureMarker);
+    if (idx >= 0) {
+      return { content: input.prompt.slice(idx + fixtureMarker.length).trim() };
+    }
+    return {
+      content: JSON.stringify({
+        amountCents: null,
+        vendor: null,
+        purchasedOn: null,
+        items: null,
+        description: null,
+        confidence: {
+          amount: 0,
+          vendor: 0,
+          purchasedOn: 0,
+          items: 0,
+          description: 0,
+        },
+        warnings: ["Mock vision provider — no receipt OCR performed."],
+      }),
     };
   }
 }
@@ -185,6 +239,62 @@ Be conservative. Do not invent unreadable text or measurements. If text is uncle
         description: `Image analysis error for ${input.filename ?? "file"}`,
         documentType: "image",
       };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async analyzeImageJson(input: {
+    mimeType: string;
+    base64Data: string;
+    filename?: string;
+    prompt: string;
+  }): Promise<{ content: string }> {
+    const env = getEnv();
+    const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY missing — receipt image not analyzed.");
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), env.EXTERNAL_API_TIMEOUT_MS);
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this.model,
+          temperature: 0,
+          max_tokens: 1500,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: input.prompt },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${input.mimeType};base64,${input.base64Data}`,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        error?: { message?: string };
+      };
+      if (!response.ok) {
+        throw new Error(data.error?.message || `Vision failed (${response.status})`);
+      }
+      return { content: data.choices?.[0]?.message?.content ?? "{}" };
     } finally {
       clearTimeout(timer);
     }
