@@ -21,6 +21,7 @@ import {
   createSignedUploadForPath,
   createSiteInspectionMediaSignedUrl,
   createSiteInspectionMediaSignedUrlMap,
+  deleteSiteInspectionMediaObject,
 } from "./media-storage";
 import {
   SITE_INSPECTION_MEDIA_BUCKET,
@@ -1130,6 +1131,140 @@ export async function softDeleteSiteInspection(
     .eq("id", id)
     .is("deleted_at", null);
   if (error) throw error;
+}
+
+/**
+ * Permanently remove one media row + storage object.
+ * Allowed for the uploader or an admin (shared team records — anyone on the crew
+ * who uploaded, or an admin cleaning up; not every teammate, to avoid accidental
+ * wipe of someone else's shot).
+ * `mediaId` may be the row UUID or the clientMediaId (optimistic / in-flight rows).
+ * If the deleted row was the cover, falls back to the next ready photo on the cover item.
+ */
+export async function deleteSiteInspectionMedia(input: {
+  inspectionId: string;
+  mediaId: string;
+  actorId: string;
+  actorRole?: string | null;
+}): Promise<SiteInspectionDetail> {
+  const inspection = await loadInspectionRow(input.inspectionId);
+
+  let row: MediaRow | null = null;
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    const byId = mem.media.get(input.mediaId);
+    if (byId && byId.inspection_id === input.inspectionId) {
+      row = byId;
+    } else {
+      row =
+        Array.from(mem.media.values()).find(
+          (m) =>
+            m.inspection_id === input.inspectionId &&
+            (m.id === input.mediaId || m.client_media_id === input.mediaId),
+        ) ?? null;
+    }
+  } else {
+    const supabase = createServiceClient();
+    const { data: byId, error: byIdError } = await supabase
+      .from("site_inspection_media")
+      .select("*")
+      .eq("id", input.mediaId)
+      .eq("inspection_id", input.inspectionId)
+      .maybeSingle();
+    if (byIdError) throw byIdError;
+    if (byId) {
+      row = byId as MediaRow;
+    } else {
+      const { data: byClient, error: byClientError } = await supabase
+        .from("site_inspection_media")
+        .select("*")
+        .eq("client_media_id", input.mediaId)
+        .eq("inspection_id", input.inspectionId)
+        .maybeSingle();
+      if (byClientError) throw byClientError;
+      row = (byClient as MediaRow | null) ?? null;
+    }
+  }
+
+  if (!row) throw new NotFoundError("Media not found");
+
+  const allowed =
+    isAdminRole(input.actorRole) ||
+    row.created_by === input.actorId ||
+    (!row.created_by && inspection.created_by === input.actorId);
+  if (!allowed) {
+    throw new AuthorizationError("Only the uploader or an admin can delete this media");
+  }
+
+  const storagePath = row.storage_path;
+  const wasCover = inspection.cover_media_id === row.id;
+  const coverItem = findCoverPhotoItem(inspection.snapshot_json);
+
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    mem.media.delete(row.id);
+    if (wasCover) {
+      const insp = mem.inspections.get(input.inspectionId)!;
+      const nextCover = pickNextCoverMediaId(
+        Array.from(mem.media.values()).filter((m) => m.inspection_id === input.inspectionId),
+        coverItem?.id ?? null,
+      );
+      mem.inspections.set(input.inspectionId, {
+        ...insp,
+        cover_media_id: nextCover,
+        updated_at: nowIso(),
+      });
+    } else {
+      const insp = mem.inspections.get(input.inspectionId);
+      if (insp) {
+        mem.inspections.set(input.inspectionId, { ...insp, updated_at: nowIso() });
+      }
+    }
+  } else {
+    const supabase = createServiceClient();
+    const { error } = await supabase.from("site_inspection_media").delete().eq("id", row.id);
+    if (error) throw error;
+    if (wasCover) {
+      const { data: siblings } = await supabase
+        .from("site_inspection_media")
+        .select("*")
+        .eq("inspection_id", input.inspectionId)
+        .order("sort_order", { ascending: true });
+      const nextCover = pickNextCoverMediaId((siblings ?? []) as MediaRow[], coverItem?.id ?? null);
+      await supabase
+        .from("site_inspections")
+        .update({ cover_media_id: nextCover, updated_at: nowIso() })
+        .eq("id", input.inspectionId);
+    } else {
+      await supabase
+        .from("site_inspections")
+        .update({ updated_at: nowIso() })
+        .eq("id", input.inspectionId);
+    }
+  }
+
+  if (storagePath) {
+    await deleteSiteInspectionMediaObject(storagePath);
+  }
+
+  return getSiteInspection(input.inspectionId);
+}
+
+function pickNextCoverMediaId(
+  media: MediaRow[],
+  coverSnapshotItemId: string | null,
+): string | null {
+  if (!coverSnapshotItemId) return null;
+  const candidates = media
+    .filter(
+      (m) =>
+        m.snapshot_item_id === coverSnapshotItemId &&
+        m.media_type === "photo" &&
+        m.upload_status === "ready" &&
+        m.storage_path,
+    )
+    .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
+  return candidates[0]?.id ?? null;
 }
 
 /** Test helper: signed URL for a media path without going through get. */

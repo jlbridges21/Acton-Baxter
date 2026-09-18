@@ -16,6 +16,7 @@ import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
 import { flushPendingResponses, type ResponseSaveResult } from "@/lib/inspections/response-sync";
 import {
+  cancelAndDiscardMediaUpload,
   countPendingForInspection,
   discardMediaUpload,
   enqueueInspectionMedia,
@@ -85,6 +86,9 @@ export function InspectionRunnerClient({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmMediaDelete, setConfirmMediaDelete] = useState<SiteInspectionMedia | null>(null);
+  const [mediaDeleteBusy, setMediaDeleteBusy] = useState(false);
+  const [mediaDeleteError, setMediaDeleteError] = useState<string | null>(null);
   const [confirmIncomplete, setConfirmIncomplete] = useState<{ unchecked: number } | null>(null);
   const [completeBusy, setCompleteBusy] = useState(false);
   const [completeMessage, setCompleteMessage] = useState<string | null>(null);
@@ -357,6 +361,75 @@ export function InspectionRunnerClient({
       pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
       failedMediaCount: Math.max(0, prev.failedMediaCount - 1),
     }));
+  }
+
+  async function confirmDeleteMedia() {
+    const target = confirmMediaDelete;
+    if (!target) return;
+    setMediaDeleteBusy(true);
+    setMediaDeleteError(null);
+    try {
+      const clientId = target.clientMediaId;
+      if (clientId) {
+        await cancelAndDiscardMediaUpload(clientId);
+        localMediaRef.current.delete(clientId);
+        if (target.localPreviewUrl) {
+          try {
+            URL.revokeObjectURL(target.localPreviewUrl);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      // Always attempt server delete — prepare may have created a row before cancel.
+      // 404 is fine when the upload never reached prepare.
+      let server: SiteInspectionDetail | null = null;
+      const res = await fetch(`/api/inspections/${inspection.id}/media`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: target.id }),
+      });
+      const json = (await res.json()) as {
+        inspection?: SiteInspectionDetail;
+        error?: { message?: string };
+      };
+      if (res.ok && json.inspection) {
+        server = json.inspection;
+      } else if (res.status !== 404) {
+        throw new Error(json.error?.message ?? "Could not delete media");
+      }
+
+      if (server) {
+        applyServerMediaOnly(server);
+      } else {
+        setInspection((prev) => ({
+          ...prev,
+          media: prev.media.filter((m) => m.id !== target.id && m.clientMediaId !== clientId),
+          coverMediaId: prev.coverMediaId === target.id ? null : prev.coverMediaId,
+          coverSignedUrl: prev.coverMediaId === target.id ? null : prev.coverSignedUrl,
+          pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
+        }));
+      }
+
+      setGallery((g) => {
+        if (!g || g.snapshotItemId !== target.snapshotItemId) return g;
+        const still = inspection.media.filter(
+          (m) =>
+            m.snapshotItemId === g.snapshotItemId &&
+            m.id !== target.id &&
+            m.clientMediaId !== clientId,
+        );
+        if (!still.length) return null;
+        return { ...g, index: Math.min(g.index, still.length - 1) };
+      });
+
+      setConfirmMediaDelete(null);
+    } catch (e) {
+      setMediaDeleteError(e instanceof Error ? e.message : "Could not delete media");
+    } finally {
+      setMediaDeleteBusy(false);
+    }
   }
 
   function uncheckedItemCount(): number {
@@ -744,6 +817,33 @@ export function InspectionRunnerClient({
         onConfirm={() => void confirmSoftDelete()}
       />
 
+      <ConfirmDialog
+        open={Boolean(confirmMediaDelete)}
+        onClose={() => {
+          if (mediaDeleteBusy) return;
+          setConfirmMediaDelete(null);
+          setMediaDeleteError(null);
+        }}
+        title="Delete this media?"
+        description={
+          <>
+            This permanently removes the{" "}
+            {confirmMediaDelete?.mediaType === "video" ? "video" : "photo"} from this checklist item
+            and from storage.
+            {mediaDeleteError ? (
+              <>
+                <br />
+                <span className="text-red-700">{mediaDeleteError}</span>
+              </>
+            ) : null}
+          </>
+        }
+        confirmLabel="Delete media"
+        destructive
+        busy={mediaDeleteBusy}
+        onConfirm={() => void confirmDeleteMedia()}
+      />
+
       {inspection.snapshot.standaloneItems.map((item) => (
         <ItemCard
           key={item.id}
@@ -754,6 +854,10 @@ export function InspectionRunnerClient({
           onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
           onVideo={(file) => void onMediaSelected(item.id, file, "video")}
           onRetry={(clientMediaId) => void onRetry(clientMediaId)}
+          onRequestDeleteMedia={(m) => {
+            setMediaDeleteError(null);
+            setConfirmMediaDelete(m);
+          }}
           onOpenMedia={(index) =>
             setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
           }
@@ -798,6 +902,10 @@ export function InspectionRunnerClient({
                     onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
                     onVideo={(file) => void onMediaSelected(item.id, file, "video")}
                     onRetry={(clientMediaId) => void onRetry(clientMediaId)}
+                    onRequestDeleteMedia={(m) => {
+                      setMediaDeleteError(null);
+                      setConfirmMediaDelete(m);
+                    }}
                     onOpenMedia={(index) =>
                       setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
                     }
@@ -888,6 +996,10 @@ export function InspectionRunnerClient({
           itemTitle={gallery.itemTitle}
           media={galleryMedia}
           initialIndex={gallery.index}
+          onRequestDelete={(m) => {
+            setMediaDeleteError(null);
+            setConfirmMediaDelete(m);
+          }}
         />
       ) : null}
     </div>
@@ -912,6 +1024,7 @@ function ItemCard({
   onPhoto,
   onVideo,
   onRetry,
+  onRequestDeleteMedia,
   onOpenMedia,
 }: {
   item: SnapshotItem;
@@ -925,6 +1038,7 @@ function ItemCard({
   onPhoto: (file: File) => void;
   onVideo: (file: File) => void;
   onRetry: (clientMediaId: string) => void;
+  onRequestDeleteMedia: (media: SiteInspectionMedia) => void;
   onOpenMedia: (index: number) => void;
 }) {
   const complete = Boolean(response?.isComplete);
@@ -1022,45 +1136,58 @@ function ItemCard({
                     const src = m.localPreviewUrl || m.signedUrl;
                     const label = mediaStatusLabel(m);
                     return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        className="relative h-16 w-16 overflow-hidden rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)]"
-                        onClick={() => {
-                          if (m.uploadStatus === "failed" && m.clientMediaId) {
-                            onRetry(m.clientMediaId);
-                            return;
+                      <div key={m.id} className="relative">
+                        <button
+                          type="button"
+                          className="relative h-16 w-16 overflow-hidden rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)]"
+                          onClick={() => {
+                            if (m.uploadStatus === "failed" && m.clientMediaId) {
+                              onRetry(m.clientMediaId);
+                              return;
+                            }
+                            onOpenMedia(mediaIndex);
+                          }}
+                          aria-label={
+                            m.uploadStatus === "failed"
+                              ? (label ?? "Retry failed upload")
+                              : `View ${m.mediaType} ${mediaIndex + 1} of ${media.length}`
                           }
-                          onOpenMedia(mediaIndex);
-                        }}
-                        aria-label={
-                          m.uploadStatus === "failed"
-                            ? (label ?? "Retry failed upload")
-                            : `View ${m.mediaType} ${mediaIndex + 1} of ${media.length}`
-                        }
-                      >
-                        {m.mediaType === "video" ? (
-                          src ? (
-                            <video src={src} className="h-full w-full object-cover" muted />
+                        >
+                          {m.mediaType === "video" ? (
+                            src ? (
+                              <video src={src} className="h-full w-full object-cover" muted />
+                            ) : (
+                              <span className="flex h-full items-center justify-center text-[10px] text-[var(--acton-muted)]">
+                                Video
+                              </span>
+                            )
+                          ) : src ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={src} alt="" className="h-full w-full object-cover" />
                           ) : (
                             <span className="flex h-full items-center justify-center text-[10px] text-[var(--acton-muted)]">
-                              Video
+                              …
                             </span>
-                          )
-                        ) : src ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={src} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          <span className="flex h-full items-center justify-center text-[10px] text-[var(--acton-muted)]">
-                            …
-                          </span>
-                        )}
-                        {label ? (
-                          <span className="absolute inset-x-0 bottom-0 bg-black/65 px-0.5 py-0.5 text-[9px] leading-tight text-white">
-                            {label}
-                          </span>
-                        ) : null}
-                      </button>
+                          )}
+                          {label ? (
+                            <span className="absolute inset-x-0 bottom-0 bg-black/65 px-0.5 py-0.5 text-[9px] leading-tight text-white">
+                              {label}
+                            </span>
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          className="absolute -top-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--acton-border)] bg-white text-[var(--acton-navy)] shadow-sm"
+                          aria-label={`Delete ${m.mediaType}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onRequestDeleteMedia(m);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     );
                   })}
                 </div>

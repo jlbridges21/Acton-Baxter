@@ -2,11 +2,11 @@
 
 /**
  * Full-screen media gallery for one checklist item.
- * Batch-refreshes signed URLs; supports arrows, keyboard, and swipe.
+ * Batch-refreshes signed URLs; supports arrows, keyboard, swipe, and delete.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import type { SiteInspectionMedia } from "@/lib/inspections/record-types";
@@ -21,6 +21,7 @@ export type InspectionMediaGalleryProps = {
   itemTitle: string;
   media: SiteInspectionMedia[];
   initialIndex: number;
+  onRequestDelete?: (media: SiteInspectionMedia) => void;
 };
 
 export function InspectionMediaGallery({
@@ -31,6 +32,7 @@ export function InspectionMediaGallery({
   itemTitle,
   media,
   initialIndex,
+  onRequestDelete,
 }: InspectionMediaGalleryProps) {
   const [index, setIndex] = useState(initialIndex);
   const [urlById, setUrlById] = useState<Record<string, string>>({});
@@ -133,15 +135,28 @@ export function InspectionMediaGallery({
             {loadingUrls ? " · Refreshing links…" : null}
           </DialogDescription>
         </div>
-        <Button
-          type="button"
-          variant="ghost"
-          className="min-h-11 min-w-11 shrink-0 px-2"
-          aria-label="Close gallery"
-          onClick={onClose}
-        >
-          <X className="h-5 w-5" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {current && onRequestDelete ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 min-w-11 px-2 text-red-700"
+              aria-label="Delete media"
+              onClick={() => onRequestDelete(current)}
+            >
+              <Trash2 className="h-5 w-5" />
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11 min-w-11 px-2"
+            aria-label="Close gallery"
+            onClick={onClose}
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
       </DialogHeader>
 
       <div

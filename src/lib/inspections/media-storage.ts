@@ -205,3 +205,20 @@ export async function createSiteInspectionMediaSignedUrlMap(
   }
   return map;
 }
+
+/** Remove a storage object (best-effort). Missing objects are not an error. */
+export async function deleteSiteInspectionMediaObject(storagePath: string): Promise<void> {
+  const path = storagePath.trim();
+  if (!path) return;
+
+  if (shouldUseMemory()) {
+    getMemory().delete(path);
+    return;
+  }
+
+  const supabase = createServiceClient();
+  const { error } = await supabase.storage.from(SITE_INSPECTION_MEDIA_BUCKET).remove([path]);
+  if (error) {
+    console.warn("[site-inspection-media] storage remove failed", { path, message: error.message });
+  }
+}

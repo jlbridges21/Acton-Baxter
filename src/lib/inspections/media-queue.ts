@@ -68,6 +68,10 @@ let draining = false;
 let activeUploads = 0;
 const listeners = new Set<Listener>();
 const inFlight = new Set<string>();
+/** clientMediaIds the user cancelled — processOne must not re-queue or patch failed. */
+const cancelledUploads = new Set<string>();
+/** Abort hooks for in-flight TUS (and any future transport) uploads. */
+const activeAbortByClientId = new Map<string, () => void>();
 let inspectionUpdateHandler: InspectionUpdateHandler | undefined;
 
 function openDb(): Promise<IDBDatabase> {
@@ -259,6 +263,7 @@ async function resolveAccessToken(): Promise<string> {
 }
 
 function uploadTus(input: {
+  clientMediaId: string;
   blob: Blob;
   path: string;
   bucket: string;
@@ -270,6 +275,13 @@ function uploadTus(input: {
     void (async () => {
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       let upload: TusUpload | null = null;
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        activeAbortByClientId.delete(input.clientMediaId);
+        fn();
+      };
       try {
         let accessToken = await resolveAccessToken();
         const env = getPublicEnv();
@@ -297,10 +309,13 @@ function uploadTus(input: {
               req.setHeader("apikey", env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
               req.setHeader("x-upsert", "true");
             } catch (error) {
-              reject(error instanceof Error ? error : new Error(formatUploadError(error)));
+              settle(() =>
+                reject(error instanceof Error ? error : new Error(formatUploadError(error))),
+              );
             }
           },
           onShouldRetry: (err, _retryAttempt, _options) => {
+            if (cancelledUploads.has(input.clientMediaId)) return false;
             const status = (
               err as { originalResponse?: { getStatus?: () => number } }
             ).originalResponse?.getStatus?.();
@@ -318,20 +333,33 @@ function uploadTus(input: {
           },
           onError: (error) => {
             if (timeoutId) clearTimeout(timeoutId);
+            if (cancelledUploads.has(input.clientMediaId)) {
+              settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
+              return;
+            }
             const message = formatUploadError(error);
             console.error("[site-inspection-media] TUS upload failed", {
               path: input.path,
               message,
             });
-            reject(new Error(message));
+            settle(() => reject(new Error(message)));
           },
           onProgress: (bytesUploaded, bytesTotal) => {
             if (bytesTotal > 0) input.onProgress(bytesUploaded / bytesTotal);
           },
           onSuccess: () => {
             if (timeoutId) clearTimeout(timeoutId);
-            resolve();
+            settle(() => resolve());
           },
+        });
+        activeAbortByClientId.set(input.clientMediaId, () => {
+          try {
+            upload?.abort(true);
+          } catch {
+            /* ignore */
+          }
+          if (timeoutId) clearTimeout(timeoutId);
+          settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
         });
         timeoutId = setTimeout(() => {
           try {
@@ -339,8 +367,17 @@ function uploadTus(input: {
           } catch {
             /* ignore */
           }
-          reject(new Error("Video upload timed out after 15 minutes — check signal and tap Retry"));
+          settle(() =>
+            reject(
+              new Error("Video upload timed out after 15 minutes — check signal and tap Retry"),
+            ),
+          );
         }, TUS_UPLOAD_TIMEOUT_MS);
+
+        if (cancelledUploads.has(input.clientMediaId)) {
+          activeAbortByClientId.get(input.clientMediaId)?.();
+          return;
+        }
 
         const previous = await upload.findPreviousUploads();
         if (previous.length) {
@@ -349,13 +386,17 @@ function uploadTus(input: {
         upload.start();
       } catch (error) {
         if (timeoutId) clearTimeout(timeoutId);
-        reject(error instanceof Error ? error : new Error(formatUploadError(error)));
+        settle(() => reject(error instanceof Error ? error : new Error(formatUploadError(error))));
       }
     })();
   });
 }
 
 async function processOne(clientMediaId: string): Promise<SiteInspectionDetail | null> {
+  if (cancelledUploads.has(clientMediaId)) {
+    await deleteItem(clientMediaId).catch(() => undefined);
+    return null;
+  }
   const item = await getItem(clientMediaId);
   if (!item) return null;
   if (item.status === "uploaded") {
@@ -374,6 +415,10 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
   await emit();
 
   try {
+    if (cancelledUploads.has(clientMediaId)) {
+      await deleteItem(clientMediaId).catch(() => undefined);
+      return null;
+    }
     const prepareRes = await fetch(`/api/inspections/${item.inspectionId}/media/prepare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -392,6 +437,11 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       throw new Error(prepareJson.error?.message ?? "Could not prepare upload");
     }
 
+    if (cancelledUploads.has(clientMediaId)) {
+      await deleteItem(clientMediaId).catch(() => undefined);
+      return null;
+    }
+
     await patchServerStatus(item.inspectionId, item.clientMediaId, "uploading", next.progress);
 
     const { upload } = prepareJson;
@@ -399,6 +449,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       await uploadSigned(upload.path, upload.token, item.blob, item.mimeType);
     } else if (upload.mode === "tus") {
       await uploadTus({
+        clientMediaId,
         blob: item.blob,
         path: upload.path,
         bucket: upload.bucket,
@@ -406,6 +457,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
         mimeType: item.mimeType,
         onProgress: (ratio) => {
           void (async () => {
+            if (cancelledUploads.has(clientMediaId)) return;
             const current = await getItem(clientMediaId);
             if (!current || current.status !== "uploading") return;
             await putItem({ ...current, progress: ratio });
@@ -418,6 +470,11 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       });
     } else {
       await uploadMemory(item.inspectionId, upload.path, item.blob, item.mimeType);
+    }
+
+    if (cancelledUploads.has(clientMediaId)) {
+      await deleteItem(clientMediaId).catch(() => undefined);
+      return null;
     }
 
     const completeRes = await fetch(`/api/inspections/${item.inspectionId}/media/complete`, {
@@ -441,6 +498,11 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     await emit();
     return completeJson.inspection;
   } catch (error) {
+    if (cancelledUploads.has(clientMediaId)) {
+      await deleteItem(clientMediaId).catch(() => undefined);
+      await emit();
+      return null;
+    }
     const attempts = item.attempts + 1;
     const baseMessage = formatUploadError(error);
     const exhausted = attempts >= MAX_UPLOAD_ATTEMPTS;
@@ -565,6 +627,26 @@ export async function discardMediaUpload(clientMediaId: string): Promise<void> {
     await emit();
     await patchServerStatus(item.inspectionId, clientMediaId, "failed", null);
   }
+}
+
+/**
+ * Cancel an in-flight or queued upload: abort TUS, drop the IndexedDB blob entry,
+ * and mark the id cancelled so drain cannot resurrect it.
+ */
+export async function cancelAndDiscardMediaUpload(clientMediaId: string): Promise<void> {
+  cancelledUploads.add(clientMediaId);
+  const abort = activeAbortByClientId.get(clientMediaId);
+  if (abort) {
+    try {
+      abort();
+    } catch {
+      /* ignore */
+    }
+  }
+  activeAbortByClientId.delete(clientMediaId);
+  inFlight.delete(clientMediaId);
+  await deleteItem(clientMediaId).catch(() => undefined);
+  await emit();
 }
 
 export async function enqueueInspectionMedia(input: {

@@ -60,3 +60,7 @@ export const mediaStatusSchema = z.object({
   uploadStatus: z.enum(["pending", "uploading", "ready", "failed"]),
   uploadProgress: z.number().min(0).max(1).nullable().optional(),
 });
+
+export const deleteMediaSchema = z.object({
+  mediaId: z.string().uuid(),
+});

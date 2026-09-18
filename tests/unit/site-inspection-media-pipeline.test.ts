@@ -17,6 +17,8 @@ import {
   completeSiteInspectionMedia,
   createSiteInspection,
   createTemplateFromSeed,
+  deleteSiteInspectionMedia,
+  deleteSiteInspectionMediaObject,
   listSiteInspections,
   prepareSiteInspectionMedia,
   putMemoryMediaBytes,
@@ -27,6 +29,7 @@ import {
   updateSiteInspectionMediaStatus,
   uploadSiteInspectionPhoto,
 } from "@/lib/inspections";
+import { AuthorizationError } from "@/lib/errors";
 
 beforeEach(() => {
   process.env.ENABLE_MOCK_RESEARCH = "true";
@@ -82,6 +85,9 @@ describe("media limits + export naming", () => {
     expect(source).toContain("media/complete");
     expect(source).toContain("resolveAccessToken");
     expect(source).toContain("discardMediaUpload");
+    expect(source).toContain("cancelAndDiscardMediaUpload");
+    expect(source).toContain("cancelledUploads");
+    expect(source).toContain("activeAbortByClientId");
   });
 
   it("builds identifiable zip filenames from section + item + index", () => {
@@ -253,6 +259,115 @@ describe("legacy FormData path retired + export streaming", () => {
       actorId: "user-1",
     });
     expect(withCover.coverMediaId).toBeTruthy();
+  });
+});
+
+describe("delete media + cover fallback + permissions", () => {
+  it("removes the row and storage object, and falls back cover photo", async () => {
+    const inspection = await seededInspection();
+    const cover = inspection.snapshot.standaloneItems[0]!;
+
+    async function addPhoto(clientMediaId: string, bytes: number[]) {
+      const prepared = await prepareSiteInspectionMedia({
+        inspectionId: inspection.id,
+        snapshotItemId: cover.id,
+        clientMediaId,
+        mediaType: "photo",
+        mimeType: "image/jpeg",
+        byteSize: bytes.length,
+        actorId: "user-1",
+      });
+      putMemoryMediaBytes({
+        storagePath: prepared.upload.path,
+        bytes: Buffer.from(bytes),
+        mimeType: "image/jpeg",
+        uploadedBy: "user-1",
+      });
+      return completeSiteInspectionMedia({
+        inspectionId: inspection.id,
+        clientMediaId,
+        storagePath: prepared.upload.path,
+        byteSize: bytes.length,
+        actorId: "user-1",
+      });
+    }
+
+    const first = await addPhoto("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", [0xff, 0xd8, 0xff, 0xd9]);
+    const second = await addPhoto(
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      [0xff, 0xd8, 0xff, 0xd8, 0xd9],
+    );
+    const coverId = first.coverMediaId ?? second.coverMediaId;
+    expect(coverId).toBeTruthy();
+    const coverMedia = second.media.find((m) => m.id === coverId)!;
+    const other = second.media.find((m) => m.id !== coverId && m.uploadStatus === "ready")!;
+
+    const after = await deleteSiteInspectionMedia({
+      inspectionId: inspection.id,
+      mediaId: coverMedia.id,
+      actorId: "user-1",
+      actorRole: "technician",
+    });
+    expect(after.media.find((m) => m.id === coverMedia.id)).toBeUndefined();
+    expect(after.coverMediaId).toBe(other.id);
+    expect(after.coverMediaId).not.toBe(coverMedia.id);
+
+    await expect(deleteSiteInspectionMediaObject(coverMedia.storagePath!)).resolves.toBeUndefined();
+  });
+
+  it("allows lookup by clientMediaId and rejects non-uploader non-admin", async () => {
+    const inspection = await seededInspection();
+    const cover = inspection.snapshot.standaloneItems[0]!;
+    const clientMediaId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const prepared = await prepareSiteInspectionMedia({
+      inspectionId: inspection.id,
+      snapshotItemId: cover.id,
+      clientMediaId,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
+      byteSize: 8,
+      actorId: "user-1",
+    });
+    putMemoryMediaBytes({
+      storagePath: prepared.upload.path,
+      bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+      mimeType: "image/jpeg",
+      uploadedBy: "user-1",
+    });
+    await completeSiteInspectionMedia({
+      inspectionId: inspection.id,
+      clientMediaId,
+      storagePath: prepared.upload.path,
+      byteSize: 8,
+      actorId: "user-1",
+    });
+
+    await expect(
+      deleteSiteInspectionMedia({
+        inspectionId: inspection.id,
+        mediaId: clientMediaId,
+        actorId: "user-2",
+        actorRole: "technician",
+      }),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+
+    const deleted = await deleteSiteInspectionMedia({
+      inspectionId: inspection.id,
+      mediaId: clientMediaId,
+      actorId: "admin-1",
+      actorRole: "admin",
+    });
+    expect(deleted.media.find((m) => m.clientMediaId === clientMediaId)).toBeUndefined();
+  });
+
+  it("DELETE route exists alongside retired POST 410", () => {
+    const source = readFileSync(
+      join(process.cwd(), "src/app/api/inspections/[id]/media/route.ts"),
+      "utf8",
+    );
+    expect(source).toContain("export async function DELETE");
+    expect(source).toContain("deleteSiteInspectionMedia");
+    expect(source).toContain("410");
   });
 });
 

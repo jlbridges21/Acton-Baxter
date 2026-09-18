@@ -80,6 +80,7 @@ export {
   softDeleteSiteInspection,
   setSiteInspectionStatus,
   getSignedUrlsForInspectionItem,
+  deleteSiteInspectionMedia,
 } from "./records-store";
 export {
   resetSiteInspectionMediaMemoryForTests,
@@ -89,6 +90,7 @@ export {
   downloadSiteInspectionMediaBytes,
   createSiteInspectionMediaSignedUrl,
   createSiteInspectionMediaSignedUrlMap,
+  deleteSiteInspectionMediaObject,
 } from "./media-storage";
 export {
   VIDEO_MAX_BYTES,
@@ -107,4 +109,5 @@ export {
   prepareMediaSchema,
   completeMediaSchema,
   mediaStatusSchema,
+  deleteMediaSchema,
 } from "./record-schemas";

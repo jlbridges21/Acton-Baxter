@@ -45,6 +45,7 @@ vi.mock("@/lib/inspections/media-queue", () => ({
   enqueueInspectionMedia: vi.fn(),
   retryMediaUpload: vi.fn(),
   discardMediaUpload: vi.fn(),
+  cancelAndDiscardMediaUpload: vi.fn(),
   countPendingForInspection: () => countPending(),
 }));
 
@@ -366,5 +367,7 @@ describe("media gallery", () => {
     expect(source).toContain("ArrowLeft");
     expect(source).toContain("onTouchEnd");
     expect(source).toContain("playsInline");
+    expect(source).toContain("onRequestDelete");
+    expect(source).toContain("Delete media");
   });
 });

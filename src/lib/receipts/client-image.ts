@@ -168,6 +168,9 @@ function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<B
 async function loadHtmlImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    // Prevent the browser from applying EXIF before we draw — same double-rotation
+    // hazard as createImageBitmap's default `from-image` (CSS default is also from-image).
+    img.style.imageOrientation = "none";
     img.onload = () => resolve(img);
     img.onerror = () =>
       reject(
@@ -185,10 +188,13 @@ async function decodeImageSource(file: File): Promise<{
   height: number;
   cleanup: () => void;
 }> {
-  // Prefer raw pixel decode (no auto-orient) so EXIF handling is explicit for JPEGs.
+  // Explicit `none`: modern browsers default createImageBitmap to `from-image`, which
+  // would already bake EXIF into the bitmap. We then apply drawOrientedImage() from the
+  // raw EXIF tag — that combination double-rotates landscape (tags 5–8). Keep one path:
+  // raw pixels here + the existing manual transform below.
   if (typeof createImageBitmap === "function") {
     try {
-      const bitmap = await createImageBitmap(file);
+      const bitmap = await createImageBitmap(file, { imageOrientation: "none" });
       return {
         source: bitmap,
         width: bitmap.width,
@@ -203,6 +209,21 @@ async function decodeImageSource(file: File): Promise<{
   const objectUrl = URL.createObjectURL(file);
   try {
     const img = await loadHtmlImage(objectUrl);
+    // Prefer a raw bitmap from the img when available (imageOrientation none again).
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await createImageBitmap(img, { imageOrientation: "none" });
+        URL.revokeObjectURL(objectUrl);
+        return {
+          source: bitmap,
+          width: bitmap.width,
+          height: bitmap.height,
+          cleanup: () => bitmap.close(),
+        };
+      } catch {
+        /* use the HTMLImageElement directly */
+      }
+    }
     return {
       source: img,
       width: img.naturalWidth || img.width,
