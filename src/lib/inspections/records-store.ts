@@ -7,8 +7,9 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
-import { NotFoundError, ValidationError } from "@/lib/errors";
+import { AuthorizationError, NotFoundError, ValidationError } from "@/lib/errors";
 import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
+import { isAdminRole } from "@/lib/auth/roles";
 import { getTemplate } from "./store";
 import {
   buildInspectionSnapshot,
@@ -189,9 +190,90 @@ async function resolveProfileName(userId: string | null): Promise<string | null>
   return formatHumanDisplayName((data?.full_name as string | null)?.trim() || "Teammate");
 }
 
+/** One profiles query for all assignee/creator ids on the card list. */
+async function resolveProfileNamesBatch(
+  userIds: Array<string | null | undefined>,
+): Promise<Map<string, string>> {
+  const unique = Array.from(
+    new Set(userIds.filter((id): id is string => Boolean(id && id.trim()))),
+  );
+  const map = new Map<string, string>();
+  if (!unique.length) return map;
+
+  if (shouldUseMemory()) {
+    for (const id of unique) {
+      const name = getMemory().profileNames.get(id);
+      map.set(id, name ? formatHumanDisplayName(name) : formatHumanDisplayName(id.slice(0, 8)));
+    }
+    return map;
+  }
+
+  const supabase = createServiceClient();
+  const { data } = await supabase.from("profiles").select("id, full_name").in("id", unique);
+  const found = new Set<string>();
+  for (const row of data ?? []) {
+    const id = row.id as string;
+    found.add(id);
+    map.set(id, formatHumanDisplayName((row.full_name as string | null)?.trim() || "Teammate"));
+  }
+  for (const id of unique) {
+    if (!found.has(id)) map.set(id, formatHumanDisplayName("Teammate"));
+  }
+  return map;
+}
+
 function deriveStatus(total: number, completed: number): SiteInspectionStatus {
   if (total > 0 && completed >= total) return "complete";
   return "pending";
+}
+
+const LIST_COLUMNS =
+  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at";
+
+type InspectionListRow = {
+  id: string;
+  project_name: string;
+  address: string;
+  job_id: string | null;
+  assigned_to: string | null;
+  source_template_id: string | null;
+  status: SiteInspectionStatus;
+  cover_media_id: string | null;
+  total_item_count: number;
+  completed_item_count: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+function mapSummaryFromListRow(
+  row: InspectionListRow,
+  coverSignedUrl: string | null,
+  pendingMediaCount: number,
+  failedMediaCount: number,
+  nameById: Map<string, string>,
+): SiteInspectionSummary {
+  return {
+    id: row.id,
+    projectName: row.project_name,
+    address: row.address,
+    jobId: row.job_id,
+    assignedTo: row.assigned_to,
+    assignedToName: row.assigned_to ? (nameById.get(row.assigned_to) ?? null) : null,
+    sourceTemplateId: row.source_template_id,
+    status: row.status,
+    coverMediaId: row.cover_media_id,
+    coverSignedUrl,
+    totalItemCount: row.total_item_count,
+    completedItemCount: row.completed_item_count,
+    pendingMediaCount,
+    failedMediaCount,
+    createdBy: row.created_by,
+    createdByName: nameById.get(row.created_by) ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 async function mapSummary(
@@ -302,21 +384,39 @@ export async function listSiteInspections(options?: {
   const q = options?.query?.trim().toLowerCase() ?? "";
   const statusFilter = options?.status ?? "all";
 
-  let rows: InspectionRow[] = [];
+  let rows: InspectionListRow[] = [];
   if (shouldUseMemory()) {
-    rows = Array.from(getMemory().inspections.values()).filter((r) => !r.deleted_at);
+    rows = Array.from(getMemory().inspections.values())
+      .filter((r) => !r.deleted_at)
+      .map((r) => ({
+        id: r.id,
+        project_name: r.project_name,
+        address: r.address,
+        job_id: r.job_id,
+        assigned_to: r.assigned_to,
+        source_template_id: r.source_template_id,
+        status: r.status,
+        cover_media_id: r.cover_media_id,
+        total_item_count: r.total_item_count,
+        completed_item_count: r.completed_item_count,
+        created_by: r.created_by,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        deleted_at: r.deleted_at,
+      }));
   } else {
     const supabase = createServiceClient();
+    // Never select snapshot_json on the card list — it dwarfs every other column.
     const { data, error } = await supabase
       .from("site_inspections")
-      .select("*")
+      .select(LIST_COLUMNS)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
     if (error) {
       if (isMissingTable(error)) return [];
       throw error;
     }
-    rows = (data ?? []) as InspectionRow[];
+    rows = (data ?? []) as InspectionListRow[];
   }
 
   rows = rows
@@ -355,46 +455,50 @@ export async function listSiteInspections(options?: {
     }
   }
 
-  const urlMap = await createSiteInspectionMediaSignedUrlMap(coverPaths, 600);
+  const [urlMap, nameById, mediaStatusByInspection] = await Promise.all([
+    createSiteInspectionMediaSignedUrlMap(coverPaths, 600),
+    resolveProfileNamesBatch(rows.flatMap((r) => [r.assigned_to, r.created_by])),
+    (async () => {
+      const map = new Map<string, { pending: number; failed: number }>();
+      if (shouldUseMemory()) {
+        for (const row of rows) {
+          const media = Array.from(getMemory().media.values()).filter(
+            (m) => m.inspection_id === row.id,
+          );
+          map.set(row.id, countMediaStatuses(media));
+        }
+      } else if (rows.length) {
+        const supabase = createServiceClient();
+        const { data } = await supabase
+          .from("site_inspection_media")
+          .select("inspection_id, upload_status")
+          .in(
+            "inspection_id",
+            rows.map((r) => r.id),
+          );
+        for (const m of data ?? []) {
+          const id = m.inspection_id as string;
+          const cur = map.get(id) ?? { pending: 0, failed: 0 };
+          if (m.upload_status === "pending" || m.upload_status === "uploading") cur.pending += 1;
+          if (m.upload_status === "failed") cur.failed += 1;
+          map.set(id, cur);
+        }
+      }
+      return map;
+    })(),
+  ]);
 
-  const mediaStatusByInspection = new Map<string, { pending: number; failed: number }>();
-  if (shouldUseMemory()) {
-    for (const row of rows) {
-      const media = Array.from(getMemory().media.values()).filter(
-        (m) => m.inspection_id === row.id,
-      );
-      mediaStatusByInspection.set(row.id, countMediaStatuses(media));
-    }
-  } else if (rows.length) {
-    const supabase = createServiceClient();
-    const { data } = await supabase
-      .from("site_inspection_media")
-      .select("inspection_id, upload_status")
-      .in(
-        "inspection_id",
-        rows.map((r) => r.id),
-      );
-    for (const m of data ?? []) {
-      const id = m.inspection_id as string;
-      const cur = mediaStatusByInspection.get(id) ?? { pending: 0, failed: 0 };
-      if (m.upload_status === "pending" || m.upload_status === "uploading") cur.pending += 1;
-      if (m.upload_status === "failed") cur.failed += 1;
-      mediaStatusByInspection.set(id, cur);
-    }
-  }
-
-  return Promise.all(
-    rows.map((row) => {
-      const path = coverPathById.get(row.id);
-      const counts = mediaStatusByInspection.get(row.id) ?? { pending: 0, failed: 0 };
-      return mapSummary(
-        row,
-        path ? (urlMap.get(path) ?? null) : null,
-        counts.pending,
-        counts.failed,
-      );
-    }),
-  );
+  return rows.map((row) => {
+    const path = coverPathById.get(row.id);
+    const counts = mediaStatusByInspection.get(row.id) ?? { pending: 0, failed: 0 };
+    return mapSummaryFromListRow(
+      row,
+      path ? (urlMap.get(path) ?? null) : null,
+      counts.pending,
+      counts.failed,
+      nameById,
+    );
+  });
 }
 
 async function loadInspectionRow(id: string): Promise<InspectionRow> {
@@ -901,19 +1005,34 @@ export async function attachSiteInspectionPhoto(input: {
   });
 }
 
-export async function softDeleteSiteInspection(id: string, _actorId: string): Promise<void> {
+/**
+ * Soft-delete an inspection (sets deleted_at). Creator or admin only.
+ * User-facing lists/exports omit soft-deleted rows; storage cleanup is a follow-up.
+ */
+export async function softDeleteSiteInspection(
+  id: string,
+  actorId: string,
+  actorRole?: string | null,
+): Promise<void> {
+  const row = await loadInspectionRow(id);
+  const allowed = row.created_by === actorId || isAdminRole(actorRole);
+  if (!allowed) {
+    throw new AuthorizationError("Only the creator or an admin can delete this inspection");
+  }
+
   if (shouldUseMemory()) {
     const mem = getMemory();
-    const row = mem.inspections.get(id);
-    if (!row) throw new NotFoundError("Inspection not found");
-    mem.inspections.set(id, { ...row, deleted_at: nowIso(), updated_at: nowIso() });
+    const current = mem.inspections.get(id);
+    if (!current) throw new NotFoundError("Inspection not found");
+    mem.inspections.set(id, { ...current, deleted_at: nowIso(), updated_at: nowIso() });
     return;
   }
   const supabase = createServiceClient();
   const { error } = await supabase
     .from("site_inspections")
     .update({ deleted_at: nowIso() })
-    .eq("id", id);
+    .eq("id", id)
+    .is("deleted_at", null);
   if (error) throw error;
 }
 

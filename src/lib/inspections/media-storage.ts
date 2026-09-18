@@ -169,15 +169,39 @@ export async function createSiteInspectionMediaSignedUrlMap(
   expiresInSeconds = 600,
 ): Promise<Map<string, string>> {
   const unique = Array.from(new Set(storagePaths.map((p) => p.trim()).filter(Boolean)));
-  const entries = await Promise.all(
-    unique.map(async (path) => {
-      const url = await createSiteInspectionMediaSignedUrl(path, expiresInSeconds);
-      return [path, url] as const;
-    }),
-  );
   const map = new Map<string, string>();
-  for (const [path, url] of entries) {
-    if (url) map.set(path, url);
+  if (!unique.length) return map;
+
+  if (shouldUseMemory()) {
+    for (const path of unique) {
+      const url = await createSiteInspectionMediaSignedUrl(path, expiresInSeconds);
+      if (url) map.set(path, url);
+    }
+    return map;
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.storage
+    .from(SITE_INSPECTION_MEDIA_BUCKET)
+    .createSignedUrls(unique, expiresInSeconds);
+  if (error || !data) {
+    // Fallback: parallel singular signed URLs
+    const entries = await Promise.all(
+      unique.map(async (path) => {
+        const url = await createSiteInspectionMediaSignedUrl(path, expiresInSeconds);
+        return [path, url] as const;
+      }),
+    );
+    for (const [path, url] of entries) {
+      if (url) map.set(path, url);
+    }
+    return map;
+  }
+
+  for (const row of data) {
+    if (row.path && row.signedUrl && !row.error) {
+      map.set(row.path, row.signedUrl);
+    }
   }
   return map;
 }

@@ -13,6 +13,8 @@ import {
   deleteSubQuestion,
   duplicateTemplate,
   listTemplates,
+  moveItem,
+  permanentlyDeleteTemplate,
   reorderItems,
   reorderOptions,
   reorderSections,
@@ -64,6 +66,10 @@ export async function POST(request: Request) {
         const template = await unarchiveTemplate(parsed.templateId, actorId);
         return jsonOk({ template });
       }
+      case "delete_template": {
+        await permanentlyDeleteTemplate(parsed.templateId);
+        return jsonOk({ deleted: true });
+      }
       case "update_meta": {
         const template = await updateTemplateMeta({
           id: parsed.templateId,
@@ -111,6 +117,8 @@ export async function POST(request: Request) {
           title: parsed.title,
           guideNotes: parsed.guideNotes,
           isCoverPhotoSource: parsed.isCoverPhotoSource,
+          allowsMedia: parsed.allowsMedia,
+          allowsNotes: parsed.allowsNotes,
           actorId,
         });
         return jsonOk({ template });
@@ -121,6 +129,8 @@ export async function POST(request: Request) {
           title: parsed.title,
           guideNotes: parsed.guideNotes,
           isCoverPhotoSource: parsed.isCoverPhotoSource,
+          allowsMedia: parsed.allowsMedia,
+          allowsNotes: parsed.allowsNotes,
           actorId,
         });
         return jsonOk({ template });
@@ -133,6 +143,15 @@ export async function POST(request: Request) {
         const template = await reorderItems({
           templateId: parsed.templateId,
           sectionId: parsed.sectionId,
+          orderedIds: parsed.orderedIds,
+          actorId,
+        });
+        return jsonOk({ template });
+      }
+      case "move_item": {
+        const template = await moveItem({
+          itemId: parsed.itemId,
+          targetSectionId: parsed.targetSectionId,
           orderedIds: parsed.orderedIds,
           actorId,
         });

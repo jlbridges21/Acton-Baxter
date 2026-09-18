@@ -2,6 +2,7 @@ import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import {
   getSiteInspection,
+  softDeleteSiteInspection,
   upsertResponseSchema,
   upsertSiteInspectionResponse,
 } from "@/lib/inspections";
@@ -35,5 +36,16 @@ export async function PATCH(request: Request, { params }: Params) {
     return jsonOk({ inspection });
   } catch (error) {
     return jsonError(error, "PATCH /api/inspections/[id]");
+  }
+}
+
+export async function DELETE(_request: Request, { params }: Params) {
+  try {
+    const user = await requireActiveUser();
+    const { id } = await params;
+    await softDeleteSiteInspection(id, user.id, user.profile.role);
+    return jsonOk({ deleted: true });
+  } catch (error) {
+    return jsonError(error, "DELETE /api/inspections/[id]");
   }
 }

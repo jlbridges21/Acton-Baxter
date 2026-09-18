@@ -356,6 +356,8 @@ async function insertSeedItem(
     title: item.title,
     guideNotes: item.guideNotes,
     isCoverPhotoSource: Boolean(item.isCoverPhotoSource),
+    allowsMedia: true,
+    allowsNotes: true,
     sortOrder,
     actorId,
   });
@@ -371,6 +373,8 @@ async function createItemInternal(input: {
   title: string;
   guideNotes: string;
   isCoverPhotoSource: boolean;
+  allowsMedia: boolean;
+  allowsNotes: boolean;
   sortOrder: number;
   actorId: string | null;
 }): Promise<string> {
@@ -385,8 +389,8 @@ async function createItemInternal(input: {
     section_id: input.sectionId,
     title: input.title.trim(),
     guide_notes: input.guideNotes,
-    allows_media: true,
-    allows_notes: true,
+    allows_media: input.allowsMedia,
+    allows_notes: input.allowsNotes,
     is_cover_photo_source: input.isCoverPhotoSource,
     sort_order: input.sortOrder,
     created_at: now,
@@ -658,30 +662,37 @@ export async function listTemplates(options?: {
     throw error;
   }
 
-  const summaries: InspectionTemplateSummary[] = [];
-  for (const t of (data ?? []) as TemplateRow[]) {
-    const { count: sectionCount } = await supabase
-      .from("inspection_template_sections")
-      .select("id", { count: "exact", head: true })
-      .eq("template_id", t.id);
-    const { count: itemCount } = await supabase
-      .from("inspection_template_items")
-      .select("id", { count: "exact", head: true })
-      .eq("template_id", t.id);
-    summaries.push({
-      id: t.id,
-      name: t.name,
-      description: t.description,
-      archivedAt: t.archived_at,
-      createdBy: t.created_by,
-      updatedBy: t.updated_by,
-      createdAt: t.created_at,
-      updatedAt: t.updated_at,
-      sectionCount: sectionCount ?? 0,
-      itemCount: itemCount ?? 0,
-    });
+  const templates = (data ?? []) as TemplateRow[];
+  if (!templates.length) return [];
+
+  const ids = templates.map((t) => t.id);
+  const [{ data: sectionRows }, { data: itemRows }] = await Promise.all([
+    supabase.from("inspection_template_sections").select("template_id").in("template_id", ids),
+    supabase.from("inspection_template_items").select("template_id").in("template_id", ids),
+  ]);
+  const sectionCountById = new Map<string, number>();
+  const itemCountById = new Map<string, number>();
+  for (const row of sectionRows ?? []) {
+    const id = row.template_id as string;
+    sectionCountById.set(id, (sectionCountById.get(id) ?? 0) + 1);
   }
-  return summaries;
+  for (const row of itemRows ?? []) {
+    const id = row.template_id as string;
+    itemCountById.set(id, (itemCountById.get(id) ?? 0) + 1);
+  }
+
+  return templates.map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    archivedAt: t.archived_at,
+    createdBy: t.created_by,
+    updatedBy: t.updated_by,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+    sectionCount: sectionCountById.get(t.id) ?? 0,
+    itemCount: itemCountById.get(t.id) ?? 0,
+  }));
 }
 
 export async function getTemplate(id: string): Promise<InspectionTemplateDetail> {
@@ -793,6 +804,54 @@ export async function unarchiveTemplate(
     .eq("id", id);
   if (error) throw error;
   return getTemplate(id);
+}
+
+/**
+ * Permanently delete an archived template and its structure.
+ * Does not touch site_inspections — those keep their independent snapshot_json.
+ */
+export async function permanentlyDeleteTemplate(id: string): Promise<void> {
+  const graph = await loadTemplateGraph(id);
+  if (!graph.template.archived_at) {
+    throw new ValidationError("Archive the template before permanently deleting it");
+  }
+
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    for (const [optId, opt] of [...mem.options.entries()]) {
+      const sq = mem.subQuestions.get(opt.sub_question_id);
+      if (sq) {
+        const item = mem.items.get(sq.item_id);
+        if (item?.template_id === id) mem.options.delete(optId);
+      }
+    }
+    for (const [sqId, sq] of [...mem.subQuestions.entries()]) {
+      const item = mem.items.get(sq.item_id);
+      if (item?.template_id === id) mem.subQuestions.delete(sqId);
+    }
+    for (const [itemId, item] of [...mem.items.entries()]) {
+      if (item.template_id === id) mem.items.delete(itemId);
+    }
+    for (const [sectionId, section] of [...mem.sections.entries()]) {
+      if (section.template_id === id) mem.sections.delete(sectionId);
+    }
+    mem.templates.delete(id);
+    return;
+  }
+
+  const supabase = createServiceClient();
+  const itemIds = graph.items.map((i) => i.id);
+  const sqIds = graph.subQuestions.map((s) => s.id);
+  if (sqIds.length) {
+    await supabase.from("inspection_template_options").delete().in("sub_question_id", sqIds);
+    await supabase.from("inspection_template_sub_questions").delete().in("id", sqIds);
+  }
+  if (itemIds.length) {
+    await supabase.from("inspection_template_items").delete().in("id", itemIds);
+  }
+  await supabase.from("inspection_template_sections").delete().eq("template_id", id);
+  const { error } = await supabase.from("inspection_templates").delete().eq("id", id);
+  if (error) throw error;
 }
 
 export async function duplicateTemplate(
@@ -982,6 +1041,8 @@ export async function addItem(input: {
   title: string;
   guideNotes?: string;
   isCoverPhotoSource?: boolean;
+  allowsMedia?: boolean;
+  allowsNotes?: boolean;
   actorId: string | null;
 }): Promise<InspectionTemplateDetail> {
   const title = input.title.trim();
@@ -994,6 +1055,8 @@ export async function addItem(input: {
     title,
     guideNotes: input.guideNotes ?? "",
     isCoverPhotoSource: Boolean(input.isCoverPhotoSource),
+    allowsMedia: input.allowsMedia !== undefined ? input.allowsMedia : true,
+    allowsNotes: input.allowsNotes !== undefined ? input.allowsNotes : true,
     sortOrder: siblings.length,
     actorId: input.actorId,
   });
@@ -1006,6 +1069,8 @@ export async function updateItem(input: {
   title?: string;
   guideNotes?: string;
   isCoverPhotoSource?: boolean;
+  allowsMedia?: boolean;
+  allowsNotes?: boolean;
   actorId: string | null;
 }): Promise<InspectionTemplateDetail> {
   if (shouldUseMemory()) {
@@ -1019,6 +1084,8 @@ export async function updateItem(input: {
       ...row,
       title,
       guide_notes: input.guideNotes !== undefined ? input.guideNotes : row.guide_notes,
+      allows_media: input.allowsMedia !== undefined ? input.allowsMedia : row.allows_media,
+      allows_notes: input.allowsNotes !== undefined ? input.allowsNotes : row.allows_notes,
       is_cover_photo_source:
         input.isCoverPhotoSource !== undefined
           ? input.isCoverPhotoSource
@@ -1044,6 +1111,8 @@ export async function updateItem(input: {
     patch.title = title;
   }
   if (input.guideNotes !== undefined) patch.guide_notes = input.guideNotes;
+  if (input.allowsMedia !== undefined) patch.allows_media = input.allowsMedia;
+  if (input.allowsNotes !== undefined) patch.allows_notes = input.allowsNotes;
   if (input.isCoverPhotoSource !== undefined)
     patch.is_cover_photo_source = input.isCoverPhotoSource;
   const { error } = await supabase
@@ -1143,6 +1212,114 @@ export async function reorderItems(input: {
   }
   await touchTemplate(input.templateId, input.actorId);
   return getTemplate(input.templateId);
+}
+
+/**
+ * Move an item into another section (or standalone) and set the target order.
+ * Reindexes the source list after removal.
+ */
+export async function moveItem(input: {
+  itemId: string;
+  targetSectionId: string | null;
+  orderedIds: string[];
+  actorId: string | null;
+}): Promise<InspectionTemplateDetail> {
+  if (!input.orderedIds.includes(input.itemId)) {
+    throw new ValidationError("orderedIds must include the moved item");
+  }
+
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    const row = mem.items.get(input.itemId);
+    if (!row) throw new NotFoundError("Item not found");
+    const templateId = row.template_id;
+    const sourceSectionId = row.section_id;
+
+    mem.items.set(input.itemId, {
+      ...row,
+      section_id: input.targetSectionId,
+      updated_at: nowIso(),
+    });
+
+    if (sourceSectionId !== input.targetSectionId) {
+      const remaining = Array.from(mem.items.values())
+        .filter(
+          (i) =>
+            i.template_id === templateId &&
+            i.section_id === sourceSectionId &&
+            i.id !== input.itemId,
+        )
+        .sort((a, b) => a.sort_order - b.sort_order);
+      remaining.forEach((i, index) => {
+        mem.items.set(i.id, { ...i, sort_order: index, updated_at: nowIso() });
+      });
+    }
+
+    for (const [index, id] of input.orderedIds.entries()) {
+      const current = mem.items.get(id);
+      if (!current || current.template_id !== templateId) {
+        throw new ValidationError(`Unknown id in reorder: ${id}`);
+      }
+      mem.items.set(id, {
+        ...current,
+        section_id: input.targetSectionId,
+        sort_order: index,
+        updated_at: nowIso(),
+      });
+    }
+
+    await touchTemplate(templateId, input.actorId);
+    return getTemplate(templateId);
+  }
+
+  const supabase = createServiceClient();
+  const { data: existing, error: fetchErr } = await supabase
+    .from("inspection_template_items")
+    .select("*")
+    .eq("id", input.itemId)
+    .maybeSingle();
+  if (fetchErr) throw fetchErr;
+  if (!existing) throw new NotFoundError("Item not found");
+  const templateId = existing.template_id as string;
+  const sourceSectionId = existing.section_id as string | null;
+
+  const { error: moveErr } = await supabase
+    .from("inspection_template_items")
+    .update({ section_id: input.targetSectionId })
+    .eq("id", input.itemId);
+  if (moveErr) throw moveErr;
+
+  if (sourceSectionId !== input.targetSectionId) {
+    let remQuery = supabase
+      .from("inspection_template_items")
+      .select("id")
+      .eq("template_id", templateId)
+      .neq("id", input.itemId)
+      .order("sort_order", { ascending: true });
+    remQuery =
+      sourceSectionId === null
+        ? remQuery.is("section_id", null)
+        : remQuery.eq("section_id", sourceSectionId);
+    const { data: remaining } = await remQuery;
+    for (const [index, row] of (remaining ?? []).entries()) {
+      await supabase
+        .from("inspection_template_items")
+        .update({ sort_order: index })
+        .eq("id", row.id);
+    }
+  }
+
+  for (const [index, id] of input.orderedIds.entries()) {
+    const { error } = await supabase
+      .from("inspection_template_items")
+      .update({ section_id: input.targetSectionId, sort_order: index })
+      .eq("id", id)
+      .eq("template_id", templateId);
+    if (error) throw error;
+  }
+
+  await touchTemplate(templateId, input.actorId);
+  return getTemplate(templateId);
 }
 
 export async function addSubQuestion(input: {

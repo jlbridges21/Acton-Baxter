@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resetEnvCacheForTests } from "@/lib/env";
+import { AuthorizationError } from "@/lib/errors";
 import {
   addItem,
   addSection,
@@ -18,6 +19,7 @@ import {
   resetSiteInspectionMediaMemoryForTests,
   resetSiteInspectionMemoryForTests,
   setSiteInspectionProfileNameForTests,
+  softDeleteSiteInspection,
   updateItem,
   updateSection,
   uploadSiteInspectionPhoto,
@@ -178,49 +180,49 @@ describe("template snapshot isolation", () => {
   });
 });
 
-describe("responses, status, cover photo", () => {
-  async function tinyInspection() {
-    const template = await createTemplateFromSeed(
-      {
-        name: "Two-item",
-        standaloneItems: [{ title: "Cover", guideNotes: "• front", isCoverPhotoSource: true }],
-        sections: [
-          {
-            title: "A",
-            items: [
-              {
-                title: "Check",
-                guideNotes: "• g",
-                subQuestions: [
-                  { prompt: "OK?", questionType: "yes_no_na" },
-                  {
-                    prompt: "Lot",
-                    questionType: "single_select",
-                    options: [{ label: "Flat" }, { label: "Sloped" }],
-                  },
-                  {
-                    prompt: "Surface",
-                    questionType: "multi_select",
-                    options: [{ label: "Grass" }, { label: "Concrete" }],
-                  },
-                  { prompt: "Notes detail", questionType: "text" },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      "admin-1",
-    );
-    return createSiteInspection({
-      projectName: "Job",
-      address: "123 St",
-      templateId: template.id,
-      assignedTo: "user-1",
-      createdBy: "admin-1",
-    });
-  }
+async function tinyInspection() {
+  const template = await createTemplateFromSeed(
+    {
+      name: "Two-item",
+      standaloneItems: [{ title: "Cover", guideNotes: "• front", isCoverPhotoSource: true }],
+      sections: [
+        {
+          title: "A",
+          items: [
+            {
+              title: "Check",
+              guideNotes: "• g",
+              subQuestions: [
+                { prompt: "OK?", questionType: "yes_no_na" },
+                {
+                  prompt: "Lot",
+                  questionType: "single_select",
+                  options: [{ label: "Flat" }, { label: "Sloped" }],
+                },
+                {
+                  prompt: "Surface",
+                  questionType: "multi_select",
+                  options: [{ label: "Grass" }, { label: "Concrete" }],
+                },
+                { prompt: "Notes detail", questionType: "text" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    "admin-1",
+  );
+  return createSiteInspection({
+    projectName: "Job",
+    address: "123 St",
+    templateId: template.id,
+    assignedTo: "user-1",
+    createdBy: "admin-1",
+  });
+}
 
+describe("responses, status, cover photo", () => {
   it("round-trips checkbox, notes, and each sub-question type", async () => {
     const inspection = await tinyInspection();
     const cover = inspection.snapshot.standaloneItems[0]!;
@@ -327,6 +329,62 @@ describe("responses, status, cover photo", () => {
     // Still pending — second item incomplete
     const pending = await listSiteInspections({ status: "pending" });
     expect(pending.some((i) => i.id === b.id)).toBe(true);
+  });
+});
+
+describe("soft-delete site inspections", () => {
+  it("allows creator or admin and hides from lists", async () => {
+    const inspection = await tinyInspection();
+
+    await expect(
+      softDeleteSiteInspection(inspection.id, "other-user", "user"),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+
+    await softDeleteSiteInspection(inspection.id, "admin-1", "user");
+    const list = await listSiteInspections();
+    expect(list.some((i) => i.id === inspection.id)).toBe(false);
+    await expect(getSiteInspection(inspection.id)).rejects.toThrow(/not found/i);
+  });
+
+  it("lets an admin soft-delete someone else's inspection", async () => {
+    const inspection = await tinyInspection();
+    await softDeleteSiteInspection(inspection.id, "ops-admin", "admin");
+    expect((await listSiteInspections()).some((i) => i.id === inspection.id)).toBe(false);
+  });
+});
+
+describe("list query shape (no snapshot_json)", () => {
+  it("list path selects denormalized counts and never snapshot_json", async () => {
+    const source = readFileSync(
+      join(process.cwd(), "src/lib/inspections/records-store.ts"),
+      "utf8",
+    );
+    expect(source).toContain("LIST_COLUMNS");
+    expect(source).toMatch(
+      /const LIST_COLUMNS =\s*\n?\s*"id, project_name, address[\s\S]*?deleted_at";/,
+    );
+    expect(source).toContain("select(LIST_COLUMNS)");
+    expect(source).toMatch(/Never select snapshot_json on the card list/);
+    const listFn = source.slice(
+      source.indexOf("export async function listSiteInspections"),
+      source.indexOf("async function loadInspectionRow"),
+    );
+    expect(listFn).toContain("select(LIST_COLUMNS)");
+    expect(listFn).not.toMatch(/\.select\(\s*["']\*["']\s*\)/);
+    expect(listFn).not.toMatch(/\.select\([^)]*snapshot_json/);
+    expect(listFn).not.toMatch(/snapshot_json:\s/);
+    expect(source).toContain("createSiteInspectionMediaSignedUrlMap");
+    expect(source).toContain("resolveProfileNamesBatch");
+    expect(source).toContain("total_item_count");
+    expect(source).toContain("completed_item_count");
+
+    const inspection = await tinyInspection();
+    expect(inspection.totalItemCount).toBeGreaterThan(0);
+    const list = await listSiteInspections();
+    const card = list.find((i) => i.id === inspection.id)!;
+    expect(card.totalItemCount).toBe(inspection.totalItemCount);
+    expect(card.completedItemCount).toBe(0);
+    expect(card).not.toHaveProperty("snapshot");
   });
 });
 

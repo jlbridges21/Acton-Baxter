@@ -22,6 +22,10 @@ export const templateActionSchema = z.discriminatedUnion("action", [
     templateId: z.string().uuid(),
   }),
   z.object({
+    action: z.literal("delete_template"),
+    templateId: z.string().uuid(),
+  }),
+  z.object({
     action: z.literal("update_meta"),
     templateId: z.string().uuid(),
     name: z.string().min(1).optional(),
@@ -53,6 +57,8 @@ export const templateActionSchema = z.discriminatedUnion("action", [
     title: z.string().min(1),
     guideNotes: z.string().optional(),
     isCoverPhotoSource: z.boolean().optional(),
+    allowsMedia: z.boolean().optional(),
+    allowsNotes: z.boolean().optional(),
   }),
   z.object({
     action: z.literal("update_item"),
@@ -60,6 +66,8 @@ export const templateActionSchema = z.discriminatedUnion("action", [
     title: z.string().min(1).optional(),
     guideNotes: z.string().optional(),
     isCoverPhotoSource: z.boolean().optional(),
+    allowsMedia: z.boolean().optional(),
+    allowsNotes: z.boolean().optional(),
   }),
   z.object({
     action: z.literal("delete_item"),
@@ -69,6 +77,12 @@ export const templateActionSchema = z.discriminatedUnion("action", [
     action: z.literal("reorder_items"),
     templateId: z.string().uuid(),
     sectionId: z.string().uuid().nullable(),
+    orderedIds: z.array(z.string().uuid()).min(1),
+  }),
+  z.object({
+    action: z.literal("move_item"),
+    itemId: z.string().uuid(),
+    targetSectionId: z.string().uuid().nullable(),
     orderedIds: z.array(z.string().uuid()).min(1),
   }),
   z.object({

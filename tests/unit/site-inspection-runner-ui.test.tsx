@@ -148,6 +148,8 @@ describe("Inspections UI at phone width", () => {
             },
           ]}
           assignees={[]}
+          currentUserId="u1"
+          isAdmin={false}
         />
       </div>,
     );
@@ -161,7 +163,7 @@ describe("Inspections UI at phone width", () => {
   it("runner shows internal guide notes, progress, photo/video attach, and export", () => {
     render(
       <div style={{ width: 375 }}>
-        <InspectionRunnerClient initialInspection={detail} />
+        <InspectionRunnerClient initialInspection={detail} currentUserId="u1" isAdmin={false} />
       </div>,
     );
     expect(screen.getByText(/1 of 2 complete/i)).toBeTruthy();

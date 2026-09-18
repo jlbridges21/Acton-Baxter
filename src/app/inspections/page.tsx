@@ -1,6 +1,7 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { InspectionsShell } from "@/components/inspections/inspections-shell";
 import { InspectionsListClient } from "@/components/inspections/inspections-list-client";
+import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { listGovernanceOwnerCandidates } from "@/lib/baxter-ai/governance/owner-candidates";
 import { listSiteInspections, listTemplates } from "@/lib/inspections";
@@ -13,7 +14,7 @@ export default async function InspectionsPage() {
   const [inspections, jobs, templates, assignees] = await Promise.all([
     listSiteInspections(),
     listExpenseJobs({ includeInactive: false }),
-    listTemplates({ includeArchived: false }),
+    listTemplates({ includeArchived: true }),
     listGovernanceOwnerCandidates(),
   ]);
 
@@ -29,6 +30,8 @@ export default async function InspectionsPage() {
           jobs={jobs}
           templates={templates}
           assignees={assignees.map((a) => ({ id: a.id, displayName: a.displayName }))}
+          currentUserId={user.id}
+          isAdmin={isAdminRole(user.profile.role)}
         />
       </InspectionsShell>
     </AppShell>

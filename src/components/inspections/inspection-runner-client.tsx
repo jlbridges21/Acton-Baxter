@@ -6,8 +6,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import {
   clearPendingResponse,
@@ -62,9 +65,14 @@ function mergeInspectionMedia(
 
 export function InspectionRunnerClient({
   initialInspection,
+  currentUserId,
+  isAdmin,
 }: {
   initialInspection: SiteInspectionDetail;
+  currentUserId: string;
+  isAdmin: boolean;
 }) {
+  const router = useRouter();
   const [inspection, setInspection] = useState(initialInspection);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [queueSnap, setQueueSnap] = useState<MediaQueueSnapshot>({
@@ -74,6 +82,9 @@ export function InspectionRunnerClient({
     items: [],
   });
   const [exportModeHint, setExportModeHint] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const localMediaRef = useRef(new Map<string, SiteInspectionMedia>());
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     const defaults = Object.fromEntries(
@@ -340,6 +351,24 @@ export function InspectionRunnerClient({
     }
   }
 
+  async function confirmSoftDelete() {
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/inspections/${inspection.id}`, { method: "DELETE" });
+      const json = (await res.json()) as { error?: { message?: string } };
+      if (!res.ok) throw new Error(json.error?.message ?? "Could not delete inspection");
+      setConfirmDelete(false);
+      router.push("/inspections");
+      router.refresh();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Could not delete inspection");
+      setDeleteBusy(false);
+    }
+  }
+
+  const canDelete = isAdmin || inspection.createdBy === currentUserId;
+
   const mediaByItem = useMemo(() => {
     const map = new Map<string, SiteInspectionMedia[]>();
     for (const m of inspection.media) {
@@ -438,8 +467,38 @@ export function InspectionRunnerClient({
               Download photos only
             </Button>
           ) : null}
+          {canDelete ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-10 text-red-700 hover:bg-red-50 hover:text-red-800"
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              Delete
+            </Button>
+          ) : null}
         </div>
+        {deleteError ? <p className="text-sm text-red-700">{deleteError}</p> : null}
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Remove this site inspection?"
+        description={
+          <>
+            This removes “{inspection.projectName}” from Site Inspections, including all checklist
+            responses, notes, and attached photos and videos. The record is soft-deleted so an admin
+            can recover it if needed — it will no longer appear in lists, counts, or media exports.
+          </>
+        }
+        confirmLabel="Remove inspection"
+        destructive
+        busy={deleteBusy}
+        requireTypedPhrase="DELETE"
+        onConfirm={() => void confirmSoftDelete()}
+      />
 
       {inspection.snapshot.standaloneItems.map((item) => (
         <ItemCard

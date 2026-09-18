@@ -14,6 +14,12 @@ import {
   addSubQuestion,
   archiveTemplate,
   createEmptyTemplate,
+  createSiteInspection,
+  getSiteInspection,
+  permanentlyDeleteTemplate,
+  resetSiteInspectionMemoryForTests,
+  unarchiveTemplate,
+  upsertSiteInspectionResponse,
   deleteItem,
   deleteOption,
   deleteSection,
@@ -40,6 +46,7 @@ beforeEach(() => {
   process.env.ENABLE_MOCK_RESEARCH = "true";
   resetEnvCacheForTests();
   resetInspectionTemplateMemoryForTests();
+  resetSiteInspectionMemoryForTests();
 });
 
 describe("Site Inspection migration + shared projects", () => {
@@ -190,6 +197,88 @@ describe("Template CRUD + ordering persistence", () => {
     expect(active.some((t) => t.id === created.id)).toBe(false);
     const all = await listTemplates({ includeArchived: true });
     expect(all.some((t) => t.id === created.id)).toBe(true);
+
+    await unarchiveTemplate(created.id, "admin-1");
+    expect((await getTemplate(created.id)).archivedAt).toBeNull();
+    await archiveTemplate(created.id, "admin-1");
+    await permanentlyDeleteTemplate(created.id);
+    expect((await listTemplates({ includeArchived: true })).some((t) => t.id === created.id)).toBe(
+      false,
+    );
+  });
+
+  it("refuses permanent delete until archived", async () => {
+    const created = await createEmptyTemplate({ name: "Temp", actorId: "admin-1" });
+    await expect(permanentlyDeleteTemplate(created.id)).rejects.toThrow(/archive/i);
+  });
+
+  it("deleting a template leaves existing inspections fully intact", async () => {
+    const template = await createEmptyTemplate({ name: "Isolation Source", actorId: "admin-1" });
+    const section = await addSection({
+      templateId: template.id,
+      title: "STRUCTURE",
+      actorId: "admin-1",
+    });
+    await addItem({
+      templateId: template.id,
+      sectionId: section.sections[0]!.id,
+      title: "Foundation",
+      guideNotes: "Check footing",
+      actorId: "admin-1",
+    });
+    const withItem = await getTemplate(template.id);
+    const itemId = withItem.sections[0]!.items[0]!.id;
+    await addSubQuestion({
+      itemId,
+      prompt: "Cracks?",
+      questionType: "yes_no_na",
+      actorId: "admin-1",
+    });
+    const live = await getTemplate(template.id);
+    const inspection = await createSiteInspection({
+      projectName: "Keep Me",
+      address: "1 Snap St",
+      templateId: live.id,
+      createdBy: "user-1",
+    });
+    const snapItem = inspection.snapshot.sections[0]!.items[0]!;
+    const snapSq = snapItem.subQuestions[0]!;
+    await upsertSiteInspectionResponse({
+      inspectionId: inspection.id,
+      snapshotItemId: snapItem.id,
+      isComplete: true,
+      notes: "Field note preserved",
+      answers: { [snapSq.id]: { type: "yes_no_na", value: "yes" } },
+      actorId: "user-1",
+    });
+
+    const before = await getSiteInspection(inspection.id);
+    const beforeJson = JSON.stringify(before.snapshot);
+    expect(before.responses).toHaveLength(1);
+    expect(before.responses[0]?.notes).toBe("Field note preserved");
+    expect(before.responses[0]?.answers[snapSq.id]?.value).toBe("yes");
+    expect(before.snapshot.sections[0]?.title).toBe("STRUCTURE");
+    expect(snapItem.id).not.toBe(itemId);
+
+    await archiveTemplate(live.id, "admin-1");
+    await permanentlyDeleteTemplate(live.id);
+    expect((await listTemplates({ includeArchived: true })).some((t) => t.id === live.id)).toBe(
+      false,
+    );
+
+    const after = await getSiteInspection(inspection.id);
+    expect(JSON.stringify(after.snapshot)).toBe(beforeJson);
+    expect(after.snapshot.sections).toHaveLength(1);
+    expect(after.snapshot.sections[0]?.items).toHaveLength(1);
+    expect(after.snapshot.sections[0]?.items[0]?.subQuestions).toHaveLength(1);
+    expect(after.snapshot.sections[0]?.items[0]?.title).toBe("Foundation");
+    expect(after.snapshot.sections[0]?.items[0]?.subQuestions[0]?.prompt).toBe("Cracks?");
+    expect(after.responses).toHaveLength(1);
+    expect(after.responses[0]?.isComplete).toBe(true);
+    expect(after.responses[0]?.notes).toBe("Field note preserved");
+    expect(after.responses[0]?.answers[snapSq.id]?.value).toBe("yes");
+    expect(after.completedItemCount).toBe(before.completedItemCount);
+    expect(after.totalItemCount).toBe(before.totalItemCount);
   });
 
   it("reorders sections, items, sub-questions, and options identically after reload", async () => {

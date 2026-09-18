@@ -3,8 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import type { ExpenseJob } from "@/lib/receipts/types";
 import type { InspectionTemplateSummary } from "@/lib/inspections/types";
 import type { SiteInspectionSummary } from "@/lib/inspections/record-types";
@@ -20,11 +22,15 @@ export function InspectionsListClient({
   jobs,
   templates,
   assignees,
+  currentUserId,
+  isAdmin,
 }: {
   initialInspections: SiteInspectionSummary[];
   jobs: ExpenseJob[];
   templates: InspectionTemplateSummary[];
   assignees: Assignee[];
+  currentUserId: string;
+  isAdmin: boolean;
 }) {
   const router = useRouter();
   const [inspections, setInspections] = useState(initialInspections);
@@ -33,11 +39,13 @@ export function InspectionsListClient({
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SiteInspectionSummary | null>(null);
 
   const [projectName, setProjectName] = useState("");
   const [address, setAddress] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
-  const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
+  const activeTemplates = templates.filter((t) => !t.archivedAt);
+  const [templateId, setTemplateId] = useState(activeTemplates[0]?.id ?? "");
   const [assignedTo, setAssignedTo] = useState("");
 
   const visible = inspections.filter((row) => {
@@ -46,6 +54,27 @@ export function InspectionsListClient({
     if (!q) return true;
     return row.projectName.toLowerCase().includes(q) || row.address.toLowerCase().includes(q);
   });
+
+  function canDelete(row: SiteInspectionSummary) {
+    return isAdmin || row.createdBy === currentUserId;
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/inspections/${deleteTarget.id}`, { method: "DELETE" });
+      const json = (await res.json()) as { error?: { message?: string } };
+      if (!res.ok) throw new Error(json.error?.message ?? "Could not delete inspection");
+      setInspections((prev) => prev.filter((r) => r.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete inspection");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function onPick(pick: ProjectPick) {
     setProjectName(pick.projectName);
@@ -169,7 +198,7 @@ export function InspectionsListClient({
               value={templateId}
               onChange={(e) => setTemplateId(e.target.value)}
             >
-              {templates.map((t) => (
+              {activeTemplates.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>
@@ -224,7 +253,7 @@ export function InspectionsListClient({
 
       <ul className="grid gap-3 sm:grid-cols-2">
         {visible.map((row) => (
-          <li key={row.id}>
+          <li key={row.id} className="relative">
             <Link
               href={`/inspections/${row.id}`}
               className="relative block overflow-hidden rounded-xl border border-[var(--acton-border)] bg-white shadow-sm transition hover:border-[var(--acton-navy)]"
@@ -269,6 +298,20 @@ export function InspectionsListClient({
                 ) : null}
               </div>
             </Link>
+            {canDelete(row) ? (
+              <button
+                type="button"
+                className="absolute right-3 bottom-3 z-10 rounded-md border border-[var(--acton-border)] bg-white p-2 text-red-700 shadow-sm hover:bg-red-50"
+                aria-label={`Delete inspection ${row.projectName}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDeleteTarget(row);
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            ) : null}
           </li>
         ))}
         {visible.length === 0 ? (
@@ -277,6 +320,29 @@ export function InspectionsListClient({
           </li>
         ) : null}
       </ul>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        title="Remove this site inspection?"
+        description={
+          deleteTarget ? (
+            <>
+              This removes “{deleteTarget.projectName}” from Site Inspections, including all
+              checklist responses, notes, and attached photos and videos. The record is soft-deleted
+              so an admin can recover it if needed — it will no longer appear in lists, counts, or
+              media exports.
+            </>
+          ) : (
+            ""
+          )
+        }
+        confirmLabel="Remove inspection"
+        destructive
+        busy={busy}
+        requireTypedPhrase="DELETE"
+        onConfirm={() => void confirmDelete()}
+      />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/layout/app-shell";
 import { InspectionRunnerClient } from "@/components/inspections/inspection-runner-client";
+import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getSiteInspection } from "@/lib/inspections";
 import { NotFoundError } from "@/lib/errors";
@@ -22,7 +23,11 @@ export default async function InspectionDetailPage({ params }: Params) {
 
   return (
     <AppShell user={user}>
-      <InspectionRunnerClient initialInspection={inspection} />
+      <InspectionRunnerClient
+        initialInspection={inspection}
+        currentUserId={user.id}
+        isAdmin={isAdminRole(user.profile.role)}
+      />
     </AppShell>
   );
 }

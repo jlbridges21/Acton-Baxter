@@ -93,7 +93,7 @@ describe("Inspections UI at phone width", () => {
       </div>,
     );
     expect(screen.getAllByText(/Internal only/i).length).toBeGreaterThan(0);
-    expect(screen.getByDisplayValue("Front Photo of Main House")).toBeTruthy();
+    expect(screen.getByText("Front Photo of Main House")).toBeTruthy();
     expect(screen.getByText(/Cover photo source/i)).toBeTruthy();
   });
 
