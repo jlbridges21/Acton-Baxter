@@ -62,19 +62,44 @@ type PrepareResponse = {
 
 type Listener = (snapshot: MediaQueueSnapshot) => void;
 type InspectionUpdateHandler = (inspection: SiteInspectionDetail) => void;
+type QueueListener = { fn: Listener; inspectionId: string | null };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 let draining = false;
 let activeUploads = 0;
-const listeners = new Set<Listener>();
+const listeners = new Set<QueueListener>();
 const inFlight = new Set<string>();
 /** clientMediaIds the user cancelled — processOne must not re-queue or patch failed. */
 const cancelledUploads = new Set<string>();
 /** Abort hooks for in-flight TUS (and any future transport) uploads. */
 const activeAbortByClientId = new Map<string, () => void>();
 let inspectionUpdateHandler: InspectionUpdateHandler | undefined;
+let onlineBound = false;
+
+/** In-memory queue for unit tests (IndexedDB unavailable / deterministic). */
+let memoryQueue: Map<string, MediaQueueItem> | null = null;
+
+export function resetMediaQueueMemoryForTests(): void {
+  memoryQueue = new Map();
+  dbPromise = null;
+  draining = false;
+  activeUploads = 0;
+  listeners.clear();
+  inFlight.clear();
+  cancelledUploads.clear();
+  activeAbortByClientId.clear();
+  inspectionUpdateHandler = undefined;
+  onlineBound = false;
+}
+
+export function enableMemoryMediaQueueForTests(): void {
+  if (!memoryQueue) memoryQueue = new Map();
+}
 
 function openDb(): Promise<IDBDatabase> {
+  if (memoryQueue) {
+    return Promise.reject(new Error("IndexedDB bypassed — using memory queue"));
+  }
   if (typeof indexedDB === "undefined") {
     return Promise.reject(new Error("IndexedDB unavailable"));
   }
@@ -104,27 +129,49 @@ function idbReq<T>(req: IDBRequest<T>): Promise<T> {
 }
 
 async function putItem(item: MediaQueueItem): Promise<void> {
+  if (memoryQueue) {
+    memoryQueue.set(item.clientMediaId, item);
+    return;
+  }
   const db = await openDb();
   const tx = db.transaction(STORE, "readwrite");
   await idbReq(tx.objectStore(STORE).put(item));
 }
 
 async function getItem(clientMediaId: string): Promise<MediaQueueItem | undefined> {
+  if (memoryQueue) {
+    return memoryQueue.get(clientMediaId);
+  }
   const db = await openDb();
   const tx = db.transaction(STORE, "readonly");
   return idbReq(tx.objectStore(STORE).get(clientMediaId));
 }
 
 async function deleteItem(clientMediaId: string): Promise<void> {
+  if (memoryQueue) {
+    memoryQueue.delete(clientMediaId);
+    return;
+  }
   const db = await openDb();
   const tx = db.transaction(STORE, "readwrite");
   await idbReq(tx.objectStore(STORE).delete(clientMediaId));
 }
 
 async function listAllItems(): Promise<MediaQueueItem[]> {
+  if (memoryQueue) {
+    return Array.from(memoryQueue.values());
+  }
   const db = await openDb();
   const tx = db.transaction(STORE, "readonly");
   return idbReq(tx.objectStore(STORE).getAll());
+}
+
+function filterItemsForInspection(
+  items: MediaQueueItem[],
+  inspectionId: string | null | undefined,
+): MediaQueueItem[] {
+  if (!inspectionId) return items;
+  return items.filter((item) => item.inspectionId === inspectionId);
 }
 
 function toSnapshot(items: MediaQueueItem[]): MediaQueueSnapshot {
@@ -155,21 +202,32 @@ function toSnapshot(items: MediaQueueItem[]): MediaQueueSnapshot {
   };
 }
 
-async function emit(): Promise<MediaQueueSnapshot> {
+async function emit(): Promise<void> {
   const items = await listAllItems();
-  const snapshot = toSnapshot(items);
-  for (const listener of listeners) listener(snapshot);
-  return snapshot;
+  for (const listener of listeners) {
+    listener.fn(toSnapshot(filterItemsForInspection(items, listener.inspectionId)));
+  }
 }
 
-export function subscribeMediaQueue(listener: Listener): () => void {
-  listeners.add(listener);
-  void listAllItems().then((items) => listener(toSnapshot(items)));
-  return () => listeners.delete(listener);
+/**
+ * Subscribe to queue snapshots. Pass `inspectionId` to receive only that
+ * inspection's counts/items — global (unscoped) UI was leaking deleted-inspection failures.
+ */
+export function subscribeMediaQueue(
+  listener: Listener,
+  options?: { inspectionId?: string },
+): () => void {
+  const entry: QueueListener = { fn: listener, inspectionId: options?.inspectionId ?? null };
+  listeners.add(entry);
+  void listAllItems().then((items) => {
+    listener(toSnapshot(filterItemsForInspection(items, entry.inspectionId)));
+  });
+  return () => listeners.delete(entry);
 }
 
-export async function getMediaQueueSnapshot(): Promise<MediaQueueSnapshot> {
-  return toSnapshot(await listAllItems());
+export async function getMediaQueueSnapshot(inspectionId?: string): Promise<MediaQueueSnapshot> {
+  const items = await listAllItems();
+  return toSnapshot(filterItemsForInspection(items, inspectionId));
 }
 
 export async function countPendingForInspection(inspectionId: string): Promise<{
@@ -184,6 +242,74 @@ export async function countPendingForInspection(inspectionId: string): Promise<{
     if (item.status === "failed") failed += 1;
   }
   return { pending, failed };
+}
+
+/** Test helper: peek all persisted queue rows (including blobs' byte sizes). */
+export async function listMediaQueueItemsForTests(): Promise<
+  Array<{
+    clientMediaId: string;
+    inspectionId: string;
+    status: QueueItemStatus;
+    byteSize: number;
+    hasBlob: boolean;
+  }>
+> {
+  const items = await listAllItems();
+  return items.map((item) => ({
+    clientMediaId: item.clientMediaId,
+    inspectionId: item.inspectionId,
+    status: item.status,
+    byteSize: item.byteSize,
+    hasBlob: item.blob.size > 0 || item.byteSize > 0,
+  }));
+}
+
+/**
+ * Remove every queue entry (and blob) for one inspection — used on delete and
+ * confirmed leave. Cancels in-flight TUS so drain cannot resurrect them.
+ */
+export async function purgeMediaQueueForInspection(inspectionId: string): Promise<number> {
+  const items = (await listAllItems()).filter((i) => i.inspectionId === inspectionId);
+  for (const item of items) {
+    await cancelAndDiscardMediaUpload(item.clientMediaId);
+  }
+  await emit();
+  return items.length;
+}
+
+/**
+ * Drop queue entries whose inspection id is not in the known-accessible set
+ * (soft-deleted / never existed / no access). Clears pre-deploy zombie failures.
+ */
+export async function purgeOrphanMediaQueueEntries(
+  knownInspectionIds: ReadonlySet<string> | readonly string[],
+): Promise<number> {
+  const known =
+    knownInspectionIds instanceof Set ? knownInspectionIds : new Set(knownInspectionIds);
+  const items = await listAllItems();
+  let removed = 0;
+  for (const item of items) {
+    if (!known.has(item.inspectionId)) {
+      await cancelAndDiscardMediaUpload(item.clientMediaId);
+      removed += 1;
+    }
+  }
+  if (removed) await emit();
+  return removed;
+}
+
+function isInspectionGoneStatus(status: number): boolean {
+  return status === 404 || status === 410;
+}
+
+function isInspectionGoneMessage(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("not found") ||
+    m.includes("deleted") ||
+    m.includes("no longer available") ||
+    m.includes("inspection not found")
+  );
 }
 
 function backoffMs(attempts: number): number {
@@ -434,7 +560,12 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       error?: { message?: string };
     };
     if (!prepareRes.ok || !prepareJson.upload) {
-      throw new Error(prepareJson.error?.message ?? "Could not prepare upload");
+      const message = prepareJson.error?.message ?? "Could not prepare upload";
+      if (isInspectionGoneStatus(prepareRes.status) || isInspectionGoneMessage(message)) {
+        await cancelAndDiscardMediaUpload(clientMediaId);
+        return null;
+      }
+      throw new Error(message);
     }
 
     if (cancelledUploads.has(clientMediaId)) {
@@ -491,7 +622,12 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       error?: { message?: string };
     };
     if (!completeRes.ok || !completeJson.inspection) {
-      throw new Error(completeJson.error?.message ?? "Could not finalize upload");
+      const message = completeJson.error?.message ?? "Could not finalize upload";
+      if (isInspectionGoneStatus(completeRes.status) || isInspectionGoneMessage(message)) {
+        await cancelAndDiscardMediaUpload(clientMediaId);
+        return null;
+      }
+      throw new Error(message);
     }
 
     await deleteItem(clientMediaId);
@@ -503,8 +639,12 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       await emit();
       return null;
     }
-    const attempts = item.attempts + 1;
     const baseMessage = formatUploadError(error);
+    if (isInspectionGoneMessage(baseMessage)) {
+      await cancelAndDiscardMediaUpload(clientMediaId);
+      return null;
+    }
+    const attempts = item.attempts + 1;
     const exhausted = attempts >= MAX_UPLOAD_ATTEMPTS;
     const message = exhausted
       ? `${baseMessage} (gave up after ${attempts} attempts — tap Retry or Discard)`
@@ -517,6 +657,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       exhausted,
       message,
     });
+    // Update the same row — never enqueue a duplicate clientMediaId.
     await putItem({
       ...item,
       status: "failed",
@@ -576,8 +717,6 @@ export async function drainMediaQueue(): Promise<void> {
     draining = false;
   }
 }
-
-let onlineBound = false;
 
 export function startMediaQueueDrain(options?: {
   onInspectionUpdate?: (inspection: SiteInspectionDetail) => void;
@@ -646,6 +785,18 @@ export async function cancelAndDiscardMediaUpload(clientMediaId: string): Promis
   activeAbortByClientId.delete(clientMediaId);
   inFlight.delete(clientMediaId);
   await deleteItem(clientMediaId).catch(() => undefined);
+  await emit();
+}
+
+/** Test-only: insert a queue row (with blob) without going through enqueue/process. */
+export async function seedMediaQueueItemForTests(
+  input: Omit<MediaQueueItem, "blob"> & { blob?: Blob },
+): Promise<void> {
+  enableMemoryMediaQueueForTests();
+  await putItem({
+    ...input,
+    blob: input.blob ?? new Blob([new Uint8Array([1, 2, 3])], { type: input.mimeType }),
+  });
   await emit();
 }
 

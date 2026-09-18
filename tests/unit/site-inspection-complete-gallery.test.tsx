@@ -46,6 +46,8 @@ vi.mock("@/lib/inspections/media-queue", () => ({
   retryMediaUpload: vi.fn(),
   discardMediaUpload: vi.fn(),
   cancelAndDiscardMediaUpload: vi.fn(),
+  purgeMediaQueueForInspection: vi.fn(async () => 0),
+  purgeOrphanMediaQueueEntries: vi.fn(async () => 0),
   countPendingForInspection: () => countPending(),
 }));
 

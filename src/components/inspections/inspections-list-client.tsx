@@ -14,6 +14,7 @@ import {
   InspectionProjectPicker,
   type ProjectPick,
 } from "@/components/inspections/inspection-project-picker";
+import { purgeMediaQueueForInspection } from "@/lib/inspections/media-queue";
 
 type Assignee = { id: string; displayName: string };
 
@@ -64,6 +65,7 @@ export function InspectionsListClient({
     setBusy(true);
     setError(null);
     try {
+      await purgeMediaQueueForInspection(deleteTarget.id);
       const res = await fetch(`/api/inspections/${deleteTarget.id}`, { method: "DELETE" });
       const json = (await res.json()) as { error?: { message?: string } };
       if (!res.ok) throw new Error(json.error?.message ?? "Could not delete inspection");

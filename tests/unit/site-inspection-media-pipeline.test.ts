@@ -88,6 +88,9 @@ describe("media limits + export naming", () => {
     expect(source).toContain("cancelAndDiscardMediaUpload");
     expect(source).toContain("cancelledUploads");
     expect(source).toContain("activeAbortByClientId");
+    expect(source).toContain("purgeMediaQueueForInspection");
+    expect(source).toContain("purgeOrphanMediaQueueEntries");
+    expect(source).toContain("inspectionId: options?.inspectionId");
   });
 
   it("builds identifiable zip filenames from section + item + index", () => {

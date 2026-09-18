@@ -20,6 +20,8 @@ import {
   countPendingForInspection,
   discardMediaUpload,
   enqueueInspectionMedia,
+  purgeMediaQueueForInspection,
+  purgeOrphanMediaQueueEntries,
   retryMediaUpload,
   startMediaQueueDrain,
   subscribeMediaQueue,
@@ -208,32 +210,36 @@ export function InspectionRunnerClient({
   }, [flushPending]);
 
   useEffect(() => {
-    const unsub = subscribeMediaQueue((snap) => {
-      setQueueSnap(snap);
-      setInspection((prev) => {
-        const nextMedia = prev.media.map((m) => {
-          if (!m.clientMediaId) return m;
-          const q = snap.items.find((i) => i.clientMediaId === m.clientMediaId);
-          if (!q) return m;
-          const uploadStatus: SiteInspectionUploadStatus =
-            q.status === "uploaded"
-              ? "ready"
-              : q.status === "uploading"
-                ? "uploading"
-                : q.status === "failed"
-                  ? "failed"
-                  : "pending";
-          return {
-            ...m,
-            uploadStatus,
-            uploadProgress: q.progress,
-          };
+    const unsub = subscribeMediaQueue(
+      (snap) => {
+        setQueueSnap(snap);
+        setInspection((prev) => {
+          const nextMedia = prev.media.map((m) => {
+            if (!m.clientMediaId) return m;
+            const q = snap.items.find((i) => i.clientMediaId === m.clientMediaId);
+            if (!q) return m;
+            const uploadStatus: SiteInspectionUploadStatus =
+              q.status === "uploaded"
+                ? "ready"
+                : q.status === "uploading"
+                  ? "uploading"
+                  : q.status === "failed"
+                    ? "failed"
+                    : "pending";
+            return {
+              ...m,
+              uploadStatus,
+              uploadProgress: q.progress,
+            };
+          });
+          return { ...prev, media: nextMedia };
         });
-        return { ...prev, media: nextMedia };
-      });
-    });
+      },
+      { inspectionId: inspection.id },
+    );
     const stopDrain = startMediaQueueDrain({
       onInspectionUpdate: (server) => {
+        if (server.id !== inspection.id) return;
         for (const m of server.media) {
           if (m.clientMediaId && m.uploadStatus === "ready") {
             const local = localMediaRef.current.get(m.clientMediaId);
@@ -246,14 +252,34 @@ export function InspectionRunnerClient({
         applyServerMediaOnly(server);
       },
     });
+
+    // Purge zombie IndexedDB entries from deleted / inaccessible inspections.
+    void (async () => {
+      try {
+        const res = await fetch("/api/inspections");
+        const json = (await res.json()) as {
+          inspections?: Array<{ id: string }>;
+          error?: { message?: string };
+        };
+        if (!res.ok || !json.inspections) return;
+        const known = new Set(json.inspections.map((row) => row.id));
+        // Always keep the open inspection even if the list is filtered oddly.
+        known.add(inspection.id);
+        await purgeOrphanMediaQueueEntries(known);
+      } catch {
+        /* ignore — offline / transient; drain still runs */
+      }
+    })();
+
     return () => {
       unsub();
       stopDrain();
     };
-  }, [applyServerMediaOnly]);
+  }, [applyServerMediaOnly, inspection.id]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Scoped to this inspection only — other inspections' queue rows must not block.
       if (queueSnap.pendingCount > 0 || queueSnap.failedCount > 0) {
         e.preventDefault();
         e.returnValue = "";
@@ -629,6 +655,7 @@ export function InspectionRunnerClient({
     setDeleteBusy(true);
     setDeleteError(null);
     try {
+      await purgeMediaQueueForInspection(inspection.id);
       const res = await fetch(`/api/inspections/${inspection.id}`, { method: "DELETE" });
       const json = (await res.json()) as { error?: { message?: string } };
       if (!res.ok) throw new Error(json.error?.message ?? "Could not delete inspection");
@@ -639,6 +666,21 @@ export function InspectionRunnerClient({
       setDeleteError(e instanceof Error ? e.message : "Could not delete inspection");
       setDeleteBusy(false);
     }
+  }
+
+  async function leaveAndDiscardQueue() {
+    await purgeMediaQueueForInspection(inspection.id);
+    for (const local of localMediaRef.current.values()) {
+      if (local.localPreviewUrl) {
+        try {
+          URL.revokeObjectURL(local.localPreviewUrl);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    localMediaRef.current.clear();
+    router.push("/inspections");
   }
 
   const canDelete = isAdmin || inspection.createdBy === currentUserId;
@@ -655,9 +697,8 @@ export function InspectionRunnerClient({
 
   const pendingUploads = queueSnap.pendingCount;
   const failedUploads = queueSnap.failedCount;
-  const failedQueueItems = queueSnap.items.filter(
-    (i) => i.status === "failed" && i.inspectionId === inspection.id,
-  );
+  // Snapshot is already scoped to this inspection — filter is belt-and-suspenders.
+  const failedQueueItems = queueSnap.items.filter((i) => i.status === "failed");
   const allItemsChecked =
     inspection.totalItemCount > 0 && inspection.completedItemCount >= inspection.totalItemCount;
   const galleryMedia = gallery
@@ -676,10 +717,11 @@ export function InspectionRunnerClient({
               className="text-sm text-[var(--acton-muted)] hover:text-[var(--acton-navy)]"
               onClick={(e) => {
                 if (pendingUploads > 0 || failedUploads > 0) {
+                  e.preventDefault();
                   const ok = window.confirm(
-                    `${pendingUploads} upload(s) pending, ${failedUploads} failed. Leave anyway?`,
+                    `${pendingUploads} upload(s) pending, ${failedUploads} failed. Leaving discards unsent photos and videos for this inspection. Leave anyway?`,
                   );
-                  if (!ok) e.preventDefault();
+                  if (ok) void leaveAndDiscardQueue();
                 }
               }}
             >

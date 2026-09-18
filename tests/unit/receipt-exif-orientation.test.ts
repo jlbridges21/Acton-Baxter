@@ -270,9 +270,13 @@ describe("processReceiptImage with mocked raw bitmap (no double-rotate)", () => 
   ] as const)(
     "orientation $orientation → $expectW×$expectH (raw bitmap + manual transform)",
     async ({ orientation, expectW, expectH }) => {
-      const file = new File([new Uint8Array(jpegWithOrientation(orientation))], `ori-${orientation}.jpg`, {
-        type: "image/jpeg",
-      });
+      const file = new File(
+        [new Uint8Array(jpegWithOrientation(orientation))],
+        `ori-${orientation}.jpg`,
+        {
+          type: "image/jpeg",
+        },
+      );
       const result = await processReceiptImage(file, { maxEdge: 1000, quality: 0.8 });
       expect(result.width).toBe(expectW);
       expect(result.height).toBe(expectH);
