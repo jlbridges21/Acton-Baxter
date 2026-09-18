@@ -22,6 +22,7 @@ import {
   setSiteInspectionStatus,
   completeSiteInspectionMedia,
   updateSiteInspectionMediaStatus,
+  putMemoryMediaBytes,
 } from "@/lib/inspections";
 import { resetEnvCacheForTests } from "@/lib/env";
 
@@ -213,7 +214,7 @@ describe("status store — explicit complete only", () => {
     setSiteInspectionProfileNameForTests("user-1", "Field Tech");
   });
 
-  it("refuses complete while media is pending, then allows after ready + reopen", async () => {
+  it("refuses complete while local uploads would still be pending — server has no pending rows", async () => {
     const template = await createTemplateFromSeed(DETACHED_ADU_SEED, "user-1");
     const inspection = await createSiteInspection({
       projectName: "Liniger",
@@ -223,6 +224,7 @@ describe("status store — explicit complete only", () => {
     });
     const item = inspection.snapshot.standaloneItems[0]!;
     const clientMediaId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    // Prepare no longer creates a server row — complete should succeed with no pending media.
     await prepareSiteInspectionMedia({
       inspectionId: inspection.id,
       snapshotItemId: item.id,
@@ -239,8 +241,39 @@ describe("status store — explicit complete only", () => {
         status: "complete",
         actorId: "user-1",
       }),
-    ).rejects.toThrow(/pending/i);
+    ).resolves.toMatchObject({ status: "complete" });
 
+    // Reopen, attach a ready photo, mark failed, then complete should refuse.
+    await setSiteInspectionStatus({
+      inspectionId: inspection.id,
+      status: "pending",
+      actorId: "user-1",
+    });
+    const prepared = await prepareSiteInspectionMedia({
+      inspectionId: inspection.id,
+      snapshotItemId: item.id,
+      clientMediaId,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
+      byteSize: 12,
+      actorId: "user-1",
+    });
+    putMemoryMediaBytes({
+      storagePath: prepared.upload.path,
+      bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+      mimeType: "image/jpeg",
+      uploadedBy: "user-1",
+    });
+    await completeSiteInspectionMedia({
+      inspectionId: inspection.id,
+      clientMediaId,
+      snapshotItemId: item.id,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
+      storagePath: prepared.upload.path,
+      byteSize: 12,
+      actorId: "user-1",
+    });
     await updateSiteInspectionMediaStatus({
       inspectionId: inspection.id,
       clientMediaId,
@@ -253,28 +286,6 @@ describe("status store — explicit complete only", () => {
         actorId: "user-1",
       }),
     ).rejects.toThrow(/failed/i);
-
-    await completeSiteInspectionMedia({
-      inspectionId: inspection.id,
-      clientMediaId,
-      storagePath: `memory/${clientMediaId}.jpg`,
-      byteSize: 12,
-      actorId: "user-1",
-    });
-
-    const done = await setSiteInspectionStatus({
-      inspectionId: inspection.id,
-      status: "complete",
-      actorId: "user-1",
-    });
-    expect(done.status).toBe("complete");
-
-    const reopened = await setSiteInspectionStatus({
-      inspectionId: inspection.id,
-      status: "pending",
-      actorId: "user-1",
-    });
-    expect(reopened.status).toBe("pending");
   });
 });
 

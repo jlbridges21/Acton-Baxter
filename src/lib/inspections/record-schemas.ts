@@ -32,27 +32,24 @@ export const itemSignedUrlsSchema = z.object({
   snapshotItemId: z.string().uuid(),
 });
 
+/** No artificial byte cap — bucket file_size_limit is the real ceiling. */
+const mediaByteSizeSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
 export const prepareMediaSchema = z.object({
   snapshotItemId: z.string().uuid(),
   clientMediaId: z.string().uuid(),
   mediaType: z.enum(["photo", "video"]),
   mimeType: z.string().trim().min(1).max(120),
-  byteSize: z
-    .number()
-    .int()
-    .nonnegative()
-    .max(200 * 1024 * 1024),
+  byteSize: mediaByteSizeSchema,
 });
 
 export const completeMediaSchema = z.object({
   clientMediaId: z.string().uuid(),
-  storagePath: z.string().trim().min(1).max(500).optional(),
-  byteSize: z
-    .number()
-    .int()
-    .nonnegative()
-    .max(200 * 1024 * 1024)
-    .optional(),
+  snapshotItemId: z.string().uuid(),
+  mediaType: z.enum(["photo", "video"]),
+  mimeType: z.string().trim().min(1).max(120),
+  storagePath: z.string().trim().min(1).max(500),
+  byteSize: mediaByteSizeSchema,
 });
 
 export const mediaStatusSchema = z.object({
@@ -62,5 +59,9 @@ export const mediaStatusSchema = z.object({
 });
 
 export const deleteMediaSchema = z.object({
+  mediaId: z.string().uuid(),
+});
+
+export const rotateMediaSchema = z.object({
   mediaId: z.string().uuid(),
 });

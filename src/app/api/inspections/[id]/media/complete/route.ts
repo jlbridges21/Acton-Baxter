@@ -1,5 +1,6 @@
 /**
- * Mark a direct-to-storage upload as ready and attach it to the inspection item.
+ * Mark a direct-to-storage upload as ready and create/attach the media row.
+ * Rows are created here (after bytes land), never at prepare/enqueue time.
  */
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
@@ -26,6 +27,9 @@ export async function POST(request: Request, { params }: Params) {
     const inspection = await completeSiteInspectionMedia({
       inspectionId,
       clientMediaId: body.clientMediaId,
+      snapshotItemId: body.snapshotItemId,
+      mediaType: body.mediaType,
+      mimeType: body.mimeType,
       storagePath: body.storagePath,
       byteSize: body.byteSize,
       actorId: user.id,

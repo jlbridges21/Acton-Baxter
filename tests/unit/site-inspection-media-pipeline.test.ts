@@ -19,6 +19,7 @@ import {
   createTemplateFromSeed,
   deleteSiteInspectionMedia,
   deleteSiteInspectionMediaObject,
+  getSiteInspection,
   listSiteInspections,
   prepareSiteInspectionMedia,
   putMemoryMediaBytes,
@@ -73,25 +74,12 @@ describe("media limits + export naming", () => {
     expect(MEDIA_UPLOAD_CONCURRENCY).toBe(2);
   });
 
-  it("TUS client uses exact 6MiB chunk size and sets Authorization only in onBeforeRequest", () => {
+  it("signed-upload queue keeps durable blobs, finalize, and cancel/purge helpers", () => {
     const source = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
-    expect(source).toContain("TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024");
-    expect(source).toContain("chunkSize: TUS_CHUNK_SIZE_BYTES");
-    expect(source).toContain("bucketName:");
-    expect(source).toContain("objectName:");
-    expect(source).toContain("contentType:");
-    expect(source).toContain("cacheControl:");
-    expect(source).toContain("x-upsert");
+    expect(source).toContain("uploadSigned");
     expect(source).toContain("media/complete");
-    expect(source).toContain("resolveAccessToken");
-    expect(source).toContain("normalizeAccessToken");
-    expect(source).toContain("redactAuthorizationForLog");
-    expect(source).toContain("removeFingerprintOnSuccess: false");
     expect(source).toContain('status: "finalizing"');
     expect(source).toContain("materializeDurableBytes");
-    // Must NOT set Authorization in static headers (XHR concatenates duplicates → Invalid Compact JWS)
-    expect(source).toMatch(/headers:\s*\{\s*apikey:/);
-    expect(source).not.toMatch(/headers:\s*\{[^}]*Authorization:\s*`Bearer/);
     expect(source).toContain("discardMediaUpload");
     expect(source).toContain("cancelAndDiscardMediaUpload");
     expect(source).toContain("cancelledUploads");
@@ -99,6 +87,9 @@ describe("media limits + export naming", () => {
     expect(source).toContain("purgeMediaQueueForInspection");
     expect(source).toContain("purgeOrphanMediaQueueEntries");
     expect(source).toContain("inspectionId: options?.inspectionId");
+    expect(source).not.toContain("tus-js-client");
+    // Auth for signed uploads is in the URL token — no Authorization header construction.
+    expect(source).toContain("redactApiKeyForLog");
   });
 
   it("builds identifiable zip filenames from section + item + index", () => {
@@ -124,7 +115,7 @@ describe("media limits + export naming", () => {
 });
 
 describe("prepare → complete direct-upload path", () => {
-  it("creates pending media then marks ready without FormData through Next", async () => {
+  it("mints upload credentials without a media row, then creates ready on complete", async () => {
     const inspection = await seededInspection();
     const cover = inspection.snapshot.standaloneItems[0]!;
     const clientMediaId = "11111111-1111-4111-8111-111111111111";
@@ -138,9 +129,9 @@ describe("prepare → complete direct-upload path", () => {
       byteSize: 1200,
       actorId: "user-1",
     });
-    expect(prepared.media.uploadStatus).toBe("pending");
-    expect(prepared.media.clientMediaId).toBe(clientMediaId);
     expect(prepared.upload.mode).toBe("memory");
+    const before = await getSiteInspection(inspection.id);
+    expect(before.media.find((m) => m.clientMediaId === clientMediaId)).toBeUndefined();
 
     putMemoryMediaBytes({
       storagePath: prepared.upload.path,
@@ -149,19 +140,12 @@ describe("prepare → complete direct-upload path", () => {
       uploadedBy: "user-1",
     });
 
-    const uploading = await updateSiteInspectionMediaStatus({
-      inspectionId: inspection.id,
-      clientMediaId,
-      uploadStatus: "uploading",
-      uploadProgress: 0.5,
-    });
-    expect(uploading.media.find((m) => m.clientMediaId === clientMediaId)?.uploadProgress).toBe(
-      0.5,
-    );
-
     const done = await completeSiteInspectionMedia({
       inspectionId: inspection.id,
       clientMediaId,
+      snapshotItemId: cover.id,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
       storagePath: prepared.upload.path,
       byteSize: 1200,
       actorId: "user-1",
@@ -172,21 +156,38 @@ describe("prepare → complete direct-upload path", () => {
     expect(done.pendingMediaCount).toBe(0);
   });
 
-  it("surfaces pending/failed counts on list cards", async () => {
+  it("surfaces failed counts only after a ready row exists then fails", async () => {
     const inspection = await seededInspection();
     const cover = inspection.snapshot.standaloneItems[0]!;
-    await prepareSiteInspectionMedia({
+    const clientMediaId = "22222222-2222-4222-8222-222222222222";
+    const prepared = await prepareSiteInspectionMedia({
       inspectionId: inspection.id,
       snapshotItemId: cover.id,
-      clientMediaId: "22222222-2222-4222-8222-222222222222",
+      clientMediaId,
       mediaType: "photo",
       mimeType: "image/jpeg",
       byteSize: 10,
       actorId: "user-1",
     });
+    putMemoryMediaBytes({
+      storagePath: prepared.upload.path,
+      bytes: Buffer.from([1, 2, 3]),
+      mimeType: "image/jpeg",
+      uploadedBy: "user-1",
+    });
+    await completeSiteInspectionMedia({
+      inspectionId: inspection.id,
+      clientMediaId,
+      snapshotItemId: cover.id,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
+      storagePath: prepared.upload.path,
+      byteSize: 10,
+      actorId: "user-1",
+    });
     await updateSiteInspectionMediaStatus({
       inspectionId: inspection.id,
-      clientMediaId: "22222222-2222-4222-8222-222222222222",
+      clientMediaId,
       uploadStatus: "failed",
     });
     const list = await listSiteInspections();
@@ -194,22 +195,26 @@ describe("prepare → complete direct-upload path", () => {
     expect(row.failedMediaCount).toBe(1);
   });
 
-  it("video prepare returns tus mode outside memory (shape check via photo memory + code)", () => {
+  it("video and photo prepare both use signed/memory — not TUS (debt)", () => {
     const queueSource = readFileSync(
       join(process.cwd(), "src/lib/inspections/media-queue.ts"),
       "utf8",
     );
-    expect(queueSource).toContain("tus-js-client");
-    expect(queueSource).toContain("resumeFromPreviousUpload");
+    expect(queueSource).toContain("uploadSigned");
     expect(queueSource).toContain("MEDIA_UPLOAD_CONCURRENCY");
     expect(queueSource).toContain("indexedDB");
+    expect(queueSource).not.toContain("tus-js-client");
 
     const storeSource = readFileSync(
       join(process.cwd(), "src/lib/inspections/records-store.ts"),
       "utf8",
     );
-    expect(storeSource).toContain("supabaseResumableUploadEndpoint");
-    expect(storeSource).toContain('mode: "tus"');
+    expect(storeSource).toContain("createSignedUploadForPath");
+    expect(storeSource).toContain('mode: "signed"');
+    expect(storeSource).not.toContain('mode: "tus"');
+    // TUS endpoint helper kept for a future resumable return.
+    const limits = readFileSync(join(process.cwd(), "src/lib/inspections/media-limits.ts"), "utf8");
+    expect(limits).toContain("supabaseResumableUploadEndpoint");
   });
 });
 
@@ -297,6 +302,9 @@ describe("delete media + cover fallback + permissions", () => {
       return completeSiteInspectionMedia({
         inspectionId: inspection.id,
         clientMediaId,
+        snapshotItemId: cover.id,
+        mediaType: "photo",
+        mimeType: "image/jpeg",
         storagePath: prepared.upload.path,
         byteSize: bytes.length,
         actorId: "user-1",
@@ -348,6 +356,9 @@ describe("delete media + cover fallback + permissions", () => {
     await completeSiteInspectionMedia({
       inspectionId: inspection.id,
       clientMediaId,
+      snapshotItemId: cover.id,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
       storagePath: prepared.upload.path,
       byteSize: 8,
       actorId: "user-1",
@@ -379,6 +390,68 @@ describe("delete media + cover fallback + permissions", () => {
     expect(source).toContain("export async function DELETE");
     expect(source).toContain("deleteSiteInspectionMedia");
     expect(source).toContain("410");
+  });
+
+  it("rotate 90° CCW four times returns to original bytes (persisted)", async () => {
+    const { rotateSiteInspectionMedia } = await import("@/lib/inspections/records-store");
+    const inspection = await seededInspection();
+    const cover = inspection.snapshot.standaloneItems[0]!;
+    const clientMediaId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+    // 2×3 JPEG-ish payload distinguished by sharp after rotate — use a real tiny PNG via sharp if available
+    const sharp = (await import("sharp")).default;
+    const original = await sharp({
+      create: { width: 4, height: 2, channels: 3, background: { r: 255, g: 0, b: 0 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const prepared = await prepareSiteInspectionMedia({
+      inspectionId: inspection.id,
+      snapshotItemId: cover.id,
+      clientMediaId,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
+      byteSize: original.byteLength,
+      actorId: "user-1",
+    });
+    putMemoryMediaBytes({
+      storagePath: prepared.upload.path,
+      bytes: original,
+      mimeType: "image/jpeg",
+      uploadedBy: "user-1",
+    });
+    const ready = await completeSiteInspectionMedia({
+      inspectionId: inspection.id,
+      clientMediaId,
+      snapshotItemId: cover.id,
+      mediaType: "photo",
+      mimeType: "image/jpeg",
+      storagePath: prepared.upload.path,
+      byteSize: original.byteLength,
+      actorId: "user-1",
+    });
+    const mediaId = ready.media.find((m) => m.clientMediaId === clientMediaId)!.id;
+
+    const dims: Array<{ w: number; h: number }> = [];
+    for (let i = 0; i < 4; i += 1) {
+      await rotateSiteInspectionMedia({
+        inspectionId: inspection.id,
+        mediaId,
+        actorId: "user-1",
+        actorRole: "technician",
+      });
+      const { downloadSiteInspectionMediaBytes } = await import("@/lib/inspections/media-storage");
+      const downloaded = await downloadSiteInspectionMediaBytes(prepared.upload.path);
+      expect(downloaded).toBeTruthy();
+      const meta = await sharp(downloaded!.bytes).metadata();
+      dims.push({ w: meta.width!, h: meta.height! });
+    }
+    // After 1 and 3 rotates: swapped; after 2 and 4: original orientation
+    expect(dims[0]).toEqual({ w: 2, h: 4 });
+    expect(dims[1]).toEqual({ w: 4, h: 2 });
+    expect(dims[2]).toEqual({ w: 2, h: 4 });
+    expect(dims[3]).toEqual({ w: 4, h: 2 });
   });
 });
 

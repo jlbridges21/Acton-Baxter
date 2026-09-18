@@ -13,7 +13,6 @@ import {
   orientedDimensions,
   processReceiptImage,
   readJpegExifOrientation,
-  scaleToMaxEdge,
 } from "@/lib/receipts/client-image";
 
 /** Minimal JPEG (1×1) without EXIF. */
@@ -195,11 +194,12 @@ describe("EXIF orientation fixtures 1/3/6/8", () => {
     }
   });
 
-  it("source explicitly uses imageOrientation none on both decode paths", () => {
+  it("source uses createImageBitmap default (EXIF baked) and HTMLImageElement none+manual fallback", () => {
     const source = readFileSync(join(process.cwd(), "src/lib/receipts/client-image.ts"), "utf8");
-    expect(source).toContain('createImageBitmap(file, { imageOrientation: "none" })');
+    expect(source).toContain("createImageBitmap(file)");
     expect(source).toContain('createImageBitmap(img, { imageOrientation: "none" })');
     expect(source).toContain('img.style.imageOrientation = "none"');
+    expect(source).toContain("appliedExif");
     expect(source).toContain("drawOrientedImage");
   });
 
@@ -210,15 +210,18 @@ describe("EXIF orientation fixtures 1/3/6/8", () => {
   });
 });
 
-describe("processReceiptImage with mocked raw bitmap (no double-rotate)", () => {
+describe("processReceiptImage with mocked bitmap (browser already applied EXIF)", () => {
   const SENSOR_W = 40;
   const SENSOR_H = 20;
 
   beforeEach(() => {
+    // Simulate createImageBitmap from-image: returns upright dimensions already.
+    // For ori 6/8 the upright size would be swapped; we return SENSOR dims as "already fixed".
     vi.stubGlobal(
       "createImageBitmap",
       vi.fn(async (_src: unknown, opts?: { imageOrientation?: string }) => {
-        expect(opts).toEqual({ imageOrientation: "none" });
+        // Primary path: no options (browser default from-image).
+        expect(opts).toBeUndefined();
         return {
           width: SENSOR_W,
           height: SENSOR_H,
@@ -239,7 +242,6 @@ describe("processReceiptImage with mocked raw bitmap (no double-rotate)", () => 
         };
       }
       toBlob(cb: (blob: Blob | null) => void) {
-        // Encode dimensions into a tiny recognizable blob
         const payload = new Uint8Array([
           this.width & 0xff,
           this.height & 0xff,
@@ -265,10 +267,11 @@ describe("processReceiptImage with mocked raw bitmap (no double-rotate)", () => 
   it.each([
     { orientation: 1, expectW: 40, expectH: 20 },
     { orientation: 3, expectW: 40, expectH: 20 },
-    { orientation: 6, expectW: 20, expectH: 40 },
-    { orientation: 8, expectW: 20, expectH: 40 },
+    // Bitmap path already upright — must NOT swap again (would double-rotate).
+    { orientation: 6, expectW: 40, expectH: 20 },
+    { orientation: 8, expectW: 40, expectH: 20 },
   ] as const)(
-    "orientation $orientation → $expectW×$expectH (raw bitmap + manual transform)",
+    "orientation $orientation → $expectW×$expectH (bitmap EXIF already applied)",
     async ({ orientation, expectW, expectH }) => {
       const file = new File(
         [new Uint8Array(jpegWithOrientation(orientation))],
@@ -281,12 +284,71 @@ describe("processReceiptImage with mocked raw bitmap (no double-rotate)", () => 
       expect(result.width).toBe(expectW);
       expect(result.height).toBe(expectH);
       expect(result.mimeType).toBe("image/jpeg");
-      expect(createImageBitmap).toHaveBeenCalledWith(file, { imageOrientation: "none" });
-      // Output must not still carry the sideways EXIF — we re-encoded upright JPEG.
-      // (Our fake blob has no EXIF; real encode also strips orientation by drawing upright.)
-      const scaled = scaleToMaxEdge(expectW, expectH, 1000);
-      expect(result.width).toBe(scaled.width);
-      expect(result.height).toBe(scaled.height);
+      expect(createImageBitmap).toHaveBeenCalledWith(file);
+    },
+  );
+});
+
+describe("processReceiptImage HTMLImageElement fallback (manual EXIF)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("createImageBitmap", undefined);
+
+    class FakeImage {
+      width = 20;
+      height = 40;
+      naturalWidth = 20;
+      naturalHeight = 40;
+      style: { imageOrientation?: string } = {};
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_v: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    vi.stubGlobal("Image", FakeImage as unknown as typeof Image);
+
+    class FakeCanvas {
+      width = 0;
+      height = 0;
+      getContext() {
+        return {
+          translate: () => undefined,
+          rotate: () => undefined,
+          scale: () => undefined,
+          drawImage: () => undefined,
+        };
+      }
+      toBlob(cb: (blob: Blob | null) => void) {
+        cb(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], { type: "image/jpeg" }));
+      }
+    }
+    vi.spyOn(document, "createElement").mockImplementation(((tag: string) => {
+      if (tag === "canvas") return new FakeCanvas() as unknown as HTMLCanvasElement;
+      return document.createElementNS("http://www.w3.org/1999/xhtml", tag);
+    }) as typeof document.createElement);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    { orientation: 1, expectW: 20, expectH: 40 },
+    { orientation: 3, expectW: 20, expectH: 40 },
+    { orientation: 6, expectW: 40, expectH: 20 },
+    { orientation: 8, expectW: 40, expectH: 20 },
+  ] as const)(
+    "fallback orientation $orientation → $expectW×$expectH",
+    async ({ orientation, expectW, expectH }) => {
+      const file = new File(
+        [new Uint8Array(jpegWithOrientation(orientation))],
+        `fb-${orientation}.jpg`,
+        { type: "image/jpeg" },
+      );
+      const result = await processReceiptImage(file, { maxEdge: 1000, quality: 0.8 });
+      expect(result.width).toBe(expectW);
+      expect(result.height).toBe(expectH);
     },
   );
 });

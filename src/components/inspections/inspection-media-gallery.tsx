@@ -6,10 +6,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
 import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import type { SiteInspectionMedia } from "@/lib/inspections/record-types";
+import type { SiteInspectionDetail, SiteInspectionMedia } from "@/lib/inspections/record-types";
 
 const URL_REFRESH_MARGIN_MS = 90_000;
 
@@ -22,6 +22,7 @@ export type InspectionMediaGalleryProps = {
   media: SiteInspectionMedia[];
   initialIndex: number;
   onRequestDelete?: (media: SiteInspectionMedia) => void;
+  onInspectionUpdate?: (inspection: SiteInspectionDetail) => void;
 };
 
 export function InspectionMediaGallery({
@@ -33,6 +34,7 @@ export function InspectionMediaGallery({
   media,
   initialIndex,
   onRequestDelete,
+  onInspectionUpdate,
 }: InspectionMediaGalleryProps) {
   const [index, setIndex] = useState(initialIndex);
   const [urlById, setUrlById] = useState<Record<string, string>>({});
@@ -40,6 +42,8 @@ export function InspectionMediaGallery({
   const [loadingUrls, setLoadingUrls] = useState(false);
   const [mediaLoading, setMediaLoading] = useState(true);
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [rotateBusy, setRotateBusy] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
   const touchStartX = useRef<number | null>(null);
   const refreshing = useRef(false);
 
@@ -117,7 +121,35 @@ export function InspectionMediaGallery({
 
   function go(delta: number) {
     setMediaLoading(true);
+    setRotateError(null);
     setIndex((i) => Math.min(viewable.length - 1, Math.max(0, i + delta)));
+  }
+
+  async function rotateCurrent() {
+    if (!current || current.mediaType !== "photo" || current.uploadStatus !== "ready") return;
+    setRotateBusy(true);
+    setRotateError(null);
+    try {
+      const res = await fetch(`/api/inspections/${inspectionId}/media/rotate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: current.id }),
+      });
+      const json = (await res.json()) as {
+        inspection?: SiteInspectionDetail;
+        error?: { message?: string };
+      };
+      if (!res.ok || !json.inspection) {
+        throw new Error(json.error?.message ?? "Could not rotate photo");
+      }
+      onInspectionUpdate?.(json.inspection);
+      setMediaLoading(true);
+      await refreshUrls();
+    } catch (e) {
+      setRotateError(e instanceof Error ? e.message : "Could not rotate photo");
+    } finally {
+      setRotateBusy(false);
+    }
   }
 
   return (
@@ -136,6 +168,18 @@ export function InspectionMediaGallery({
           </DialogDescription>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {current && current.mediaType === "photo" && current.uploadStatus === "ready" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 min-w-11 px-2"
+              aria-label="Rotate 90 degrees counter-clockwise"
+              disabled={rotateBusy}
+              onClick={() => void rotateCurrent()}
+            >
+              <RotateCcw className="h-5 w-5" />
+            </Button>
+          ) : null}
           {current && onRequestDelete ? (
             <Button
               type="button"
@@ -259,6 +303,11 @@ export function InspectionMediaGallery({
           )}
         </div>
       </div>
+      {rotateError ? (
+        <p className="px-4 pb-3 text-center text-sm text-red-600" role="alert">
+          {rotateError}
+        </p>
+      ) : null}
     </Dialog>
   );
 }

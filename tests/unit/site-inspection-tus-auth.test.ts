@@ -1,16 +1,17 @@
 /**
- * Auth header normalization + TUS endpoint helpers for site inspection uploads.
+ * Auth header diagnostics + signed-upload contract (TUS kept as debt helpers).
  */
 import { describe, expect, it } from "vitest";
 import {
   normalizeAccessToken,
+  redactApiKeyForLog,
   redactAuthorizationForLog,
   supabaseResumableUploadEndpoint,
 } from "@/lib/inspections/media-limits";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-describe("TUS auth + endpoint contract", () => {
+describe("upload auth + endpoint contract", () => {
   it("normalizes Bearer prefix and rejects malformed JWTs", () => {
     const raw = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature";
     expect(normalizeAccessToken(raw)).toBe(raw);
@@ -25,12 +26,23 @@ describe("TUS auth + endpoint contract", () => {
     const token = "aaa.bbb.ccc";
     expect(redactAuthorizationForLog(`Bearer ${token}`)).toEqual({
       hasBearerPrefix: true,
+      bearerPrefixCount: 1,
       tokenSegmentCount: 3,
+      firstSegmentPrefix: "aaa",
       tokenLength: token.length,
+    });
+    expect(redactAuthorizationForLog(`Bearer ${token}, Bearer ${token}`)).toMatchObject({
+      bearerPrefixCount: 2,
+      tokenSegmentCount: 5,
     });
   });
 
-  it("uses direct storage hostname for resumable uploads", () => {
+  it("classifies legacy JWT vs new-format publishable keys", () => {
+    expect(redactApiKeyForLog("eyJhbGciOiJIUzI1NiJ9.aa.bb").format).toBe("legacy_jwt");
+    expect(redactApiKeyForLog("sb_publishable_abc").format).toBe("sb_publishable");
+  });
+
+  it("uses direct storage hostname for resumable uploads (TUS debt helper)", () => {
     expect(supabaseResumableUploadEndpoint("https://abcd.supabase.co")).toBe(
       "https://abcd.storage.supabase.co/storage/v1/upload/resumable",
     );
@@ -39,12 +51,14 @@ describe("TUS auth + endpoint contract", () => {
     );
   });
 
-  it("prepare route uses storage hostname helper", () => {
+  it("prepare uses signed uploads for photo and video (no TUS in active path)", () => {
     const source = readFileSync(
       join(process.cwd(), "src/lib/inspections/records-store.ts"),
       "utf8",
     );
-    expect(source).toContain("supabaseResumableUploadEndpoint");
+    expect(source).toContain("createSignedUploadForPath");
+    expect(source).not.toContain('mode: "tus"');
+    expect(source).toContain("Does NOT create a media row");
   });
 
   it("browser supabase client is a singleton", () => {

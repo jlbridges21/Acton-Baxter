@@ -165,7 +165,7 @@ describe("background / offline resilience preserved", () => {
     const source = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
     expect(source).toContain('window.addEventListener("online"');
     expect(source).toContain("void drainMediaQueue()");
-    expect(source).toContain("resumeFromPreviousUpload");
+    expect(source).toContain("uploadSigned");
     expect(source).not.toContain("purgeMediaQueueForInspection(inspection.id);\n  void drain");
   });
 });

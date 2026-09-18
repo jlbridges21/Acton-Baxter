@@ -81,6 +81,8 @@ export {
   setSiteInspectionStatus,
   getSignedUrlsForInspectionItem,
   deleteSiteInspectionMedia,
+  rotateSiteInspectionMedia,
+  purgeOrphanPendingMediaRows,
 } from "./records-store";
 export {
   resetSiteInspectionMediaMemoryForTests,
@@ -110,4 +112,5 @@ export {
   completeMediaSchema,
   mediaStatusSchema,
   deleteMediaSchema,
+  rotateMediaSchema,
 } from "./record-schemas";

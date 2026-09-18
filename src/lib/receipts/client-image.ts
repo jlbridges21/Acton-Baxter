@@ -186,19 +186,20 @@ async function decodeImageSource(file: File): Promise<{
   source: CanvasImageSource;
   width: number;
   height: number;
+  /** True when the decoder already applied EXIF (createImageBitmap default). */
+  appliedExif: boolean;
   cleanup: () => void;
 }> {
-  // Explicit `none`: modern browsers default createImageBitmap to `from-image`, which
-  // would already bake EXIF into the bitmap. We then apply drawOrientedImage() from the
-  // raw EXIF tag — that combination double-rotates landscape (tags 5–8). Keep one path:
-  // raw pixels here + the existing manual transform below.
+  // Prefer createImageBitmap with default `from-image`: the browser bakes EXIF once.
+  // Do NOT also run drawOrientedImage on that bitmap — that double-rotates 5–8.
   if (typeof createImageBitmap === "function") {
     try {
-      const bitmap = await createImageBitmap(file, { imageOrientation: "none" });
+      const bitmap = await createImageBitmap(file);
       return {
         source: bitmap,
         width: bitmap.width,
         height: bitmap.height,
+        appliedExif: true,
         cleanup: () => bitmap.close(),
       };
     } catch {
@@ -218,6 +219,7 @@ async function decodeImageSource(file: File): Promise<{
           source: bitmap,
           width: bitmap.width,
           height: bitmap.height,
+          appliedExif: false,
           cleanup: () => bitmap.close(),
         };
       } catch {
@@ -228,6 +230,7 @@ async function decodeImageSource(file: File): Promise<{
       source: img,
       width: img.naturalWidth || img.width,
       height: img.naturalHeight || img.height,
+      appliedExif: false,
       cleanup: () => URL.revokeObjectURL(objectUrl),
     };
   } catch (error) {
@@ -238,6 +241,12 @@ async function decodeImageSource(file: File): Promise<{
 
 /**
  * Decode selected file, fix orientation, resize long edge, encode JPEG ~0.8.
+ *
+ * Orientation strategy (avoid double-rotation):
+ * - createImageBitmap path: let the browser bake EXIF (`from-image` default) and
+ *   skip manual transforms.
+ * - HTMLImageElement fallback: force `imageOrientation: none` and apply EXIF via
+ *   drawOrientedImage (same as receipts).
  */
 export async function processReceiptImage(
   file: File,
@@ -248,7 +257,7 @@ export async function processReceiptImage(
   const originalBytes = file.size;
 
   const arrayBuffer = await file.arrayBuffer();
-  const orientation = readJpegExifOrientation(arrayBuffer);
+  const exifOrientation = readJpegExifOrientation(arrayBuffer);
 
   let cleanup: (() => void) | null = null;
   try {
@@ -261,6 +270,8 @@ export async function processReceiptImage(
       );
     }
 
+    // Bitmap path already applied EXIF; only the HTMLImageElement fallback needs manual transform.
+    const orientation = decoded.appliedExif ? 1 : exifOrientation;
     const oriented = orientedDimensions(decoded.width, decoded.height, orientation);
     const target = scaleToMaxEdge(oriented.width, oriented.height, maxEdge);
 

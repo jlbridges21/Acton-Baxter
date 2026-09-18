@@ -77,15 +77,45 @@ export function normalizeAccessToken(raw: string): string {
 
 export function redactAuthorizationForLog(authorizationHeader: string): {
   hasBearerPrefix: boolean;
+  bearerPrefixCount: number;
   tokenSegmentCount: number;
+  firstSegmentPrefix: string | null;
   tokenLength: number;
 } {
   const trimmed = authorizationHeader.trim();
+  const bearerPrefixCount = (trimmed.match(/bearer\s+/gi) ?? []).length;
   const hasBearerPrefix = /^bearer\s+/i.test(trimmed);
   const token = hasBearerPrefix ? trimmed.replace(/^bearer\s+/i, "").trim() : trimmed;
+  const segments = token ? token.split(".") : [];
   return {
     hasBearerPrefix,
-    tokenSegmentCount: token ? token.split(".").length : 0,
+    bearerPrefixCount,
+    tokenSegmentCount: segments.length,
+    firstSegmentPrefix: segments[0] ? segments[0].slice(0, 20) : null,
     tokenLength: token.length,
   };
+}
+
+/** Redact apikey the same way (structure only — never log the secret). */
+export function redactApiKeyForLog(apikeyHeader: string): {
+  hasBearerPrefix: boolean;
+  bearerPrefixCount: number;
+  tokenSegmentCount: number;
+  firstSegmentPrefix: string | null;
+  tokenLength: number;
+  format: "legacy_jwt" | "sb_publishable" | "sb_secret" | "other";
+} {
+  const base = redactAuthorizationForLog(apikeyHeader);
+  const raw = apikeyHeader
+    .trim()
+    .replace(/^bearer\s+/i, "")
+    .trim();
+  const format = raw.startsWith("sb_publishable_")
+    ? "sb_publishable"
+    : raw.startsWith("sb_secret_")
+      ? "sb_secret"
+      : raw.startsWith("eyJ")
+        ? "legacy_jwt"
+        : "other";
+  return { ...base, format };
 }

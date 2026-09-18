@@ -22,11 +22,12 @@ import {
   createSiteInspectionMediaSignedUrl,
   createSiteInspectionMediaSignedUrlMap,
   deleteSiteInspectionMediaObject,
+  downloadSiteInspectionMediaBytes,
+  putMemoryMediaBytes,
 } from "./media-storage";
-import { supabaseResumableUploadEndpoint } from "./media-limits";
 import {
-  SITE_INSPECTION_MEDIA_BUCKET,
   type CreateSiteInspectionInput,
+  SITE_INSPECTION_MEDIA_BUCKET,
   type SiteInspectionDetail,
   type SiteInspectionMedia,
   type SiteInspectionResponse,
@@ -789,8 +790,10 @@ export async function upsertSiteInspectionResponse(
 }
 
 /**
- * Prepare a media slot for direct-to-storage upload (bytes never hit this server).
- * Photos: signed upload URL. Videos: TUS resumable endpoint + object path.
+ * Mint direct-to-storage upload credentials. Does NOT create a media row —
+ * optimistic UI stays device-local until bytes land and complete() runs.
+ * Photos and videos both use signed upload URLs (TUS deferred: client Authorization
+ * still produces Invalid Compact JWS in the field; signed URLs carry auth in the URL).
  */
 export async function prepareSiteInspectionMedia(input: {
   inspectionId: string;
@@ -801,10 +804,8 @@ export async function prepareSiteInspectionMedia(input: {
   byteSize: number;
   actorId: string;
 }): Promise<{
-  media: SiteInspectionMedia;
   upload:
     | { mode: "signed"; path: string; token: string; signedUrl: string }
-    | { mode: "tus"; path: string; bucket: string; tusEndpoint: string }
     | { mode: "memory"; path: string };
 }> {
   const inspection = await loadInspectionRow(input.inspectionId);
@@ -823,9 +824,42 @@ export async function prepareSiteInspectionMedia(input: {
           ? "webp"
           : "jpg";
   const storagePath = `${input.actorId}/${input.inspectionId}/${input.clientMediaId}.${ext}`;
+
+  if (shouldUseMemory()) {
+    return { upload: { mode: "memory", path: storagePath } };
+  }
+
+  const signed = await createSignedUploadForPath(storagePath);
+  return {
+    upload: {
+      mode: "signed",
+      path: storagePath,
+      token: signed.token,
+      signedUrl: signed.signedUrl,
+    },
+  };
+}
+
+export async function completeSiteInspectionMedia(input: {
+  inspectionId: string;
+  clientMediaId: string;
+  snapshotItemId: string;
+  mediaType: "photo" | "video";
+  mimeType: string;
+  storagePath: string;
+  byteSize: number;
+  actorId: string;
+}): Promise<SiteInspectionDetail> {
+  const inspection = await loadInspectionRow(input.inspectionId);
+  assertItemInSnapshot(inspection.snapshot_json, input.snapshotItemId);
+  if (!input.clientMediaId.trim()) throw new ValidationError("clientMediaId is required");
+  if (!input.storagePath.trim()) throw new ValidationError("storagePath is required");
+
   const now = nowIso();
-  let id: string = randomUUID();
+  let mediaId: string = randomUUID();
   let sortOrder = 0;
+  const mediaType = input.mediaType;
+  const snapshotItemId = input.snapshotItemId;
 
   if (shouldUseMemory()) {
     const mem = getMemory();
@@ -833,34 +867,34 @@ export async function prepareSiteInspectionMedia(input: {
       (m) => m.inspection_id === input.inspectionId && m.client_media_id === input.clientMediaId,
     );
     if (existing) {
-      id = existing.id;
+      mediaId = existing.id;
       sortOrder = existing.sort_order;
-      mem.media.set(id, {
+      mem.media.set(existing.id, {
         ...existing,
-        storage_path: storagePath,
-        media_type: input.mediaType,
+        snapshot_item_id: snapshotItemId,
+        storage_path: input.storagePath,
+        media_type: mediaType,
         mime_type: input.mimeType,
         byte_size: input.byteSize,
-        upload_status: "pending",
-        upload_progress: 0,
+        upload_status: "ready",
+        upload_progress: 1,
         updated_at: now,
       });
     } else {
       const siblings = Array.from(mem.media.values()).filter(
-        (m) =>
-          m.inspection_id === input.inspectionId && m.snapshot_item_id === input.snapshotItemId,
+        (m) => m.inspection_id === input.inspectionId && m.snapshot_item_id === snapshotItemId,
       );
       sortOrder = siblings.length;
-      mem.media.set(id, {
-        id,
+      mem.media.set(mediaId, {
+        id: mediaId,
         inspection_id: input.inspectionId,
-        snapshot_item_id: input.snapshotItemId,
+        snapshot_item_id: snapshotItemId,
         client_media_id: input.clientMediaId,
-        storage_path: storagePath,
-        media_type: input.mediaType,
+        storage_path: input.storagePath,
+        media_type: mediaType,
         sort_order: sortOrder,
-        upload_status: "pending",
-        upload_progress: 0,
+        upload_status: "ready",
+        upload_progress: 1,
         mime_type: input.mimeType,
         byte_size: input.byteSize,
         created_by: input.actorId,
@@ -877,130 +911,43 @@ export async function prepareSiteInspectionMedia(input: {
       .eq("client_media_id", input.clientMediaId)
       .maybeSingle();
     if (existing) {
-      id = existing.id as string;
+      mediaId = existing.id as string;
       sortOrder = existing.sort_order as number;
       await supabase
         .from("site_inspection_media")
         .update({
-          storage_path: storagePath,
-          media_type: input.mediaType,
+          snapshot_item_id: snapshotItemId,
+          storage_path: input.storagePath,
+          media_type: mediaType,
           mime_type: input.mimeType,
           byte_size: input.byteSize,
-          upload_status: "pending",
-          upload_progress: 0,
+          upload_status: "ready",
+          upload_progress: 1,
         })
-        .eq("id", id);
+        .eq("id", mediaId);
     } else {
       const { count } = await supabase
         .from("site_inspection_media")
         .select("id", { count: "exact", head: true })
         .eq("inspection_id", input.inspectionId)
-        .eq("snapshot_item_id", input.snapshotItemId);
+        .eq("snapshot_item_id", snapshotItemId);
       sortOrder = count ?? 0;
       const { error } = await supabase.from("site_inspection_media").insert({
-        id,
+        id: mediaId,
         inspection_id: input.inspectionId,
-        snapshot_item_id: input.snapshotItemId,
+        snapshot_item_id: snapshotItemId,
         client_media_id: input.clientMediaId,
-        storage_path: storagePath,
-        media_type: input.mediaType,
+        storage_path: input.storagePath,
+        media_type: mediaType,
         sort_order: sortOrder,
-        upload_status: "pending",
-        upload_progress: 0,
+        upload_status: "ready",
+        upload_progress: 1,
         mime_type: input.mimeType,
         byte_size: input.byteSize,
         created_by: input.actorId,
       });
       if (error) throw error;
     }
-  }
-
-  const detail = await getSiteInspection(input.inspectionId);
-  const media = detail.media.find((m) => m.id === id)!;
-
-  if (shouldUseMemory()) {
-    return { media, upload: { mode: "memory", path: storagePath } };
-  }
-
-  if (input.mediaType === "photo") {
-    const signed = await createSignedUploadForPath(storagePath);
-    return {
-      media,
-      upload: {
-        mode: "signed",
-        path: storagePath,
-        token: signed.token,
-        signedUrl: signed.signedUrl,
-      },
-    };
-  }
-
-  const tusEndpoint = supabaseResumableUploadEndpoint(getEnv().NEXT_PUBLIC_SUPABASE_URL);
-  return {
-    media,
-    upload: {
-      mode: "tus",
-      path: storagePath,
-      bucket: SITE_INSPECTION_MEDIA_BUCKET,
-      tusEndpoint,
-    },
-  };
-}
-
-export async function completeSiteInspectionMedia(input: {
-  inspectionId: string;
-  clientMediaId: string;
-  storagePath?: string;
-  byteSize?: number;
-  actorId: string;
-}): Promise<SiteInspectionDetail> {
-  const inspection = await loadInspectionRow(input.inspectionId);
-  let mediaId: string | null = null;
-  let snapshotItemId: string | null = null;
-  let sortOrder = 0;
-  let mediaType: "photo" | "video" = "photo";
-
-  if (shouldUseMemory()) {
-    const mem = getMemory();
-    const row = Array.from(mem.media.values()).find(
-      (m) => m.inspection_id === input.inspectionId && m.client_media_id === input.clientMediaId,
-    );
-    if (!row) throw new NotFoundError("Media not found");
-    mediaId = row.id;
-    snapshotItemId = row.snapshot_item_id;
-    sortOrder = row.sort_order;
-    mediaType = row.media_type;
-    mem.media.set(row.id, {
-      ...row,
-      storage_path: input.storagePath ?? row.storage_path,
-      byte_size: input.byteSize ?? row.byte_size,
-      upload_status: "ready",
-      upload_progress: 1,
-      updated_at: nowIso(),
-    });
-  } else {
-    const supabase = createServiceClient();
-    const { data: row, error } = await supabase
-      .from("site_inspection_media")
-      .select("*")
-      .eq("inspection_id", input.inspectionId)
-      .eq("client_media_id", input.clientMediaId)
-      .maybeSingle();
-    if (error) throw error;
-    if (!row) throw new NotFoundError("Media not found");
-    mediaId = row.id as string;
-    snapshotItemId = row.snapshot_item_id as string;
-    sortOrder = row.sort_order as number;
-    mediaType = row.media_type as "photo" | "video";
-    await supabase
-      .from("site_inspection_media")
-      .update({
-        storage_path: input.storagePath ?? row.storage_path,
-        byte_size: input.byteSize ?? row.byte_size,
-        upload_status: "ready",
-        upload_progress: 1,
-      })
-      .eq("id", mediaId);
   }
 
   const coverItem = findCoverPhotoItem(inspection.snapshot_json);
@@ -1085,18 +1032,12 @@ export async function attachSiteInspectionPhoto(input: {
   clientMediaId?: string;
 }): Promise<SiteInspectionDetail> {
   const clientMediaId = input.clientMediaId ?? randomUUID();
-  await prepareSiteInspectionMedia({
-    inspectionId: input.inspectionId,
-    snapshotItemId: input.snapshotItemId,
-    clientMediaId,
-    mediaType: "photo",
-    mimeType: input.mimeType,
-    byteSize: input.byteSize,
-    actorId: input.actorId,
-  });
   return completeSiteInspectionMedia({
     inspectionId: input.inspectionId,
     clientMediaId,
+    snapshotItemId: input.snapshotItemId,
+    mediaType: "photo",
+    mimeType: input.mimeType,
     storagePath: input.storagePath,
     byteSize: input.byteSize,
     actorId: input.actorId,
@@ -1266,6 +1207,137 @@ function pickNextCoverMediaId(
     )
     .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at));
   return candidates[0]?.id ?? null;
+}
+
+/**
+ * Persist a 90° counter-clockwise rotation by re-encoding the stored object.
+ * Downloads and zip exports pick up the new bytes automatically.
+ */
+export async function rotateSiteInspectionMedia(input: {
+  inspectionId: string;
+  mediaId: string;
+  actorId: string;
+  actorRole?: string | null;
+}): Promise<SiteInspectionDetail> {
+  const inspection = await loadInspectionRow(input.inspectionId);
+
+  let row: MediaRow | null = null;
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    row =
+      Array.from(mem.media.values()).find(
+        (m) =>
+          m.inspection_id === input.inspectionId &&
+          (m.id === input.mediaId || m.client_media_id === input.mediaId),
+      ) ?? null;
+  } else {
+    const supabase = createServiceClient();
+    const { data: byId } = await supabase
+      .from("site_inspection_media")
+      .select("*")
+      .eq("id", input.mediaId)
+      .eq("inspection_id", input.inspectionId)
+      .maybeSingle();
+    if (byId) {
+      row = byId as MediaRow;
+    } else {
+      const { data: byClient } = await supabase
+        .from("site_inspection_media")
+        .select("*")
+        .eq("client_media_id", input.mediaId)
+        .eq("inspection_id", input.inspectionId)
+        .maybeSingle();
+      row = (byClient as MediaRow | null) ?? null;
+    }
+  }
+
+  if (!row) throw new NotFoundError("Media not found");
+  if (row.media_type !== "photo") {
+    throw new ValidationError("Only photos can be rotated");
+  }
+  if (row.upload_status !== "ready" || !row.storage_path) {
+    throw new ValidationError("Wait for the photo to finish uploading before rotating");
+  }
+
+  const allowed =
+    isAdminRole(input.actorRole) ||
+    row.created_by === input.actorId ||
+    (!row.created_by && inspection.created_by === input.actorId);
+  if (!allowed) {
+    throw new AuthorizationError("Only the uploader or an admin can rotate this media");
+  }
+
+  const downloaded = await downloadSiteInspectionMediaBytes(row.storage_path);
+  if (!downloaded) throw new ValidationError("Could not load the photo to rotate");
+
+  let rotated: Buffer;
+  try {
+    const sharp = (await import("sharp")).default;
+    rotated = await sharp(downloaded.bytes).rotate(-90).jpeg({ quality: 90 }).toBuffer();
+  } catch (error) {
+    console.error("[site-inspection-media] rotate failed", error);
+    throw new ValidationError("Could not rotate this photo");
+  }
+
+  if (shouldUseMemory()) {
+    putMemoryMediaBytes({
+      storagePath: row.storage_path,
+      bytes: rotated,
+      mimeType: "image/jpeg",
+      uploadedBy: input.actorId,
+    });
+    const mem = getMemory();
+    mem.media.set(row.id, {
+      ...row,
+      mime_type: "image/jpeg",
+      byte_size: rotated.byteLength,
+      updated_at: nowIso(),
+    });
+  } else {
+    const supabase = createServiceClient();
+    const { error: uploadError } = await supabase.storage
+      .from(SITE_INSPECTION_MEDIA_BUCKET)
+      .upload(row.storage_path, rotated, {
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+    if (uploadError) {
+      throw new ValidationError("Could not save the rotated photo");
+    }
+    await supabase
+      .from("site_inspection_media")
+      .update({
+        mime_type: "image/jpeg",
+        byte_size: rotated.byteLength,
+        updated_at: nowIso(),
+      })
+      .eq("id", row.id);
+  }
+
+  return getSiteInspection(input.inspectionId);
+}
+
+/** Delete abandoned pending/uploading rows that never received bytes. */
+export async function purgeOrphanPendingMediaRows(): Promise<number> {
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    let removed = 0;
+    for (const [id, row] of mem.media) {
+      if (row.upload_status === "pending" || row.upload_status === "uploading") {
+        mem.media.delete(id);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("site_inspection_media")
+    .delete()
+    .in("upload_status", ["pending", "uploading"])
+    .select("id");
+  if (error) throw error;
+  return data?.length ?? 0;
 }
 
 /** Test helper: signed URL for a media path without going through get. */

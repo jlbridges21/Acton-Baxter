@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Trash2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
@@ -453,6 +453,28 @@ export function InspectionRunnerClient({
     }
   }
 
+  async function rotateMedia(target: SiteInspectionMedia) {
+    if (target.mediaType !== "photo" || target.uploadStatus !== "ready") return;
+    setMediaDeleteError(null);
+    try {
+      const res = await fetch(`/api/inspections/${inspection.id}/media/rotate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: target.id }),
+      });
+      const json = (await res.json()) as {
+        inspection?: SiteInspectionDetail;
+        error?: { message?: string };
+      };
+      if (!res.ok || !json.inspection) {
+        throw new Error(json.error?.message ?? "Could not rotate photo");
+      }
+      applyServerMediaOnly(json.inspection);
+    } catch (e) {
+      setMediaDeleteError(e instanceof Error ? e.message : "Could not rotate photo");
+    }
+  }
+
   function uncheckedItemCount(): number {
     const items = listSnapshotItems(inspection.snapshot);
     return items.filter((item) => !responses.get(item.id)?.isComplete).length;
@@ -895,6 +917,7 @@ export function InspectionRunnerClient({
             setMediaDeleteError(null);
             setConfirmMediaDelete(m);
           }}
+          onRequestRotateMedia={(m) => void rotateMedia(m)}
           onOpenMedia={(index) =>
             setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
           }
@@ -943,6 +966,7 @@ export function InspectionRunnerClient({
                       setMediaDeleteError(null);
                       setConfirmMediaDelete(m);
                     }}
+                    onRequestRotateMedia={(m) => void rotateMedia(m)}
                     onOpenMedia={(index) =>
                       setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
                     }
@@ -1037,6 +1061,7 @@ export function InspectionRunnerClient({
             setMediaDeleteError(null);
             setConfirmMediaDelete(m);
           }}
+          onInspectionUpdate={(updated) => applyServerMediaOnly(updated)}
         />
       ) : null}
     </div>
@@ -1062,6 +1087,7 @@ function ItemCard({
   onVideo,
   onRetry,
   onRequestDeleteMedia,
+  onRequestRotateMedia,
   onOpenMedia,
 }: {
   item: SnapshotItem;
@@ -1076,6 +1102,7 @@ function ItemCard({
   onVideo: (file: File) => void;
   onRetry: (clientMediaId: string) => void;
   onRequestDeleteMedia: (media: SiteInspectionMedia) => void;
+  onRequestRotateMedia: (media: SiteInspectionMedia) => void;
   onOpenMedia: (index: number) => void;
 }) {
   const complete = Boolean(response?.isComplete);
@@ -1224,6 +1251,20 @@ function ItemCard({
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
+                        {m.mediaType === "photo" && m.uploadStatus === "ready" ? (
+                          <button
+                            type="button"
+                            className="absolute -bottom-1.5 -left-1.5 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--acton-border)] bg-white text-[var(--acton-navy)] shadow-sm"
+                            aria-label="Rotate 90 degrees counter-clockwise"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onRequestRotateMedia(m);
+                            }}
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
                       </div>
                     );
                   })}
