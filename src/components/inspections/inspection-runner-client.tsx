@@ -25,7 +25,6 @@ import {
   retryMediaUpload,
   startMediaQueueDrain,
   subscribeMediaQueue,
-  VIDEO_MAX_BYTES,
   VIDEO_WARN_MESSAGE,
   type MediaQueueSnapshot,
 } from "@/lib/inspections/media-queue";
@@ -221,7 +220,7 @@ export function InspectionRunnerClient({
             const uploadStatus: SiteInspectionUploadStatus =
               q.status === "uploaded"
                 ? "ready"
-                : q.status === "uploading"
+                : q.status === "uploading" || q.status === "finalizing"
                   ? "uploading"
                   : q.status === "failed"
                     ? "failed"
@@ -347,10 +346,6 @@ export function InspectionRunnerClient({
 
   async function onMediaSelected(snapshotItemId: string, file: File, mediaType: "photo" | "video") {
     try {
-      if (mediaType === "video" && file.size > VIDEO_MAX_BYTES) {
-        window.alert(VIDEO_WARN_MESSAGE);
-        return;
-      }
       const { clientMediaId, optimisticMedia } = await enqueueInspectionMedia({
         inspectionId: inspection.id,
         snapshotItemId,

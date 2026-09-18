@@ -65,15 +65,15 @@ describe("migration 048 media pipeline", () => {
 });
 
 describe("media limits + export naming", () => {
-  it("documents video caps and zip guard", () => {
-    expect(VIDEO_MAX_BYTES).toBe(100 * 1024 * 1024);
-    expect(VIDEO_MAX_DURATION_SECONDS).toBe(120);
-    expect(VIDEO_WARN_MESSAGE.toLowerCase()).toContain("2 minutes");
+  it("documents soft video guidance (no hard client size/duration caps)", () => {
+    expect(VIDEO_MAX_BYTES).toBe(Number.POSITIVE_INFINITY);
+    expect(VIDEO_MAX_DURATION_SECONDS).toBe(Number.POSITIVE_INFINITY);
+    expect(VIDEO_WARN_MESSAGE.toLowerCase()).toContain("cell signal");
     expect(ZIP_FULL_EXPORT_MAX_BYTES).toBe(200 * 1024 * 1024);
     expect(MEDIA_UPLOAD_CONCURRENCY).toBe(2);
   });
 
-  it("TUS client uses exact 6MiB chunk size and Supabase metadata keys", () => {
+  it("TUS client uses exact 6MiB chunk size and sets Authorization only in onBeforeRequest", () => {
     const source = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
     expect(source).toContain("TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024");
     expect(source).toContain("chunkSize: TUS_CHUNK_SIZE_BYTES");
@@ -84,6 +84,14 @@ describe("media limits + export naming", () => {
     expect(source).toContain("x-upsert");
     expect(source).toContain("media/complete");
     expect(source).toContain("resolveAccessToken");
+    expect(source).toContain("normalizeAccessToken");
+    expect(source).toContain("redactAuthorizationForLog");
+    expect(source).toContain("removeFingerprintOnSuccess: false");
+    expect(source).toContain('status: "finalizing"');
+    expect(source).toContain("materializeDurableBytes");
+    // Must NOT set Authorization in static headers (XHR concatenates duplicates → Invalid Compact JWS)
+    expect(source).toMatch(/headers:\s*\{\s*apikey:/);
+    expect(source).not.toMatch(/headers:\s*\{[^}]*Authorization:\s*`Bearer/);
     expect(source).toContain("discardMediaUpload");
     expect(source).toContain("cancelAndDiscardMediaUpload");
     expect(source).toContain("cancelledUploads");
@@ -200,7 +208,7 @@ describe("prepare → complete direct-upload path", () => {
       join(process.cwd(), "src/lib/inspections/records-store.ts"),
       "utf8",
     );
-    expect(storeSource).toContain("upload/resumable");
+    expect(storeSource).toContain("supabaseResumableUploadEndpoint");
     expect(storeSource).toContain('mode: "tus"');
   });
 });

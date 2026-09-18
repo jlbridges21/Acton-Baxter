@@ -7,7 +7,12 @@ import { Upload as TusUpload } from "tus-js-client";
 import { createClient } from "@/lib/supabase/client";
 import { getPublicEnv } from "@/lib/env.public";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
-import { MEDIA_UPLOAD_CONCURRENCY, VIDEO_MAX_BYTES, VIDEO_WARN_MESSAGE } from "./media-limits";
+import {
+  MEDIA_UPLOAD_CONCURRENCY,
+  VIDEO_WARN_MESSAGE,
+  redactAuthorizationForLog,
+  normalizeAccessToken,
+} from "./media-limits";
 import type { SiteInspectionDetail, SiteInspectionMedia } from "./record-types";
 
 const DB_NAME = "baxter-site-inspection-uploads";
@@ -16,9 +21,10 @@ const STORE = "queue";
 /** Supabase TUS requires exactly 6 MiB chunks — any other value fails. */
 export const TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024;
 const MAX_UPLOAD_ATTEMPTS = 8;
-const TUS_UPLOAD_TIMEOUT_MS = 15 * 60 * 1000;
+/** Large videos on cell need a long window; resume handles shorter outages. */
+const TUS_UPLOAD_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 
-export type QueueItemStatus = "queued" | "uploading" | "uploaded" | "failed";
+export type QueueItemStatus = "queued" | "uploading" | "finalizing" | "uploaded" | "failed";
 
 export type MediaQueueItem = {
   clientMediaId: string;
@@ -27,6 +33,8 @@ export type MediaQueueItem = {
   mediaType: "photo" | "video";
   mimeType: string;
   byteSize: number;
+  /** Durable copy — IndexedDB Blob handles can go stale on iOS (“Load failed”). */
+  bytes: ArrayBuffer;
   blob: Blob;
   status: QueueItemStatus;
   attempts: number;
@@ -138,6 +146,31 @@ async function putItem(item: MediaQueueItem): Promise<void> {
   await idbReq(tx.objectStore(STORE).put(item));
 }
 
+async function materializeDurableBytes(
+  blob: Blob,
+  mimeType: string,
+): Promise<{
+  bytes: ArrayBuffer;
+  blob: Blob;
+  byteSize: number;
+}> {
+  const bytes = await blob.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new Error("Media data was empty — try attaching again");
+  }
+  // Fresh Blob from ArrayBuffer so we are not holding a live File/input reference.
+  const durable = new Blob([bytes], { type: mimeType || blob.type || "application/octet-stream" });
+  return { bytes, blob: durable, byteSize: bytes.byteLength };
+}
+
+function blobForUpload(item: MediaQueueItem): Blob {
+  if (item.bytes && item.bytes.byteLength > 0) {
+    return new Blob([item.bytes], { type: item.mimeType });
+  }
+  if (item.blob && item.blob.size > 0) return item.blob;
+  throw new Error("Stored media bytes are missing — try attaching again");
+}
+
 async function getItem(clientMediaId: string): Promise<MediaQueueItem | undefined> {
   if (memoryQueue) {
     return memoryQueue.get(clientMediaId);
@@ -180,9 +213,9 @@ function toSnapshot(items: MediaQueueItem[]): MediaQueueSnapshot {
   let uploadingCount = 0;
   for (const item of items) {
     if (item.status === "queued") pendingCount += 1;
-    if (item.status === "uploading") {
+    if (item.status === "uploading" || item.status === "finalizing") {
       pendingCount += 1;
-      uploadingCount += 1;
+      if (item.status === "uploading") uploadingCount += 1;
     }
     if (item.status === "failed") failedCount += 1;
   }
@@ -238,7 +271,8 @@ export async function countPendingForInspection(inspectionId: string): Promise<{
   let pending = 0;
   let failed = 0;
   for (const item of items) {
-    if (item.status === "queued" || item.status === "uploading") pending += 1;
+    if (item.status === "queued" || item.status === "uploading" || item.status === "finalizing")
+      pending += 1;
     if (item.status === "failed") failed += 1;
   }
   return { pending, failed };
@@ -352,7 +386,16 @@ async function uploadSigned(path: string, token: string, blob: Blob, mimeType: s
   const { error } = await supabase.storage
     .from("site-inspection-media")
     .uploadToSignedUrl(path, token, blob, { contentType: mimeType, upsert: true });
-  if (error) throw new Error(error.message || "Signed upload failed");
+  if (error) {
+    const message = error.message || "Signed upload failed";
+    // Safari often surfaces revoked/stale blob reads as a bare "Load failed".
+    if (/load failed/i.test(message)) {
+      throw new Error(
+        "Photo upload failed — the file data went stale. Remove and re-attach the photo, then retry.",
+      );
+    }
+    throw new Error(message);
+  }
 }
 
 async function uploadMemory(inspectionId: string, path: string, blob: Blob, mimeType: string) {
@@ -373,19 +416,26 @@ async function resolveAccessToken(): Promise<string> {
   const supabase = createClient();
   const {
     data: { session },
+    error: sessionError,
   } = await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error(sessionError.message || "Sign in again to upload video");
+  }
   if (!session?.access_token) {
     throw new Error("Sign in again to upload video");
   }
+
+  let token = session.access_token;
   const expiresAtMs = (session.expires_at ?? 0) * 1000;
   if (expiresAtMs && expiresAtMs - Date.now() < 60_000) {
     const { data, error } = await supabase.auth.refreshSession();
     if (error || !data.session?.access_token) {
       throw new Error("Session expired — sign in again to finish the video upload");
     }
-    return data.session.access_token;
+    token = data.session.access_token;
   }
-  return session.access_token;
+
+  return normalizeAccessToken(token);
 }
 
 function uploadTus(input: {
@@ -409,18 +459,20 @@ function uploadTus(input: {
         fn();
       };
       try {
-        let accessToken = await resolveAccessToken();
         const env = getPublicEnv();
+        // Authorization is set ONLY in onBeforeRequest. Putting it in `headers` AND
+        // calling setHeader again makes XHR concatenate values → "Bearer a, Bearer a"
+        // which Supabase rejects as Invalid Compact JWS.
         upload = new TusUpload(input.blob, {
           endpoint: input.tusEndpoint,
           retryDelays: [0, 1000, 3000, 5000, 10000, 20000],
           headers: {
-            Authorization: `Bearer ${accessToken}`,
             apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
             "x-upsert": "true",
           },
           uploadDataDuringCreation: true,
-          removeFingerprintOnSuccess: true,
+          // Keep fingerprint until /media/complete succeeds so retries resume, not restart.
+          removeFingerprintOnSuccess: false,
           chunkSize: TUS_CHUNK_SIZE_BYTES,
           metadata: {
             bucketName: input.bucket,
@@ -430,8 +482,13 @@ function uploadTus(input: {
           },
           onBeforeRequest: async (req) => {
             try {
-              accessToken = await resolveAccessToken();
-              req.setHeader("Authorization", `Bearer ${accessToken}`);
+              const accessToken = await resolveAccessToken();
+              const authorization = `Bearer ${accessToken}`;
+              console.info(
+                "[site-inspection-media] TUS Authorization",
+                redactAuthorizationForLog(authorization),
+              );
+              req.setHeader("Authorization", authorization);
               req.setHeader("apikey", env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
               req.setHeader("x-upsert", "true");
             } catch (error) {
@@ -494,9 +551,7 @@ function uploadTus(input: {
             /* ignore */
           }
           settle(() =>
-            reject(
-              new Error("Video upload timed out after 15 minutes — check signal and tap Retry"),
-            ),
+            reject(new Error("Video upload timed out after 3 hours — check signal and tap Retry")),
           );
         }, TUS_UPLOAD_TIMEOUT_MS);
 
@@ -533,18 +588,32 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
 
   const next: MediaQueueItem = {
     ...item,
-    status: "uploading",
-    progress: item.progress || 0,
+    status: item.status === "finalizing" ? "finalizing" : "uploading",
+    progress: item.status === "finalizing" ? 1 : item.progress || 0,
     lastError: null,
   };
   await putItem(next);
   await emit();
+
+  let bytesLandedPath: string | null =
+    item.status === "finalizing" && item.storagePath ? item.storagePath : null;
 
   try {
     if (cancelledUploads.has(clientMediaId)) {
       await deleteItem(clientMediaId).catch(() => undefined);
       return null;
     }
+
+    // Bytes already in storage — only finalize. Avoids the 0→100→0 restart loop.
+    if (bytesLandedPath) {
+      return await finalizeMediaUpload({
+        ...item,
+        status: "finalizing",
+        storagePath: bytesLandedPath,
+        progress: 1,
+      });
+    }
+
     const prepareRes = await fetch(`/api/inspections/${item.inspectionId}/media/prepare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -575,13 +644,15 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
 
     await patchServerStatus(item.inspectionId, item.clientMediaId, "uploading", next.progress);
 
+    const uploadBlob = blobForUpload(item);
     const { upload } = prepareJson;
     if (upload.mode === "signed") {
-      await uploadSigned(upload.path, upload.token, item.blob, item.mimeType);
+      // Signed URL/token minted at upload time (prepare), not at enqueue.
+      await uploadSigned(upload.path, upload.token, uploadBlob, item.mimeType);
     } else if (upload.mode === "tus") {
       await uploadTus({
         clientMediaId,
-        blob: item.blob,
+        blob: uploadBlob,
         path: upload.path,
         bucket: upload.bucket,
         tusEndpoint: upload.tusEndpoint,
@@ -600,7 +671,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
         },
       });
     } else {
-      await uploadMemory(item.inspectionId, upload.path, item.blob, item.mimeType);
+      await uploadMemory(item.inspectionId, upload.path, uploadBlob, item.mimeType);
     }
 
     if (cancelledUploads.has(clientMediaId)) {
@@ -608,31 +679,23 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       return null;
     }
 
-    const completeRes = await fetch(`/api/inspections/${item.inspectionId}/media/complete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientMediaId: item.clientMediaId,
-        storagePath: upload.path,
-        byteSize: item.byteSize,
-      }),
+    // Persist "bytes landed" before complete so a failed attach retries complete only.
+    bytesLandedPath = upload.path;
+    await putItem({
+      ...item,
+      status: "finalizing",
+      storagePath: upload.path,
+      progress: 1,
+      lastError: null,
     });
-    const completeJson = (await completeRes.json()) as {
-      inspection?: SiteInspectionDetail;
-      error?: { message?: string };
-    };
-    if (!completeRes.ok || !completeJson.inspection) {
-      const message = completeJson.error?.message ?? "Could not finalize upload";
-      if (isInspectionGoneStatus(completeRes.status) || isInspectionGoneMessage(message)) {
-        await cancelAndDiscardMediaUpload(clientMediaId);
-        return null;
-      }
-      throw new Error(message);
-    }
-
-    await deleteItem(clientMediaId);
     await emit();
-    return completeJson.inspection;
+
+    return await finalizeMediaUpload({
+      ...item,
+      status: "finalizing",
+      storagePath: upload.path,
+      progress: 1,
+    });
   } catch (error) {
     if (cancelledUploads.has(clientMediaId)) {
       await deleteItem(clientMediaId).catch(() => undefined);
@@ -657,19 +720,52 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       exhausted,
       message,
     });
-    // Update the same row — never enqueue a duplicate clientMediaId.
+    // Keep finalizing if bytes already landed — retry should not re-upload.
+    const keepFinalizing = Boolean(bytesLandedPath);
     await putItem({
       ...item,
-      status: "failed",
+      status: keepFinalizing ? "finalizing" : "failed",
+      storagePath: bytesLandedPath ?? item.storagePath,
       attempts,
       nextAttemptAt: exhausted ? Number.MAX_SAFE_INTEGER : Date.now() + backoffMs(attempts),
       lastError: message,
-      progress: item.progress,
+      progress: keepFinalizing ? 1 : item.progress,
     });
     await emit();
-    await patchServerStatus(item.inspectionId, item.clientMediaId, "failed", null);
+    if (!keepFinalizing) {
+      await patchServerStatus(item.inspectionId, item.clientMediaId, "failed", null);
+    }
     return null;
   }
+}
+
+async function finalizeMediaUpload(item: MediaQueueItem): Promise<SiteInspectionDetail | null> {
+  if (!item.storagePath) throw new Error("Missing storage path for finalize");
+  const completeRes = await fetch(`/api/inspections/${item.inspectionId}/media/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientMediaId: item.clientMediaId,
+      storagePath: item.storagePath,
+      byteSize: item.byteSize,
+    }),
+  });
+  const completeJson = (await completeRes.json()) as {
+    inspection?: SiteInspectionDetail;
+    error?: { message?: string };
+  };
+  if (!completeRes.ok || !completeJson.inspection) {
+    const message = completeJson.error?.message ?? "Could not finalize upload";
+    if (isInspectionGoneStatus(completeRes.status) || isInspectionGoneMessage(message)) {
+      await cancelAndDiscardMediaUpload(item.clientMediaId);
+      return null;
+    }
+    throw new Error(message);
+  }
+
+  await deleteItem(item.clientMediaId);
+  await emit();
+  return completeJson.inspection;
 }
 
 export async function drainMediaQueue(): Promise<void> {
@@ -683,6 +779,7 @@ export async function drainMediaQueue(): Promise<void> {
         (entry) =>
           !inFlight.has(entry.clientMediaId) &&
           (entry.status === "queued" ||
+            entry.status === "finalizing" ||
             (entry.status === "failed" &&
               entry.nextAttemptAt <= now &&
               entry.nextAttemptAt !== Number.MAX_SAFE_INTEGER) ||
@@ -747,13 +844,23 @@ export function startMediaQueueDrain(options?: {
 export async function retryMediaUpload(clientMediaId: string): Promise<void> {
   const item = await getItem(clientMediaId);
   if (!item) return;
-  await putItem({
-    ...item,
-    status: "queued",
-    attempts: 0,
-    nextAttemptAt: 0,
-    lastError: null,
-  });
+  // Finalizing rows already have bytes in storage — just clear backoff and drain.
+  if (item.status === "finalizing" && item.storagePath) {
+    await putItem({
+      ...item,
+      attempts: 0,
+      nextAttemptAt: 0,
+      lastError: null,
+    });
+  } else {
+    await putItem({
+      ...item,
+      status: "queued",
+      attempts: 0,
+      nextAttemptAt: 0,
+      lastError: null,
+    });
+  }
   await emit();
   void drainMediaQueue();
 }
@@ -790,12 +897,16 @@ export async function cancelAndDiscardMediaUpload(clientMediaId: string): Promis
 
 /** Test-only: insert a queue row (with blob) without going through enqueue/process. */
 export async function seedMediaQueueItemForTests(
-  input: Omit<MediaQueueItem, "blob"> & { blob?: Blob },
+  input: Omit<MediaQueueItem, "blob" | "bytes"> & { blob?: Blob; bytes?: ArrayBuffer },
 ): Promise<void> {
   enableMemoryMediaQueueForTests();
+  const blob = input.blob ?? new Blob([new Uint8Array([1, 2, 3])], { type: input.mimeType });
+  const bytes = input.bytes ?? (await blob.arrayBuffer());
   await putItem({
     ...input,
-    blob: input.blob ?? new Blob([new Uint8Array([1, 2, 3])], { type: input.mimeType }),
+    bytes,
+    blob: new Blob([bytes], { type: input.mimeType }),
+    byteSize: input.byteSize || bytes.byteLength,
   });
   await emit();
 }
@@ -811,25 +922,24 @@ export async function enqueueInspectionMedia(input: {
   optimisticMedia: SiteInspectionMedia;
 }> {
   const clientMediaId = crypto.randomUUID();
-  let blob: Blob = input.file;
+  let sourceBlob: Blob = input.file;
   let mimeType = input.file.type || (input.mediaType === "video" ? "video/mp4" : "image/jpeg");
-  let byteSize = input.file.size;
 
   if (input.mediaType === "photo") {
     try {
       const processed = await processReceiptImage(input.file);
-      blob = processed.blob;
+      sourceBlob = processed.blob;
       mimeType = processed.mimeType || "image/jpeg";
-      byteSize = processed.blob.size;
     } catch (error) {
       if (error instanceof ReceiptImageProcessError) throw error;
       throw error;
     }
-  } else if (byteSize > VIDEO_MAX_BYTES) {
-    throw new Error(VIDEO_WARN_MESSAGE);
   }
 
-  const localPreviewUrl = URL.createObjectURL(blob);
+  // Copy into ArrayBuffer immediately so queued items don't depend on a live File
+  // (iOS can invalidate input Files; Safari IDB Blob handles can throw "Load failed").
+  const durable = await materializeDurableBytes(sourceBlob, mimeType);
+  const localPreviewUrl = URL.createObjectURL(durable.blob);
   const now = Date.now();
   const queueItem: MediaQueueItem = {
     clientMediaId,
@@ -837,8 +947,9 @@ export async function enqueueInspectionMedia(input: {
     snapshotItemId: input.snapshotItemId,
     mediaType: input.mediaType,
     mimeType,
-    byteSize,
-    blob,
+    byteSize: durable.byteSize,
+    bytes: durable.bytes,
+    blob: durable.blob,
     status: "queued",
     attempts: 0,
     nextAttemptAt: 0,
@@ -862,7 +973,7 @@ export async function enqueueInspectionMedia(input: {
     uploadStatus: "pending",
     uploadProgress: 0,
     mimeType,
-    byteSize,
+    byteSize: durable.byteSize,
     createdBy: null,
     createdAt: new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString(),
@@ -873,4 +984,9 @@ export async function enqueueInspectionMedia(input: {
   return { clientMediaId, localPreviewUrl, optimisticMedia };
 }
 
-export { VIDEO_MAX_BYTES, VIDEO_WARN_MESSAGE, MEDIA_UPLOAD_CONCURRENCY };
+export { VIDEO_WARN_MESSAGE, MEDIA_UPLOAD_CONCURRENCY, VIDEO_MAX_BYTES } from "./media-limits";
+export {
+  normalizeAccessToken,
+  redactAuthorizationForLog,
+  supabaseResumableUploadEndpoint,
+} from "./media-limits";

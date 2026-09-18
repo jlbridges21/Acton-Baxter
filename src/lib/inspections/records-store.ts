@@ -23,6 +23,7 @@ import {
   createSiteInspectionMediaSignedUrlMap,
   deleteSiteInspectionMediaObject,
 } from "./media-storage";
+import { supabaseResumableUploadEndpoint } from "./media-limits";
 import {
   SITE_INSPECTION_MEDIA_BUCKET,
   type CreateSiteInspectionInput,
@@ -934,7 +935,7 @@ export async function prepareSiteInspectionMedia(input: {
     };
   }
 
-  const tusEndpoint = `${getEnv().NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, "")}/storage/v1/upload/resumable`;
+  const tusEndpoint = supabaseResumableUploadEndpoint(getEnv().NEXT_PUBLIC_SUPABASE_URL);
   return {
     media,
     upload: {

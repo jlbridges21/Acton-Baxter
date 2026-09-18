@@ -35,8 +35,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/inspections/media-queue", () => ({
-  VIDEO_WARN_MESSAGE: "Keep videos under 2 minutes and about 100 MB.",
-  VIDEO_MAX_BYTES: 100 * 1024 * 1024,
+  VIDEO_WARN_MESSAGE:
+    "Large videos can take a while to upload on cell signal. Keep the app open until the upload finishes.",
+  VIDEO_MAX_BYTES: Number.POSITIVE_INFINITY,
   subscribeMediaQueue: (listener: (s: unknown) => void) => {
     listener({ pendingCount: 0, failedCount: 0, uploadingCount: 0, items: [] });
     return () => undefined;

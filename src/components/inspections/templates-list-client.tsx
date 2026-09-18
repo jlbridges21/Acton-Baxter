@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import type { InspectionTemplateSummary } from "@/lib/inspections/types";
 
 async function postAction(body: Record<string, unknown>) {
@@ -37,6 +38,7 @@ export function TemplatesListClient({
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<InspectionTemplateSummary | null>(null);
 
   const visible = templates.filter((t) => showArchived || !t.archivedAt);
 
@@ -98,6 +100,21 @@ export function TemplatesListClient({
       await refresh(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to unarchive");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmPermanentDelete() {
+    if (!deleteTarget) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await postAction({ action: "delete_template", templateId: deleteTarget.id });
+      setDeleteTarget(null);
+      await refresh(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete template");
     } finally {
       setBusy(false);
     }
@@ -193,15 +210,26 @@ export function TemplatesListClient({
                     Duplicate
                   </Button>
                   {template.archivedAt ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() => void unarchive(template.id)}
-                    >
-                      Unarchive
-                    </Button>
+                    <>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => void unarchive(template.id)}
+                      >
+                        Unarchive
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => setDeleteTarget(template)}
+                      >
+                        Delete
+                      </Button>
+                    </>
                   ) : (
                     <Button
                       type="button"
@@ -224,6 +252,26 @@ export function TemplatesListClient({
           </li>
         ) : null}
       </ul>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onClose={() => {
+          if (busy) return;
+          setDeleteTarget(null);
+        }}
+        title="Delete this template permanently?"
+        description={
+          <>
+            This permanently deletes “{deleteTarget?.name}” and cannot be undone. Inspections
+            already created from this template keep their own checklist snapshot and are not
+            affected.
+          </>
+        }
+        confirmLabel="Delete template"
+        destructive
+        busy={busy}
+        onConfirm={() => void confirmPermanentDelete()}
+      />
     </div>
   );
 }

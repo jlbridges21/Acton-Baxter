@@ -174,6 +174,7 @@ describe("archived template delete UI", () => {
     fireEvent.click(screen.getByLabelText(/Show archived/i));
     expect(screen.getByText("Parked")).toBeTruthy();
     expect(screen.getByText("Archived")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Delete$/i })).toBeTruthy();
     vi.unstubAllGlobals();
   });
 });
