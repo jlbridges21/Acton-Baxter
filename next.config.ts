@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   allowedDevOrigins: ["127.0.0.1", "localhost"],
-  // Keep PDF extraction on the Node serverless path (unpdf serverless PDF.js build).
-  serverExternalPackages: ["unpdf"],
+  // Keep PDF extraction / zip export on the Node serverless path.
+  serverExternalPackages: ["unpdf", "archiver"],
   images: {
     remotePatterns: [
       {

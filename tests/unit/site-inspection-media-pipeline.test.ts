@@ -70,6 +70,20 @@ describe("media limits + export naming", () => {
     expect(MEDIA_UPLOAD_CONCURRENCY).toBe(2);
   });
 
+  it("TUS client uses exact 6MiB chunk size and Supabase metadata keys", () => {
+    const source = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
+    expect(source).toContain("TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024");
+    expect(source).toContain("chunkSize: TUS_CHUNK_SIZE_BYTES");
+    expect(source).toContain("bucketName:");
+    expect(source).toContain("objectName:");
+    expect(source).toContain("contentType:");
+    expect(source).toContain("cacheControl:");
+    expect(source).toContain("x-upsert");
+    expect(source).toContain("media/complete");
+    expect(source).toContain("resolveAccessToken");
+    expect(source).toContain("discardMediaUpload");
+  });
+
   it("builds identifiable zip filenames from section + item + index", () => {
     expect(
       buildMediaExportFilename({
@@ -205,17 +219,20 @@ describe("legacy FormData path retired + export streaming", () => {
     }
   });
 
-  it("export route streams zip with maxDuration and size guard", () => {
+  it("export route streams zip with ZipArchive, maxDuration, and size guard", () => {
     const source = readFileSync(
       join(process.cwd(), "src/app/api/inspections/[id]/export/route.ts"),
       "utf8",
     );
-    expect(source).toContain('createArchive("zip"');
+    expect(source).toContain("ZipArchive");
+    expect(source).toContain("new ZipArchive");
     expect(source).toContain("PassThrough");
     expect(source).toContain("maxDuration = 300");
     expect(source).toContain("ZIP_FULL_EXPORT_MAX_BYTES");
     expect(source).toContain("buildMediaExportFilename");
     expect(source).toContain("mode=photos");
+    expect(source).toContain("No ready media to export");
+    expect(source).not.toContain('createArchive("zip"');
   });
 
   it("still supports test helper attach after server-side upload", async () => {

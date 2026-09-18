@@ -12,13 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
-import {
-  clearPendingResponse,
-  listPendingResponses,
-  queuePendingResponse,
-} from "@/lib/inspections/client-autosave";
+import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
+import { flushPendingResponses } from "@/lib/inspections/response-sync";
 import {
   countPendingForInspection,
+  discardMediaUpload,
   enqueueInspectionMedia,
   retryMediaUpload,
   startMediaQueueDrain,
@@ -42,12 +40,12 @@ function responseMap(responses: SiteInspectionResponse[]) {
   return new Map(responses.map((r) => [r.snapshotItemId, r]));
 }
 
-function mergeInspectionMedia(
-  server: SiteInspectionDetail,
+function mergeMediaLists(
+  serverMedia: SiteInspectionMedia[],
   localByClientId: Map<string, SiteInspectionMedia>,
-): SiteInspectionDetail {
+): SiteInspectionMedia[] {
   const merged = new Map<string, SiteInspectionMedia>();
-  for (const m of server.media) {
+  for (const m of serverMedia) {
     const key = m.clientMediaId ?? m.id;
     const local = m.clientMediaId ? localByClientId.get(m.clientMediaId) : undefined;
     merged.set(key, {
@@ -60,7 +58,7 @@ function mergeInspectionMedia(
       merged.set(clientId, local);
     }
   }
-  return { ...server, media: Array.from(merged.values()) };
+  return Array.from(merged.values());
 }
 
 export function InspectionRunnerClient({
@@ -101,10 +99,24 @@ export function InspectionRunnerClient({
   });
 
   const flushTimer = useRef<number | null>(null);
+  const flushInFlight = useRef(false);
+  const flushAgain = useRef(false);
   const responses = useMemo(() => responseMap(inspection.responses), [inspection.responses]);
 
-  const applyServerInspection = useCallback((server: SiteInspectionDetail) => {
-    setInspection(mergeInspectionMedia(server, localMediaRef.current));
+  /**
+   * Media complete/status acks may update media rows and cover — never rewrite
+   * checklist responses from those payloads (local edits stay authoritative).
+   */
+  const applyServerMediaOnly = useCallback((server: SiteInspectionDetail) => {
+    setInspection((prev) => ({
+      ...prev,
+      media: mergeMediaLists(server.media, localMediaRef.current),
+      pendingMediaCount: server.pendingMediaCount,
+      failedMediaCount: server.failedMediaCount,
+      coverMediaId: server.coverMediaId,
+      coverSignedUrl: server.coverSignedUrl,
+      updatedAt: server.updatedAt,
+    }));
   }, []);
 
   const persistSectionState = useCallback(
@@ -123,40 +135,47 @@ export function InspectionRunnerClient({
   );
 
   const flushPending = useCallback(async () => {
-    const pending = listPendingResponses(inspection.id);
-    if (!pending.length) {
-      setSaveState("saved");
+    if (flushInFlight.current) {
+      flushAgain.current = true;
       return;
     }
-    setSaveState("saving");
-    let last: SiteInspectionDetail | null = null;
-    for (const patch of pending) {
-      try {
-        const res = await fetch(`/api/inspections/${inspection.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            snapshotItemId: patch.snapshotItemId,
-            isComplete: patch.isComplete,
-            notes: patch.notes,
-            answers: patch.answers,
-          }),
-        });
-        const json = (await res.json()) as {
-          inspection?: SiteInspectionDetail;
-          error?: { message?: string };
-        };
-        if (!res.ok || !json.inspection) throw new Error(json.error?.message ?? "Save failed");
-        clearPendingResponse(inspection.id, patch.snapshotItemId);
-        last = json.inspection;
-      } catch {
-        setSaveState("pending");
+    flushInFlight.current = true;
+    flushAgain.current = false;
+    try {
+      if (!listPendingResponses(inspection.id).length) {
+        setSaveState("saved");
         return;
       }
+      setSaveState("saving");
+      const result = await flushPendingResponses({
+        inspectionId: inspection.id,
+        saveItem: async (body) => {
+          const res = await fetch(`/api/inspections/${inspection.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const json = (await res.json()) as {
+            inspection?: SiteInspectionDetail;
+            error?: { message?: string };
+          };
+          // Ack only — do not apply json.inspection responses (stale-write race).
+          if (!res.ok || !json.inspection) {
+            throw new Error(json.error?.message ?? "Save failed");
+          }
+        },
+      });
+      if (result === "saved") setSaveState("saved");
+      else if (result === "error") setSaveState("error");
+      else setSaveState("pending");
+    } finally {
+      flushInFlight.current = false;
+      if (flushAgain.current) {
+        flushAgain.current = false;
+        window.setTimeout(() => void flushPending(), 0);
+      }
     }
-    if (last) applyServerInspection(last);
-    setSaveState(listPendingResponses(inspection.id).length ? "pending" : "saved");
-  }, [applyServerInspection, inspection.id]);
+  }, [inspection.id]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -206,14 +225,14 @@ export function InspectionRunnerClient({
             localMediaRef.current.delete(m.clientMediaId);
           }
         }
-        applyServerInspection(server);
+        applyServerMediaOnly(server);
       },
     });
     return () => {
       unsub();
       stopDrain();
     };
-  }, [applyServerInspection]);
+  }, [applyServerMediaOnly]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -317,6 +336,17 @@ export function InspectionRunnerClient({
     await retryMediaUpload(clientMediaId);
   }
 
+  async function onDiscard(clientMediaId: string) {
+    await discardMediaUpload(clientMediaId);
+    localMediaRef.current.delete(clientMediaId);
+    setInspection((prev) => ({
+      ...prev,
+      media: prev.media.filter((m) => m.clientMediaId !== clientMediaId),
+      pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
+      failedMediaCount: Math.max(0, prev.failedMediaCount - 1),
+    }));
+  }
+
   async function onExport(mode: "full" | "photos") {
     setExportModeHint(null);
     try {
@@ -330,10 +360,13 @@ export function InspectionRunnerClient({
       const res = await fetch(`/api/inspections/${inspection.id}/export?mode=${mode}`);
       if (!res.ok) {
         const json = (await res.json().catch(() => ({}))) as {
-          error?: { message?: string };
+          error?: { message?: string; code?: string };
         };
         const message = json.error?.message ?? "Export failed";
-        if (message.toLowerCase().includes("photos only")) {
+        if (
+          message.toLowerCase().includes("photos only") ||
+          message.toLowerCase().includes("download photos")
+        ) {
           setExportModeHint(message);
         }
         window.alert(message);
@@ -381,6 +414,9 @@ export function InspectionRunnerClient({
 
   const pendingUploads = queueSnap.pendingCount;
   const failedUploads = queueSnap.failedCount;
+  const failedQueueItems = queueSnap.items.filter(
+    (i) => i.status === "failed" && i.inspectionId === inspection.id,
+  );
 
   return (
     <div className="space-y-4">
@@ -448,6 +484,39 @@ export function InspectionRunnerClient({
             </span>
           </div>
         </div>
+        {failedQueueItems.length ? (
+          <div className="space-y-1 rounded-md border border-red-200 bg-red-50 px-2 py-2 text-left text-xs text-red-900">
+            {failedQueueItems.map((item) => (
+              <div
+                key={item.clientMediaId}
+                className="flex flex-wrap items-start justify-between gap-2"
+              >
+                <p className="min-w-0 flex-1">
+                  {item.mediaType === "video" ? "Video" : "Photo"}:{" "}
+                  {item.lastError ?? "Upload failed"}
+                </p>
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-8 min-h-8 px-2 text-xs"
+                    onClick={() => void onRetry(item.clientMediaId)}
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-8 min-h-8 px-2 text-xs text-red-800"
+                    onClick={() => void onDiscard(item.clientMediaId)}
+                  >
+                    Discard
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"

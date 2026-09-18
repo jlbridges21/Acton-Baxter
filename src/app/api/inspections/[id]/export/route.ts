@@ -1,8 +1,11 @@
 /**
  * Streaming zip export of inspection media for BuilderTrend / off-platform use.
- * Pulls from private storage and pipes into the response — does not buffer the archive.
+ *
+ * archiver v8 exports `ZipArchive` (class), not a callable `archiver(format)` factory.
+ * Calling the old factory threw TypeError → generic "An unexpected error occurred".
  */
 import { PassThrough, Readable } from "node:stream";
+import { ZipArchive } from "archiver";
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError } from "@/lib/api";
 import { ValidationError } from "@/lib/errors";
@@ -18,19 +21,6 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
-
-// @types/archiver uses `export =`; load via require for a callable factory.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const createArchive = require("archiver") as (
-  format: string,
-  options?: { zlib?: { level?: number } },
-) => {
-  on(event: "error", cb: (err: Error) => void): void;
-  pipe(dest: NodeJS.WritableStream): NodeJS.WritableStream;
-  append(source: Buffer | string, data: { name: string }): void;
-  finalize(): Promise<void>;
-  abort(): void;
-};
 
 function extFor(mediaType: "photo" | "video", mimeType: string | null, path: string | null) {
   if (path?.includes(".")) {
@@ -90,40 +80,65 @@ export async function GET(request: Request, { params }: Params) {
     }
 
     if (!media.length) {
-      throw new ValidationError("No ready media to export");
+      throw new ValidationError(
+        "No ready media to export. Photos or videos may still be uploading, or none were attached.",
+      );
     }
 
+    // Resolve bytes before opening the response so missing objects become JSON errors,
+    // not a broken mid-stream zip.
     const indexByItem = new Map<string, number>();
+    const files: Array<{ name: string; bytes: Buffer }> = [];
+    let missing = 0;
+    for (const m of media) {
+      const downloaded = await downloadSiteInspectionMediaBytes(m.storagePath!);
+      if (!downloaded) {
+        missing += 1;
+        console.warn("[GET /api/inspections/[id]/export] missing storage object", {
+          inspectionId: id,
+          mediaId: m.id,
+          storagePath: m.storagePath,
+        });
+        continue;
+      }
+      const meta = itemMeta.get(m.snapshotItemId);
+      const idx = indexByItem.get(m.snapshotItemId) ?? 0;
+      indexByItem.set(m.snapshotItemId, idx + 1);
+      files.push({
+        name: buildMediaExportFilename({
+          sectionTitle: meta?.sectionTitle ?? null,
+          itemTitle: meta?.title ?? "item",
+          index: idx,
+          mediaType: m.mediaType,
+          ext: extFor(m.mediaType, m.mimeType ?? downloaded.mimeType, m.storagePath),
+        }),
+        bytes: downloaded.bytes,
+      });
+    }
+
+    if (!files.length) {
+      throw new ValidationError(
+        missing
+          ? "Could not download any media files from storage. They may still be uploading or were removed."
+          : "No ready media to export. Photos or videos may still be uploading, or none were attached.",
+      );
+    }
+
     const passthrough = new PassThrough();
-    const archive = createArchive("zip", { zlib: { level: 1 } });
+    const archive = new ZipArchive({ zlib: { level: 1 } });
     archive.on("error", (err: Error) => {
+      console.error("[GET /api/inspections/[id]/export] archive error", err);
       passthrough.destroy(err);
     });
     archive.pipe(passthrough);
 
-    void (async () => {
-      try {
-        for (const m of media) {
-          const downloaded = await downloadSiteInspectionMediaBytes(m.storagePath!);
-          if (!downloaded) continue;
-          const meta = itemMeta.get(m.snapshotItemId);
-          const idx = indexByItem.get(m.snapshotItemId) ?? 0;
-          indexByItem.set(m.snapshotItemId, idx + 1);
-          const name = buildMediaExportFilename({
-            sectionTitle: meta?.sectionTitle ?? null,
-            itemTitle: meta?.title ?? "item",
-            index: idx,
-            mediaType: m.mediaType,
-            ext: extFor(m.mediaType, m.mimeType ?? downloaded.mimeType, m.storagePath),
-          });
-          archive.append(downloaded.bytes, { name });
-        }
-        await archive.finalize();
-      } catch (error) {
-        archive.abort();
-        passthrough.destroy(error instanceof Error ? error : new Error("Export failed"));
-      }
-    })();
+    for (const file of files) {
+      archive.append(file.bytes, { name: file.name });
+    }
+    void archive.finalize().catch((error: unknown) => {
+      console.error("[GET /api/inspections/[id]/export] finalize failed", error);
+      passthrough.destroy(error instanceof Error ? error : new Error("Export failed"));
+    });
 
     const webStream = Readable.toWeb(passthrough) as unknown as ReadableStream;
     const safeName = inspection.projectName.replace(/[^\w.-]+/g, "_").slice(0, 40) || "inspection";
