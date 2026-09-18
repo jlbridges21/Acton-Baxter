@@ -19,6 +19,7 @@ import {
   reorderOptions,
   reorderSections,
   reorderSubQuestions,
+  saveItemGraph,
   templateActionSchema,
   unarchiveTemplate,
   updateItem,
@@ -119,6 +120,21 @@ export async function POST(request: Request) {
           isCoverPhotoSource: parsed.isCoverPhotoSource,
           allowsMedia: parsed.allowsMedia,
           allowsNotes: parsed.allowsNotes,
+          actorId,
+        });
+        return jsonOk({ template });
+      }
+      case "save_item": {
+        const template = await saveItemGraph({
+          templateId: parsed.templateId,
+          itemId: parsed.itemId,
+          sectionId: parsed.sectionId,
+          title: parsed.title,
+          guideNotes: parsed.guideNotes,
+          isCoverPhotoSource: parsed.isCoverPhotoSource,
+          allowsMedia: parsed.allowsMedia,
+          allowsNotes: parsed.allowsNotes,
+          subQuestions: parsed.subQuestions,
           actorId,
         });
         return jsonOk({ template });

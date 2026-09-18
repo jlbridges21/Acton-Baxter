@@ -150,6 +150,25 @@ function reindexOrders<T extends { sort_order: number }>(
   return next;
 }
 
+/** Concurrent sort_order writes — one round-trip wave instead of N sequential updates. */
+async function batchSetSortOrders(
+  table:
+    | "inspection_template_sections"
+    | "inspection_template_items"
+    | "inspection_template_sub_questions"
+    | "inspection_template_sub_question_options",
+  orderedIds: string[],
+): Promise<void> {
+  if (!orderedIds.length || shouldUseMemory()) return;
+  const supabase = createServiceClient();
+  const results = await Promise.all(
+    orderedIds.map((id, index) => supabase.from(table).update({ sort_order: index }).eq("id", id)),
+  );
+  for (const { error } of results) {
+    if (error) throw error;
+  }
+}
+
 function mapOption(row: OptionRow): InspectionTemplateOption {
   return {
     id: row.id,
@@ -997,12 +1016,10 @@ export async function deleteSection(input: {
     .select("id")
     .eq("template_id", data.template_id)
     .order("sort_order", { ascending: true });
-  for (const [index, section] of (remaining ?? []).entries()) {
-    await supabase
-      .from("inspection_template_sections")
-      .update({ sort_order: index })
-      .eq("id", section.id);
-  }
+  await batchSetSortOrders(
+    "inspection_template_sections",
+    (remaining ?? []).map((s) => s.id as string),
+  );
   await touchTemplate(data.template_id, input.actorId);
   return getTemplate(data.template_id);
 }
@@ -1023,14 +1040,7 @@ export async function reorderSections(input: {
     return getTemplate(input.templateId);
   }
   const supabase = createServiceClient();
-  for (const [index, id] of input.orderedIds.entries()) {
-    const { error } = await supabase
-      .from("inspection_template_sections")
-      .update({ sort_order: index })
-      .eq("id", id)
-      .eq("template_id", input.templateId);
-    if (error) throw error;
-  }
+  await batchSetSortOrders("inspection_template_sections", input.orderedIds);
   await touchTemplate(input.templateId, input.actorId);
   return getTemplate(input.templateId);
 }
@@ -1124,6 +1134,244 @@ export async function updateItem(input: {
   return getTemplate(existing.template_id);
 }
 
+export type SaveItemGraphInput = {
+  templateId: string;
+  itemId: string | null;
+  sectionId: string | null;
+  title: string;
+  guideNotes?: string;
+  isCoverPhotoSource?: boolean;
+  allowsMedia?: boolean;
+  allowsNotes?: boolean;
+  subQuestions: Array<{
+    id: string | null;
+    prompt: string;
+    questionType: InspectionSubQuestionType;
+    options: Array<{ id: string | null; label: string }>;
+  }>;
+  actorId: string | null;
+};
+
+/**
+ * Create or update an item and its full sub-question/option graph in one call.
+ * Returns the template once — avoids the N-request cascade from the editor.
+ */
+export async function saveItemGraph(input: SaveItemGraphInput): Promise<InspectionTemplateDetail> {
+  const title = input.title.trim();
+  if (!title) throw new ValidationError("Item title is required");
+  for (const sq of input.subQuestions) {
+    if (!sq.prompt.trim()) throw new ValidationError("Sub-question label is required");
+    if (
+      (sq.questionType === "single_select" || sq.questionType === "multi_select") &&
+      sq.options.filter((o) => o.label.trim()).length < 1
+    ) {
+      throw new ValidationError(`Add at least one option for “${sq.prompt.trim()}”`);
+    }
+  }
+
+  const graph = await loadTemplateGraph(input.templateId);
+  let itemId = input.itemId;
+
+  if (!itemId) {
+    const siblings = graph.items.filter((i) => i.section_id === input.sectionId);
+    itemId = await createItemInternal({
+      templateId: input.templateId,
+      sectionId: input.sectionId,
+      title,
+      guideNotes: input.guideNotes ?? "",
+      isCoverPhotoSource: Boolean(input.isCoverPhotoSource),
+      allowsMedia: input.allowsMedia !== undefined ? input.allowsMedia : true,
+      allowsNotes: input.allowsNotes !== undefined ? input.allowsNotes : true,
+      sortOrder: siblings.length,
+      actorId: input.actorId,
+    });
+  } else {
+    const existing = graph.items.find((i) => i.id === itemId);
+    if (!existing || existing.template_id !== input.templateId) {
+      throw new NotFoundError("Item not found");
+    }
+    if (input.isCoverPhotoSource) await clearCoverPhotoFlag(input.templateId, itemId);
+    if (shouldUseMemory()) {
+      const mem = getMemory();
+      const row = mem.items.get(itemId)!;
+      mem.items.set(itemId, {
+        ...row,
+        title,
+        guide_notes: input.guideNotes ?? row.guide_notes,
+        allows_media: input.allowsMedia !== undefined ? input.allowsMedia : row.allows_media,
+        allows_notes: input.allowsNotes !== undefined ? input.allowsNotes : row.allows_notes,
+        is_cover_photo_source:
+          input.isCoverPhotoSource !== undefined
+            ? input.isCoverPhotoSource
+            : row.is_cover_photo_source,
+        updated_at: nowIso(),
+      });
+    } else {
+      const supabase = createServiceClient();
+      const { error } = await supabase
+        .from("inspection_template_items")
+        .update({
+          title,
+          guide_notes: input.guideNotes ?? "",
+          allows_media: input.allowsMedia !== undefined ? input.allowsMedia : true,
+          allows_notes: input.allowsNotes !== undefined ? input.allowsNotes : true,
+          is_cover_photo_source: Boolean(input.isCoverPhotoSource),
+        })
+        .eq("id", itemId);
+      if (error) throw error;
+    }
+  }
+
+  let currentSqs: SubQuestionRow[];
+  if (shouldUseMemory()) {
+    currentSqs = Array.from(getMemory().subQuestions.values()).filter((s) => s.item_id === itemId);
+  } else {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("inspection_template_sub_questions")
+      .select("*")
+      .eq("item_id", itemId);
+    if (error) throw error;
+    currentSqs = (data ?? []) as SubQuestionRow[];
+  }
+
+  const keepSqIds = new Set(
+    input.subQuestions.map((s) => s.id).filter((id): id is string => Boolean(id)),
+  );
+  for (const sq of currentSqs) {
+    if (keepSqIds.has(sq.id)) continue;
+    if (shouldUseMemory()) {
+      const mem = getMemory();
+      for (const [optId, opt] of [...mem.options.entries()]) {
+        if (opt.sub_question_id === sq.id) mem.options.delete(optId);
+      }
+      mem.subQuestions.delete(sq.id);
+    } else {
+      const supabase = createServiceClient();
+      await supabase
+        .from("inspection_template_sub_question_options")
+        .delete()
+        .eq("sub_question_id", sq.id);
+      await supabase.from("inspection_template_sub_questions").delete().eq("id", sq.id);
+    }
+  }
+
+  const orderedSqIds: string[] = [];
+  for (const [sqIndex, draftSq] of input.subQuestions.entries()) {
+    const prompt = draftSq.prompt.trim();
+    const isSelect =
+      draftSq.questionType === "single_select" || draftSq.questionType === "multi_select";
+    const desiredOpts = isSelect
+      ? draftSq.options.map((o) => ({ id: o.id, label: o.label.trim() })).filter((o) => o.label)
+      : [];
+
+    let sqId = draftSq.id;
+    if (!sqId) {
+      sqId = await createSubQuestionInternal(
+        itemId,
+        {
+          prompt,
+          questionType: draftSq.questionType,
+          options: [],
+        },
+        sqIndex,
+        input.actorId,
+      );
+    } else {
+      if (shouldUseMemory()) {
+        const mem = getMemory();
+        const row = mem.subQuestions.get(sqId);
+        if (!row || row.item_id !== itemId) throw new NotFoundError("Sub-question not found");
+        mem.subQuestions.set(sqId, {
+          ...row,
+          prompt,
+          question_type: draftSq.questionType,
+          sort_order: sqIndex,
+          updated_at: nowIso(),
+        });
+      } else {
+        const supabase = createServiceClient();
+        const { error } = await supabase
+          .from("inspection_template_sub_questions")
+          .update({
+            prompt,
+            question_type: draftSq.questionType,
+            sort_order: sqIndex,
+          })
+          .eq("id", sqId)
+          .eq("item_id", itemId);
+        if (error) throw error;
+      }
+    }
+    orderedSqIds.push(sqId);
+
+    let liveOpts: OptionRow[];
+    if (shouldUseMemory()) {
+      liveOpts = Array.from(getMemory().options.values()).filter((o) => o.sub_question_id === sqId);
+    } else {
+      const supabase = createServiceClient();
+      const { data, error } = await supabase
+        .from("inspection_template_sub_question_options")
+        .select("*")
+        .eq("sub_question_id", sqId);
+      if (error) throw error;
+      liveOpts = (data ?? []) as OptionRow[];
+    }
+
+    const keepOptIds = new Set(
+      desiredOpts.map((o) => o.id).filter((id): id is string => Boolean(id)),
+    );
+    for (const opt of liveOpts) {
+      if (keepOptIds.has(opt.id)) continue;
+      if (shouldUseMemory()) {
+        getMemory().options.delete(opt.id);
+      } else {
+        const supabase = createServiceClient();
+        await supabase.from("inspection_template_sub_question_options").delete().eq("id", opt.id);
+      }
+    }
+
+    const orderedOptIds: string[] = [];
+    for (const [optIndex, draftOpt] of desiredOpts.entries()) {
+      if (draftOpt.id && liveOpts.some((o) => o.id === draftOpt.id)) {
+        if (shouldUseMemory()) {
+          const mem = getMemory();
+          const row = mem.options.get(draftOpt.id)!;
+          mem.options.set(draftOpt.id, {
+            ...row,
+            label: draftOpt.label,
+            sort_order: optIndex,
+          });
+        } else {
+          const supabase = createServiceClient();
+          await supabase
+            .from("inspection_template_sub_question_options")
+            .update({ label: draftOpt.label, sort_order: optIndex })
+            .eq("id", draftOpt.id);
+        }
+        orderedOptIds.push(draftOpt.id);
+      } else {
+        const createdId = await createOptionInternal(sqId, draftOpt.label, optIndex);
+        orderedOptIds.push(createdId);
+      }
+    }
+    await batchSetSortOrders("inspection_template_sub_question_options", orderedOptIds);
+  }
+
+  await batchSetSortOrders("inspection_template_sub_questions", orderedSqIds);
+  // Memory path: apply sort orders explicitly
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    orderedSqIds.forEach((id, index) => {
+      const row = mem.subQuestions.get(id);
+      if (row) mem.subQuestions.set(id, { ...row, sort_order: index });
+    });
+  }
+
+  await touchTemplate(input.templateId, input.actorId);
+  return getTemplate(input.templateId);
+}
+
 export async function deleteItem(input: {
   itemId: string;
   actorId: string | null;
@@ -1175,12 +1423,10 @@ export async function deleteItem(input: {
       ? remQuery.is("section_id", null)
       : remQuery.eq("section_id", data.section_id);
   const { data: remaining } = await remQuery;
-  for (const [index, item] of (remaining ?? []).entries()) {
-    await supabase
-      .from("inspection_template_items")
-      .update({ sort_order: index })
-      .eq("id", item.id);
-  }
+  await batchSetSortOrders(
+    "inspection_template_items",
+    (remaining ?? []).map((item) => item.id as string),
+  );
   await touchTemplate(data.template_id, input.actorId);
   return getTemplate(data.template_id);
 }
@@ -1201,15 +1447,7 @@ export async function reorderItems(input: {
     await touchTemplate(input.templateId, input.actorId);
     return getTemplate(input.templateId);
   }
-  const supabase = createServiceClient();
-  for (const [index, id] of input.orderedIds.entries()) {
-    const { error } = await supabase
-      .from("inspection_template_items")
-      .update({ sort_order: index })
-      .eq("id", id)
-      .eq("template_id", input.templateId);
-    if (error) throw error;
-  }
+  await batchSetSortOrders("inspection_template_items", input.orderedIds);
   await touchTemplate(input.templateId, input.actorId);
   return getTemplate(input.templateId);
 }
@@ -1301,21 +1539,26 @@ export async function moveItem(input: {
         ? remQuery.is("section_id", null)
         : remQuery.eq("section_id", sourceSectionId);
     const { data: remaining } = await remQuery;
-    for (const [index, row] of (remaining ?? []).entries()) {
-      await supabase
-        .from("inspection_template_items")
-        .update({ sort_order: index })
-        .eq("id", row.id);
-    }
+    await batchSetSortOrders(
+      "inspection_template_items",
+      (remaining ?? []).map((row) => row.id as string),
+    );
   }
 
-  for (const [index, id] of input.orderedIds.entries()) {
-    const { error } = await supabase
-      .from("inspection_template_items")
-      .update({ section_id: input.targetSectionId, sort_order: index })
-      .eq("id", id)
-      .eq("template_id", templateId);
-    if (error) throw error;
+  {
+    const supabase = createServiceClient();
+    const results = await Promise.all(
+      input.orderedIds.map((id, index) =>
+        supabase
+          .from("inspection_template_items")
+          .update({ section_id: input.targetSectionId, sort_order: index })
+          .eq("id", id)
+          .eq("template_id", templateId),
+      ),
+    );
+    for (const { error } of results) {
+      if (error) throw error;
+    }
   }
 
   await touchTemplate(templateId, input.actorId);
@@ -1454,12 +1697,10 @@ export async function deleteSubQuestion(input: {
     .select("id")
     .eq("item_id", itemId)
     .order("sort_order", { ascending: true });
-  for (const [index, sq] of (remaining ?? []).entries()) {
-    await supabase
-      .from("inspection_template_sub_questions")
-      .update({ sort_order: index })
-      .eq("id", sq.id);
-  }
+  await batchSetSortOrders(
+    "inspection_template_sub_questions",
+    (remaining ?? []).map((sq) => sq.id as string),
+  );
   await touchTemplate(templateId, input.actorId);
   return getTemplate(templateId);
 }
@@ -1487,14 +1728,7 @@ export async function reorderSubQuestions(input: {
     .maybeSingle();
   if (fetchErr) throw fetchErr;
   if (!item) throw new NotFoundError("Item not found");
-  for (const [index, id] of input.orderedIds.entries()) {
-    const { error } = await supabase
-      .from("inspection_template_sub_questions")
-      .update({ sort_order: index })
-      .eq("id", id)
-      .eq("item_id", input.itemId);
-    if (error) throw error;
-  }
+  await batchSetSortOrders("inspection_template_sub_questions", input.orderedIds);
   await touchTemplate(item.template_id, input.actorId);
   return getTemplate(item.template_id);
 }
@@ -1594,12 +1828,10 @@ export async function deleteOption(input: {
     .select("id")
     .eq("sub_question_id", subQuestionId)
     .order("sort_order", { ascending: true });
-  for (const [index, opt] of (remaining ?? []).entries()) {
-    await supabase
-      .from("inspection_template_sub_question_options")
-      .update({ sort_order: index })
-      .eq("id", opt.id);
-  }
+  await batchSetSortOrders(
+    "inspection_template_sub_question_options",
+    (remaining ?? []).map((opt) => opt.id as string),
+  );
   await touchTemplate(templateId, input.actorId);
   return getTemplate(templateId);
 }
@@ -1625,14 +1857,7 @@ export async function reorderOptions(input: {
   }
   const supabase = createServiceClient();
   const { templateId } = await templateIdForSubQuestion(input.subQuestionId);
-  for (const [index, id] of input.orderedIds.entries()) {
-    const { error } = await supabase
-      .from("inspection_template_sub_question_options")
-      .update({ sort_order: index })
-      .eq("id", id)
-      .eq("sub_question_id", input.subQuestionId);
-    if (error) throw error;
-  }
+  await batchSetSortOrders("inspection_template_sub_question_options", input.orderedIds);
   await touchTemplate(templateId, input.actorId);
   return getTemplate(templateId);
 }

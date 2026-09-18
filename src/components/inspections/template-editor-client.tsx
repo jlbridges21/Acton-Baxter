@@ -62,11 +62,13 @@ async function postAction(body: Record<string, unknown>) {
   });
   const json = (await res.json()) as {
     ok?: boolean;
-    error?: string;
+    error?: string | { message?: string };
     template?: InspectionTemplateDetail;
   };
   if (!res.ok || !json.template) {
-    throw new Error(json.error ?? "Request failed");
+    const message =
+      typeof json.error === "string" ? json.error : (json.error?.message ?? "Request failed");
+    throw new Error(message);
   }
   return json.template;
 }
@@ -200,6 +202,170 @@ export function TemplateEditorClient({
     }
   }
 
+  async function saveSection() {
+    if (!isAdmin || !sectionModal) return;
+    const title = sectionTitle.trim();
+    if (!title) {
+      setSectionError("Title is required");
+      return;
+    }
+    setSectionError(null);
+    setError(null);
+
+    if (sectionModal.mode === "edit" && sectionModal.sectionId) {
+      const snapshot = template;
+      setTemplate((prev) => ({
+        ...prev,
+        sections: prev.sections.map((s) => (s.id === sectionModal.sectionId ? { ...s, title } : s)),
+      }));
+      setSectionModal(null);
+      setBusy(true);
+      try {
+        const next = await postAction({
+          action: "update_section",
+          sectionId: sectionModal.sectionId,
+          title,
+        });
+        setTemplate(next);
+      } catch (e) {
+        setTemplate(snapshot);
+        setError(e instanceof Error ? e.message : "Could not update section");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    const tempId = crypto.randomUUID();
+    const snapshot = template;
+    const optimistic: InspectionTemplateSection = {
+      id: tempId,
+      templateId: template.id,
+      title,
+      sortOrder: template.sections.length,
+      items: [],
+    };
+    setTemplate((prev) => ({
+      ...prev,
+      sections: [...prev.sections, optimistic],
+      sectionCount: prev.sectionCount + 1,
+    }));
+    setOpenSections((prev) => ({ ...prev, [tempId]: true }));
+    setSectionModal(null);
+    setBusy(true);
+    try {
+      const next = await postAction({
+        action: "add_section",
+        templateId: template.id,
+        title,
+      });
+      setTemplate(next);
+      setOpenSections((prev) => {
+        const merged = { ...prev };
+        for (const s of next.sections) {
+          if (merged[s.id] === undefined) merged[s.id] = true;
+        }
+        delete merged[tempId];
+        return merged;
+      });
+    } catch (e) {
+      setTemplate(snapshot);
+      setOpenSections((prev) => {
+        const { [tempId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      setError(e instanceof Error ? e.message : "Could not add section");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function draftToOptimisticItem(draft: ItemDraft, itemId: string): InspectionTemplateItem {
+    return {
+      id: itemId,
+      templateId: template.id,
+      sectionId: draft.sectionId,
+      title: draft.title.trim(),
+      guideNotes: draft.guideNotes,
+      allowsMedia: draft.allowsMedia,
+      allowsNotes: draft.allowsNotes,
+      isCoverPhotoSource: draft.isCoverPhotoSource,
+      sortOrder: 0,
+      subQuestions: draft.subQuestions.map((sq, sqIndex) => ({
+        id: sq.serverId ?? `temp-sq-${sq.key}`,
+        itemId,
+        prompt: sq.prompt.trim(),
+        questionType: sq.questionType,
+        sortOrder: sqIndex,
+        options: sq.options
+          .filter((o) => o.label.trim())
+          .map((o, optIndex) => ({
+            id: o.key,
+            subQuestionId: sq.serverId ?? `temp-sq-${sq.key}`,
+            label: o.label.trim(),
+            sortOrder: optIndex,
+          })),
+      })),
+    };
+  }
+
+  async function saveItemDraft(draft: ItemDraft) {
+    if (!isAdmin) return;
+    setError(null);
+    const snapshot = template;
+    const tempId = draft.serverId ?? `temp-item-${crypto.randomUUID()}`;
+    const optimistic = draftToOptimisticItem(draft, tempId);
+
+    setTemplate((prev) => {
+      if (draft.serverId) {
+        const mapItem = (items: InspectionTemplateItem[]) =>
+          items.map((i) => (i.id === draft.serverId ? { ...optimistic, id: draft.serverId! } : i));
+        if (draft.sectionId === null) {
+          return { ...prev, standaloneItems: mapItem(prev.standaloneItems) };
+        }
+        return {
+          ...prev,
+          sections: prev.sections.map((s) =>
+            s.id === draft.sectionId ? { ...s, items: mapItem(s.items) } : s,
+          ),
+        };
+      }
+      if (draft.sectionId === null) {
+        return {
+          ...prev,
+          standaloneItems: [
+            ...prev.standaloneItems,
+            { ...optimistic, sortOrder: prev.standaloneItems.length },
+          ],
+          itemCount: prev.itemCount + 1,
+        };
+      }
+      return {
+        ...prev,
+        sections: prev.sections.map((s) =>
+          s.id === draft.sectionId
+            ? {
+                ...s,
+                items: [...s.items, { ...optimistic, sortOrder: s.items.length }],
+              }
+            : s,
+        ),
+        itemCount: prev.itemCount + 1,
+      };
+    });
+    setItemModal(null);
+    setBusy(true);
+    try {
+      const latest = await persistItemDraft(postAction, snapshot, draft);
+      setTemplate(latest);
+    } catch (e) {
+      setTemplate(snapshot);
+      setError(e instanceof Error ? e.message : "Could not save item");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function permanentlyDelete() {
     if (!isAdmin || !template.archivedAt) return;
     setBusy(true);
@@ -246,20 +412,6 @@ export function TemplateEditorClient({
     const other = all.find((i) => i.isCoverPhotoSource && i.id !== itemModal.serverId);
     return other?.title ?? null;
   }, [itemModal, template]);
-
-  async function saveItemDraft(draft: ItemDraft) {
-    setBusy(true);
-    setError(null);
-    try {
-      const latest = await persistItemDraft(postAction, template, draft);
-      setTemplate(latest);
-      setItemModal(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save item");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   function itemsInContainer(sectionId: string | null): InspectionTemplateItem[] {
     if (sectionId === null) return template.standaloneItems;
@@ -567,7 +719,7 @@ export function TemplateEditorClient({
         />
 
         <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-          {template.sections.map((section, sectionIndex) => (
+          {template.sections.map((section) => (
             <SortableSection
               key={section.id}
               section={section}
@@ -592,20 +744,6 @@ export function TemplateEditorClient({
                   action: { action: "delete_section", sectionId: section.id },
                 })
               }
-              onMoveSection={(dir) => {
-                const next = moveInList(
-                  template.sections.map((s) => s.id),
-                  sectionIndex,
-                  dir,
-                );
-                if (next) {
-                  void run({
-                    action: "reorder_sections",
-                    templateId: template.id,
-                    orderedIds: next,
-                  });
-                }
-              }}
               onAddItem={() => setItemModal(emptyItemDraft(section.id))}
               onEditItem={(item) => setItemModal(itemToDraft(item))}
               onDeleteItem={(item) =>
@@ -679,26 +817,7 @@ export function TemplateEditorClient({
             type="button"
             className="min-h-11"
             disabled={busy}
-            onClick={() => {
-              const title = sectionTitle.trim();
-              if (!title) {
-                setSectionError("Title is required");
-                return;
-              }
-              if (sectionModal?.mode === "edit" && sectionModal.sectionId) {
-                void run({
-                  action: "update_section",
-                  sectionId: sectionModal.sectionId,
-                  title,
-                }).then(() => setSectionModal(null));
-              } else {
-                void run({
-                  action: "add_section",
-                  templateId: template.id,
-                  title,
-                }).then(() => setSectionModal(null));
-              }
-            }}
+            onClick={() => void saveSection()}
           >
             {busy ? "Saving…" : "Save section"}
           </Button>
@@ -797,7 +916,7 @@ function ItemList({
               </Button>
             ) : null}
             <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onAdd}>
-              + Add item
+              + Add standalone item
             </Button>
           </div>
         ) : null}
@@ -838,7 +957,6 @@ function SortableSection({
   busy,
   onEdit,
   onDelete,
-  onMoveSection,
   onAddItem,
   onEditItem,
   onDeleteItem,
@@ -851,7 +969,6 @@ function SortableSection({
   busy: boolean;
   onEdit: () => void;
   onDelete: () => void;
-  onMoveSection: (dir: -1 | 1) => void;
   onAddItem: () => void;
   onEditItem: (item: InspectionTemplateItem) => void;
   onDeleteItem: (item: InspectionTemplateItem) => void;
@@ -879,7 +996,8 @@ function SortableSection({
           <button
             type="button"
             className="touch-none rounded p-1 text-[var(--acton-muted)] hover:bg-white"
-            aria-label={`Drag section ${section.title}`}
+            aria-label={`Reorder section ${section.title}. Press Space to pick up, arrow keys to move, Space to drop.`}
+            title="Drag to reorder (keyboard: Space, then arrows)"
             {...attributes}
             {...listeners}
           >
@@ -888,7 +1006,7 @@ function SortableSection({
         ) : null}
         <button
           type="button"
-          className="min-h-11 flex-1 text-left text-sm font-semibold text-[var(--acton-navy)]"
+          className="min-h-11 min-w-0 flex-1 text-left text-sm font-semibold text-[var(--acton-navy)]"
           onClick={onToggle}
           aria-expanded={open}
         >
@@ -898,19 +1016,17 @@ function SortableSection({
           </span>
         </button>
         {isAdmin ? (
-          <>
-            <MoveButtons
-              disabled={busy}
-              onUp={() => onMoveSection(-1)}
-              onDown={() => onMoveSection(1)}
-            />
+          <div className="flex flex-wrap items-center gap-1">
+            <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onAddItem}>
+              + Add item
+            </Button>
             <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onEdit}>
               Edit
             </Button>
             <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onDelete}>
               Delete
             </Button>
-          </>
+          </div>
         ) : null}
       </div>
       {open ? (
@@ -936,13 +1052,8 @@ function SortableSection({
           </SortableContext>
           {section.items.length === 0 ? (
             <p className="rounded-lg border border-dashed border-[var(--acton-border)] px-3 py-4 text-center text-sm text-[var(--acton-muted)]">
-              No items in this section
+              No items in this section — use “+ Add item” above.
             </p>
-          ) : null}
-          {isAdmin ? (
-            <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onAddItem}>
-              + Add item
-            </Button>
           ) : null}
         </div>
       ) : null}

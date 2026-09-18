@@ -61,6 +61,30 @@ export const templateActionSchema = z.discriminatedUnion("action", [
     allowsNotes: z.boolean().optional(),
   }),
   z.object({
+    action: z.literal("save_item"),
+    templateId: z.string().uuid(),
+    itemId: z.string().uuid().nullable(),
+    sectionId: z.string().uuid().nullable(),
+    title: z.string().min(1),
+    guideNotes: z.string().optional(),
+    isCoverPhotoSource: z.boolean().optional(),
+    allowsMedia: z.boolean().optional(),
+    allowsNotes: z.boolean().optional(),
+    subQuestions: z.array(
+      z.object({
+        id: z.string().uuid().nullable(),
+        prompt: z.string().min(1),
+        questionType: questionTypeSchema,
+        options: z.array(
+          z.object({
+            id: z.string().uuid().nullable(),
+            label: z.string().min(1),
+          }),
+        ),
+      }),
+    ),
+  }),
+  z.object({
     action: z.literal("update_item"),
     itemId: z.string().uuid(),
     title: z.string().min(1).optional(),

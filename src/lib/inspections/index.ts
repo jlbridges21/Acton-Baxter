@@ -29,6 +29,7 @@ export {
   reorderSections,
   addItem,
   updateItem,
+  saveItemGraph,
   deleteItem,
   reorderItems,
   moveItem,

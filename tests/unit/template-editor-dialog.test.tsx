@@ -153,7 +153,7 @@ describe("template editor compact + modal", () => {
     confirmSpy.mockRestore();
   });
 
-  it("places Add section beside Add item at the top of standalone items", () => {
+  it("places Add section beside Add standalone item at the top", () => {
     const { container } = render(
       <div style={{ width: 375 }}>
         <TemplateEditorClient initialTemplate={SAMPLE} isAdmin />
@@ -161,22 +161,21 @@ describe("template editor compact + modal", () => {
     );
 
     const addSection = screen.getByRole("button", { name: /^\+ Add section$/i });
-    const addItems = screen.getAllByRole("button", { name: /^\+ Add item$/i });
+    const addStandalone = screen.getByRole("button", { name: /^\+ Add standalone item$/i });
     expect(addSection).toBeTruthy();
-    expect(addItems.length).toBeGreaterThan(0);
+    expect(addStandalone).toBeTruthy();
 
     const standalone = container.querySelector('[data-container="standalone"]');
     expect(standalone).toBeTruthy();
     expect(standalone!.contains(addSection)).toBe(true);
-    expect(standalone!.contains(addItems[0]!)).toBe(true);
+    expect(standalone!.contains(addStandalone)).toBe(true);
 
-    // Peers in the same header action group (section then item).
     const group = addSection.parentElement;
     expect(group).toBeTruthy();
-    expect(group!.contains(addItems[0]!)).toBe(true);
+    expect(group!.contains(addStandalone)).toBe(true);
     expect([...group!.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual([
       "+ Add section",
-      "+ Add item",
+      "+ Add standalone item",
     ]);
 
     fireEvent.click(addSection);
