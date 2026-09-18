@@ -153,6 +153,63 @@ describe("template editor compact + modal", () => {
     confirmSpy.mockRestore();
   });
 
+  it("places Add section beside Add item at the top of standalone items", () => {
+    const { container } = render(
+      <div style={{ width: 375 }}>
+        <TemplateEditorClient initialTemplate={SAMPLE} isAdmin />
+      </div>,
+    );
+
+    const addSection = screen.getByRole("button", { name: /^\+ Add section$/i });
+    const addItems = screen.getAllByRole("button", { name: /^\+ Add item$/i });
+    expect(addSection).toBeTruthy();
+    expect(addItems.length).toBeGreaterThan(0);
+
+    const standalone = container.querySelector('[data-container="standalone"]');
+    expect(standalone).toBeTruthy();
+    expect(standalone!.contains(addSection)).toBe(true);
+    expect(standalone!.contains(addItems[0]!)).toBe(true);
+
+    // Peers in the same header action group (section then item).
+    const group = addSection.parentElement;
+    expect(group).toBeTruthy();
+    expect(group!.contains(addItems[0]!)).toBe(true);
+    expect([...group!.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual([
+      "+ Add section",
+      "+ Add item",
+    ]);
+
+    fireEvent.click(addSection);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText(/Sections group related checklist items/i)).toBeTruthy();
+  });
+
+  it("types a full sub-question label without focus jumping to Title", async () => {
+    render(
+      <div style={{ width: 375 }}>
+        <TemplateEditorClient initialTemplate={SAMPLE} isAdmin />
+      </div>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit$/i })[0]!);
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /\+ Add sub-question/i }));
+    const prompt = screen.getByPlaceholderText(/Question label/i) as HTMLInputElement;
+    prompt.focus();
+
+    const typed = "Any access restrictions?";
+    let value = "";
+    for (const ch of typed) {
+      value += ch;
+      fireEvent.change(prompt, { target: { value } });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(document.activeElement).toBe(prompt);
+    }
+    expect(prompt.value).toBe(typed);
+    expect(document.activeElement).not.toBe(screen.getByLabelText(/^Title$/i));
+  });
+
   it("source file has no window.prompt or window.confirm", () => {
     const source = readFileSync(
       join(process.cwd(), "src/components/inspections/template-editor-client.tsx"),

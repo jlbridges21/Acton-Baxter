@@ -27,9 +27,21 @@ function useDialogContext() {
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
+function isDisplayed(el: HTMLElement): boolean {
+  if (el.hidden || el.getAttribute("aria-hidden") === "true") return false;
+  // Prefer computed style: `offsetParent` is null for fixed/sticky ancestors and in jsdom.
+  try {
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+  } catch {
+    /* ignore — treat as visible in non-DOM environments */
+  }
+  return true;
+}
+
 function getFocusable(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1 && el.offsetParent !== null,
+    (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1 && isDisplayed(el),
   );
 }
 
@@ -66,6 +78,14 @@ export function Dialog({
     onClose();
   }, [onClose, onRequestClose]);
 
+  // Always call the latest dismiss handler from the keydown listener without
+  // tying focus/scroll setup to unstable callback identities.
+  const requestCloseRef = React.useRef(requestClose);
+  React.useEffect(() => {
+    requestCloseRef.current = requestClose;
+  }, [requestClose]);
+
+  // Open/close lifecycle only: initial focus, scroll lock, focus restore.
   React.useEffect(() => {
     if (!open) return;
     previouslyFocused.current = document.activeElement as HTMLElement | null;
@@ -75,13 +95,25 @@ export function Dialog({
     const panel = panelRef.current;
     const focusables = panel ? getFocusable(panel) : [];
     const first = focusables[0] ?? panel;
-    window.setTimeout(() => first?.focus(), 0);
+    const focusTimer = window.setTimeout(() => first?.focus(), 0);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = prevOverflow;
+      previouslyFocused.current?.focus?.();
+    };
+  }, [open]);
+
+  // Keydown: Escape + focus trap. Reads requestClose via ref so unstable
+  // onClose/onRequestClose props do not re-run open lifecycle work.
+  React.useEffect(() => {
+    if (!open) return;
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        requestClose();
+        requestCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !panelRef.current) return;
@@ -104,11 +136,9 @@ export function Dialog({
 
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      document.body.style.overflow = prevOverflow;
       document.removeEventListener("keydown", onKeyDown, true);
-      previouslyFocused.current?.focus?.();
     };
-  }, [open, requestClose]);
+  }, [open]);
 
   if (!canPortal || !open) return null;
 

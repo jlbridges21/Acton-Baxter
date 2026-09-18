@@ -532,6 +532,15 @@ export function TemplateEditorClient({
           isAdmin={isAdmin}
           busy={busy}
           onAdd={() => setItemModal(emptyItemDraft(null))}
+          onAddSection={
+            isAdmin
+              ? () => {
+                  setSectionModal({ mode: "add", sectionId: null, title: "" });
+                  setSectionTitle("");
+                  setSectionError(null);
+                }
+              : undefined
+          }
           onEdit={(item) => setItemModal(itemToDraft(item))}
           onDelete={(item) =>
             setConfirm({
@@ -640,22 +649,6 @@ export function TemplateEditorClient({
           ) : null}
         </DragOverlay>
       </DndContext>
-
-      {isAdmin ? (
-        <Button
-          type="button"
-          variant="secondary"
-          className="min-h-11 w-full sm:w-auto"
-          disabled={busy}
-          onClick={() => {
-            setSectionModal({ mode: "add", sectionId: null, title: "" });
-            setSectionTitle("");
-            setSectionError(null);
-          }}
-        >
-          + Add section
-        </Button>
-      ) : null}
 
       <Dialog open={Boolean(sectionModal)} onClose={() => setSectionModal(null)} size="md">
         <DialogHeader>
@@ -766,6 +759,7 @@ function ItemList({
   isAdmin,
   busy,
   onAdd,
+  onAddSection,
   onEdit,
   onDelete,
   onMove,
@@ -777,6 +771,7 @@ function ItemList({
   isAdmin: boolean;
   busy: boolean;
   onAdd: () => void;
+  onAddSection?: () => void;
   onEdit: (item: InspectionTemplateItem) => void;
   onDelete: (item: InspectionTemplateItem) => void;
   onMove: (index: number, dir: -1 | 1) => void;
@@ -789,9 +784,22 @@ function ItemList({
           {title}
         </h3>
         {isAdmin ? (
-          <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onAdd}>
-            + Add item
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {onAddSection ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={onAddSection}
+              >
+                + Add section
+              </Button>
+            ) : null}
+            <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={onAdd}>
+              + Add item
+            </Button>
+          </div>
         ) : null}
       </div>
       <SortableContext
