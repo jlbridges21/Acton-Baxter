@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
+  ClipboardCheck,
   Cloud,
   ClipboardList,
   FolderKanban,
@@ -83,6 +84,25 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     aliases: ["receipt", "receipts", "expense", "expenses", "reimbursement photo"],
   },
   {
+    key: "site-inspections",
+    name: "Site Inspection Checklist",
+    description:
+      "Repeatable field checklists by project — sections, guide notes, photos, and clarifying questions.",
+    href: "/inspections",
+    createHref: "/inspections",
+    enabled: true,
+    icon: ClipboardCheck,
+    ctaLabel: "Open Site Inspections",
+    aliases: [
+      "site inspection",
+      "site inspections",
+      "inspection",
+      "inspections",
+      "checklist",
+      "company cam",
+    ],
+  },
+  {
     key: "customer-dossier",
     name: "Customer Center",
     description:
@@ -151,6 +171,7 @@ export type NavContext =
   | "project-setup"
   | "customer-dossier"
   | "knowledge"
+  | "site-inspections"
   | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
@@ -169,6 +190,9 @@ export function getNavContext(pathname: string): NavContext {
   }
   if (pathname.startsWith("/customers")) {
     return "customer-dossier";
+  }
+  if (pathname.startsWith("/inspections")) {
+    return "site-inspections";
   }
   if (pathname.startsWith("/receipts")) {
     return "platform";

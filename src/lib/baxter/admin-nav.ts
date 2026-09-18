@@ -3,6 +3,7 @@ import {
   Bell,
   BookOpen,
   BookMarked,
+  ClipboardCheck,
   ClipboardList,
   Cloud,
   FolderKanban,
@@ -85,6 +86,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Receipt Log",
       icon: ClipboardList,
       match: (pathname) => pathname === "/receipts/log" || pathname.startsWith("/receipts/log/"),
+    },
+    {
+      href: "/inspections",
+      label: "Site Inspections",
+      icon: ClipboardCheck,
+      match: (pathname) => pathname.startsWith("/inspections"),
     },
     {
       href: "/projects/setup",

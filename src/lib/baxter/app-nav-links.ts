@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  ClipboardCheck,
   ClipboardList,
   FolderKanban,
   LayoutDashboard,
@@ -60,6 +61,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "Receipt Log",
       icon: Receipt,
       match: (pathname) => pathname.startsWith("/receipts"),
+    },
+    {
+      href: "/inspections",
+      label: "Site Inspections",
+      icon: ClipboardCheck,
+      match: (pathname) => pathname.startsWith("/inspections"),
     },
     {
       href: "/dashboard",
