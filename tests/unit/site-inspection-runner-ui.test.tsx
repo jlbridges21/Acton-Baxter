@@ -161,7 +161,7 @@ describe("Inspections UI at phone width", () => {
     expect((container.firstElementChild as HTMLElement).style.width).toBe("375px");
   });
 
-  it("runner shows internal guide notes, progress, photo/video attach, and export", () => {
+  it("runner shows internal guide notes, progress, photo/video attach, export, and complete", () => {
     render(
       <div style={{ width: 375 }}>
         <InspectionRunnerClient initialInspection={detail} currentUserId="u1" isAdmin={false} />
@@ -173,6 +173,7 @@ describe("Inspections UI at phone width", () => {
     expect(screen.getAllByRole("button", { name: /Attach photo/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: /Attach video/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Download all media/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Complete site inspection/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /ACCESS/i }));
   });
 });

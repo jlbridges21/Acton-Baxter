@@ -78,6 +78,8 @@ export {
   updateSiteInspectionMediaStatus,
   attachSiteInspectionPhoto,
   softDeleteSiteInspection,
+  setSiteInspectionStatus,
+  getSignedUrlsForInspectionItem,
 } from "./records-store";
 export {
   resetSiteInspectionMediaMemoryForTests,
@@ -100,6 +102,8 @@ export {
 export {
   createSiteInspectionSchema,
   upsertResponseSchema,
+  setInspectionStatusSchema,
+  itemSignedUrlsSchema,
   prepareMediaSchema,
   completeMediaSchema,
   mediaStatusSchema,

@@ -24,6 +24,14 @@ export const upsertResponseSchema = z.object({
     .optional(),
 });
 
+export const setInspectionStatusSchema = z.object({
+  status: z.enum(["pending", "complete"]),
+});
+
+export const itemSignedUrlsSchema = z.object({
+  snapshotItemId: z.string().uuid(),
+});
+
 export const prepareMediaSchema = z.object({
   snapshotItemId: z.string().uuid(),
   clientMediaId: z.string().uuid(),

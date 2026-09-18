@@ -11,9 +11,10 @@ import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { InspectionMediaGallery } from "@/components/inspections/inspection-media-gallery";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
-import { flushPendingResponses } from "@/lib/inspections/response-sync";
+import { flushPendingResponses, type ResponseSaveResult } from "@/lib/inspections/response-sync";
 import {
   countPendingForInspection,
   discardMediaUpload,
@@ -25,6 +26,7 @@ import {
   VIDEO_WARN_MESSAGE,
   type MediaQueueSnapshot,
 } from "@/lib/inspections/media-queue";
+import { listSnapshotItems } from "@/lib/inspections/snapshot";
 import type {
   SiteInspectionDetail,
   SiteInspectionMedia,
@@ -83,6 +85,16 @@ export function InspectionRunnerClient({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmIncomplete, setConfirmIncomplete] = useState<{ unchecked: number } | null>(null);
+  const [completeBusy, setCompleteBusy] = useState(false);
+  const [completeMessage, setCompleteMessage] = useState<string | null>(null);
+  const [completeError, setCompleteError] = useState<string | null>(null);
+  const [waitUploadsOpen, setWaitUploadsOpen] = useState(false);
+  const [gallery, setGallery] = useState<{
+    snapshotItemId: string;
+    itemTitle: string;
+    index: number;
+  } | null>(null);
   const localMediaRef = useRef(new Map<string, SiteInspectionMedia>());
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     const defaults = Object.fromEntries(
@@ -134,20 +146,21 @@ export function InspectionRunnerClient({
     [inspection.id],
   );
 
-  const flushPending = useCallback(async () => {
+  const flushPending = useCallback(async (): Promise<ResponseSaveResult> => {
     if (flushInFlight.current) {
       flushAgain.current = true;
-      return;
+      return "pending";
     }
     flushInFlight.current = true;
     flushAgain.current = false;
+    let result: ResponseSaveResult = "saved";
     try {
       if (!listPendingResponses(inspection.id).length) {
         setSaveState("saved");
-        return;
+        return "saved";
       }
       setSaveState("saving");
-      const result = await flushPendingResponses({
+      result = await flushPendingResponses({
         inspectionId: inspection.id,
         saveItem: async (body) => {
           const res = await fetch(`/api/inspections/${inspection.id}`, {
@@ -168,6 +181,7 @@ export function InspectionRunnerClient({
       if (result === "saved") setSaveState("saved");
       else if (result === "error") setSaveState("error");
       else setSaveState("pending");
+      return result;
     } finally {
       flushInFlight.current = false;
       if (flushAgain.current) {
@@ -282,13 +296,11 @@ export function InspectionRunnerClient({
       const others = prev.responses.filter((r) => r.snapshotItemId !== snapshotItemId);
       const responsesNext = [...others, nextResponse];
       const completed = responsesNext.filter((r) => r.isComplete).length;
-      const status =
-        prev.totalItemCount > 0 && completed >= prev.totalItemCount ? "complete" : "pending";
+      // Status is only changed via Complete / Reopen — never auto-derived from checkboxes.
       return {
         ...prev,
         responses: responsesNext,
         completedItemCount: completed,
-        status,
       };
     });
 
@@ -345,6 +357,162 @@ export function InspectionRunnerClient({
       pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
       failedMediaCount: Math.max(0, prev.failedMediaCount - 1),
     }));
+  }
+
+  function uncheckedItemCount(): number {
+    const items = listSnapshotItems(inspection.snapshot);
+    return items.filter((item) => !responses.get(item.id)?.isComplete).length;
+  }
+
+  async function waitForPendingUploads(
+    timeoutMs = 120_000,
+  ): Promise<"ready" | "failed" | "timeout"> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const counts = await countPendingForInspection(inspection.id);
+      if (counts.failed > 0) return "failed";
+      if (counts.pending === 0) return "ready";
+      await new Promise((r) => window.setTimeout(r, 750));
+    }
+    return "timeout";
+  }
+
+  async function patchStatus(status: "complete" | "pending"): Promise<SiteInspectionDetail> {
+    const res = await fetch(`/api/inspections/${inspection.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const json = (await res.json()) as {
+      inspection?: SiteInspectionDetail;
+      error?: { message?: string };
+    };
+    if (!res.ok || !json.inspection) {
+      throw new Error(json.error?.message ?? "Could not update inspection status");
+    }
+    return json.inspection;
+  }
+
+  async function applyCompleteStatus() {
+    const updated = await patchStatus("complete");
+    setInspection((prev) => ({
+      ...prev,
+      status: updated.status,
+      updatedAt: updated.updatedAt,
+    }));
+    setConfirmIncomplete(null);
+    setCompleteMessage(
+      "Site inspection marked complete. All checklist answers and ready media are saved.",
+    );
+  }
+
+  async function finalizeComplete() {
+    setCompleteBusy(true);
+    setCompleteError(null);
+    try {
+      await applyCompleteStatus();
+    } catch (e) {
+      setCompleteError(e instanceof Error ? e.message : "Could not complete inspection");
+    } finally {
+      setCompleteBusy(false);
+    }
+  }
+
+  async function beginCompleteFlow() {
+    setCompleteError(null);
+    setCompleteMessage(null);
+    setCompleteBusy(true);
+    let readyToComplete = false;
+    try {
+      if (flushTimer.current) window.clearTimeout(flushTimer.current);
+      for (let i = 0; i < 20; i++) {
+        const result = await flushPending();
+        if (!listPendingResponses(inspection.id).length && result === "saved") break;
+        if (result === "error") {
+          setCompleteError(
+            "Could not finish saving checklist changes. Fix the save error and try again.",
+          );
+          return;
+        }
+        await new Promise((r) => window.setTimeout(r, 150));
+      }
+      if (listPendingResponses(inspection.id).length) {
+        setCompleteError("Checklist changes are still syncing. Wait a moment and try again.");
+        return;
+      }
+
+      const counts = await countPendingForInspection(inspection.id);
+      if (counts.failed > 0) {
+        setCompleteError(
+          `${counts.failed} upload${counts.failed === 1 ? "" : "s"} failed. Retry or discard each failed upload before completing.`,
+        );
+        return;
+      }
+      if (counts.pending > 0) {
+        setWaitUploadsOpen(true);
+        return;
+      }
+
+      const unchecked = uncheckedItemCount();
+      if (unchecked > 0) {
+        setConfirmIncomplete({ unchecked });
+        return;
+      }
+      readyToComplete = true;
+    } finally {
+      setCompleteBusy(false);
+    }
+    if (readyToComplete) await finalizeComplete();
+  }
+
+  async function waitThenComplete() {
+    setWaitUploadsOpen(false);
+    setCompleteBusy(true);
+    setCompleteError(null);
+    let readyToComplete = false;
+    let unchecked = 0;
+    try {
+      const outcome = await waitForPendingUploads();
+      if (outcome === "failed") {
+        setCompleteError(
+          "An upload failed while waiting. Retry or discard failed uploads before completing.",
+        );
+        return;
+      }
+      if (outcome === "timeout") {
+        setCompleteError(
+          "Uploads are still pending after waiting. Stay on this page until they finish, then try again.",
+        );
+        return;
+      }
+      unchecked = uncheckedItemCount();
+      if (unchecked > 0) {
+        setConfirmIncomplete({ unchecked });
+        return;
+      }
+      readyToComplete = true;
+    } finally {
+      setCompleteBusy(false);
+    }
+    if (readyToComplete) await finalizeComplete();
+  }
+
+  async function reopenInspection() {
+    setCompleteBusy(true);
+    setCompleteError(null);
+    setCompleteMessage(null);
+    try {
+      const updated = await patchStatus("pending");
+      setInspection((prev) => ({
+        ...prev,
+        status: updated.status,
+        updatedAt: updated.updatedAt,
+      }));
+    } catch (e) {
+      setCompleteError(e instanceof Error ? e.message : "Could not reopen inspection");
+    } finally {
+      setCompleteBusy(false);
+    }
   }
 
   async function onExport(mode: "full" | "photos") {
@@ -417,6 +585,13 @@ export function InspectionRunnerClient({
   const failedQueueItems = queueSnap.items.filter(
     (i) => i.status === "failed" && i.inspectionId === inspection.id,
   );
+  const allItemsChecked =
+    inspection.totalItemCount > 0 && inspection.completedItemCount >= inspection.totalItemCount;
+  const galleryMedia = gallery
+    ? (mediaByItem.get(gallery.snapshotItemId) ?? []).filter(
+        (m) => m.localPreviewUrl || m.signedUrl || m.storagePath,
+      )
+    : [];
 
   return (
     <div className="space-y-4">
@@ -579,6 +754,9 @@ export function InspectionRunnerClient({
           onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
           onVideo={(file) => void onMediaSelected(item.id, file, "video")}
           onRetry={(clientMediaId) => void onRetry(clientMediaId)}
+          onOpenMedia={(index) =>
+            setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
+          }
         />
       ))}
 
@@ -620,6 +798,9 @@ export function InspectionRunnerClient({
                     onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
                     onVideo={(file) => void onMediaSelected(item.id, file, "video")}
                     onRetry={(clientMediaId) => void onRetry(clientMediaId)}
+                    onOpenMedia={(index) =>
+                      setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
+                    }
                   />
                 ))}
               </div>
@@ -627,6 +808,88 @@ export function InspectionRunnerClient({
           </section>
         );
       })}
+
+      <div className="space-y-3 rounded-xl border border-[var(--acton-border)] bg-white p-4 shadow-sm">
+        {completeError ? <p className="text-sm text-red-700">{completeError}</p> : null}
+        {inspection.status === "complete" ? (
+          <div className="space-y-2">
+            <p className="text-sm text-[var(--acton-muted)]">
+              This inspection is marked complete. You can still edit answers and media, or reopen it
+              to return it to Pending.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              className="min-h-11 w-full sm:w-auto"
+              disabled={completeBusy}
+              onClick={() => void reopenInspection()}
+            >
+              Reopen inspection
+            </Button>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant={allItemsChecked ? "accent" : "primary"}
+            className="min-h-12 w-full text-base"
+            disabled={completeBusy}
+            onClick={() => void beginCompleteFlow()}
+          >
+            {completeBusy ? "Working…" : "Complete site inspection"}
+          </Button>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={Boolean(confirmIncomplete)}
+        onClose={() => setConfirmIncomplete(null)}
+        title="Some items are not checked"
+        description={
+          confirmIncomplete
+            ? `${confirmIncomplete.unchecked} item${
+                confirmIncomplete.unchecked === 1 ? "" : "s"
+              } ${confirmIncomplete.unchecked === 1 ? "is" : "are"} not checked. Some items may not apply to this site — complete anyway?`
+            : null
+        }
+        confirmLabel="Complete anyway"
+        cancelLabel="Keep editing"
+        busy={completeBusy}
+        onConfirm={() => void finalizeComplete()}
+      />
+
+      <ConfirmDialog
+        open={waitUploadsOpen}
+        onClose={() => setWaitUploadsOpen(false)}
+        title="Uploads still pending"
+        description="Photos or videos are still uploading. Wait for them to finish before marking this inspection complete — otherwise media can be lost."
+        confirmLabel="Wait for uploads"
+        cancelLabel="Cancel"
+        busy={completeBusy}
+        onConfirm={() => void waitThenComplete()}
+      />
+
+      <ConfirmDialog
+        open={Boolean(completeMessage) && inspection.status === "complete"}
+        onClose={() => setCompleteMessage(null)}
+        title="Inspection complete"
+        description={completeMessage ?? "Site inspection marked complete."}
+        confirmLabel="Done"
+        cancelLabel="Close"
+        onConfirm={() => setCompleteMessage(null)}
+      />
+
+      {gallery ? (
+        <InspectionMediaGallery
+          key={`${gallery.snapshotItemId}:${gallery.index}`}
+          open
+          onClose={() => setGallery(null)}
+          inspectionId={inspection.id}
+          snapshotItemId={gallery.snapshotItemId}
+          itemTitle={gallery.itemTitle}
+          media={galleryMedia}
+          initialIndex={gallery.index}
+        />
+      ) : null}
     </div>
   );
 }
@@ -649,6 +912,7 @@ function ItemCard({
   onPhoto,
   onVideo,
   onRetry,
+  onOpenMedia,
 }: {
   item: SnapshotItem;
   response?: SiteInspectionResponse;
@@ -661,6 +925,7 @@ function ItemCard({
   onPhoto: (file: File) => void;
   onVideo: (file: File) => void;
   onRetry: (clientMediaId: string) => void;
+  onOpenMedia: (index: number) => void;
 }) {
   const complete = Boolean(response?.isComplete);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -753,7 +1018,7 @@ function ItemCard({
               </div>
               {media.length ? (
                 <div className="flex flex-wrap gap-2">
-                  {media.map((m) => {
+                  {media.map((m, mediaIndex) => {
                     const src = m.localPreviewUrl || m.signedUrl;
                     const label = mediaStatusLabel(m);
                     return (
@@ -764,9 +1029,15 @@ function ItemCard({
                         onClick={() => {
                           if (m.uploadStatus === "failed" && m.clientMediaId) {
                             onRetry(m.clientMediaId);
+                            return;
                           }
+                          onOpenMedia(mediaIndex);
                         }}
-                        aria-label={label ?? "Media"}
+                        aria-label={
+                          m.uploadStatus === "failed"
+                            ? (label ?? "Retry failed upload")
+                            : `View ${m.mediaType} ${mediaIndex + 1} of ${media.length}`
+                        }
                       >
                         {m.mediaType === "video" ? (
                           src ? (

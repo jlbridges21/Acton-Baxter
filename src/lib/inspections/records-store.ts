@@ -222,9 +222,14 @@ async function resolveProfileNamesBatch(
   return map;
 }
 
-function deriveStatus(total: number, completed: number): SiteInspectionStatus {
-  if (total > 0 && completed >= total) return "complete";
-  return "pending";
+function countMediaStatuses(media: MediaRow[]): { pending: number; failed: number } {
+  let pending = 0;
+  let failed = 0;
+  for (const m of media) {
+    if (m.upload_status === "pending" || m.upload_status === "uploading") pending += 1;
+    if (m.upload_status === "failed") failed += 1;
+  }
+  return { pending, failed };
 }
 
 const LIST_COLUMNS =
@@ -306,16 +311,6 @@ async function mapSummary(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
-}
-
-function countMediaStatuses(media: MediaRow[]): { pending: number; failed: number } {
-  let pending = 0;
-  let failed = 0;
-  for (const m of media) {
-    if (m.upload_status === "pending" || m.upload_status === "uploading") pending += 1;
-    if (m.upload_status === "failed") failed += 1;
-  }
-  return { pending, failed };
 }
 
 export async function createSiteInspection(
@@ -577,35 +572,136 @@ async function recountProgress(inspectionId: string): Promise<void> {
     const completed = Array.from(mem.responses.values()).filter(
       (r) => r.inspection_id === inspectionId && r.is_complete,
     ).length;
-    const status = deriveStatus(row.total_item_count, completed);
+    // Status is set only via explicit complete/reopen — never derived from checkboxes.
     mem.inspections.set(inspectionId, {
       ...row,
       completed_item_count: completed,
-      status,
       updated_at: nowIso(),
     });
     return;
   }
   const supabase = createServiceClient();
-  const { data: insp } = await supabase
-    .from("site_inspections")
-    .select("total_item_count")
-    .eq("id", inspectionId)
-    .maybeSingle();
   const { count } = await supabase
     .from("site_inspection_responses")
     .select("id", { count: "exact", head: true })
     .eq("inspection_id", inspectionId)
     .eq("is_complete", true);
   const completed = count ?? 0;
-  const total = (insp?.total_item_count as number) ?? 0;
   await supabase
     .from("site_inspections")
     .update({
       completed_item_count: completed,
-      status: deriveStatus(total, completed),
     })
     .eq("id", inspectionId);
+}
+
+/**
+ * Explicitly set inspection status (complete / reopen to pending).
+ * Completing is refused while media uploads are pending or failed.
+ */
+export async function setSiteInspectionStatus(input: {
+  inspectionId: string;
+  status: SiteInspectionStatus;
+  actorId: string;
+}): Promise<SiteInspectionDetail> {
+  void input.actorId;
+  await loadInspectionRow(input.inspectionId);
+
+  if (input.status === "complete") {
+    let media: MediaRow[] = [];
+    if (shouldUseMemory()) {
+      media = Array.from(getMemory().media.values()).filter(
+        (m) => m.inspection_id === input.inspectionId,
+      );
+    } else {
+      const supabase = createServiceClient();
+      const { data, error } = await supabase
+        .from("site_inspection_media")
+        .select("*")
+        .eq("inspection_id", input.inspectionId);
+      if (error) throw error;
+      media = (data ?? []) as MediaRow[];
+    }
+    const { pending, failed } = countMediaStatuses(media);
+    if (failed > 0) {
+      throw new ValidationError(
+        `${failed} upload${failed === 1 ? "" : "s"} failed. Retry or discard each failed upload before completing.`,
+      );
+    }
+    if (pending > 0) {
+      throw new ValidationError(
+        `${pending} upload${pending === 1 ? "" : "s"} still pending. Wait for uploads to finish before completing.`,
+      );
+    }
+  }
+
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    const row = mem.inspections.get(input.inspectionId);
+    if (!row) throw new NotFoundError("Inspection not found");
+    mem.inspections.set(input.inspectionId, {
+      ...row,
+      status: input.status,
+      updated_at: nowIso(),
+    });
+  } else {
+    const supabase = createServiceClient();
+    const { error } = await supabase
+      .from("site_inspections")
+      .update({ status: input.status })
+      .eq("id", input.inspectionId);
+    if (error) throw error;
+  }
+
+  return getSiteInspection(input.inspectionId);
+}
+
+/**
+ * Batch-sign URLs for media on one checklist item (gallery refresh).
+ */
+export async function getSignedUrlsForInspectionItem(input: {
+  inspectionId: string;
+  snapshotItemId: string;
+  expiresInSeconds?: number;
+}): Promise<{
+  urls: Record<string, string>;
+  expiresAt: string;
+  expiresInSeconds: number;
+}> {
+  const row = await loadInspectionRow(input.inspectionId);
+  assertItemInSnapshot(row.snapshot_json, input.snapshotItemId);
+
+  let media: MediaRow[] = [];
+  if (shouldUseMemory()) {
+    media = Array.from(getMemory().media.values()).filter(
+      (m) => m.inspection_id === input.inspectionId && m.snapshot_item_id === input.snapshotItemId,
+    );
+  } else {
+    const supabase = createServiceClient();
+    const { data, error } = await supabase
+      .from("site_inspection_media")
+      .select("*")
+      .eq("inspection_id", input.inspectionId)
+      .eq("snapshot_item_id", input.snapshotItemId);
+    if (error) throw error;
+    media = (data ?? []) as MediaRow[];
+  }
+
+  const expiresInSeconds = input.expiresInSeconds ?? 600;
+  const paths = media.map((m) => m.storage_path).filter(Boolean) as string[];
+  const urlMap = await createSiteInspectionMediaSignedUrlMap(paths, expiresInSeconds);
+  const urls: Record<string, string> = {};
+  for (const m of media) {
+    if (m.storage_path && urlMap.has(m.storage_path)) {
+      urls[m.id] = urlMap.get(m.storage_path)!;
+      if (m.client_media_id) urls[m.client_media_id] = urlMap.get(m.storage_path)!;
+    }
+  }
+  return {
+    urls,
+    expiresInSeconds,
+    expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+  };
 }
 
 function assertItemInSnapshot(snapshot: InspectionSnapshot, snapshotItemId: string) {

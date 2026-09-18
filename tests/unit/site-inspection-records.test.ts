@@ -20,6 +20,7 @@ import {
   resetSiteInspectionMemoryForTests,
   setSiteInspectionProfileNameForTests,
   softDeleteSiteInspection,
+  setSiteInspectionStatus,
   updateItem,
   updateSection,
   uploadSiteInspectionPhoto,
@@ -252,7 +253,7 @@ describe("responses, status, cover photo", () => {
     expect(response.answers[multi!.id]?.value).toEqual(["Grass", "Concrete"]);
     expect(response.answers[text!.id]?.value).toBe("OK");
 
-    // Cover still incomplete → pending
+    // Cover still incomplete → still pending until explicit complete
     expect(reloaded.status).toBe("pending");
     expect(reloaded.completedItemCount).toBe(1);
 
@@ -262,9 +263,23 @@ describe("responses, status, cover photo", () => {
       isComplete: true,
       actorId: "user-1",
     });
-    const complete = await getSiteInspection(inspection.id);
+    const allChecked = await getSiteInspection(inspection.id);
+    expect(allChecked.status).toBe("pending");
+    expect(allChecked.completedItemCount).toBe(2);
+
+    const complete = await setSiteInspectionStatus({
+      inspectionId: inspection.id,
+      status: "complete",
+      actorId: "user-1",
+    });
     expect(complete.status).toBe("complete");
-    expect(complete.completedItemCount).toBe(2);
+
+    const reopened = await setSiteInspectionStatus({
+      inspectionId: inspection.id,
+      status: "pending",
+      actorId: "user-1",
+    });
+    expect(reopened.status).toBe("pending");
 
     await upsertSiteInspectionResponse({
       inspectionId: inspection.id,
@@ -272,8 +287,9 @@ describe("responses, status, cover photo", () => {
       isComplete: false,
       actorId: "user-1",
     });
-    const pendingAgain = await getSiteInspection(inspection.id);
-    expect(pendingAgain.status).toBe("pending");
+    const unchecked = await getSiteInspection(inspection.id);
+    expect(unchecked.status).toBe("pending");
+    expect(unchecked.completedItemCount).toBe(1);
   });
 
   it("sets cover media from the first photo on the cover-photo item", async () => {

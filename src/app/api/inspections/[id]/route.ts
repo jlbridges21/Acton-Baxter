@@ -1,7 +1,10 @@
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
+import { ValidationError } from "@/lib/errors";
 import {
   getSiteInspection,
+  setInspectionStatusSchema,
+  setSiteInspectionStatus,
   softDeleteSiteInspection,
   upsertResponseSchema,
   upsertSiteInspectionResponse,
@@ -24,7 +27,23 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     const user = await requireActiveUser();
     const { id } = await params;
-    const parsed = upsertResponseSchema.parse(await request.json());
+    const body = (await request.json()) as Record<string, unknown>;
+
+    if ("status" in body && !("snapshotItemId" in body)) {
+      const parsed = setInspectionStatusSchema.parse(body);
+      const inspection = await setSiteInspectionStatus({
+        inspectionId: id,
+        status: parsed.status,
+        actorId: user.id,
+      });
+      return jsonOk({ inspection });
+    }
+
+    if (!("snapshotItemId" in body)) {
+      throw new ValidationError("Provide snapshotItemId (response patch) or status");
+    }
+
+    const parsed = upsertResponseSchema.parse(body);
     const inspection = await upsertSiteInspectionResponse({
       inspectionId: id,
       snapshotItemId: parsed.snapshotItemId,
