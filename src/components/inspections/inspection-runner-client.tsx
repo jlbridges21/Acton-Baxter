@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Trash2, RotateCcw } from "lucide-react";
+import { Trash2, RotateCcw, Download, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
@@ -918,6 +918,7 @@ export function InspectionRunnerClient({
             setConfirmMediaDelete(m);
           }}
           onRequestRotateMedia={(m) => void rotateMedia(m)}
+          inspectionId={inspection.id}
           onOpenMedia={(index) =>
             setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
           }
@@ -967,6 +968,7 @@ export function InspectionRunnerClient({
                       setConfirmMediaDelete(m);
                     }}
                     onRequestRotateMedia={(m) => void rotateMedia(m)}
+                    inspectionId={inspection.id}
                     onOpenMedia={(index) =>
                       setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
                     }
@@ -1089,6 +1091,7 @@ function ItemCard({
   onRequestDeleteMedia,
   onRequestRotateMedia,
   onOpenMedia,
+  inspectionId,
 }: {
   item: SnapshotItem;
   response?: SiteInspectionResponse;
@@ -1104,6 +1107,7 @@ function ItemCard({
   onRequestDeleteMedia: (media: SiteInspectionMedia) => void;
   onRequestRotateMedia: (media: SiteInspectionMedia) => void;
   onOpenMedia: (index: number) => void;
+  inspectionId: string;
 }) {
   const complete = Boolean(response?.isComplete);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -1193,17 +1197,35 @@ function ItemCard({
                 >
                   Attach video
                 </Button>
+                {media.some((m) => m.uploadStatus === "ready") ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="min-h-11"
+                    onClick={() => {
+                      const a = document.createElement("a");
+                      a.href = `/api/inspections/${inspectionId}/export?mode=item&snapshotItemId=${encodeURIComponent(item.id)}`;
+                      a.rel = "noopener";
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                    }}
+                  >
+                    Download item media
+                  </Button>
+                ) : null}
               </div>
               {media.length ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-3">
                   {media.map((m, mediaIndex) => {
+                    const poster = m.localPosterUrl || m.posterSignedUrl;
                     const src = m.localPreviewUrl || m.signedUrl;
                     const label = mediaStatusLabel(m);
                     return (
                       <div key={m.id} className="relative">
                         <button
                           type="button"
-                          className="relative h-16 w-16 overflow-hidden rounded border border-[var(--acton-border)] bg-[var(--acton-gray-50)]"
+                          className="relative h-28 w-28 overflow-hidden rounded-md border border-[var(--acton-border)] bg-[var(--acton-gray-50)] sm:h-32 sm:w-32"
                           onClick={() => {
                             if (m.uploadStatus === "failed" && m.clientMediaId) {
                               onRetry(m.clientMediaId);
@@ -1218,10 +1240,19 @@ function ItemCard({
                           }
                         >
                           {m.mediaType === "video" ? (
-                            src ? (
-                              <video src={src} className="h-full w-full object-cover" muted />
+                            poster ? (
+                              <>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={poster} alt="" className="h-full w-full object-cover" />
+                                <span className="absolute inset-0 flex items-center justify-center bg-black/25">
+                                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-black/70 text-white">
+                                    <Play className="h-4 w-4 fill-current" />
+                                  </span>
+                                </span>
+                              </>
                             ) : (
-                              <span className="flex h-full items-center justify-center text-[10px] text-[var(--acton-muted)]">
+                              <span className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--acton-muted)]">
+                                <Play className="h-5 w-5" />
                                 Video
                               </span>
                             )
@@ -1251,6 +1282,25 @@ function ItemCard({
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
+                        {m.uploadStatus === "ready" ? (
+                          <button
+                            type="button"
+                            className="absolute -top-1.5 -left-1.5 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--acton-border)] bg-white text-[var(--acton-navy)] shadow-sm"
+                            aria-label={`Download ${m.mediaType}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const a = document.createElement("a");
+                              a.href = `/api/inspections/${inspectionId}/media/${m.id}/file?download=1`;
+                              a.rel = "noopener";
+                              document.body.appendChild(a);
+                              a.click();
+                              a.remove();
+                            }}
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
                         {m.mediaType === "photo" && m.uploadStatus === "ready" ? (
                           <button
                             type="button"

@@ -23,8 +23,10 @@ import {
   createSiteInspectionMediaSignedUrlMap,
   deleteSiteInspectionMediaObject,
   downloadSiteInspectionMediaBytes,
+  ensureChromePlayableVideoObject,
   putMemoryMediaBytes,
 } from "./media-storage";
+import { posterStoragePathForVideo } from "./video-remux";
 import {
   type CreateSiteInspectionInput,
   SITE_INSPECTION_MEDIA_BUCKET,
@@ -73,6 +75,7 @@ type MediaRow = {
   snapshot_item_id: string;
   client_media_id: string | null;
   storage_path: string | null;
+  poster_storage_path: string | null;
   media_type: "photo" | "video";
   sort_order: number;
   upload_status: "pending" | "uploading" | "ready" | "failed";
@@ -158,7 +161,11 @@ function mapResponse(row: ResponseRow): SiteInspectionResponse {
   };
 }
 
-function mapMedia(row: MediaRow, signedUrl?: string | null): SiteInspectionMedia {
+function mapMedia(
+  row: MediaRow,
+  signedUrl?: string | null,
+  posterSignedUrl?: string | null,
+): SiteInspectionMedia {
   return {
     id: row.id,
     inspectionId: row.inspection_id,
@@ -175,7 +182,16 @@ function mapMedia(row: MediaRow, signedUrl?: string | null): SiteInspectionMedia
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     signedUrl: signedUrl ?? null,
+    posterSignedUrl: posterSignedUrl ?? null,
   };
+}
+
+function resolvedPosterPath(row: MediaRow): string | null {
+  if (row.poster_storage_path) return row.poster_storage_path;
+  if (row.media_type === "video" && row.storage_path) {
+    return posterStoragePathForVideo(row.storage_path);
+  }
+  return null;
 }
 
 async function resolveProfileName(userId: string | null): Promise<string | null> {
@@ -545,7 +561,12 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     media = (mediaRows ?? []) as MediaRow[];
   }
 
-  const paths = media.map((m) => m.storage_path).filter(Boolean) as string[];
+  const paths = media.flatMap((m) => {
+    const list = m.storage_path ? [m.storage_path] : [];
+    const poster = resolvedPosterPath(m);
+    if (poster) list.push(poster);
+    return list;
+  });
   const urlMap = await createSiteInspectionMediaSignedUrlMap(paths, 600);
   let coverSignedUrl: string | null = null;
   if (row.cover_media_id) {
@@ -563,7 +584,14 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     ...summary,
     snapshot: row.snapshot_json,
     responses: responses.map(mapResponse),
-    media: media.map((m) => mapMedia(m, m.storage_path ? urlMap.get(m.storage_path) : null)),
+    media: media.map((m) => {
+      const poster = resolvedPosterPath(m);
+      return mapMedia(
+        m,
+        m.storage_path ? urlMap.get(m.storage_path) : null,
+        poster ? (urlMap.get(poster) ?? null) : null,
+      );
+    }),
   };
 }
 
@@ -691,13 +719,23 @@ export async function getSignedUrlsForInspectionItem(input: {
   }
 
   const expiresInSeconds = input.expiresInSeconds ?? 600;
-  const paths = media.map((m) => m.storage_path).filter(Boolean) as string[];
+  const paths = media.flatMap((m) => {
+    const list = m.storage_path ? [m.storage_path] : [];
+    const poster = resolvedPosterPath(m);
+    if (poster) list.push(poster);
+    return list;
+  });
   const urlMap = await createSiteInspectionMediaSignedUrlMap(paths, expiresInSeconds);
   const urls: Record<string, string> = {};
   for (const m of media) {
     if (m.storage_path && urlMap.has(m.storage_path)) {
       urls[m.id] = urlMap.get(m.storage_path)!;
       if (m.client_media_id) urls[m.client_media_id] = urlMap.get(m.storage_path)!;
+    }
+    const poster = resolvedPosterPath(m);
+    if (poster && urlMap.has(poster)) {
+      urls[`poster:${m.id}`] = urlMap.get(poster)!;
+      if (m.client_media_id) urls[`poster:${m.client_media_id}`] = urlMap.get(poster)!;
     }
   }
   return {
@@ -794,6 +832,7 @@ export async function upsertSiteInspectionResponse(
  * optimistic UI stays device-local until bytes land and complete() runs.
  * Photos and videos both use signed upload URLs (TUS deferred: client Authorization
  * still produces Invalid Compact JWS in the field; signed URLs carry auth in the URL).
+ * Videos also receive optional poster upload credentials (on-device first frame).
  */
 export async function prepareSiteInspectionMedia(input: {
   inspectionId: string;
@@ -803,10 +842,22 @@ export async function prepareSiteInspectionMedia(input: {
   mimeType: string;
   byteSize: number;
   actorId: string;
+  /** When true (videos), also mint a signed upload for the companion poster JPEG. */
+  includePosterUpload?: boolean;
 }): Promise<{
   upload:
-    | { mode: "signed"; path: string; token: string; signedUrl: string }
-    | { mode: "memory"; path: string };
+    | {
+        mode: "signed";
+        path: string;
+        token: string;
+        signedUrl: string;
+        poster?: { path: string; token: string; signedUrl: string };
+      }
+    | {
+        mode: "memory";
+        path: string;
+        poster?: { path: string };
+      };
 }> {
   const inspection = await loadInspectionRow(input.inspectionId);
   const item = assertItemInSnapshot(inspection.snapshot_json, input.snapshotItemId);
@@ -824,18 +875,36 @@ export async function prepareSiteInspectionMedia(input: {
           ? "webp"
           : "jpg";
   const storagePath = `${input.actorId}/${input.inspectionId}/${input.clientMediaId}.${ext}`;
+  const wantPoster = input.mediaType === "video" && input.includePosterUpload !== false;
+  const posterPath = wantPoster ? posterStoragePathForVideo(storagePath) : null;
 
   if (shouldUseMemory()) {
-    return { upload: { mode: "memory", path: storagePath } };
+    return {
+      upload: {
+        mode: "memory",
+        path: storagePath,
+        ...(posterPath ? { poster: { path: posterPath } } : {}),
+      },
+    };
   }
 
   const signed = await createSignedUploadForPath(storagePath);
+  let poster: { path: string; token: string; signedUrl: string } | undefined;
+  if (posterPath) {
+    const posterSigned = await createSignedUploadForPath(posterPath);
+    poster = {
+      path: posterPath,
+      token: posterSigned.token,
+      signedUrl: posterSigned.signedUrl,
+    };
+  }
   return {
     upload: {
       mode: "signed",
       path: storagePath,
       token: signed.token,
       signedUrl: signed.signedUrl,
+      ...(poster ? { poster } : {}),
     },
   };
 }
@@ -849,11 +918,30 @@ export async function completeSiteInspectionMedia(input: {
   storagePath: string;
   byteSize: number;
   actorId: string;
+  posterStoragePath?: string | null;
 }): Promise<SiteInspectionDetail> {
   const inspection = await loadInspectionRow(input.inspectionId);
   assertItemInSnapshot(inspection.snapshot_json, input.snapshotItemId);
   if (!input.clientMediaId.trim()) throw new ValidationError("clientMediaId is required");
   if (!input.storagePath.trim()) throw new ValidationError("storagePath is required");
+
+  let storagePath = input.storagePath;
+  let mimeType = input.mimeType;
+  let byteSize = input.byteSize;
+  const posterStoragePath =
+    input.posterStoragePath?.trim() ||
+    (input.mediaType === "video" ? posterStoragePathForVideo(storagePath) : null);
+
+  // Remux QuickTime → MP4 so Chrome (and other non-Safari browsers) can play H.264.
+  if (input.mediaType === "video" && !shouldUseMemory()) {
+    const playable = await ensureChromePlayableVideoObject({
+      storagePath,
+      mimeType,
+    });
+    storagePath = playable.storagePath;
+    mimeType = playable.mimeType;
+    byteSize = playable.byteSize || byteSize;
+  }
 
   const now = nowIso();
   let mediaId: string = randomUUID();
@@ -872,10 +960,11 @@ export async function completeSiteInspectionMedia(input: {
       mem.media.set(existing.id, {
         ...existing,
         snapshot_item_id: snapshotItemId,
-        storage_path: input.storagePath,
+        storage_path: storagePath,
+        poster_storage_path: posterStoragePath,
         media_type: mediaType,
-        mime_type: input.mimeType,
-        byte_size: input.byteSize,
+        mime_type: mimeType,
+        byte_size: byteSize,
         upload_status: "ready",
         upload_progress: 1,
         updated_at: now,
@@ -890,13 +979,14 @@ export async function completeSiteInspectionMedia(input: {
         inspection_id: input.inspectionId,
         snapshot_item_id: snapshotItemId,
         client_media_id: input.clientMediaId,
-        storage_path: input.storagePath,
+        storage_path: storagePath,
+        poster_storage_path: posterStoragePath,
         media_type: mediaType,
         sort_order: sortOrder,
         upload_status: "ready",
         upload_progress: 1,
-        mime_type: input.mimeType,
-        byte_size: input.byteSize,
+        mime_type: mimeType,
+        byte_size: byteSize,
         created_by: input.actorId,
         created_at: now,
         updated_at: now,
@@ -910,21 +1000,36 @@ export async function completeSiteInspectionMedia(input: {
       .eq("inspection_id", input.inspectionId)
       .eq("client_media_id", input.clientMediaId)
       .maybeSingle();
+
+    const baseFields: Record<string, unknown> = {
+      snapshot_item_id: snapshotItemId,
+      storage_path: storagePath,
+      media_type: mediaType,
+      mime_type: mimeType,
+      byte_size: byteSize,
+      upload_status: "ready",
+      upload_progress: 1,
+    };
+    // poster_storage_path is optional until migration 050 is applied — try, ignore unknown column.
+    if (posterStoragePath) baseFields.poster_storage_path = posterStoragePath;
+
     if (existing) {
       mediaId = existing.id as string;
       sortOrder = existing.sort_order as number;
-      await supabase
+      const { error } = await supabase
         .from("site_inspection_media")
-        .update({
-          snapshot_item_id: snapshotItemId,
-          storage_path: input.storagePath,
-          media_type: mediaType,
-          mime_type: input.mimeType,
-          byte_size: input.byteSize,
-          upload_status: "ready",
-          upload_progress: 1,
-        })
+        .update(baseFields)
         .eq("id", mediaId);
+      if (error && /poster_storage_path/i.test(error.message)) {
+        delete baseFields.poster_storage_path;
+        const retry = await supabase
+          .from("site_inspection_media")
+          .update(baseFields)
+          .eq("id", mediaId);
+        if (retry.error) throw retry.error;
+      } else if (error) {
+        throw error;
+      }
     } else {
       const { count } = await supabase
         .from("site_inspection_media")
@@ -932,21 +1037,22 @@ export async function completeSiteInspectionMedia(input: {
         .eq("inspection_id", input.inspectionId)
         .eq("snapshot_item_id", snapshotItemId);
       sortOrder = count ?? 0;
-      const { error } = await supabase.from("site_inspection_media").insert({
+      const insertRow: Record<string, unknown> = {
         id: mediaId,
         inspection_id: input.inspectionId,
-        snapshot_item_id: snapshotItemId,
         client_media_id: input.clientMediaId,
-        storage_path: input.storagePath,
-        media_type: mediaType,
         sort_order: sortOrder,
-        upload_status: "ready",
-        upload_progress: 1,
-        mime_type: input.mimeType,
-        byte_size: input.byteSize,
         created_by: input.actorId,
-      });
-      if (error) throw error;
+        ...baseFields,
+      };
+      const { error } = await supabase.from("site_inspection_media").insert(insertRow);
+      if (error && /poster_storage_path/i.test(error.message)) {
+        delete insertRow.poster_storage_path;
+        const retry = await supabase.from("site_inspection_media").insert(insertRow);
+        if (retry.error) throw retry.error;
+      } else if (error) {
+        throw error;
+      }
     }
   }
 
@@ -1187,6 +1293,14 @@ export async function deleteSiteInspectionMedia(input: {
 
   if (storagePath) {
     await deleteSiteInspectionMediaObject(storagePath);
+  }
+  const posterPath =
+    row.poster_storage_path ||
+    (row.media_type === "video" && row.storage_path
+      ? posterStoragePathForVideo(row.storage_path)
+      : null);
+  if (posterPath) {
+    await deleteSiteInspectionMediaObject(posterPath);
   }
 
   return getSiteInspection(input.inspectionId);

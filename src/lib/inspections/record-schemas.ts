@@ -50,6 +50,8 @@ export const completeMediaSchema = z.object({
   mimeType: z.string().trim().min(1).max(120),
   storagePath: z.string().trim().min(1).max(500),
   byteSize: mediaByteSizeSchema,
+  /** Optional on-device poster path already uploaded beside the video. */
+  posterStoragePath: z.string().trim().min(1).max(500).optional(),
 });
 
 export const mediaStatusSchema = z.object({

@@ -22,6 +22,14 @@ export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
 
+function assertItemExists(
+  inspection: Awaited<ReturnType<typeof getSiteInspection>>,
+  snapshotItemId: string,
+) {
+  const found = listSnapshotItems(inspection.snapshot).some((i) => i.id === snapshotItemId);
+  if (!found) throw new ValidationError("Checklist item not found on this inspection");
+}
+
 function extFor(mediaType: "photo" | "video", mimeType: string | null, path: string | null) {
   if (path?.includes(".")) {
     const fromPath = path.split(".").pop()?.toLowerCase();
@@ -41,8 +49,9 @@ export async function GET(request: Request, { params }: Params) {
     await requireActiveUser();
     const { id } = await params;
     const url = new URL(request.url);
-    const mode = (url.searchParams.get("mode") ?? "full") as "full" | "photos" | "section";
+    const mode = (url.searchParams.get("mode") ?? "full") as "full" | "photos" | "section" | "item";
     const sectionId = url.searchParams.get("sectionId");
+    const snapshotItemId = url.searchParams.get("snapshotItemId");
 
     const inspection = await getSiteInspection(id);
     const items = listSnapshotItems(inspection.snapshot);
@@ -68,6 +77,12 @@ export async function GET(request: Request, { params }: Params) {
     } else if (mode === "section") {
       if (!sectionId) throw new ValidationError("sectionId is required for section export");
       media = media.filter((m) => itemMeta.get(m.snapshotItemId)?.sectionId === sectionId);
+    } else if (mode === "item") {
+      if (!snapshotItemId) {
+        throw new ValidationError("snapshotItemId is required for item export");
+      }
+      assertItemExists(inspection, snapshotItemId);
+      media = media.filter((m) => m.snapshotItemId === snapshotItemId);
     }
 
     const totalBytes = media.reduce((sum, m) => sum + (m.byteSize ?? 0), 0);
@@ -142,10 +157,15 @@ export async function GET(request: Request, { params }: Params) {
 
     const webStream = Readable.toWeb(passthrough) as unknown as ReadableStream;
     const safeName = inspection.projectName.replace(/[^\w.-]+/g, "_").slice(0, 40) || "inspection";
+    const itemTitle =
+      mode === "item" && snapshotItemId
+        ? (itemMeta.get(snapshotItemId)?.title ?? "item").replace(/[^\w.-]+/g, "_").slice(0, 40)
+        : null;
+    const zipName = itemTitle ? `${safeName}-${itemTitle}-media.zip` : `${safeName}-media.zip`;
     return new Response(webStream, {
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${safeName}-media.zip"`,
+        "Content-Disposition": `attachment; filename="${zipName}"`,
         "Cache-Control": "no-store",
       },
     });

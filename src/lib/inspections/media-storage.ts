@@ -206,6 +206,93 @@ export async function createSiteInspectionMediaSignedUrlMap(
   return map;
 }
 
+/** Upload bytes with an explicit Content-Type (service role). */
+export async function uploadSiteInspectionMediaBytes(input: {
+  storagePath: string;
+  bytes: Buffer;
+  mimeType: string;
+}): Promise<void> {
+  if (shouldUseMemory()) {
+    putMemoryMediaBytes({
+      storagePath: input.storagePath,
+      bytes: input.bytes,
+      mimeType: input.mimeType,
+      uploadedBy: "system",
+    });
+    return;
+  }
+
+  const supabase = createServiceClient();
+  const { error } = await supabase.storage
+    .from(SITE_INSPECTION_MEDIA_BUCKET)
+    .upload(input.storagePath, input.bytes, {
+      contentType: input.mimeType,
+      upsert: true,
+    });
+  if (error) {
+    throw new ValidationError(`Could not store inspection media (${error.message})`);
+  }
+}
+
+/**
+ * Remux classic QuickTime (`qt  ` brand) to MP4 so Chrome can play H.264 field video.
+ * No-op when the object is already an MP4-friendly container.
+ */
+export async function ensureChromePlayableVideoObject(input: {
+  storagePath: string;
+  mimeType: string;
+}): Promise<{ storagePath: string; mimeType: string; byteSize: number }> {
+  const { looksLikeQuickTimeContainer, remuxQuickTimeToMp4 } = await import("./video-remux");
+  if (!looksLikeQuickTimeContainer(input)) {
+    const existing = await downloadSiteInspectionMediaBytes(input.storagePath);
+    return {
+      storagePath: input.storagePath,
+      mimeType: input.mimeType || existing?.mimeType || "video/mp4",
+      byteSize: existing?.bytes.byteLength ?? 0,
+    };
+  }
+
+  const downloaded = await downloadSiteInspectionMediaBytes(input.storagePath);
+  if (!downloaded) {
+    throw new ValidationError("Uploaded video is missing from storage");
+  }
+
+  if (shouldUseMemory()) {
+    // Tests/mock: keep original bytes; path stays .mov.
+    return {
+      storagePath: input.storagePath,
+      mimeType: input.mimeType,
+      byteSize: downloaded.bytes.byteLength,
+    };
+  }
+
+  let remuxed: Buffer;
+  try {
+    remuxed = await remuxQuickTimeToMp4(downloaded.bytes);
+  } catch (error) {
+    console.warn("[site-inspection-media] QuickTime remux failed — keeping original", {
+      storagePath: input.storagePath,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      storagePath: input.storagePath,
+      mimeType: input.mimeType || downloaded.mimeType || "video/quicktime",
+      byteSize: downloaded.bytes.byteLength,
+    };
+  }
+
+  const mp4Path = input.storagePath.replace(/\.mov$/i, ".mp4");
+  await uploadSiteInspectionMediaBytes({
+    storagePath: mp4Path,
+    bytes: remuxed,
+    mimeType: "video/mp4",
+  });
+  if (mp4Path !== input.storagePath) {
+    await deleteSiteInspectionMediaObject(input.storagePath);
+  }
+  return { storagePath: mp4Path, mimeType: "video/mp4", byteSize: remuxed.byteLength };
+}
+
 /** Remove a storage object (best-effort). Missing objects are not an error. */
 export async function deleteSiteInspectionMediaObject(storagePath: string): Promise<void> {
   const path = storagePath.trim();

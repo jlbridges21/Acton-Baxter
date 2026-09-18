@@ -93,7 +93,15 @@ export {
   createSiteInspectionMediaSignedUrl,
   createSiteInspectionMediaSignedUrlMap,
   deleteSiteInspectionMediaObject,
+  ensureChromePlayableVideoObject,
+  uploadSiteInspectionMediaBytes,
 } from "./media-storage";
+export {
+  looksLikeQuickTimeContainer,
+  posterStoragePathForVideo,
+  remuxQuickTimeToMp4,
+} from "./video-remux";
+export { extractVideoPosterFrame } from "./video-poster";
 export {
   VIDEO_MAX_BYTES,
   VIDEO_MAX_DURATION_SECONDS,

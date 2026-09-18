@@ -6,7 +6,8 @@
 import { createClient } from "@/lib/supabase/client";
 import { getPublicEnv } from "@/lib/env.public";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
-import { MEDIA_UPLOAD_CONCURRENCY, VIDEO_WARN_MESSAGE, redactApiKeyForLog } from "./media-limits";
+import { MEDIA_UPLOAD_CONCURRENCY, redactApiKeyForLog } from "./media-limits";
+import { extractVideoPosterFrame } from "./video-poster";
 import type { SiteInspectionDetail, SiteInspectionMedia } from "./record-types";
 
 const DB_NAME = "baxter-site-inspection-uploads";
@@ -26,12 +27,16 @@ export type MediaQueueItem = {
   /** Durable copy — IndexedDB Blob handles can go stale on iOS (“Load failed”). */
   bytes: ArrayBuffer;
   blob: Blob;
+  /** Optional on-device first-frame JPEG for videos. */
+  posterBytes?: ArrayBuffer | null;
+  posterMimeType?: string | null;
   status: QueueItemStatus;
   attempts: number;
   nextAttemptAt: number;
   progress: number;
   lastError: string | null;
   storagePath: string | null;
+  posterStoragePath?: string | null;
   createdAt: number;
 };
 
@@ -52,8 +57,14 @@ export type MediaQueueSnapshot = {
 
 type PrepareResponse = {
   upload:
-    | { mode: "signed"; path: string; token: string; signedUrl: string }
-    | { mode: "memory"; path: string };
+    | {
+        mode: "signed";
+        path: string;
+        token: string;
+        signedUrl: string;
+        poster?: { path: string; token: string; signedUrl: string };
+      }
+    | { mode: "memory"; path: string; poster?: { path: string } };
 };
 
 type Listener = (snapshot: MediaQueueSnapshot) => void;
@@ -535,8 +546,31 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
           })();
         },
       );
+      if (item.posterBytes && upload.poster) {
+        const posterBlob = new Blob([item.posterBytes], {
+          type: item.posterMimeType || "image/jpeg",
+        });
+        await uploadSigned(
+          upload.poster.path,
+          upload.poster.token,
+          upload.poster.signedUrl,
+          posterBlob,
+          item.posterMimeType || "image/jpeg",
+        );
+      }
     } else {
       await uploadMemory(item.inspectionId, upload.path, uploadBlob, item.mimeType);
+      if (item.posterBytes && upload.poster) {
+        const posterBlob = new Blob([item.posterBytes], {
+          type: item.posterMimeType || "image/jpeg",
+        });
+        await uploadMemory(
+          item.inspectionId,
+          upload.poster.path,
+          posterBlob,
+          item.posterMimeType || "image/jpeg",
+        );
+      }
     }
 
     activeAbortByClientId.delete(clientMediaId);
@@ -546,12 +580,16 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       return null;
     }
 
+    const posterPath =
+      upload.mode === "signed" ? (upload.poster?.path ?? null) : (upload.poster?.path ?? null);
+
     // Persist "bytes landed" before complete so a failed attach retries complete only.
     bytesLandedPath = upload.path;
     await putItem({
       ...item,
       status: "finalizing",
       storagePath: upload.path,
+      posterStoragePath: posterPath,
       progress: 1,
       lastError: null,
     });
@@ -561,6 +599,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       ...item,
       status: "finalizing",
       storagePath: upload.path,
+      posterStoragePath: posterPath,
       progress: 1,
     });
   } catch (error) {
@@ -616,6 +655,7 @@ async function finalizeMediaUpload(item: MediaQueueItem): Promise<SiteInspection
       mimeType: item.mimeType,
       storagePath: item.storagePath,
       byteSize: item.byteSize,
+      ...(item.posterStoragePath ? { posterStoragePath: item.posterStoragePath } : {}),
     }),
   });
   const completeJson = (await completeRes.json()) as {
@@ -805,6 +845,23 @@ export async function enqueueInspectionMedia(input: {
     }
   }
 
+  let posterBytes: ArrayBuffer | null = null;
+  let posterMimeType: string | null = null;
+  let localPosterUrl: string | null = null;
+  if (input.mediaType === "video") {
+    try {
+      const poster = await extractVideoPosterFrame(input.file);
+      if (poster) {
+        posterBytes = await poster.arrayBuffer();
+        posterMimeType = "image/jpeg";
+        localPosterUrl = URL.createObjectURL(new Blob([posterBytes], { type: "image/jpeg" }));
+      }
+    } catch {
+      // Poster is best-effort — never block the video upload.
+      posterBytes = null;
+    }
+  }
+
   // Copy into ArrayBuffer immediately so queued items don't depend on a live File
   // (iOS can invalidate input Files; Safari IDB Blob handles can throw "Load failed").
   const durable = await materializeDurableBytes(sourceBlob, mimeType);
@@ -819,12 +876,15 @@ export async function enqueueInspectionMedia(input: {
     byteSize: durable.byteSize,
     bytes: durable.bytes,
     blob: durable.blob,
+    posterBytes,
+    posterMimeType,
     status: "queued",
     attempts: 0,
     nextAttemptAt: 0,
     progress: 0,
     lastError: null,
     storagePath: null,
+    posterStoragePath: null,
     createdAt: now,
   };
   await putItem(queueItem);
@@ -847,7 +907,9 @@ export async function enqueueInspectionMedia(input: {
     createdAt: new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString(),
     signedUrl: null,
+    posterSignedUrl: null,
     localPreviewUrl,
+    localPosterUrl,
   };
 
   return { clientMediaId, localPreviewUrl, optimisticMedia };

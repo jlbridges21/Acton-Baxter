@@ -53,8 +53,12 @@ export type SiteInspectionMedia = {
   updatedAt: string;
   /** Short-lived display URL when requested. */
   signedUrl?: string | null;
+  /** Short-lived poster URL for videos (first-frame JPEG). */
+  posterSignedUrl?: string | null;
   /** Local object URL for optimistic thumbnails (client-only). */
   localPreviewUrl?: string | null;
+  /** Local poster preview while the queue is uploading (client-only). */
+  localPosterUrl?: string | null;
 };
 
 export type SiteInspectionSummary = {

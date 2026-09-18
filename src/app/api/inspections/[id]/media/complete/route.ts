@@ -11,6 +11,8 @@ import { completeMediaSchema } from "@/lib/inspections/record-schemas";
 
 export const runtime = "nodejs";
 
+export const maxDuration = 300;
+
 type Params = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, { params }: Params) {
@@ -32,6 +34,7 @@ export async function POST(request: Request, { params }: Params) {
       mimeType: body.mimeType,
       storagePath: body.storagePath,
       byteSize: body.byteSize,
+      posterStoragePath: body.posterStoragePath,
       actorId: user.id,
     });
     return jsonOk({ inspection });

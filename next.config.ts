@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   allowedDevOrigins: ["127.0.0.1", "localhost"],
   // Keep PDF extraction / zip export on the Node serverless path.
-  serverExternalPackages: ["unpdf", "archiver"],
+  serverExternalPackages: ["unpdf", "archiver", "ffmpeg-static"],
   images: {
     remotePatterns: [
       {
@@ -32,6 +32,7 @@ const nextConfig: NextConfig = {
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://maps.gstatic.com",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob: https://*.supabase.co https://maps.gstatic.com https://maps.googleapis.com https://*.googleusercontent.com",
+              "media-src 'self' blob: https://*.supabase.co",
               "font-src 'self' https://fonts.gstatic.com data:",
               "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://maps.googleapis.com https://places.googleapis.com",
               // PDF viewer: same-origin stream for uploads; Drive preview for Google PDFs.

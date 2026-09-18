@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, X } from "lucide-react";
 import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import type { SiteInspectionDetail, SiteInspectionMedia } from "@/lib/inspections/record-types";
@@ -168,6 +168,24 @@ export function InspectionMediaGallery({
           </DialogDescription>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {current && current.uploadStatus === "ready" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="min-h-11 min-w-11 px-2"
+              aria-label="Download media"
+              onClick={() => {
+                const a = document.createElement("a");
+                a.href = `/api/inspections/${inspectionId}/media/${current.id}/file?download=1`;
+                a.rel = "noopener";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              }}
+            >
+              <Download className="h-5 w-5" />
+            </Button>
+          ) : null}
           {current && current.mediaType === "photo" && current.uploadStatus === "ready" ? (
             <Button
               type="button"
@@ -270,13 +288,16 @@ export function InspectionMediaGallery({
                 src={src}
                 controls
                 playsInline
+                preload="metadata"
                 className="max-h-full max-w-full object-contain"
                 onLoadedData={() => setMediaLoading(false)}
                 onError={() => {
                   setMediaLoading(false);
                   void refreshUrls();
                 }}
-              />
+              >
+                <source src={src} type={current.mimeType ?? undefined} />
+              </video>
             </>
           ) : (
             <>
