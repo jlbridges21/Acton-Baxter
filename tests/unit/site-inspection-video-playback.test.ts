@@ -53,5 +53,13 @@ describe("video remux + poster paths", () => {
 
     const queue = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
     expect(queue).toContain("extractVideoPosterFrame");
+    expect(queue).toContain("attachPosterInBackground");
+    // Enqueue must not await poster extract (iOS hang made capture a silent no-op).
+    const enqueueIdx = queue.indexOf("export async function enqueueInspectionMedia");
+    const attachIdx = queue.indexOf("void attachPosterInBackground");
+    const awaitExtractInEnqueue = queue
+      .slice(enqueueIdx, attachIdx)
+      .includes("await extractVideoPosterFrame");
+    expect(awaitExtractInEnqueue).toBe(false);
   });
 });

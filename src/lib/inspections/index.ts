@@ -101,7 +101,7 @@ export {
   posterStoragePathForVideo,
   remuxQuickTimeToMp4,
 } from "./video-remux";
-export { extractVideoPosterFrame } from "./video-poster";
+export { extractVideoPosterFrame, VIDEO_POSTER_EXTRACT_TIMEOUT_MS } from "./video-poster";
 export {
   VIDEO_MAX_BYTES,
   VIDEO_MAX_DURATION_SECONDS,

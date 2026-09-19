@@ -345,12 +345,26 @@ export function InspectionRunnerClient({
   }
 
   async function onMediaSelected(snapshotItemId: string, file: File, mediaType: "photo" | "video") {
+    if (!file || file.size <= 0) {
+      window.alert("That capture was empty. Please try again.");
+      return;
+    }
     try {
       const { clientMediaId, optimisticMedia } = await enqueueInspectionMedia({
         inspectionId: inspection.id,
         snapshotItemId,
         file,
         mediaType,
+        onPosterReady: ({ clientMediaId: id, localPosterUrl }) => {
+          const existing = localMediaRef.current.get(id);
+          if (existing) {
+            localMediaRef.current.set(id, { ...existing, localPosterUrl });
+          }
+          setInspection((prev) => ({
+            ...prev,
+            media: prev.media.map((m) => (m.clientMediaId === id ? { ...m, localPosterUrl } : m)),
+          }));
+        },
       });
       localMediaRef.current.set(clientMediaId, optimisticMedia);
       setInspection((prev) => ({
@@ -1157,7 +1171,6 @@ function ItemCard({
                 ref={photoRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 className="sr-only"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -1169,7 +1182,6 @@ function ItemCard({
                 ref={videoRef}
                 type="file"
                 accept="video/*"
-                capture="environment"
                 className="sr-only"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
