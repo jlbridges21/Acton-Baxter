@@ -8,6 +8,21 @@ export {
   writeEntityArbitration,
 } from "./conversation-arbitration";
 export type { EntityArbitrationRecord, PreferredEntitySource } from "./conversation-arbitration";
+export {
+  readPendingClarification,
+  writePendingClarification,
+  clearPendingClarification,
+  resolvePendingClarificationReply,
+  shouldAbandonPendingClarification,
+  detectClarificationCategoryReply,
+  buildInformationCategoryPending,
+  buildEntityDisambiguationPending,
+} from "./pending-clarification";
+export type {
+  PendingClarification,
+  PendingClarificationCategory,
+  PendingClarificationResolution,
+} from "./pending-clarification";
 export { runEvidenceRegistry } from "./orchestrate";
 export { adaptQuestionForPemLookup } from "./sources/pem";
 export type {
@@ -24,6 +39,8 @@ export {
   isGenericEntityLookup,
   shouldOfferEntitySourceMenu,
   looksLikeOpenEndedEntityInfoAsk,
+  looksLikeSpecificFieldAsk,
+  asksForEntityLocation,
   hasMultipleInformationNeeds,
   isPemAggregateSemantic,
   SEMANTIC_ROUTING_CONFIDENCE_THRESHOLD,

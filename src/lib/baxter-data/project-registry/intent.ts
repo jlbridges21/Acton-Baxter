@@ -9,6 +9,11 @@ import type { ProjectRegistryField, ProjectRegistryQuery } from "./types";
 const FIELD_PATTERNS: Array<{ re: RegExp; field: ProjectRegistryField }> = [
   { re: /\bcity\b/i, field: "city" },
   { re: /\b(street\s+)?address\b/i, field: "address" },
+  // Location need without the word "address" — "where is the X project", "location of X"
+  {
+    re: /\bwhere(?:'s|’s|s)?\b.+\b(project|customer|prospect|job|site|property|located|based)\b|\blocation\s+of\b|\bwhere(?:'s|’s|s)?\s+(?:the\s+)?[A-Za-z]/i,
+    field: "address",
+  },
   { re: /\b(zip(?:\s*code)?|postal(?:\s*code)?)\b/i, field: "postal" },
   { re: /\bjurisdiction\b/i, field: "jurisdiction" },
   { re: /\b(sales(?:person|rep)?|who\s+(?:sold|owns|runs|started))\b/i, field: "salesperson" },

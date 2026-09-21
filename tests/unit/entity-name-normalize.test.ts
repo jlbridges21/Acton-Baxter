@@ -27,6 +27,13 @@ describe("normalizeEntitySearchName", () => {
     expect(normalizeEntitySearchName("information about Denis Kornilov")).toBe("Denis Kornilov");
   });
 
+  it("strips leading interrogative phrasing and rejects stopword-only residue", () => {
+    expect(normalizeEntitySearchName("what the")).toBeNull();
+    expect(normalizeEntitySearchName("what's the")).toBeNull();
+    expect(normalizeEntitySearchName("where is the")).toBeNull();
+    expect(normalizeEntitySearchName("what the Janowitz")).toBe("Janowitz");
+  });
+
   it("covers the documented noise-word set", () => {
     for (const word of ENTITY_DESCRIPTOR_NOISE_WORDS) {
       expect(normalizeEntitySearchName(`Alex Rivera ${word}`)?.toLowerCase()).toBe("alex rivera");

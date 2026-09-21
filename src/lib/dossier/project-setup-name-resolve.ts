@@ -30,8 +30,8 @@ export function extractProjectReferenceName(question: string): string | null {
     /\b([A-Za-z][A-Za-z'-]{1,40}(?:\s+[A-Za-z][A-Za-z'-]{1,40}){0,2})(?:'s|’s)\s+project\b/i,
   );
   if (possessive?.[1]) {
-    const name = normalizeEntitySearchName(possessive[1]) || possessive[1].trim();
-    if (name.length >= 2) return name;
+    const name = normalizeEntitySearchName(possessive[1]);
+    if (name && name.length >= 2) return name;
   }
 
   // Require "the … project" so "What city is the Yeh project" → "Yeh", not "city is the Yeh".
@@ -42,8 +42,8 @@ export function extractProjectReferenceName(question: string): string | null {
     const raw = theProject[1].trim();
     if (/^(his|her|their|its|my|your|our|this|that|a|an)$/i.test(raw)) return null;
     if (/^(new|adu|sales|design|slack|pem|neat)$/i.test(raw)) return null;
-    const name = normalizeEntitySearchName(raw) || raw;
-    if (name.length >= 2) return name;
+    const name = normalizeEntitySearchName(raw);
+    if (name && name.length >= 2) return name;
   }
 
   // "Yeh project" / "Katie Liniger project" without leading "the"
@@ -63,12 +63,15 @@ export function extractProjectReferenceName(question: string): string | null {
     if (/\b(is|are|was|were|city|email|phone|address|about|info|information)\b/i.test(raw)) {
       return null;
     }
-    const name = normalizeEntitySearchName(raw) || raw;
-    if (name.length >= 2) return name;
+    // Reject interrogative residue ("what the") — never a project name.
+    const name = normalizeEntitySearchName(raw);
+    if (name && name.length >= 2) return name;
   }
 
   const fromExtract = extractProjectNameQueries(q)[0];
-  if (fromExtract && fromExtract.length >= 2) return fromExtract;
+  if (fromExtract && fromExtract.length >= 2) {
+    return normalizeEntitySearchName(fromExtract);
+  }
   return null;
 }
 

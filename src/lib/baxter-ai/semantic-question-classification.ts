@@ -85,11 +85,13 @@ lookupSpecificity: only for entity_lookup — otherwise null.
 - specific: clearly wants one category of data:
   • PEM / sales intelligence: Type 1/2 Pain, budget, decision process, NEAT summary, reason for building, salesperson notes
   • GHL / CRM: phone, email, address, city, stage, pipeline, opportunity status, tags, owner
+  • Location / place: ANY question whose information need is where an entity is — address, city, site location. This includes paraphrases whose meaning is location even without the words "address" or "city" (e.g. "where is the Janowitz project", "where's the Yeh project", "what's the location of X", "where is X located"). Those are ALWAYS specific — never generic — and must NOT trigger an information-category menu.
   • Slack: latest update, recent activity, what someone said in a channel, project status from Slack
-  Examples: "what's Katie's email", "What city is the Yeh project", "Denis Type 1 Pain", "latest update in #l01-26019-liniger", "what's the stage of Robert's opportunity"
-  IMPORTANT: If the question names city/email/phone/address/stage/budget/timeline (etc.), it is ALWAYS specific — never generic — even when the entity is only a surname or "the X project".
+  Examples: "what's Katie's email", "What city is the Yeh project", "where is the Janowitz project", "what's the location of the Liniger project", "Denis Type 1 Pain", "latest update in #l01-26019-liniger", "what's the stage of Robert's opportunity"
+  IMPORTANT: If the question names city/email/phone/address/stage/budget/timeline (etc.), OR asks where a named project/person/customer is, it is ALWAYS specific — never generic — even when the entity is only a surname or "the X project".
+  Do NOT confuse entity location ("where is the Janowitz project?") with procedural research ("where do I look up a tract map?") — the latter is procedural_knowledge, not entity_lookup generic.
 - content_search: wants a passage/exchange/coaching moment FROM a named prospect's PEM NEAT (transcript or assessment), not a single typed field. Examples: "how I disqualified Sharon Liu by saying I don't recommend an ADU", "what did the advisor say about budget in Robert's PEM", "find where they discussed the timeline in Cindy's meeting", "show how the advisor handled the pricing objection with Jeannie". Prefer content_search over specific when the ask is about what was said/done in the meeting rather than a labeled NEAT field.
-- When unsure between generic and specific for entity_lookup, prefer specific only if a concrete category word is clearly the ask; otherwise generic. Prefer content_search when the ask is about an exchange, quote, technique, or "what am I missing" tied to a named PEM prospect.
+- When unsure between generic and specific for entity_lookup, prefer specific only if a concrete category OR a location need is clearly the ask; otherwise generic. Prefer content_search when the ask is about an exchange, quote, technique, or "what am I missing" tied to a named PEM prospect.
 
 informationNeeds: ONLY for entity_lookup when the question asks 2–3 DISTINCT information needs (different categories and/or sources). Otherwise [].
   Each item: { partQuestion, entityName, sourceHint, lookupSpecificity }.
@@ -204,12 +206,48 @@ export function hasMultipleInformationNeeds(
 }
 
 /**
+ * True when the question's information need is the location/place of a named
+ * entity (project, customer, prospect) — not a procedural "where do I look up…" howto.
+ * Detects the *need* (location), not one fixed phrase.
+ */
+export function asksForEntityLocation(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  // Procedural / research howtos — not entity location.
+  if (/\bwhere\s+do\s+i\b/i.test(q)) return false;
+  if (
+    /\bwhere\b/i.test(q) &&
+    /\b(tract\s*map|wui|zoning|parcel|permit|public\s+records|look\s*up)\b/i.test(q) &&
+    !/\b(project|customer|prospect|contact)\b/i.test(q)
+  ) {
+    return false;
+  }
+
+  // Explicit location / address category words.
+  if (/\b(address|location|street\s+address)\b/i.test(q)) return true;
+
+  // Interrogative whose object is place of an entity ("where is the X project",
+  // "where's X", "where is X located", "what's the location of X").
+  if (
+    /\bwhere(?:'s|’s|s)?\b/i.test(q) &&
+    (/\b(project|customer|prospect|contact|job|site|property|located|based)\b/i.test(q) ||
+      /\bthe\s+[A-Za-z][A-Za-z'-]+\b/i.test(q))
+  ) {
+    return true;
+  }
+  if (/\blocation\s+of\b/i.test(q)) return true;
+  if (/\bwhat(?:'s|’s| is)\s+(?:the\s+)?(?:location|address)\b/i.test(q)) return true;
+  return false;
+}
+
+/**
  * True when the question clearly names a single information category
- * (city, email, phone, budget, stage, …) — never treat as open-ended info menu.
+ * (city, email, phone, budget, stage, location, …) — never treat as open-ended info menu.
  */
 export function looksLikeSpecificFieldAsk(question: string): boolean {
   const q = question.trim();
   if (!q) return false;
+  if (asksForEntityLocation(q)) return true;
   return /\b(e-?mail|phone|address|city|zip|postal(?:\s*code)?|stage|pipeline|tag|tags|owner|source|budget|pricing|timeline|schedule|type\s*[12]\s*pain|pain\s*points?|latest\s+update|recent\s+activity|what(?:'s| is) (?:the )?city)\b/i.test(
     q,
   );

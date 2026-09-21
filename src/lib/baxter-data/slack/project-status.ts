@@ -141,8 +141,11 @@ export function extractProjectNameQueries(question: string): string[] {
 
 /** Drop leading filler ("in the", "latest on") left over from channel phrasing. */
 function cleanProjectNameCandidate(raw: string): string | null {
-  let name = normalizeEntitySearchName(raw) || raw.trim();
-  if (!name) return null;
+  // Never fall back to raw when normalize rejects — stopword residue like "what the"
+  // must not become a project search key.
+  const normalized = normalizeEntitySearchName(raw);
+  if (!normalized) return null;
+  let name = normalized;
   const leadJunk = new Set([
     "in",
     "on",

@@ -13,6 +13,7 @@ import type { BaxterContextItem, BaxterHistoryMessage } from "@/lib/baxter-ai/ty
 import { resolveQuestionEntity } from "./entity-resolution";
 import {
   preferredSourceForFollowUp,
+  mostRecentEntitySource,
   sourceKeyToPreferred,
   writeEntityArbitration,
 } from "./conversation-arbitration";
@@ -34,6 +35,14 @@ import {
   probeEntitySourceAvailability,
   type ProbeEntitySourcesDeps,
 } from "./entity-source-menu";
+import {
+  readPendingClarification,
+  writePendingClarification,
+  clearPendingClarification,
+  resolvePendingClarificationReply,
+  buildInformationCategoryPending,
+  type PendingClarificationCategory,
+} from "./pending-clarification";
 import { resolveMultiNeedQuestion, type MultiNeedResolvers } from "./multi-need";
 import type {
   EvidenceSource,
@@ -42,6 +51,7 @@ import type {
   RegistryEarlyAnswer,
   RegistryRunResult,
 } from "./types";
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
 
 const DEFAULT_SOURCES: EvidenceSource[] = [
   pemAggregateEvidenceSource,
@@ -162,8 +172,39 @@ export async function runEvidenceRegistry(input: {
 }): Promise<RegistryRunResult> {
   let metadata: Record<string, unknown> = { ...(input.conversationMetadata ?? {}) };
   const history = input.history ?? [];
-  const preferredSource = preferredSourceForFollowUp({
+
+  // Unified pending-clarification resolution (info menu + mirrored entity disambiguation).
+  // Must run before entity extraction so replies inherit the clarified entity.
+  let effectiveQuestion = input.question;
+  const pending = readPendingClarification(metadata);
+  const pendingResolution = resolvePendingClarificationReply({
     question: input.question,
+    history,
+    pending,
+  });
+  if (pendingResolution.action === "abandon") {
+    metadata = clearPendingClarification(metadata);
+    // Also clear PEM entity-disambiguation pending so both mechanisms stay in sync.
+    if (pending?.kind === "entity_disambiguation") {
+      const { readPemConversationState, writePemConversationState } =
+        await import("@/lib/baxter-data/pem-neats/conversation-state");
+      const pemState = readPemConversationState(metadata);
+      if (pemState.pending) {
+        metadata = writePemConversationState(metadata, {
+          pending: null,
+          active: pemState.active,
+        });
+      }
+    }
+  } else if (pendingResolution.action === "continue_with_entity") {
+    effectiveQuestion = pendingResolution.enrichedQuestion;
+    if (pendingResolution.clearPending) {
+      metadata = clearPendingClarification(metadata);
+    }
+  }
+
+  const preferredSource = preferredSourceForFollowUp({
+    question: effectiveQuestion,
     history,
     conversationMetadata: metadata,
   });
@@ -171,7 +212,7 @@ export async function runEvidenceRegistry(input: {
   let semantic: SemanticQuestionClassification | null = input.semantic ?? null;
   if (!semantic && !input.semanticOptions?.skipSemantic) {
     semantic = await classifyQuestionSemantically(
-      { question: input.question, history },
+      { question: effectiveQuestion, history },
       input.semanticOptions,
     );
   } else if (!semantic && input.semanticOptions?.skipSemantic) {
@@ -189,15 +230,39 @@ export async function runEvidenceRegistry(input: {
     };
   }
 
+  // When continuing a clarification, force the pending entity into semantic name if
+  // the classifier produced stopword residue or null.
+  if (
+    pendingResolution.action === "continue_with_entity" &&
+    semantic &&
+    semantic.questionType === "entity_lookup"
+  ) {
+    const cleaned = normalizeEntitySearchName(semantic.entityName);
+    if (!cleaned) {
+      semantic = {
+        ...semantic,
+        entityName: pendingResolution.entityName,
+        lookupSpecificity:
+          semantic.lookupSpecificity === "generic" ? "specific" : semantic.lookupSpecificity,
+      };
+    }
+  }
+
+  const inheritedEntityLabel =
+    (pendingResolution.action === "continue_with_entity" ? pendingResolution.entityLabel : null) ||
+    mostRecentEntitySource(metadata)?.label ||
+    null;
+
   const entity = resolveQuestionEntity({
-    question: input.question,
+    question: effectiveQuestion,
     history,
     preferredSource,
+    inheritedEntityLabel,
     semantic,
   });
 
   const handleInput = {
-    question: input.question,
+    question: effectiveQuestion,
     history,
     entity,
     preferredSource,
@@ -231,7 +296,7 @@ export async function runEvidenceRegistry(input: {
   // deterministic hit on one source cannot silently drop the other parts.
   if (semantic && hasMultipleInformationNeeds(semantic)) {
     const multi = await resolveMultiNeedQuestion({
-      question: input.question,
+      question: effectiveQuestion,
       history,
       conversationMetadata: metadata,
       role: input.role,
@@ -262,7 +327,7 @@ export async function runEvidenceRegistry(input: {
   // Open-ended entity ask → clarifying source menu (existence only; no full dumps).
   // Specific entity asks continue through the normal source loop below.
   const entityNameForMenu = entity.extractedName || semantic?.entityName || null;
-  if (shouldOfferEntitySourceMenu(input.question, semantic) && entityNameForMenu) {
+  if (shouldOfferEntitySourceMenu(effectiveQuestion, semantic) && entityNameForMenu) {
     try {
       const availability = await probeEntitySourceAvailability(
         entityNameForMenu,
@@ -309,6 +374,25 @@ export async function runEvidenceRegistry(input: {
           label: availability.displayName,
           setAt: now,
         });
+
+        const categories: PendingClarificationCategory[] = [];
+        if (availability.pem.available) categories.push("pem");
+        if (availability.ghl.available) categories.push("ghl");
+        if (availability.slack.available) categories.push("slack");
+        const cleanName =
+          normalizeEntitySearchName(entityNameForMenu) ||
+          normalizeEntitySearchName(availability.displayName) ||
+          availability.displayName;
+        metadata = writePendingClarification(
+          metadata,
+          buildInformationCategoryPending({
+            entityName: cleanName,
+            entityLabel: availability.displayName,
+            originalQuestion: effectiveQuestion,
+            categories,
+          }),
+        );
+
         return {
           earlyAnswer: {
             kind: "clarification",
@@ -373,6 +457,31 @@ export async function runEvidenceRegistry(input: {
       const { writePemConversationState } =
         await import("@/lib/baxter-data/pem-neats/conversation-state");
       metadata = writePemConversationState(metadata, result.nextPemState);
+      // Mirror PEM entity-disambiguation into the unified pending-clarification record
+      // so abandonment / continuity share one mechanism with the information menu.
+      if (result.nextPemState.pending?.type === "pem_selection") {
+        const { buildEntityDisambiguationPending } = await import("./pending-clarification");
+        const p = result.nextPemState.pending;
+        metadata = writePendingClarification(
+          metadata,
+          buildEntityDisambiguationPending({
+            entityName:
+              normalizeEntitySearchName(p.baseProspectHint) ||
+              p.baseProspectHint ||
+              entity.extractedName ||
+              "prospect",
+            entityLabel: p.baseProspectHint || entity.extractedName || "prospect",
+            originalQuestion: p.originalQuestion || effectiveQuestion,
+            candidateLabels: p.candidateLabels,
+          }),
+        );
+      } else if (!result.nextPemState.pending) {
+        // PEM cleared its pending — drop unified entity_disambiguation if present.
+        const current = readPendingClarification(metadata);
+        if (current?.kind === "entity_disambiguation") {
+          metadata = clearPendingClarification(metadata);
+        }
+      }
     }
 
     if (result.softMiss) {

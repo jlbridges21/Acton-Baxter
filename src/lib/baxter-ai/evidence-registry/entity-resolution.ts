@@ -55,6 +55,11 @@ export type EntityResolutionResult = {
 const OPPORTUNITY_SHAPE =
   /\b(opportunity|deal|project)\b|\b(status|stage)\s+of\b|\bwhat(?:'s|\s+is)\s+going\s+on\s+with\b/i;
 
+function usableEntityName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  return normalizeEntitySearchName(raw);
+}
+
 function mapSemanticEntityType(
   guess: SemanticQuestionClassification["entityTypeGuess"],
 ): EntityType {
@@ -210,13 +215,15 @@ export function resolveQuestionEntity(input: {
   question: string;
   history?: BaxterHistoryMessage[];
   preferredSource?: PreferredEntitySource | null;
+  /** Label from conversation arbitration / pending clarification — used when extract fails. */
+  inheritedEntityLabel?: string | null;
   semantic?: SemanticQuestionClassification | null;
 }): EntityResolutionResult {
   const question = input.question.trim();
   const history = input.history ?? [];
   const semantic = input.semantic ?? null;
   const ctx = decideConversationContext(question, history);
-  const isFollowUp = ctx.isFollowUp || ctx.hasPronounReference;
+  const isFollowUp = ctx.isFollowUp || ctx.hasPronounReference || ctx.inheritPriorEntities;
 
   if (isSemanticRoutingConfident(semantic) && isNonEntitySemanticType(semantic!.questionType)) {
     return {
@@ -253,33 +260,35 @@ export function resolveQuestionEntity(input: {
     semantic!.questionType === "entity_lookup" &&
     semantic!.entityName
   ) {
-    const cleanedSemanticName =
-      normalizeEntitySearchName(semantic!.entityName) || semantic!.entityName;
-    const type = mapSemanticEntityType(semantic!.entityTypeGuess);
-    if (type !== "none") {
-      candidates.push({
-        type,
-        name: cleanedSemanticName,
-        confidence: Math.max(semantic!.confidence, 0.92),
-        via: "semantic",
-      });
-      usedSemanticEntity = true;
-    } else {
-      // Name known, type unknown — prefer attempting both GHL opportunity + PEM.
-      candidates.push({
-        type: "ghl_opportunity",
-        name: cleanedSemanticName,
-        confidence: Math.min(semantic!.confidence, 0.75),
-        via: "semantic",
-      });
-      candidates.push({
-        type: "pem_prospect",
-        name: cleanedSemanticName,
-        confidence: Math.min(semantic!.confidence, 0.72),
-        via: "semantic",
-      });
-      usedSemanticEntity = true;
+    const cleanedSemanticName = usableEntityName(semantic!.entityName);
+    if (cleanedSemanticName) {
+      const type = mapSemanticEntityType(semantic!.entityTypeGuess);
+      if (type !== "none") {
+        candidates.push({
+          type,
+          name: cleanedSemanticName,
+          confidence: Math.max(semantic!.confidence, 0.92),
+          via: "semantic",
+        });
+        usedSemanticEntity = true;
+      } else {
+        // Name known, type unknown — prefer attempting both GHL opportunity + PEM.
+        candidates.push({
+          type: "ghl_opportunity",
+          name: cleanedSemanticName,
+          confidence: Math.min(semantic!.confidence, 0.75),
+          via: "semantic",
+        });
+        candidates.push({
+          type: "pem_prospect",
+          name: cleanedSemanticName,
+          confidence: Math.min(semantic!.confidence, 0.72),
+          via: "semantic",
+        });
+        usedSemanticEntity = true;
+      }
     }
+    // Stopword-only semantic names (e.g. "what the") are discarded — never searched.
   }
 
   // Regex secondary (or primary when semantic unavailable / ambiguous).
@@ -290,15 +299,11 @@ export function resolveQuestionEntity(input: {
   });
 
   if (usedSemanticEntity) {
-    const semanticName = (
-      normalizeEntitySearchName(semantic!.entityName) ||
-      semantic!.entityName ||
-      ""
-    ).toLowerCase();
+    const semanticName = (usableEntityName(semantic!.entityName) || "").toLowerCase();
     for (const c of regexCandidates) {
       // Keep collision rivals (e.g. PEM for same person) and alternate extractors.
       if (c.via === "semantic") continue;
-      const cleanedRegexName = c.name ? normalizeEntitySearchName(c.name) || c.name : null;
+      const cleanedRegexName = c.name ? usableEntityName(c.name) : null;
       if (
         cleanedRegexName &&
         cleanedRegexName.toLowerCase() === semanticName &&
@@ -306,14 +311,40 @@ export function resolveQuestionEntity(input: {
       ) {
         continue; // duplicate of semantic primary
       }
+      // Drop regex candidates whose names normalize to nothing.
+      if (c.name && !cleanedRegexName) continue;
       candidates.push(
         cleanedRegexName && cleanedRegexName !== c.name ? { ...c, name: cleanedRegexName } : c,
       );
     }
   } else {
     for (const c of regexCandidates) {
-      const cleaned = c.name ? normalizeEntitySearchName(c.name) || c.name : null;
+      const cleaned = c.name ? usableEntityName(c.name) : null;
+      if (c.name && !cleaned) continue;
       candidates.push(cleaned && cleaned !== c.name ? { ...c, name: cleaned } : c);
+    }
+  }
+
+  // Follow-up continuity: arbitration / pending label when no usable name extracted.
+  const inheritedLabel = usableEntityName(input.inheritedEntityLabel);
+  if (inheritedLabel && (isFollowUp || ctx.inheritPriorEntities)) {
+    const already = candidates.some(
+      (c) => c.name && c.name.toLowerCase() === inheritedLabel.toLowerCase(),
+    );
+    if (!already) {
+      const via = input.preferredSource ? "arbitration" : "history";
+      const type: EntityType =
+        input.preferredSource === "pem"
+          ? "pem_prospect"
+          : input.preferredSource === "ghl" || input.preferredSource === "slack"
+            ? "ghl_contact"
+            : "ghl_contact";
+      candidates.push({
+        type,
+        name: inheritedLabel,
+        confidence: 0.88,
+        via,
+      });
     }
   }
 
@@ -334,16 +365,13 @@ export function resolveQuestionEntity(input: {
   }
 
   const rawExtractedName =
-    (usedSemanticEntity
-      ? normalizeEntitySearchName(semantic!.entityName) || semantic!.entityName
-      : null) ||
+    (usedSemanticEntity ? usableEntityName(semantic!.entityName) : null) ||
     primary?.name ||
     candidates.find((c) => c.name)?.name ||
-    extractPriorEntitiesFromHistory(history)[0] ||
+    (isFollowUp || ctx.inheritPriorEntities ? inheritedLabel : null) ||
+    usableEntityName(extractPriorEntitiesFromHistory(history)[0]) ||
     null;
-  const extractedName = rawExtractedName
-    ? normalizeEntitySearchName(rawExtractedName) || rawExtractedName
-    : null;
+  const extractedName = rawExtractedName ? usableEntityName(rawExtractedName) : null;
 
   return {
     primary,

@@ -14,6 +14,7 @@ import {
 } from "@/lib/baxter-data/project-registry";
 import { extractProjectReferenceName } from "@/lib/dossier/project-setup-name-resolve";
 import { extractProjectNumbers } from "@/lib/baxter-data/slack/project-status";
+import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
 import { isSemanticRoutingConfident } from "@/lib/baxter-ai/semantic-question-classification";
 import type { EvidenceSource, EvidenceSourceResult } from "../types";
 
@@ -67,14 +68,15 @@ export const projectRegistryEvidenceSource: EvidenceSource = {
   async resolve(input): Promise<EvidenceSourceResult | null> {
     let effective = detectProjectRegistryQuery(input.question);
     if (!effective) {
+      // Also harden project-registry resolve fallback
       const projectQuery =
         extractProjectNumbers(input.question)[0] ||
         extractProjectReferenceName(input.question) ||
-        input.entity.extractedName;
+        (input.entity.extractedName ? normalizeEntitySearchName(input.entity.extractedName) : null);
       if (!projectQuery) return null;
       if (/\bcity\b/i.test(input.question)) {
         effective = { kind: "field_lookup", projectQuery, field: "city" };
-      } else if (/\b(address|street)\b/i.test(input.question)) {
+      } else if (/\b(address|street|where|location)\b/i.test(input.question)) {
         effective = { kind: "field_lookup", projectQuery, field: "address" };
       } else if (/\bjurisdiction\b/i.test(input.question)) {
         effective = { kind: "field_lookup", projectQuery, field: "jurisdiction" };

@@ -110,7 +110,12 @@ export function decideConversationContext(
 
   // Short incomplete questions often follow up
   const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length <= 5 && /\b(cost|margin|close|date|agreement|amount|project)\b/i.test(trimmed)) {
+  if (
+    words.length <= 8 &&
+    /\b(cost|margin|close|date|agreement|amount|project|address|location|city|where|email|phone|pem|contact)\b/i.test(
+      trimmed,
+    )
+  ) {
     return {
       inheritPriorEntities: true,
       reason: "short_field_follow_up",
@@ -136,17 +141,37 @@ export function decideConversationContext(
 import { isReservedConceptName } from "@/lib/baxter/concept-vocabulary";
 
 /**
- * Extract likely person entities from a prior user question for follow-up inheritance.
+ * Extract likely person/project entities from a prior user question for follow-up inheritance.
+ * Includes single surnames from "the X project" phrasing (e.g. Janowitz, Yeh).
  */
 export function extractPriorEntitiesFromHistory(history: BaxterHistoryMessage[]): string[] {
   const priorUser = [...history]
     .reverse()
     .find((m) => m.role === "user" && m.content.trim().length > 0);
   if (!priorUser) return [];
-  const matches = priorUser.content.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g) ?? [];
-  return Array.from(
-    new Set(matches.map((m) => m.trim()).filter((m) => !isReservedConceptName(m))),
-  ).slice(0, 3);
+  const found: string[] = [];
+  const fullNames = priorUser.content.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g) ?? [];
+  for (const m of fullNames) {
+    if (!isReservedConceptName(m.trim())) found.push(m.trim());
+  }
+  const projectRefs =
+    priorUser.content.match(
+      /\bthe\s+([A-Za-z][A-Za-z'-]{1,40}(?:\s+[A-Za-z][A-Za-z'-]{1,40}){0,2})\s+project\b/gi,
+    ) ?? [];
+  for (const match of projectRefs) {
+    const inner = match
+      .replace(/^the\s+/i, "")
+      .replace(/\s+project$/i, "")
+      .trim();
+    if (
+      inner &&
+      !/^(his|her|their|its|my|your|our|this|that|a|an|new|adu)$/i.test(inner) &&
+      !isReservedConceptName(inner)
+    ) {
+      found.push(inner);
+    }
+  }
+  return Array.from(new Set(found)).slice(0, 3);
 }
 
 const UNDERSPECIFIED_FIELD =
