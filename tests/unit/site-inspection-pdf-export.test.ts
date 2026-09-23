@@ -3,6 +3,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { resetEnvCacheForTests } from "@/lib/env";
 import {
   resetSiteInspectionAiMemoryForTests,
@@ -241,5 +243,21 @@ describe("site inspection PDF export", () => {
     // Solid-color fixtures compress extremely well; still assert a sane upper bound
     // for emailability (real site photos typically land ~2–5 MB for ~50 images).
     expect(result.byteSize).toBeGreaterThan(5_000);
+  });
+
+  it("lays out photos with contain (no crop) and a non-colliding footer", () => {
+    const source = readFileSync(
+      join(process.cwd(), "src/lib/inspections/ai/export-pdf.tsx"),
+      "utf8",
+    );
+    const photoImgBlock = source.slice(source.indexOf("photoImg:"), source.indexOf("videoBadge:"));
+    expect(photoImgBlock).toContain('objectFit: "contain"');
+    expect(photoImgBlock).not.toContain('objectFit: "cover"');
+    expect(photoImgBlock).not.toContain("maxHeight");
+    expect(source).toContain("footerLeft");
+    expect(source).toContain("footerCenter");
+    expect(source).toContain("footerRight");
+    expect(source).toContain("paddingBottom: 72");
+    expect(source).not.toContain("bottom: 28, left: 44, fontSize: 7");
   });
 });

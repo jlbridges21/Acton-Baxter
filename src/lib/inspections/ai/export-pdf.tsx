@@ -50,7 +50,7 @@ const colors = {
 const styles = StyleSheet.create({
   page: {
     paddingTop: 48,
-    paddingBottom: 56,
+    paddingBottom: 72,
     paddingHorizontal: 44,
     fontSize: 10,
     fontFamily: "Helvetica",
@@ -59,7 +59,7 @@ const styles = StyleSheet.create({
   },
   coverPage: {
     paddingTop: 56,
-    paddingBottom: 56,
+    paddingBottom: 72,
     paddingHorizontal: 48,
     fontFamily: "Helvetica",
     color: colors.navy,
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
   coverPhoto: {
     width: "100%",
     maxHeight: 320,
-    objectFit: "cover",
+    objectFit: "contain",
     borderRadius: 4,
     marginTop: 8,
   },
@@ -203,12 +203,11 @@ const styles = StyleSheet.create({
   },
   photoCell: {
     width: "48%",
-    marginBottom: 4,
+    marginBottom: 8,
   },
   photoImg: {
     width: "100%",
-    maxHeight: 160,
-    objectFit: "cover",
+    objectFit: "contain",
     borderRadius: 2,
   },
   videoBadge: {
@@ -225,13 +224,26 @@ const styles = StyleSheet.create({
   },
   footer: {
     position: "absolute",
-    bottom: 28,
+    bottom: 24,
     left: 44,
     right: 44,
+    height: 28,
     flexDirection: "row",
-    justifyContent: "space-between",
+    alignItems: "center",
     fontSize: 8,
     color: colors.muted,
+  },
+  footerLeft: {
+    width: "28%",
+    textAlign: "left",
+  },
+  footerCenter: {
+    width: "44%",
+    textAlign: "center",
+  },
+  footerRight: {
+    width: "28%",
+    textAlign: "right",
   },
   muted: {
     color: colors.muted,
@@ -329,11 +341,17 @@ async function collectImages(inspection: SiteInspectionDetail): Promise<Map<stri
   return map;
 }
 
-function PageFooter({ projectName }: { projectName: string }) {
+function PageFooter({ projectName, companyName }: { projectName: string; companyName: string }) {
   return (
     <View style={styles.footer} fixed>
-      <Text>{projectName} — Site Inspection Report</Text>
-      <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+      <Text style={styles.footerLeft}>{companyName}</Text>
+      <Text style={styles.footerCenter}>
+        {projectName.length > 36 ? `${projectName.slice(0, 34)}…` : projectName} — Site Inspection
+      </Text>
+      <Text
+        style={styles.footerRight}
+        render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
+      />
     </View>
   );
 }
@@ -353,8 +371,8 @@ function ItemBody(props: {
   const videos = media.filter((m) => m.mediaType === "video");
 
   return (
-    <View style={styles.itemBlock} minPresenceAhead={48}>
-      <Text style={styles.itemTitle} minPresenceAhead={40}>
+    <View style={styles.itemBlock} wrap minPresenceAhead={60}>
+      <Text style={styles.itemTitle} minPresenceAhead={56}>
         {item.title}
       </Text>
       <Text style={styles.itemStatus}>{response?.isComplete ? "Completed" : "Incomplete"}</Text>
@@ -384,14 +402,14 @@ function ItemBody(props: {
       ) : null}
 
       {photos.length > 0 ? (
-        <View>
+        <View wrap={false} minPresenceAhead={100}>
           <Text style={styles.fieldLabel}>Photos</Text>
-          <View style={styles.photoGrid} minPresenceAhead={80}>
+          <View style={styles.photoGrid}>
             {photos.map((p) => {
               const img = images.get(p.id);
               if (!img) return null;
               return (
-                <View key={p.id} style={styles.photoCell}>
+                <View key={p.id} style={styles.photoCell} wrap={false}>
                   {/* eslint-disable-next-line jsx-a11y/alt-text -- react-pdf Image */}
                   <Image src={img.dataUri} style={styles.photoImg} />
                 </View>
@@ -461,13 +479,7 @@ function SectionPages(props: {
       {items.map((item) => (
         <ItemBody key={item.id} item={item} inspection={inspection} images={images} />
       ))}
-      <PageFooter projectName={inspection.projectName} />
-      <Text
-        style={{ position: "absolute", bottom: 28, left: 44, fontSize: 7, color: colors.muted }}
-        fixed
-      >
-        {companyName}
-      </Text>
+      <PageFooter projectName={inspection.projectName} companyName={companyName} />
     </Page>
   );
 }
@@ -545,7 +557,7 @@ function InspectionPdfDocument(props: {
             <Text style={styles.muted}>No cover photo</Text>
           </View>
         )}
-        <PageFooter projectName={inspection.projectName} />
+        <PageFooter projectName={inspection.projectName} companyName={companyName} />
       </Page>
 
       {standalone.length > 0 ? (

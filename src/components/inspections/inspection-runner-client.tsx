@@ -920,7 +920,11 @@ export function InspectionRunnerClient({
           </div>
         </div>
         {inspection.aiProcessingStatus !== "idle" ? (
-          <InspectionAiPipelineProgress inspection={inspection} />
+          <InspectionAiPipelineProgress
+            key={`${inspection.id}-${inspection.aiProcessingFinishedAt ?? inspection.aiProcessingStatus}`}
+            inspection={inspection}
+            inspectionId={inspection.id}
+          />
         ) : null}
         {failedQueueItems.length ? (
           <div className="space-y-1 rounded-md border border-red-200 bg-red-50 px-2 py-2 text-left text-xs text-red-900">

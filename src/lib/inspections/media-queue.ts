@@ -1,6 +1,11 @@
 /**
  * Persistent background upload queue for site inspection media.
  * Blobs + metadata live in IndexedDB so uploads survive reload / backgrounding.
+ *
+ * Storage strategy: copy the selected File once into a fresh Blob (detaching from
+ * the input element — that was the iOS stale-handle bug), then persist that Blob
+ * in IndexedDB. Safari keeps IDB Blobs disk-backed, so we do NOT keep ArrayBuffers
+ * resident in memory (that caused connection reclaim under many large videos).
  */
 
 import { createClient } from "@/lib/supabase/client";
@@ -13,6 +18,8 @@ const DB_NAME = "baxter-site-inspection-uploads";
 const DB_VERSION = 1;
 const STORE = "queue";
 const MAX_UPLOAD_ATTEMPTS = 8;
+/** Fail an upload that sits at 0% (or any stalled progress) this long with no activity. */
+export const UPLOAD_STALL_TIMEOUT_MS = 120_000;
 
 export type QueueItemStatus = "queued" | "uploading" | "finalizing" | "uploaded" | "failed";
 
@@ -23,10 +30,14 @@ export type MediaQueueItem = {
   mediaType: "photo" | "video";
   mimeType: string;
   byteSize: number;
-  /** Durable copy — IndexedDB Blob handles can go stale on iOS (“Load failed”). */
-  bytes: ArrayBuffer;
+  /**
+   * Durable Blob copy (not a live File). IndexedDB-backed on Safari — disk, not RAM.
+   * Legacy rows may still carry `bytes?: ArrayBuffer`; those are migrated on read.
+   */
   blob: Blob;
-  /** Optional on-device first-frame JPEG for videos. */
+  /** @deprecated Prefer `blob`. Kept optional for migrating older queue rows. */
+  bytes?: ArrayBuffer;
+  /** Optional on-device first-frame JPEG for videos (legacy; posters are server-side now). */
   posterBytes?: ArrayBuffer | null;
   posterMimeType?: string | null;
   status: QueueItemStatus;
@@ -37,6 +48,8 @@ export type MediaQueueItem = {
   storagePath: string | null;
   posterStoragePath?: string | null;
   createdAt: number;
+  /** Wall-clock of last progress/status activity — used for stall detection. */
+  lastProgressAt?: number;
 };
 
 export type MediaQueueSnapshot = {
@@ -102,6 +115,33 @@ export function enableMemoryMediaQueueForTests(): void {
   if (!memoryQueue) memoryQueue = new Map();
 }
 
+function isIdbClosingError(error: unknown): boolean {
+  const name = error instanceof DOMException ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    name === "InvalidStateError" ||
+    /connection is closing/i.test(message) ||
+    /database connection is closing/i.test(message) ||
+    /InvalidStateError/i.test(message)
+  );
+}
+
+function attachDbLifecycle(db: IDBDatabase): void {
+  db.onclose = () => {
+    console.warn("[site-inspection-media] IndexedDB connection closed — will reopen");
+    if (dbPromise) dbPromise = null;
+  };
+  db.onversionchange = () => {
+    console.warn("[site-inspection-media] IndexedDB versionchange — closing for reopen");
+    try {
+      db.close();
+    } catch {
+      /* ignore */
+    }
+    dbPromise = null;
+  };
+}
+
 function openDb(): Promise<IDBDatabase> {
   if (memoryQueue) {
     return Promise.reject(new Error("IndexedDB bypassed — using memory queue"));
@@ -120,11 +160,42 @@ function openDb(): Promise<IDBDatabase> {
           store.createIndex("status", "status", { unique: false });
         }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
+      req.onsuccess = () => {
+        const db = req.result;
+        attachDbLifecycle(db);
+        resolve(db);
+      };
+      req.onerror = () => {
+        dbPromise = null;
+        reject(req.error ?? new Error("IndexedDB open failed"));
+      };
+      req.onblocked = () => {
+        console.warn("[site-inspection-media] IndexedDB open blocked");
+      };
     });
   }
   return dbPromise;
+}
+
+/** Invalidate cached connection so the next call reopens. */
+export function resetIdbConnectionForTests(): void {
+  dbPromise = null;
+}
+
+async function withIdbRetry<T>(operation: () => Promise<T>, attempts = 2): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (attempts > 1 && isIdbClosingError(error)) {
+      console.warn("[site-inspection-media] IndexedDB closing mid-op — reopening and retrying", {
+        message: error instanceof Error ? error.message : String(error),
+        attemptsLeft: attempts - 1,
+      });
+      dbPromise = null;
+      return withIdbRetry(operation, attempts - 1);
+    }
+    throw error;
+  }
 }
 
 function idbReq<T>(req: IDBRequest<T>): Promise<T> {
@@ -134,21 +205,61 @@ function idbReq<T>(req: IDBRequest<T>): Promise<T> {
   });
 }
 
-async function putItem(item: MediaQueueItem): Promise<void> {
-  if (memoryQueue) {
-    memoryQueue.set(item.clientMediaId, item);
-    return;
-  }
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readwrite");
-  await idbReq(tx.objectStore(STORE).put(item));
+function idbTxDone(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
+    tx.onabort = () => reject(tx.error ?? new Error("IndexedDB transaction aborted"));
+  });
 }
 
+/**
+ * Normalize a row loaded from IDB: prefer Blob, drop resident ArrayBuffers so
+ * subsequent puts don't re-pin hundreds of MB in JS heap.
+ */
+function normalizeQueueItem(raw: MediaQueueItem): MediaQueueItem {
+  let blob = raw.blob;
+  if ((!blob || blob.size === 0) && raw.bytes && raw.bytes.byteLength > 0) {
+    blob = new Blob([raw.bytes], { type: raw.mimeType || "application/octet-stream" });
+  }
+  const { bytes: _drop, ...rest } = raw;
+  return {
+    ...rest,
+    blob,
+    byteSize: raw.byteSize || blob.size,
+  };
+}
+
+/** Persist without ArrayBuffer payload — Blob only. */
+function toPersistable(item: MediaQueueItem): MediaQueueItem {
+  const normalized = normalizeQueueItem(item);
+  const { bytes: _omit, ...rest } = normalized;
+  return rest;
+}
+
+async function putItem(item: MediaQueueItem): Promise<void> {
+  const persistable = toPersistable(item);
+  if (memoryQueue) {
+    memoryQueue.set(persistable.clientMediaId, persistable);
+    return;
+  }
+  await withIdbRetry(async () => {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(persistable);
+    await idbTxDone(tx);
+  });
+}
+
+/**
+ * Copy once off the live File/input Blob into a fresh Blob.
+ * We intentionally do NOT keep the intermediate ArrayBuffer on the queue item —
+ * that was pinning video bytes in RAM and triggering Safari IDB reclaim.
+ */
 async function materializeDurableBytes(
   blob: Blob,
   mimeType: string,
 ): Promise<{
-  bytes: ArrayBuffer;
   blob: Blob;
   byteSize: number;
 }> {
@@ -156,26 +267,34 @@ async function materializeDurableBytes(
   if (bytes.byteLength === 0) {
     throw new Error("Media data was empty — try attaching again");
   }
-  // Fresh Blob from ArrayBuffer so we are not holding a live File/input reference.
   const durable = new Blob([bytes], { type: mimeType || blob.type || "application/octet-stream" });
-  return { bytes, blob: durable, byteSize: bytes.byteLength };
+  return { blob: durable, byteSize: bytes.byteLength };
 }
 
 function blobForUpload(item: MediaQueueItem): Blob {
-  if (item.bytes && item.bytes.byteLength > 0) {
-    return new Blob([item.bytes], { type: item.mimeType });
-  }
-  if (item.blob && item.blob.size > 0) return item.blob;
+  const normalized = normalizeQueueItem(item);
+  if (normalized.blob && normalized.blob.size > 0) return normalized.blob;
   throw new Error("Stored media bytes are missing — try attaching again");
 }
 
 async function getItem(clientMediaId: string): Promise<MediaQueueItem | undefined> {
   if (memoryQueue) {
-    return memoryQueue.get(clientMediaId);
+    const row = memoryQueue.get(clientMediaId);
+    return row ? normalizeQueueItem(row) : undefined;
   }
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readonly");
-  return idbReq(tx.objectStore(STORE).get(clientMediaId));
+  return withIdbRetry(async () => {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readonly");
+    const raw = await idbReq(tx.objectStore(STORE).get(clientMediaId));
+    await idbTxDone(tx);
+    if (!raw) return undefined;
+    const normalized = normalizeQueueItem(raw as MediaQueueItem);
+    // Opportunistically rewrite legacy ArrayBuffer rows to Blob-only.
+    if ((raw as MediaQueueItem).bytes && (raw as MediaQueueItem).bytes!.byteLength > 0) {
+      void putItem(normalized).catch(() => undefined);
+    }
+    return normalized;
+  });
 }
 
 async function deleteItem(clientMediaId: string): Promise<void> {
@@ -183,18 +302,25 @@ async function deleteItem(clientMediaId: string): Promise<void> {
     memoryQueue.delete(clientMediaId);
     return;
   }
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readwrite");
-  await idbReq(tx.objectStore(STORE).delete(clientMediaId));
+  await withIdbRetry(async () => {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(clientMediaId);
+    await idbTxDone(tx);
+  });
 }
 
 async function listAllItems(): Promise<MediaQueueItem[]> {
   if (memoryQueue) {
-    return Array.from(memoryQueue.values());
+    return Array.from(memoryQueue.values()).map(normalizeQueueItem);
   }
-  const db = await openDb();
-  const tx = db.transaction(STORE, "readonly");
-  return idbReq(tx.objectStore(STORE).getAll());
+  return withIdbRetry(async () => {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readonly");
+    const raw = (await idbReq(tx.objectStore(STORE).getAll())) as MediaQueueItem[];
+    await idbTxDone(tx);
+    return raw.map(normalizeQueueItem);
+  });
 }
 
 function filterItemsForInspection(
@@ -388,6 +514,7 @@ async function uploadSigned(
   blob: Blob,
   mimeType: string,
   onProgress?: (ratio: number) => void,
+  options?: { onAbort?: (abort: () => void) => void; stallTimeoutMs?: number },
 ): Promise<void> {
   const env = getPublicEnv();
   console.info("[site-inspection-media] signed upload auth (apikey only; JWT in URL token)", {
@@ -396,46 +523,119 @@ async function uploadSigned(
     hasSignedUrl: Boolean(signedUrl),
   });
 
+  const stallTimeoutMs = options?.stallTimeoutMs ?? UPLOAD_STALL_TIMEOUT_MS;
+
   // Prefer XHR against the signed URL so large videos can report progress.
   if (signedUrl && typeof XMLHttpRequest !== "undefined") {
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      let lastActivityAt = Date.now();
+      let settled = false;
+      const stallTimer = setInterval(() => {
+        if (settled) return;
+        if (Date.now() - lastActivityAt >= stallTimeoutMs) {
+          settled = true;
+          clearInterval(stallTimer);
+          try {
+            xhr.abort();
+          } catch {
+            /* ignore */
+          }
+          reject(
+            new Error(
+              `Upload stalled with no progress for ${Math.round(stallTimeoutMs / 1000)}s — tap Retry`,
+            ),
+          );
+        }
+      }, 5_000);
+
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(stallTimer);
+        fn();
+      };
+
+      options?.onAbort?.(() => {
+        finish(() => {
+          try {
+            xhr.abort();
+          } catch {
+            /* ignore */
+          }
+          reject(new Error("Upload cancelled"));
+        });
+      });
+
       xhr.open("PUT", signedUrl, true);
       xhr.setRequestHeader("Content-Type", mimeType);
       xhr.upload.onprogress = (event) => {
+        lastActivityAt = Date.now();
         if (event.lengthComputable && event.total > 0) {
           onProgress?.(event.loaded / event.total);
+        } else if (event.loaded > 0) {
+          // Some Safari builds omit total; any bytes moving still count as activity.
+          onProgress?.(Math.min(0.99, event.loaded / Math.max(blob.size, 1)));
         }
       };
       xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          onProgress?.(1);
-          resolve();
-          return;
-        }
-        reject(new Error(`Signed upload failed (${xhr.status})`));
+        finish(() => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            onProgress?.(1);
+            resolve();
+            return;
+          }
+          reject(new Error(`Signed upload failed (${xhr.status})`));
+        });
       };
-      xhr.onerror = () => reject(new Error("Signed upload failed — network error"));
+      xhr.onerror = () => finish(() => reject(new Error("Signed upload failed — network error")));
+      xhr.onabort = () => {
+        /* abort handled by stall/cancel finish paths */
+      };
+      // Mark activity when send starts so a hung socket before first progress still times out
+      // from this moment (covers the "uploading 0%" hang).
+      lastActivityAt = Date.now();
       xhr.send(blob);
     });
     return;
   }
 
   const supabase = createClient();
-  const { error } = await supabase.storage
-    .from("site-inspection-media")
-    .uploadToSignedUrl(path, token, blob, { contentType: mimeType, upsert: true });
-  if (error) {
-    const message = error.message || "Signed upload failed";
-    // Safari often surfaces revoked/stale blob reads as a bare "Load failed".
-    if (/load failed/i.test(message)) {
-      throw new Error(
-        "Photo upload failed — the file data went stale. Remove and re-attach the photo, then retry.",
+  const startedAt = Date.now();
+  let stallReject: ((error: Error) => void) | null = null;
+  const stallWatch = new Promise<never>((_, reject) => {
+    stallReject = reject;
+  });
+  const stallInterval = setInterval(() => {
+    if (Date.now() - startedAt >= stallTimeoutMs) {
+      stallReject?.(
+        new Error(
+          `Upload stalled with no progress for ${Math.round(stallTimeoutMs / 1000)}s — tap Retry`,
+        ),
       );
     }
-    throw new Error(message);
+  }, 5_000);
+  try {
+    const { error } = await Promise.race([
+      supabase.storage
+        .from("site-inspection-media")
+        .uploadToSignedUrl(path, token, blob, { contentType: mimeType, upsert: true }),
+      stallWatch,
+    ]);
+    if (error) {
+      const message = error.message || "Signed upload failed";
+      // Safari often surfaces revoked/stale blob reads as a bare "Load failed".
+      if (/load failed/i.test(message)) {
+        throw new Error(
+          "Media upload failed — the file data went stale. Remove and re-attach, then retry.",
+        );
+      }
+      throw new Error(message);
+    }
+    onProgress?.(1);
+  } finally {
+    clearInterval(stallInterval);
   }
-  onProgress?.(1);
 }
 
 async function uploadMemory(inspectionId: string, path: string, blob: Blob, mimeType: string) {
@@ -470,6 +670,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     status: item.status === "finalizing" ? "finalizing" : "uploading",
     progress: item.status === "finalizing" ? 1 : item.progress || 0,
     lastError: null,
+    lastProgressAt: Date.now(),
   };
   await putItem(next);
   await emit();
@@ -524,8 +725,10 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     const uploadBlob = blobForUpload(item);
     const { upload } = prepareJson;
     const abortController = { aborted: false };
+    let xhrAbort: (() => void) | null = null;
     activeAbortByClientId.set(clientMediaId, () => {
       abortController.aborted = true;
+      xhrAbort?.();
     });
 
     if (upload.mode === "signed") {
@@ -540,9 +743,14 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
           void (async () => {
             const current = await getItem(clientMediaId);
             if (!current || current.status !== "uploading") return;
-            await putItem({ ...current, progress: ratio });
+            await putItem({ ...current, progress: ratio, lastProgressAt: Date.now() });
             await emit();
           })();
+        },
+        {
+          onAbort: (abort) => {
+            xhrAbort = abort;
+          },
         },
       );
       // Posters are generated server-side after complete — do not upload client frames.
@@ -781,16 +989,18 @@ export async function cancelAndDiscardMediaUpload(clientMediaId: string): Promis
 
 /** Test-only: insert a queue row (with blob) without going through enqueue/process. */
 export async function seedMediaQueueItemForTests(
-  input: Omit<MediaQueueItem, "blob" | "bytes"> & { blob?: Blob; bytes?: ArrayBuffer },
+  input: Omit<MediaQueueItem, "blob"> & { blob?: Blob; bytes?: ArrayBuffer },
 ): Promise<void> {
   enableMemoryMediaQueueForTests();
-  const blob = input.blob ?? new Blob([new Uint8Array([1, 2, 3])], { type: input.mimeType });
-  const bytes = input.bytes ?? (await blob.arrayBuffer());
+  const blob =
+    input.blob ??
+    (input.bytes
+      ? new Blob([input.bytes], { type: input.mimeType })
+      : new Blob([new Uint8Array([1, 2, 3])], { type: input.mimeType }));
   await putItem({
     ...input,
-    bytes,
-    blob: new Blob([bytes], { type: input.mimeType }),
-    byteSize: input.byteSize || bytes.byteLength,
+    blob,
+    byteSize: input.byteSize || blob.size,
   });
   await emit();
 }
@@ -820,9 +1030,8 @@ export async function enqueueInspectionMedia(input: {
     }
   }
 
-  // Copy into ArrayBuffer immediately so queued items don't depend on a live File
-  // (iOS can invalidate input Files; Safari IDB Blob handles can throw "Load failed").
-  // Posters are generated server-side after upload complete — not on-device.
+  // Copy once off the live File into a fresh Blob (iOS invalidates input File handles).
+  // Persist the Blob only — do not keep the intermediate ArrayBuffer on the queue item.
   const durable = await materializeDurableBytes(sourceBlob, mimeType);
   const localPreviewUrl = URL.createObjectURL(durable.blob);
   const now = Date.now();
@@ -833,7 +1042,6 @@ export async function enqueueInspectionMedia(input: {
     mediaType: input.mediaType,
     mimeType,
     byteSize: durable.byteSize,
-    bytes: durable.bytes,
     blob: durable.blob,
     posterBytes: null,
     posterMimeType: null,
@@ -845,6 +1053,7 @@ export async function enqueueInspectionMedia(input: {
     storagePath: null,
     posterStoragePath: null,
     createdAt: now,
+    lastProgressAt: now,
   };
   await putItem(queueItem);
   await emit();
@@ -881,3 +1090,8 @@ export {
   redactApiKeyForLog,
   supabaseResumableUploadEndpoint,
 } from "./media-limits";
+
+/** Exported for unit tests — classify IndexedDB closing errors. */
+export function isIdbClosingErrorForTests(error: unknown): boolean {
+  return isIdbClosingError(error);
+}

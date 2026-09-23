@@ -311,7 +311,12 @@ export function InspectionsListClient({
                       e.stopPropagation();
                     }}
                   >
-                    <InspectionAiPipelineProgress inspection={row} compact />
+                    <InspectionAiPipelineProgress
+                      key={`${row.id}-${row.aiProcessingFinishedAt ?? row.aiProcessingStatus}`}
+                      inspection={row}
+                      inspectionId={row.id}
+                      compact
+                    />
                   </div>
                 ) : null}
               </div>

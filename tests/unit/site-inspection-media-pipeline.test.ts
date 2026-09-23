@@ -87,6 +87,12 @@ describe("media limits + export naming", () => {
     expect(source).toContain("purgeMediaQueueForInspection");
     expect(source).toContain("purgeOrphanMediaQueueEntries");
     expect(source).toContain("inspectionId: options?.inspectionId");
+    expect(source).toContain("UPLOAD_STALL_TIMEOUT_MS");
+    expect(source).toContain("withIdbRetry");
+    expect(source).toContain("onclose");
+    expect(source).toContain("onversionchange");
+    // Persist Blob only — resident ArrayBuffers caused Safari IDB reclaim under many videos.
+    expect(source).toContain("Persist the Blob only");
     expect(source).not.toContain("tus-js-client");
     // Auth for signed uploads is in the URL token — no Authorization header construction.
     expect(source).toContain("redactApiKeyForLog");
