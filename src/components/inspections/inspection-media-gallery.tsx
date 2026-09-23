@@ -2,16 +2,28 @@
 
 /**
  * Full-screen media gallery for one checklist item.
- * Batch-refreshes signed URLs; supports arrows, keyboard, swipe, and delete.
+ * Videos show transcript beside (desktop) or below (mobile) the player,
+ * with seekable timestamps and active-segment highlight during playback.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, RotateCcw, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Play, RotateCcw, Trash2, X } from "lucide-react";
 import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import type { SiteInspectionDetail, SiteInspectionMedia } from "@/lib/inspections/record-types";
+import type {
+  SiteInspectionDetail,
+  SiteInspectionMedia,
+  TranscriptSegment,
+} from "@/lib/inspections/record-types";
 
 const URL_REFRESH_MARGIN_MS = 90_000;
+
+function formatSeconds(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${String(rem).padStart(2, "0")}`;
+}
 
 export type InspectionMediaGalleryProps = {
   open: boolean;
@@ -47,9 +59,12 @@ export function InspectionMediaGallery({
   const [urlError, setUrlError] = useState<string | null>(null);
   const [rotateBusy, setRotateBusy] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
   const touchStartX = useRef<number | null>(null);
   const refreshing = useRef(false);
   const seekApplied = useRef(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const activeSegRef = useRef<HTMLLIElement | null>(null);
 
   const viewable = media.filter((m) => m.localPreviewUrl || m.signedUrl || m.storagePath);
   const safeIndex = Math.min(Math.max(0, index), Math.max(0, viewable.length - 1));
@@ -88,7 +103,6 @@ export function InspectionMediaGallery({
 
   useEffect(() => {
     if (!open) return;
-    // Defer so URL fetch setState is not synchronous inside the effect body.
     const timer = window.setTimeout(() => {
       void refreshUrls();
     }, 0);
@@ -119,6 +133,23 @@ export function InspectionMediaGallery({
     return () => document.removeEventListener("keydown", onKey, true);
   }, [open, viewable.length]);
 
+  const segments: TranscriptSegment[] =
+    current?.mediaType === "video" ? (current.transcriptSegments ?? []) : [];
+
+  const activeSegmentIndex = (() => {
+    if (!segments.length) return -1;
+    let idx = -1;
+    for (let i = 0; i < segments.length; i += 1) {
+      if (currentTime >= segments[i]!.start) idx = i;
+      else break;
+    }
+    return idx;
+  })();
+
+  useEffect(() => {
+    activeSegRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeSegmentIndex]);
+
   function srcFor(m: SiteInspectionMedia): string | null {
     if (m.localPreviewUrl) return m.localPreviewUrl;
     const fromBatch = urlById[m.id] ?? (m.clientMediaId ? urlById[m.clientMediaId] : undefined);
@@ -126,11 +157,21 @@ export function InspectionMediaGallery({
   }
 
   const src = current ? srcFor(current) : null;
+  const showTranscriptPanel = current?.mediaType === "video";
 
   function go(delta: number) {
     setMediaLoading(true);
     setRotateError(null);
+    setCurrentTime(0);
     setIndex((i) => Math.min(viewable.length - 1, Math.max(0, i + delta)));
+  }
+
+  function seekTo(seconds: number) {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = seconds;
+    setCurrentTime(seconds);
+    void el.play().catch(() => undefined);
   }
 
   async function rotateCurrent() {
@@ -165,9 +206,9 @@ export function InspectionMediaGallery({
       open={open}
       onClose={onClose}
       size="lg"
-      className="h-[100dvh] max-h-[100dvh] rounded-none sm:h-[min(92vh,880px)] sm:max-h-[min(92vh,880px)] sm:max-w-4xl sm:rounded-xl"
+      className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden rounded-none sm:h-[min(92vh,880px)] sm:max-h-[min(92vh,880px)] sm:max-w-5xl sm:rounded-xl"
     >
-      <DialogHeader className="flex flex-row items-start justify-between gap-2">
+      <DialogHeader className="flex shrink-0 flex-row items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <DialogTitle className="truncate">{itemTitle}</DialogTitle>
           <DialogDescription>
@@ -230,7 +271,9 @@ export function InspectionMediaGallery({
       </DialogHeader>
 
       <div
-        className="relative flex min-h-0 flex-1 items-center justify-center bg-black/90 px-2 py-3"
+        className={`relative flex min-h-0 flex-1 flex-col overflow-hidden ${
+          showTranscriptPanel ? "sm:flex-row" : ""
+        }`}
         onTouchStart={(e) => {
           touchStartX.current = e.changedTouches[0]?.clientX ?? null;
         }}
@@ -245,109 +288,201 @@ export function InspectionMediaGallery({
           else go(1);
         }}
       >
-        {viewable.length > 1 ? (
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              className="absolute top-1/2 left-2 z-10 min-h-11 min-w-11 -translate-y-1/2 px-2"
-              aria-label="Previous media"
-              disabled={safeIndex <= 0}
-              onClick={() => go(-1)}
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="absolute top-1/2 right-2 z-10 min-h-11 min-w-11 -translate-y-1/2 px-2"
-              aria-label="Next media"
-              disabled={safeIndex >= viewable.length - 1}
-              onClick={() => go(1)}
-            >
-              <ChevronRight className="h-5 w-5" />
-            </Button>
-          </>
-        ) : null}
-
-        <div className="relative flex h-full w-full max-w-full items-center justify-center">
-          {urlError ? (
-            <div className="space-y-2 px-4 text-center text-sm text-white">
-              <p>{urlError}</p>
-              <Button type="button" variant="secondary" onClick={() => void refreshUrls()}>
-                Retry
-              </Button>
-            </div>
-          ) : !current ? (
-            <p className="text-sm text-white/80">No media</p>
-          ) : !src ? (
-            <p className="text-sm text-white/80">
-              {loadingUrls ? "Loading…" : "Media not available yet"}
-            </p>
-          ) : current.mediaType === "video" ? (
+        <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black/90 px-2 py-3">
+          {viewable.length > 1 ? (
             <>
-              {mediaLoading ? (
-                <p className="absolute text-sm text-white/70" aria-live="polite">
-                  Loading…
-                </p>
-              ) : null}
-              <video
-                key={`${current.id}-${src}`}
-                src={src}
-                controls
-                playsInline
-                preload="metadata"
-                className="max-h-full max-w-full object-contain"
-                onLoadedMetadata={(e) => {
-                  if (
-                    !seekApplied.current &&
-                    initialSeekSeconds != null &&
-                    Number.isFinite(initialSeekSeconds) &&
-                    initialSeekSeconds >= 0
-                  ) {
-                    e.currentTarget.currentTime = initialSeekSeconds;
-                    seekApplied.current = true;
-                  }
-                }}
-                onLoadedData={() => setMediaLoading(false)}
-                onError={() => {
-                  setMediaLoading(false);
-                  void refreshUrls();
-                }}
+              <Button
+                type="button"
+                variant="secondary"
+                className="absolute top-1/2 left-2 z-10 min-h-11 min-w-11 -translate-y-1/2 px-2"
+                aria-label="Previous media"
+                disabled={safeIndex <= 0}
+                onClick={() => go(-1)}
               >
-                <source src={src} type={current.mimeType ?? undefined} />
-              </video>
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="absolute top-1/2 right-2 z-10 min-h-11 min-w-11 -translate-y-1/2 px-2"
+                aria-label="Next media"
+                disabled={safeIndex >= viewable.length - 1}
+                onClick={() => go(1)}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
             </>
-          ) : (
-            <>
-              {mediaLoading ? (
-                <p className="absolute text-sm text-white/70" aria-live="polite">
-                  Loading…
-                </p>
-              ) : null}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                key={`${current.id}-${src}`}
-                src={src}
-                alt=""
-                className={`max-h-full max-w-full object-contain transition-opacity ${
-                  mediaLoading ? "opacity-0" : "opacity-100"
-                }`}
-                onLoad={() => setMediaLoading(false)}
-                onError={() => {
-                  setMediaLoading(false);
-                  void refreshUrls();
-                }}
-              />
-            </>
-          )}
+          ) : null}
+
+          <div className="relative flex h-full w-full max-w-full items-center justify-center">
+            {urlError ? (
+              <div className="space-y-2 px-4 text-center text-sm text-white">
+                <p>{urlError}</p>
+                <Button type="button" variant="secondary" onClick={() => void refreshUrls()}>
+                  Retry
+                </Button>
+              </div>
+            ) : !current ? (
+              <p className="text-sm text-white/80">No media</p>
+            ) : !src ? (
+              <p className="text-sm text-white/80">
+                {loadingUrls ? "Loading…" : "Media not available yet"}
+              </p>
+            ) : current.mediaType === "video" ? (
+              <>
+                {mediaLoading ? (
+                  <p className="absolute text-sm text-white/70" aria-live="polite">
+                    Loading…
+                  </p>
+                ) : null}
+                <video
+                  key={`${current.id}-${src}`}
+                  ref={videoRef}
+                  src={src}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="max-h-full max-w-full object-contain"
+                  onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                  onLoadedMetadata={(e) => {
+                    if (
+                      !seekApplied.current &&
+                      initialSeekSeconds != null &&
+                      Number.isFinite(initialSeekSeconds) &&
+                      initialSeekSeconds >= 0
+                    ) {
+                      e.currentTarget.currentTime = initialSeekSeconds;
+                      seekApplied.current = true;
+                      setCurrentTime(initialSeekSeconds);
+                    }
+                  }}
+                  onLoadedData={() => setMediaLoading(false)}
+                  onError={() => {
+                    setMediaLoading(false);
+                    void refreshUrls();
+                  }}
+                >
+                  <source src={src} type={current.mimeType ?? undefined} />
+                </video>
+              </>
+            ) : (
+              <>
+                {mediaLoading ? (
+                  <p className="absolute text-sm text-white/70" aria-live="polite">
+                    Loading…
+                  </p>
+                ) : null}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  key={`${current.id}-${src}`}
+                  src={src}
+                  alt=""
+                  className={`max-h-full max-w-full object-contain transition-opacity ${
+                    mediaLoading ? "opacity-0" : "opacity-100"
+                  }`}
+                  onLoad={() => setMediaLoading(false)}
+                  onError={() => {
+                    setMediaLoading(false);
+                    void refreshUrls();
+                  }}
+                />
+              </>
+            )}
+          </div>
         </div>
+
+        {showTranscriptPanel && current ? (
+          <aside className="flex max-h-[42%] min-h-0 w-full shrink-0 flex-col border-t border-[var(--acton-border)] bg-white sm:max-h-none sm:w-[min(340px,42%)] sm:border-t-0 sm:border-l">
+            <div className="shrink-0 border-b border-[var(--acton-border)] px-3 py-2">
+              <p className="text-xs font-semibold tracking-wide text-[var(--acton-navy)] uppercase">
+                Transcript
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-sm text-[var(--acton-navy)]">
+              <ViewerTranscriptBody
+                media={current}
+                segments={segments}
+                activeSegmentIndex={activeSegmentIndex}
+                activeSegRef={activeSegRef}
+                onSeek={seekTo}
+              />
+            </div>
+          </aside>
+        ) : null}
       </div>
       {rotateError ? (
-        <p className="px-4 pb-3 text-center text-sm text-red-600" role="alert">
+        <p className="shrink-0 px-4 pb-3 text-center text-sm text-red-600" role="alert">
           {rotateError}
         </p>
       ) : null}
     </Dialog>
   );
+}
+
+function ViewerTranscriptBody({
+  media,
+  segments,
+  activeSegmentIndex,
+  activeSegRef,
+  onSeek,
+}: {
+  media: SiteInspectionMedia;
+  segments: TranscriptSegment[];
+  activeSegmentIndex: number;
+  activeSegRef: React.RefObject<HTMLLIElement | null>;
+  onSeek: (seconds: number) => void;
+}) {
+  const status = media.transcriptStatus;
+  if (!status) {
+    return (
+      <p className="text-[var(--acton-muted)]">
+        Transcript appears after you complete the site inspection.
+      </p>
+    );
+  }
+  if (status === "pending" || status === "processing") {
+    return <p className="text-[var(--acton-muted)]">Transcribing this video…</p>;
+  }
+  if (status === "no_speech_detected") {
+    return <p className="text-[var(--acton-muted)]">No speech detected in this video.</p>;
+  }
+  if (status === "failed") {
+    return (
+      <p className="text-red-700">
+        {media.transcriptError ?? "Transcription failed for this video."}
+      </p>
+    );
+  }
+  if (segments.length) {
+    return (
+      <ul className="space-y-2">
+        {segments.map((seg, i) => {
+          const active = i === activeSegmentIndex;
+          return (
+            <li
+              key={`${seg.start}-${i}`}
+              ref={active ? activeSegRef : undefined}
+              className={`rounded-md px-2 py-1.5 leading-snug ${
+                active ? "bg-[var(--acton-navy)]/10 ring-1 ring-[var(--acton-navy)]/25" : ""
+              }`}
+            >
+              <button
+                type="button"
+                className="mr-1.5 inline-flex items-center gap-1 font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                onClick={() => onSeek(seg.start)}
+              >
+                <Play className="h-3 w-3 fill-current" aria-hidden />
+                {formatSeconds(seg.start)}
+              </button>
+              <span>{seg.text}</span>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+  if (media.transcriptText?.trim()) {
+    return <p className="leading-relaxed whitespace-pre-wrap">{media.transcriptText}</p>;
+  }
+  return <p className="text-[var(--acton-muted)]">Empty transcript</p>;
 }

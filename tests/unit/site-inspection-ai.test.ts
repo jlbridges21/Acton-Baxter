@@ -63,6 +63,13 @@ vi.mock("@/lib/inspections/ai/summarize", () => ({
   })),
 }));
 
+vi.mock("@/lib/inspections/ensure-video-poster", () => ({
+  ensureServerVideoPoster: vi.fn(async (input: { mediaId: string; storagePath: string }) => ({
+    ok: true as const,
+    posterPath: `${input.storagePath.replace(/\.[^.]+$/, "")}.poster.jpg`,
+  })),
+}));
+
 beforeEach(() => {
   process.env.ENABLE_MOCK_RESEARCH = "true";
   process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
@@ -261,6 +268,91 @@ describe("site inspection AI job", () => {
     const fresh = detail.itemSummaries.find((s) => s.snapshotItemId === itemId);
     expect(fresh?.isStale).toBe(false);
     expect(fresh?.sourceNotes).toMatch(/panel clearance/i);
+  });
+
+  it("does not summarize until every transcript is terminal", async () => {
+    const { inspectionId, itemId } = await inspectionWithReadyVideo();
+    // Leave transcript non-terminal while forcing a summarize path via repair helper.
+    await updateMediaTranscript(
+      (await getSiteInspection(inspectionId)).media.find((m) => m.mediaType === "video")!.id,
+      { transcript_status: "processing" },
+    );
+
+    const { summarizeInspectionItem } = await import("@/lib/inspections/ai/summarize");
+    vi.mocked(summarizeInspectionItem).mockClear();
+
+    // Manually invoke the job's summary phase by running with a sticky processing status:
+    // re-run job will finish the stuck video then summarize.
+    const slow = vi.mocked(await import("@/lib/inspections/ai/transcribe")).transcribeAudioBuffer;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    slow.mockImplementationOnce(async () => {
+      await gate;
+      return {
+        kind: "complete" as const,
+        text: "Sewer lateral looks about eight feet deep.",
+        segments: [{ start: 12.5, end: 16, text: "Sewer lateral looks about eight feet deep." }],
+      };
+    });
+
+    const running = runSiteInspectionAiJob(fakeJob(inspectionId));
+    // While transcript is still slow, summarize must not have been called yet.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(vi.mocked(summarizeInspectionItem).mock.calls.length).toBe(0);
+    release();
+    await running;
+    expect(vi.mocked(summarizeInspectionItem).mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    const detail = await getSiteInspection(inspectionId);
+    expect(detail.itemSummaries.find((s) => s.snapshotItemId === itemId)?.summaryText).toMatch(
+      /sewer/i,
+    );
+  });
+
+  it("repairs premature empty summaries when usable transcripts exist", async () => {
+    const { inspectionId, itemId } = await inspectionWithReadyVideo();
+    await runSiteInspectionAiJob(fakeJob(inspectionId));
+    const video = (await getSiteInspection(inspectionId)).media.find(
+      (m) => m.mediaType === "video",
+    )!;
+
+    // Simulate the race artifact: empty-input boilerplate locked in with matching fingerprint.
+    await upsertItemSummary({
+      inspectionId,
+      snapshotItemId: itemId,
+      summaryText: "No spoken content or notes were available.",
+      contentFingerprint: buildItemSummaryFingerprint({
+        notes: "",
+        videos: [
+          {
+            mediaId: video.id,
+            transcriptStatus: video.transcriptStatus,
+            transcriptText: video.transcriptText,
+            transcriptSegments: video.transcriptSegments,
+          },
+        ],
+      }),
+      sourceNotes: "",
+      sourceVideoIds: [video.id],
+      status: "complete",
+    });
+
+    let detail = await getSiteInspection(inspectionId);
+    const bad = detail.itemSummaries.find((s) => s.snapshotItemId === itemId);
+    expect(bad?.isStale).toBe(true);
+    expect(bad?.staleReason).toMatch(/before transcripts were ready/i);
+
+    const { repairPrematureEmptySummariesForInspection } =
+      await import("@/lib/inspections/ai/run-job");
+    const repaired = await repairPrematureEmptySummariesForInspection(inspectionId);
+    expect(repaired).toBe(1);
+
+    detail = await getSiteInspection(inspectionId);
+    const fixed = detail.itemSummaries.find((s) => s.snapshotItemId === itemId);
+    expect(fixed?.summaryText).toMatch(/sewer/i);
+    expect(fixed?.isStale).toBe(false);
   });
 
   it("complete with video enqueues AI; complete without video leaves idle", async () => {

@@ -1,45 +1,31 @@
 /**
- * @vitest-environment jsdom
- *
- * Video poster must never block enqueue; capture attrs must not force camera-only.
+ * Posters are generated server-side (ffmpeg). Client extract is retired.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  extractVideoPosterFrame,
-  VIDEO_POSTER_EXTRACT_TIMEOUT_MS,
-} from "@/lib/inspections/video-poster";
 
-afterEach(() => {
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-});
-
-describe("video poster extract timeout", () => {
-  it("exports a 4s soft deadline", () => {
-    expect(VIDEO_POSTER_EXTRACT_TIMEOUT_MS).toBe(4_000);
+describe("video poster — server path", () => {
+  it("media queue no longer extracts posters on-device", () => {
+    const queue = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
+    expect(queue).not.toContain("extractVideoPosterFrame");
+    expect(queue).not.toContain("attachPosterInBackground");
+    expect(queue).toContain("Posters are generated server-side");
   });
 
-  it("returns null when decode never fires (does not hang forever)", async () => {
-    vi.useFakeTimers();
+  it("complete path wires ensureServerVideoPoster", () => {
+    const store = readFileSync(join(process.cwd(), "src/lib/inspections/records-store.ts"), "utf8");
+    expect(store).toContain("ensureServerVideoPoster");
+    expect(store).toContain("server poster extract failed");
+  });
 
-    const createElement = document.createElement.bind(document);
-    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
-      const el = createElement(tag);
-      if (tag === "video") {
-        // Never fire loadeddata/seeked — mirrors iOS Safari hang.
-        Object.defineProperty(el, "play", {
-          value: () => Promise.resolve(),
-        });
-      }
-      return el;
-    });
-
-    const blob = new Blob([new Uint8Array([0, 0, 0, 0])], { type: "video/mp4" });
-    const promise = extractVideoPosterFrame(blob, { timeoutMs: 50 });
-    await vi.advanceTimersByTimeAsync(60);
-    await expect(promise).resolves.toBeNull();
+  it("server extract seeks past frame zero", () => {
+    const server = readFileSync(
+      join(process.cwd(), "src/lib/inspections/video-poster-server.ts"),
+      "utf8",
+    );
+    expect(server).toContain("POSTER_SEEK_SECONDS");
+    expect(server).toMatch(/0\.5/);
   });
 });
 

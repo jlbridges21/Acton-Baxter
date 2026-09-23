@@ -5,6 +5,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { after } from "next/server";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
 import { AuthorizationError, NotFoundError, ValidationError } from "@/lib/errors";
@@ -49,6 +50,7 @@ import {
   resetSiteInspectionAiMemoryForTests,
 } from "./ai/store";
 import { buildItemSummaryFingerprint, describeSummaryStaleReason } from "./ai/fingerprint";
+import { isPrematureEmptySummary } from "./ai/transcript-gate";
 import { enqueueSiteInspectionAi } from "./ai/enqueue";
 
 type InspectionRow = {
@@ -418,24 +420,33 @@ function enrichItemSummariesWithStale(
         mediaId: v.id,
         transcriptStatus: v.transcriptStatus,
         transcriptText: v.transcriptText,
+        transcriptSegments: v.transcriptSegments,
       })),
     });
-    const isStale =
+    const premature = isPrematureEmptySummary({
+      summaryText: summary.summaryText,
+      status: summary.status,
+      videos,
+    });
+    const contentStale =
       summary.status === "complete" &&
       Boolean(summary.summaryText.trim()) &&
       currentFp !== summary.contentFingerprint;
+    const isStale = premature || contentStale;
     if (!isStale) {
       return { ...summary, isStale: false, staleReason: null };
     }
     return {
       ...summary,
       isStale: true,
-      staleReason: describeSummaryStaleReason({
-        previousNotes: summary.sourceNotes,
-        currentNotes: notes,
-        previousVideoIds: summary.sourceVideoIds,
-        currentVideoIds: videos.map((v) => v.id),
-      }),
+      staleReason: premature
+        ? "summary was generated before transcripts were ready"
+        : describeSummaryStaleReason({
+            previousNotes: summary.sourceNotes,
+            currentNotes: notes,
+            previousVideoIds: summary.sourceVideoIds,
+            currentVideoIds: videos.map((v) => v.id),
+          }),
     };
   });
 }
@@ -708,6 +719,10 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     mappedMedia,
     mappedResponses,
   );
+
+  // Auto-repair premature empty summaries + backfill missing posters (non-blocking).
+  scheduleInspectionMaintenance(id, itemSummaries, mappedMedia);
+
   return {
     ...summary,
     snapshot: row.snapshot_json,
@@ -715,6 +730,83 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     media: mappedMedia,
     itemSummaries,
   };
+}
+
+function scheduleInspectionMaintenance(
+  inspectionId: string,
+  itemSummaries: SiteInspectionItemSummary[],
+  media: SiteInspectionMedia[],
+): void {
+  const needsSummaryRepair = itemSummaries.some(
+    (s) => s.staleReason === "summary was generated before transcripts were ready",
+  );
+  const needsPoster = media.some(
+    (m) =>
+      m.mediaType === "video" &&
+      m.uploadStatus === "ready" &&
+      m.storagePath &&
+      !m.posterSignedUrl &&
+      !m.localPosterUrl,
+  );
+  if (!needsSummaryRepair && !needsPoster) return;
+
+  const run = async () => {
+    if (needsSummaryRepair) {
+      try {
+        const { repairPrematureEmptySummariesForInspection } = await import("./ai/run-job");
+        const n = await repairPrematureEmptySummariesForInspection(inspectionId);
+        if (n > 0) {
+          console.info("[site-inspection-ai] repaired premature empty summaries", {
+            inspectionId,
+            repaired: n,
+          });
+        }
+      } catch (error) {
+        console.warn("[site-inspection-ai] repair failed", error);
+      }
+    }
+    if (needsPoster) {
+      const { ensureServerVideoPoster } = await import("./ensure-video-poster");
+      for (const m of media) {
+        if (
+          m.mediaType !== "video" ||
+          m.uploadStatus !== "ready" ||
+          !m.storagePath ||
+          m.posterSignedUrl
+        ) {
+          continue;
+        }
+        try {
+          const result = await ensureServerVideoPoster({
+            mediaId: m.id,
+            storagePath: m.storagePath,
+          });
+          if (result.ok && shouldUseMemory()) {
+            const mem = getMemory();
+            const row = mem.media.get(m.id);
+            if (row) {
+              mem.media.set(m.id, {
+                ...row,
+                poster_storage_path: result.posterPath,
+                updated_at: nowIso(),
+              });
+            }
+          }
+        } catch (error) {
+          console.warn("[site-inspection-media] poster backfill failed", {
+            mediaId: m.id,
+            error,
+          });
+        }
+      }
+    }
+  };
+
+  if (shouldUseMemory()) {
+    void run();
+    return;
+  }
+  after(run);
 }
 
 async function recountProgress(inspectionId: string): Promise<void> {
@@ -976,9 +1068,8 @@ export async function upsertSiteInspectionResponse(
 /**
  * Mint direct-to-storage upload credentials. Does NOT create a media row —
  * optimistic UI stays device-local until bytes land and complete() runs.
- * Photos and videos both use signed upload URLs (TUS deferred: client Authorization
- * still produces Invalid Compact JWS in the field; signed URLs carry auth in the URL).
- * Videos also receive optional poster upload credentials (on-device first frame).
+ * Photos and videos both use signed upload URLs.
+ * Video posters are generated server-side (ffmpeg) on complete — not client-uploaded.
  */
 export async function prepareSiteInspectionMedia(input: {
   inspectionId: string;
@@ -988,7 +1079,7 @@ export async function prepareSiteInspectionMedia(input: {
   mimeType: string;
   byteSize: number;
   actorId: string;
-  /** When true (videos), also mint a signed upload for the companion poster JPEG. */
+  /** @deprecated Ignored — client poster uploads retired. */
   includePosterUpload?: boolean;
 }): Promise<{
   upload:
@@ -997,18 +1088,14 @@ export async function prepareSiteInspectionMedia(input: {
         path: string;
         token: string;
         signedUrl: string;
-        poster?: { path: string; token: string; signedUrl: string };
       }
-    | {
-        mode: "memory";
-        path: string;
-        poster?: { path: string };
-      };
+    | { mode: "memory"; path: string };
 }> {
   const inspection = await loadInspectionRow(input.inspectionId);
   const item = assertItemInSnapshot(inspection.snapshot_json, input.snapshotItemId);
   if (!item.allowsMedia) throw new ValidationError("This item does not allow media");
   if (!input.clientMediaId.trim()) throw new ValidationError("clientMediaId is required");
+  void input.includePosterUpload;
 
   const ext =
     input.mediaType === "video"
@@ -1021,36 +1108,23 @@ export async function prepareSiteInspectionMedia(input: {
           ? "webp"
           : "jpg";
   const storagePath = `${input.actorId}/${input.inspectionId}/${input.clientMediaId}.${ext}`;
-  const wantPoster = input.mediaType === "video" && input.includePosterUpload !== false;
-  const posterPath = wantPoster ? posterStoragePathForVideo(storagePath) : null;
 
   if (shouldUseMemory()) {
     return {
       upload: {
         mode: "memory",
         path: storagePath,
-        ...(posterPath ? { poster: { path: posterPath } } : {}),
       },
     };
   }
 
   const signed = await createSignedUploadForPath(storagePath);
-  let poster: { path: string; token: string; signedUrl: string } | undefined;
-  if (posterPath) {
-    const posterSigned = await createSignedUploadForPath(posterPath);
-    poster = {
-      path: posterPath,
-      token: posterSigned.token,
-      signedUrl: posterSigned.signedUrl,
-    };
-  }
   return {
     upload: {
       mode: "signed",
       path: storagePath,
       token: signed.token,
       signedUrl: signed.signedUrl,
-      ...(poster ? { poster } : {}),
     },
   };
 }
@@ -1233,6 +1307,36 @@ export async function completeSiteInspectionMedia(input: {
           .update({ cover_media_id: mediaId })
           .eq("id", input.inspectionId);
       }
+    }
+  }
+
+  // Server-side poster: never block/fail the upload if extraction fails.
+  if (mediaType === "video" && storagePath) {
+    try {
+      const { ensureServerVideoPoster } = await import("./ensure-video-poster");
+      const result = await ensureServerVideoPoster({
+        mediaId,
+        storagePath,
+        posterStoragePath,
+      });
+      if (result.ok && shouldUseMemory()) {
+        const mem = getMemory();
+        const row = mem.media.get(mediaId);
+        if (row) {
+          mem.media.set(mediaId, {
+            ...row,
+            poster_storage_path: result.posterPath,
+            updated_at: nowIso(),
+          });
+        }
+      } else if (!result.ok) {
+        console.warn("[site-inspection-media] server poster extract failed", {
+          mediaId,
+          message: result.message,
+        });
+      }
+    } catch (error) {
+      console.warn("[site-inspection-media] server poster extract threw", error);
     }
   }
 

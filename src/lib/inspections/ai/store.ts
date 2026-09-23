@@ -154,26 +154,36 @@ export async function updateMediaTranscript(
 ): Promise<void> {
   const updatedAt = nowIso();
   if (shouldUseMemory()) {
+    const prev = getAiMemory().transcripts.get(mediaId);
     getAiMemory().transcripts.set(mediaId, {
       transcript_status: patch.transcript_status,
-      transcript_text: patch.transcript_text ?? null,
-      transcript_segments: patch.transcript_segments ?? null,
-      transcript_error: patch.transcript_error ?? null,
+      transcript_text:
+        patch.transcript_text !== undefined
+          ? patch.transcript_text
+          : (prev?.transcript_text ?? null),
+      transcript_segments:
+        patch.transcript_segments !== undefined
+          ? patch.transcript_segments
+          : (prev?.transcript_segments ?? null),
+      transcript_error:
+        patch.transcript_error !== undefined
+          ? patch.transcript_error
+          : (prev?.transcript_error ?? null),
       transcript_updated_at: updatedAt,
     });
     return;
   }
   const supabase = createServiceClient();
-  const { error } = await supabase
-    .from("site_inspection_media")
-    .update({
-      transcript_status: patch.transcript_status,
-      transcript_text: patch.transcript_text ?? null,
-      transcript_segments: patch.transcript_segments ?? null,
-      transcript_error: patch.transcript_error ?? null,
-      transcript_updated_at: updatedAt,
-    })
-    .eq("id", mediaId);
+  const row: Record<string, unknown> = {
+    transcript_status: patch.transcript_status,
+    transcript_updated_at: updatedAt,
+  };
+  if (patch.transcript_text !== undefined) row.transcript_text = patch.transcript_text;
+  if (patch.transcript_segments !== undefined) {
+    row.transcript_segments = patch.transcript_segments;
+  }
+  if (patch.transcript_error !== undefined) row.transcript_error = patch.transcript_error;
+  const { error } = await supabase.from("site_inspection_media").update(row).eq("id", mediaId);
   if (error) throw error;
 }
 

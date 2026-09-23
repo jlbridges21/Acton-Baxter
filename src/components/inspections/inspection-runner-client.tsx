@@ -13,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { InspectionMediaGallery } from "@/components/inspections/inspection-media-gallery";
 import { InspectionAiSummaryBlock } from "@/components/inspections/inspection-ai-summary";
-import { InspectionVideoTranscript } from "@/components/inspections/inspection-video-transcript";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
 import { flushPendingResponses, type ResponseSaveResult } from "@/lib/inspections/response-sync";
@@ -421,16 +420,6 @@ export function InspectionRunnerClient({
         snapshotItemId,
         file,
         mediaType,
-        onPosterReady: ({ clientMediaId: id, localPosterUrl }) => {
-          const existing = localMediaRef.current.get(id);
-          if (existing) {
-            localMediaRef.current.set(id, { ...existing, localPosterUrl });
-          }
-          setInspection((prev) => ({
-            ...prev,
-            media: prev.media.map((m) => (m.clientMediaId === id ? { ...m, localPosterUrl } : m)),
-          }));
-        },
       });
       localMediaRef.current.set(clientMediaId, optimisticMedia);
       setInspection((prev) => ({
@@ -1436,12 +1425,6 @@ function ItemCard({
                           >
                             <RotateCcw className="h-3.5 w-3.5" />
                           </button>
-                        ) : null}
-                        {m.mediaType === "video" ? (
-                          <InspectionVideoTranscript
-                            media={m}
-                            onSeek={(seconds) => onOpenMedia(mediaIndex, seconds)}
-                          />
                         ) : null}
                       </div>
                     );

@@ -47,11 +47,14 @@ export async function summarizeInspectionItem(
       ? "(no transcripts)"
       : input.transcripts
           .map((t, i) => {
-            if (t.status === "no_speech_detected" || !t.text.trim()) {
-              return `Video ${i + 1}: [no speech detected]`;
+            if (t.status === "pending" || t.status === "processing" || !t.status) {
+              return `Video ${i + 1}: [transcript not ready]`;
             }
             if (t.status === "failed") {
               return `Video ${i + 1}: [transcription failed]`;
+            }
+            if (t.status === "no_speech_detected" || !t.text.trim()) {
+              return `Video ${i + 1}: [no speech detected]`;
             }
             return `Video ${i + 1}:\n${t.text.trim()}`;
           })

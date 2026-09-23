@@ -7,35 +7,12 @@ import { createClient } from "@/lib/supabase/client";
 import { getPublicEnv } from "@/lib/env.public";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { MEDIA_UPLOAD_CONCURRENCY, redactApiKeyForLog } from "./media-limits";
-import { extractVideoPosterFrame } from "./video-poster";
 import type { SiteInspectionDetail, SiteInspectionMedia } from "./record-types";
 
 const DB_NAME = "baxter-site-inspection-uploads";
 const DB_VERSION = 1;
 const STORE = "queue";
 const MAX_UPLOAD_ATTEMPTS = 8;
-/** After video bytes land, wait briefly for a racing background poster extract. */
-const POSTER_UPLOAD_GRACE_MS = 2_000;
-
-async function waitForPosterBytes(
-  clientMediaId: string,
-  graceMs: number,
-): Promise<{ posterBytes: ArrayBuffer | null; posterMimeType: string | null }> {
-  const deadline = Date.now() + graceMs;
-  for (;;) {
-    const current = await getItem(clientMediaId);
-    if (current?.posterBytes) {
-      return {
-        posterBytes: current.posterBytes,
-        posterMimeType: current.posterMimeType ?? "image/jpeg",
-      };
-    }
-    if (Date.now() >= deadline) {
-      return { posterBytes: null, posterMimeType: null };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-}
 
 export type QueueItemStatus = "queued" | "uploading" | "finalizing" | "uploaded" | "failed";
 
@@ -568,39 +545,9 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
           })();
         },
       );
-      // Poster extract runs in the background after enqueue — re-read (with a short
-      // grace) so a finished extract is uploaded even if it landed during video PUT.
-      const poster = upload.poster
-        ? await waitForPosterBytes(clientMediaId, POSTER_UPLOAD_GRACE_MS)
-        : { posterBytes: null, posterMimeType: null };
-      if (poster.posterBytes && upload.poster) {
-        const posterBlob = new Blob([poster.posterBytes], {
-          type: poster.posterMimeType || "image/jpeg",
-        });
-        await uploadSigned(
-          upload.poster.path,
-          upload.poster.token,
-          upload.poster.signedUrl,
-          posterBlob,
-          poster.posterMimeType || "image/jpeg",
-        );
-      }
+      // Posters are generated server-side after complete — do not upload client frames.
     } else {
       await uploadMemory(item.inspectionId, upload.path, uploadBlob, item.mimeType);
-      const poster = upload.poster
-        ? await waitForPosterBytes(clientMediaId, POSTER_UPLOAD_GRACE_MS)
-        : { posterBytes: null, posterMimeType: null };
-      if (poster.posterBytes && upload.poster) {
-        const posterBlob = new Blob([poster.posterBytes], {
-          type: poster.posterMimeType || "image/jpeg",
-        });
-        await uploadMemory(
-          item.inspectionId,
-          upload.poster.path,
-          posterBlob,
-          poster.posterMimeType || "image/jpeg",
-        );
-      }
     }
 
     activeAbortByClientId.delete(clientMediaId);
@@ -610,18 +557,14 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       return null;
     }
 
-    const posterPath =
-      upload.mode === "signed" ? (upload.poster?.path ?? null) : (upload.poster?.path ?? null);
-
     // Persist "bytes landed" before complete so a failed attach retries complete only.
-    // Merge with latest IDB row so a background poster attach is not wiped.
     bytesLandedPath = upload.path;
     const latest = (await getItem(clientMediaId)) ?? item;
     await putItem({
       ...latest,
       status: "finalizing",
       storagePath: upload.path,
-      posterStoragePath: posterPath,
+      posterStoragePath: null,
       progress: 1,
       lastError: null,
     });
@@ -631,7 +574,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       ...latest,
       status: "finalizing",
       storagePath: upload.path,
-      posterStoragePath: posterPath,
+      posterStoragePath: null,
       progress: 1,
     });
   } catch (error) {
@@ -857,8 +800,6 @@ export async function enqueueInspectionMedia(input: {
   snapshotItemId: string;
   file: File;
   mediaType: "photo" | "video";
-  /** Fired when an on-device video poster becomes available (after enqueue). */
-  onPosterReady?: (info: { clientMediaId: string; localPosterUrl: string }) => void;
 }): Promise<{
   clientMediaId: string;
   localPreviewUrl: string;
@@ -881,8 +822,7 @@ export async function enqueueInspectionMedia(input: {
 
   // Copy into ArrayBuffer immediately so queued items don't depend on a live File
   // (iOS can invalidate input Files; Safari IDB Blob handles can throw "Load failed").
-  // Poster extraction is intentionally NOT awaited here — on iOS it often hangs on
-  // loadeddata/seeked with no rejection, which made capture look like a no-op.
+  // Posters are generated server-side after upload complete — not on-device.
   const durable = await materializeDurableBytes(sourceBlob, mimeType);
   const localPreviewUrl = URL.createObjectURL(durable.blob);
   const now = Date.now();
@@ -910,14 +850,6 @@ export async function enqueueInspectionMedia(input: {
   await emit();
   void drainMediaQueue();
 
-  if (input.mediaType === "video") {
-    void attachPosterInBackground({
-      clientMediaId,
-      file: input.file,
-      onPosterReady: input.onPosterReady,
-    });
-  }
-
   const optimisticMedia: SiteInspectionMedia = {
     id: clientMediaId,
     inspectionId: input.inspectionId,
@@ -940,45 +872,6 @@ export async function enqueueInspectionMedia(input: {
   };
 
   return { clientMediaId, localPreviewUrl, optimisticMedia };
-}
-
-/**
- * Best-effort poster after the video is already visible + queued.
- * Never throws to the caller; never blocks upload start.
- */
-async function attachPosterInBackground(input: {
-  clientMediaId: string;
-  file: File;
-  onPosterReady?: (info: { clientMediaId: string; localPosterUrl: string }) => void;
-}): Promise<void> {
-  try {
-    const poster = await extractVideoPosterFrame(input.file);
-    if (!poster) return;
-    if (cancelledUploads.has(input.clientMediaId)) return;
-
-    const posterBytes = await poster.arrayBuffer();
-    const current = await getItem(input.clientMediaId);
-    if (!current) return;
-
-    await putItem({
-      ...current,
-      posterBytes,
-      posterMimeType: "image/jpeg",
-    });
-    await emit();
-
-    const localPosterUrl = URL.createObjectURL(new Blob([posterBytes], { type: "image/jpeg" }));
-    try {
-      input.onPosterReady?.({ clientMediaId: input.clientMediaId, localPosterUrl });
-    } catch (error) {
-      console.warn("[site-inspection-media] onPosterReady callback failed", error);
-    }
-  } catch (error) {
-    console.warn("[site-inspection-media] background poster attach failed", {
-      clientMediaId: input.clientMediaId,
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 export { VIDEO_WARN_MESSAGE, MEDIA_UPLOAD_CONCURRENCY, VIDEO_MAX_BYTES } from "./media-limits";

@@ -1,6 +1,7 @@
 /**
  * Site inspection AI job: extract audio → Whisper → per-item summaries.
  * Idempotent: completed transcripts / matching fingerprints are skipped.
+ * Summaries are strictly gated on every item video reaching a terminal transcript state.
  */
 
 import "server-only";
@@ -18,7 +19,15 @@ import {
   updateMediaTranscript,
   upsertItemSummary,
   getItemSummary,
+  listItemSummariesForInspection,
 } from "./store";
+import {
+  allItemTranscriptsTerminal,
+  effectiveTranscriptText,
+  hasUsableSpeechTranscript,
+  isPrematureEmptySummary,
+  isTerminalTranscriptStatus,
+} from "./transcript-gate";
 import type { SiteInspectionMedia, TranscriptStatus } from "../record-types";
 
 export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
@@ -53,23 +62,20 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
     ai_processing_finished_at: null,
   });
 
-  // Mark pending for videos not yet done (idempotent re-run skips complete/no_speech).
   for (const video of videos) {
     const status = video.transcriptStatus;
-    if (status === "complete" || status === "no_speech_detected") continue;
+    if (isTerminalTranscriptStatus(status)) continue;
     if (status !== "processing" && status !== "pending") {
       await updateMediaTranscript(video.id, { transcript_status: "pending" });
     }
   }
 
-  let done = videos.filter(
-    (v) => v.transcriptStatus === "complete" || v.transcriptStatus === "no_speech_detected",
-  ).length;
+  let done = videos.filter((v) => isTerminalTranscriptStatus(v.transcriptStatus)).length;
 
   for (const video of videos) {
     const fresh = (await getSiteInspection(inspectionId)).media.find((m) => m.id === video.id);
     const status = fresh?.transcriptStatus ?? video.transcriptStatus;
-    if (status === "complete" || status === "no_speech_detected") {
+    if (isTerminalTranscriptStatus(status)) {
       continue;
     }
 
@@ -97,7 +103,7 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
     });
   }
 
-  // Summaries for items that have at least one video.
+  // Fresh read after all transcriptions — never summarize from a stale snapshot.
   const afterTranscripts = await getSiteInspection(inspectionId);
   const items = listSnapshotItems(afterTranscripts.snapshot);
   const videosByItem = new Map<string, SiteInspectionMedia[]>();
@@ -112,77 +118,24 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
   let summariesDone = 0;
   for (const snapshotItemId of itemIds) {
     const itemVideos = videosByItem.get(snapshotItemId) ?? [];
-    const item = items.find((i) => i.id === snapshotItemId);
-    const response = afterTranscripts.responses.find((r) => r.snapshotItemId === snapshotItemId);
-    const notes = response?.notes ?? "";
-    const fingerprint = buildItemSummaryFingerprint({
-      notes,
-      videos: itemVideos.map((v) => ({
-        mediaId: v.id,
-        transcriptStatus: v.transcriptStatus,
-        transcriptText: v.transcriptText,
-      })),
-    });
-
-    const existing = await getItemSummary(inspectionId, snapshotItemId);
-    if (
-      existing?.status === "complete" &&
-      existing.contentFingerprint === fingerprint &&
-      existing.summaryText.trim()
-    ) {
-      summariesDone += 1;
-      continue;
-    }
-
-    await upsertItemSummary({
+    const summarized = await summarizeOneItem({
       inspectionId,
       snapshotItemId,
-      summaryText: existing?.summaryText ?? "",
-      contentFingerprint: fingerprint,
-      sourceNotes: notes,
-      sourceVideoIds: itemVideos.map((v) => v.id),
-      status: "processing",
+      itemTitle: items.find((i) => i.id === snapshotItemId)?.title ?? "Checklist item",
+      guideNotes: items.find((i) => i.id === snapshotItemId)?.guideNotes ?? null,
+      notes:
+        afterTranscripts.responses.find((r) => r.snapshotItemId === snapshotItemId)?.notes ?? "",
+      itemVideos,
+      force: false,
     });
-
+    if (summarized !== "skipped_not_ready") summariesDone += 1;
     await patchInspectionAiProgress(inspectionId, {
-      ai_processing_message: `Summarizing item ${summariesDone + 1} of ${itemIds.length}`,
+      ai_processing_message: `Summarizing item ${summariesDone} of ${itemIds.length}`,
     });
-
-    const result = await summarizeInspectionItem({
-      itemTitle: item?.title ?? "Checklist item",
-      guideNotes: item?.guideNotes ?? null,
-      inspectorNotes: notes,
-      transcripts: itemVideos.map((v) => ({
-        mediaId: v.id,
-        text: v.transcriptText ?? "",
-        status: v.transcriptStatus ?? "pending",
-      })),
-    });
-
-    if (result.kind === "complete") {
-      await upsertItemSummary({
-        inspectionId,
-        snapshotItemId,
-        summaryText: result.summary,
-        contentFingerprint: fingerprint,
-        sourceNotes: notes,
-        sourceVideoIds: itemVideos.map((v) => v.id),
-        status: "complete",
-      });
-    } else {
-      await upsertItemSummary({
-        inspectionId,
-        snapshotItemId,
-        summaryText: existing?.summaryText ?? "",
-        contentFingerprint: fingerprint,
-        sourceNotes: notes,
-        sourceVideoIds: itemVideos.map((v) => v.id),
-        status: "failed",
-        error: result.message,
-      });
-    }
-    summariesDone += 1;
   }
+
+  // Repair any premature empty summaries left from earlier races.
+  await repairPrematureEmptySummariesForInspection(inspectionId);
 
   const failedVideos = (await getSiteInspection(inspectionId)).media.filter(
     (m) => m.mediaType === "video" && m.transcriptStatus === "failed",
@@ -198,6 +151,126 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
     ai_processing_videos_done: videos.length,
     ai_processing_finished_at: new Date().toISOString(),
   });
+}
+
+async function summarizeOneItem(input: {
+  inspectionId: string;
+  snapshotItemId: string;
+  itemTitle: string;
+  guideNotes: string | null;
+  notes: string;
+  itemVideos: SiteInspectionMedia[];
+  force: boolean;
+}): Promise<"complete" | "failed" | "skipped" | "skipped_not_ready"> {
+  const { inspectionId, snapshotItemId, itemVideos, notes } = input;
+
+  if (!allItemTranscriptsTerminal(itemVideos)) {
+    // Strict gate — never invent an empty summary while transcripts are in flight.
+    const existing = await getItemSummary(inspectionId, snapshotItemId);
+    await upsertItemSummary({
+      inspectionId,
+      snapshotItemId,
+      summaryText: existing?.summaryText ?? "",
+      contentFingerprint: existing?.contentFingerprint ?? "",
+      sourceNotes: notes,
+      sourceVideoIds: itemVideos.map((v) => v.id),
+      status: "pending",
+      error: "Waiting for all video transcripts to finish",
+    });
+    return "skipped_not_ready";
+  }
+
+  const fingerprint = buildItemSummaryFingerprint({
+    notes,
+    videos: itemVideos.map((v) => ({
+      mediaId: v.id,
+      transcriptStatus: v.transcriptStatus,
+      transcriptText: v.transcriptText,
+      transcriptSegments: v.transcriptSegments,
+    })),
+  });
+
+  const existing = await getItemSummary(inspectionId, snapshotItemId);
+  const premature =
+    existing &&
+    isPrematureEmptySummary({
+      summaryText: existing.summaryText,
+      status: existing.status,
+      videos: itemVideos,
+    });
+
+  if (
+    !input.force &&
+    !premature &&
+    existing?.status === "complete" &&
+    existing.contentFingerprint === fingerprint &&
+    existing.summaryText.trim()
+  ) {
+    return "skipped";
+  }
+
+  await upsertItemSummary({
+    inspectionId,
+    snapshotItemId,
+    summaryText: existing?.summaryText ?? "",
+    contentFingerprint: fingerprint,
+    sourceNotes: notes,
+    sourceVideoIds: itemVideos.map((v) => v.id),
+    status: "processing",
+  });
+
+  const result = await summarizeInspectionItem({
+    itemTitle: input.itemTitle,
+    guideNotes: input.guideNotes,
+    inspectorNotes: notes,
+    transcripts: itemVideos.map((v) => ({
+      mediaId: v.id,
+      text: effectiveTranscriptText(v),
+      status: v.transcriptStatus ?? "pending",
+    })),
+  });
+
+  if (result.kind === "complete") {
+    // Guard: never persist empty-input boilerplate when usable speech exists.
+    if (
+      hasUsableSpeechTranscript(itemVideos) &&
+      /no spoken content or notes were available/i.test(result.summary)
+    ) {
+      await upsertItemSummary({
+        inspectionId,
+        snapshotItemId,
+        summaryText: existing?.summaryText ?? "",
+        contentFingerprint: fingerprint,
+        sourceNotes: notes,
+        sourceVideoIds: itemVideos.map((v) => v.id),
+        status: "failed",
+        error: "Model returned empty-input summary despite usable transcripts",
+      });
+      return "failed";
+    }
+    await upsertItemSummary({
+      inspectionId,
+      snapshotItemId,
+      summaryText: result.summary,
+      contentFingerprint: fingerprint,
+      sourceNotes: notes,
+      sourceVideoIds: itemVideos.map((v) => v.id),
+      status: "complete",
+    });
+    return "complete";
+  }
+
+  await upsertItemSummary({
+    inspectionId,
+    snapshotItemId,
+    summaryText: existing?.summaryText ?? "",
+    contentFingerprint: fingerprint,
+    sourceNotes: notes,
+    sourceVideoIds: itemVideos.map((v) => v.id),
+    status: "failed",
+    error: result.message,
+  });
+  return "failed";
 }
 
 async function transcribeOneVideo(video: SiteInspectionMedia): Promise<void> {
@@ -282,15 +355,8 @@ export async function regenerateItemSummary(input: {
     throw new Error("Summaries are only generated for items with video");
   }
 
-  // Ensure transcripts exist for any new videos.
   for (const video of itemVideos) {
-    if (
-      video.transcriptStatus === "complete" ||
-      video.transcriptStatus === "no_speech_detected" ||
-      video.transcriptStatus === "failed"
-    ) {
-      continue;
-    }
+    if (isTerminalTranscriptStatus(video.transcriptStatus)) continue;
     await updateMediaTranscript(video.id, { transcript_status: "processing" });
     try {
       await transcribeOneVideo(video);
@@ -311,59 +377,125 @@ export async function regenerateItemSummary(input: {
   );
   const notes =
     refreshed.responses.find((r) => r.snapshotItemId === input.snapshotItemId)?.notes ?? "";
-  const fingerprint = buildItemSummaryFingerprint({
-    notes,
-    videos: videos.map((v) => ({
-      mediaId: v.id,
-      transcriptStatus: v.transcriptStatus,
-      transcriptText: v.transcriptText,
-    })),
-  });
 
-  await upsertItemSummary({
+  const outcome = await summarizeOneItem({
     inspectionId: input.inspectionId,
     snapshotItemId: input.snapshotItemId,
-    summaryText: "",
-    contentFingerprint: fingerprint,
-    sourceNotes: notes,
-    sourceVideoIds: videos.map((v) => v.id),
-    status: "processing",
-  });
-
-  const result = await summarizeInspectionItem({
     itemTitle: item.title,
     guideNotes: item.guideNotes ?? null,
-    inspectorNotes: notes,
-    transcripts: videos.map((v) => ({
-      mediaId: v.id,
-      text: v.transcriptText ?? "",
-      status: v.transcriptStatus ?? "pending",
-    })),
+    notes,
+    itemVideos: videos,
+    force: true,
   });
 
-  if (result.kind !== "complete") {
-    await upsertItemSummary({
-      inspectionId: input.inspectionId,
-      snapshotItemId: input.snapshotItemId,
-      summaryText: "",
-      contentFingerprint: fingerprint,
-      sourceNotes: notes,
-      sourceVideoIds: videos.map((v) => v.id),
-      status: "failed",
-      error: result.message,
-    });
-    throw new Error(result.message);
+  if (outcome === "skipped_not_ready") {
+    throw new Error("Transcripts are still processing for this item");
+  }
+  if (outcome === "failed") {
+    const failed = await getItemSummary(input.inspectionId, input.snapshotItemId);
+    throw new Error(failed?.error ?? "Summary generation failed");
   }
 
-  await upsertItemSummary({
-    inspectionId: input.inspectionId,
-    snapshotItemId: input.snapshotItemId,
-    summaryText: result.summary,
-    contentFingerprint: fingerprint,
-    sourceNotes: notes,
-    sourceVideoIds: videos.map((v) => v.id),
-    status: "complete",
-  });
+  const saved = await getItemSummary(input.inspectionId, input.snapshotItemId);
+  return {
+    summaryText: saved?.summaryText ?? "",
+    fingerprint: saved?.contentFingerprint ?? "",
+  };
+}
 
-  return { summaryText: result.summary, fingerprint };
+/**
+ * Find and regenerate summaries that claim empty input while usable transcripts exist.
+ * Returns how many were repaired.
+ */
+export async function repairPrematureEmptySummariesForInspection(
+  inspectionId: string,
+): Promise<number> {
+  const inspection = await getSiteInspection(inspectionId);
+  const summaries = await listItemSummariesForInspection(inspectionId);
+  let repaired = 0;
+  for (const summary of summaries) {
+    const itemVideos = inspection.media.filter(
+      (m) =>
+        m.snapshotItemId === summary.snapshotItemId &&
+        m.mediaType === "video" &&
+        m.uploadStatus === "ready",
+    );
+    if (
+      !isPrematureEmptySummary({
+        summaryText: summary.summaryText,
+        status: summary.status,
+        videos: itemVideos,
+      })
+    ) {
+      continue;
+    }
+    const item = listSnapshotItems(inspection.snapshot).find(
+      (i) => i.id === summary.snapshotItemId,
+    );
+    const notes =
+      inspection.responses.find((r) => r.snapshotItemId === summary.snapshotItemId)?.notes ?? "";
+    const outcome = await summarizeOneItem({
+      inspectionId,
+      snapshotItemId: summary.snapshotItemId,
+      itemTitle: item?.title ?? "Checklist item",
+      guideNotes: item?.guideNotes ?? null,
+      notes,
+      itemVideos,
+      force: true,
+    });
+    if (outcome === "complete") repaired += 1;
+  }
+  return repaired;
+}
+
+/** Scan all inspections in memory/DB for premature empty summaries and repair them. */
+export async function repairAllPrematureEmptySummaries(): Promise<{
+  inspected: number;
+  repaired: number;
+}> {
+  const { createServiceClient } = await import("@/lib/supabase/admin");
+  const { getEnv } = await import("@/lib/env");
+  let useMemory = false;
+  try {
+    const env = getEnv();
+    useMemory = Boolean(env.ENABLE_MOCK_RESEARCH) && env.NODE_ENV !== "production";
+  } catch {
+    useMemory = true;
+  }
+
+  if (useMemory) {
+    const summaries = await listItemSummariesForInspection(""); // won't work - need all
+    void summaries;
+    // Memory: walk known inspections via repairing each summary's inspection id.
+    const allKeys = Array.from(
+      (
+        globalThis as typeof globalThis & {
+          __baxterSiteInspectionAi?: { summaries: Map<string, { inspection_id: string }> };
+        }
+      ).__baxterSiteInspectionAi?.summaries.values() ?? [],
+    );
+    const inspectionIds = [...new Set(allKeys.map((r) => r.inspection_id))];
+    let repaired = 0;
+    for (const id of inspectionIds) {
+      repaired += await repairPrematureEmptySummariesForInspection(id);
+    }
+    return { inspected: inspectionIds.length, repaired };
+  }
+
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("site_inspection_item_summaries")
+    .select("inspection_id, summary_text, status")
+    .eq("status", "complete");
+  if (error) throw error;
+
+  const candidates = (data ?? []).filter((row) =>
+    /no spoken content or notes were available/i.test(String(row.summary_text ?? "")),
+  );
+  const inspectionIds = [...new Set(candidates.map((r) => r.inspection_id as string))];
+  let repaired = 0;
+  for (const id of inspectionIds) {
+    repaired += await repairPrematureEmptySummariesForInspection(id);
+  }
+  return { inspected: inspectionIds.length, repaired };
 }

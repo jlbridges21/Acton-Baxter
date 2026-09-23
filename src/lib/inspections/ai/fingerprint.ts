@@ -4,12 +4,14 @@
  */
 
 import { createHash } from "node:crypto";
-import type { TranscriptStatus } from "../record-types";
+import type { TranscriptSegment, TranscriptStatus } from "../record-types";
+import { effectiveTranscriptText } from "./transcript-gate";
 
 export type FingerprintVideoInput = {
   mediaId: string;
   transcriptStatus: TranscriptStatus | null | undefined;
   transcriptText: string | null | undefined;
+  transcriptSegments?: TranscriptSegment[] | null;
 };
 
 /**
@@ -27,7 +29,10 @@ export function buildItemSummaryFingerprint(input: {
     .map((v) => ({
       id: v.mediaId,
       status: v.transcriptStatus ?? null,
-      text: (v.transcriptText ?? "").trim(),
+      text: effectiveTranscriptText({
+        transcriptText: v.transcriptText,
+        transcriptSegments: v.transcriptSegments,
+      }),
     }));
   const payload = JSON.stringify({
     notes: input.notes.trim(),
