@@ -184,9 +184,11 @@ describe("Inspections UI at phone width", () => {
     expect(screen.getByText(/1 of 2 complete/i)).toBeTruthy();
     expect(screen.getAllByText(/Internal only/i).length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/Mark Access complete/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /Take photo/i }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: /Take video/i }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: /Attach file/i }).length).toBeGreaterThan(0);
+    // Capture controls are labels wrapping opacity-0 file inputs (not <button>),
+    // so Android honors `capture` on a genuine input activation.
+    expect(screen.getAllByLabelText(/Take photo/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText(/Take video/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText(/Attach file/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Download all media/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Complete site inspection/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /ACCESS/i }));

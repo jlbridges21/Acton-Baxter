@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Trash2, RotateCcw, Download, Play } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { InspectionMediaGallery } from "@/components/inspections/inspection-media-gallery";
@@ -32,6 +32,7 @@ import {
 } from "@/lib/inspections/media-queue";
 import { inferInspectionMediaType } from "@/lib/inspections/media-limits";
 import { listSnapshotItems } from "@/lib/inspections/snapshot";
+import { cn } from "@/lib/utils";
 import type {
   SiteInspectionDetail,
   SiteInspectionItemSummary,
@@ -1264,6 +1265,53 @@ function shouldShowCameraCaptureButtons(): boolean {
   return true;
 }
 
+/**
+ * Media capture control: the file input fills the hit target so the tap is a
+ * genuine activation of the input (not a programmatic .click()). Android Chrome
+ * often ignores `capture` when the input is opened via inputRef.click() from a
+ * separate button, routing to the system Photo Picker (no camera) instead.
+ *
+ * Bare boolean `capture` (empty attribute in the DOM) is historically more
+ * reliable on Android than the valued facing-mode form. Attach file omits
+ * capture entirely.
+ */
+function InspectionMediaPickControl({
+  label,
+  accept,
+  capture,
+  onFile,
+}: {
+  label: string;
+  accept: string;
+  capture?: boolean;
+  onFile: (file: File) => void;
+}) {
+  return (
+    <label
+      className={cn(
+        buttonVariants({ variant: "secondary", size: "lg" }),
+        "relative min-h-11 w-full cursor-pointer overflow-hidden",
+      )}
+    >
+      <span className="pointer-events-none">{label}</span>
+      <input
+        type="file"
+        accept={accept}
+        // Bare boolean capture → DOM attribute `capture=""` (HTML Media Capture).
+        // Do not pass capture={false}; React omits the attribute when falsy.
+        {...(capture ? { capture: true as const } : {})}
+        aria-label={label}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFile(file);
+          e.target.value = "";
+        }}
+      />
+    </label>
+  );
+}
+
 function ItemCard({
   item,
   response,
@@ -1296,9 +1344,6 @@ function ItemCard({
   inspectionId: string;
 }) {
   const complete = Boolean(response?.isComplete);
-  const takePhotoRef = useRef<HTMLInputElement>(null);
-  const takeVideoRef = useRef<HTMLInputElement>(null);
-  const attachFileRef = useRef<HTMLInputElement>(null);
   const [showCaptureButtons] = useState(shouldShowCameraCaptureButtons);
   const hasVideo = media.some((m) => m.mediaType === "video" && m.uploadStatus === "ready");
 
@@ -1349,70 +1394,28 @@ function ItemCard({
 
           {item.allowsMedia ? (
             <div className="space-y-2">
-              <input
-                ref={takePhotoRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onMedia(file);
-                  e.target.value = "";
-                }}
-              />
-              <input
-                ref={takeVideoRef}
-                type="file"
-                accept="video/*"
-                capture="environment"
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onMedia(file);
-                  e.target.value = "";
-                }}
-              />
-              <input
-                ref={attachFileRef}
-                type="file"
-                accept="image/*,video/*"
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onMedia(file);
-                  e.target.value = "";
-                }}
-              />
               <div className="flex flex-col gap-2">
                 {showCaptureButtons ? (
                   <>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="min-h-11 w-full"
-                      onClick={() => takePhotoRef.current?.click()}
-                    >
-                      Take photo
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="min-h-11 w-full"
-                      onClick={() => takeVideoRef.current?.click()}
-                    >
-                      Take video
-                    </Button>
+                    <InspectionMediaPickControl
+                      label="Take photo"
+                      accept="image/*"
+                      capture
+                      onFile={onMedia}
+                    />
+                    <InspectionMediaPickControl
+                      label="Take video"
+                      accept="video/*"
+                      capture
+                      onFile={onMedia}
+                    />
                   </>
                 ) : null}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="min-h-11 w-full"
-                  onClick={() => attachFileRef.current?.click()}
-                >
-                  Attach file
-                </Button>
+                <InspectionMediaPickControl
+                  label="Attach file"
+                  accept="image/*,video/*"
+                  onFile={onMedia}
+                />
                 {media.some((m) => m.uploadStatus === "ready") ? (
                   <Button
                     type="button"

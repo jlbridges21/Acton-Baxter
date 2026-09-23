@@ -30,12 +30,15 @@ describe("video poster — server path", () => {
 });
 
 describe("inspection capture inputs", () => {
-  it("uses capture=environment for Take photo/video and leaves Attach file without capture", () => {
+  it("uses bare capture for Take photo/video and leaves Attach file without capture", () => {
     const runner = readFileSync(
       join(process.cwd(), "src/components/inspections/inspection-runner-client.tsx"),
       "utf8",
     );
-    expect(runner).toMatch(/capture=["']environment["']/);
+    // Bare boolean capture (not valued facing-mode) — more reliable on Android Chrome.
+    expect(runner).not.toMatch(/capture=["']environment["']/);
+    expect(runner).toContain("capture: true");
+    expect(runner).toContain("InspectionMediaPickControl");
     expect(runner).toContain('accept="image/*"');
     expect(runner).toContain('accept="video/*"');
     expect(runner).toContain('accept="image/*,video/*"');
@@ -43,6 +46,7 @@ describe("inspection capture inputs", () => {
     expect(runner).toContain("Take video");
     expect(runner).toContain("Attach file");
     expect(runner).toContain("inferInspectionMediaType");
+    expect(runner).not.toMatch(/takePhotoRef\.current\?\.click\(\)/);
   });
 
   it("photos still run through the client image pipeline on enqueue", () => {
