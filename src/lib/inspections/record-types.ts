@@ -37,6 +37,9 @@ export const AI_PROCESSING_STATUSES = [
 ] as const;
 export type AiProcessingStatus = (typeof AI_PROCESSING_STATUSES)[number];
 
+export const AI_PROCESSING_PHASES = ["transcribing", "summarizing", "complete", "failed"] as const;
+export type AiProcessingPhase = (typeof AI_PROCESSING_PHASES)[number];
+
 export type TranscriptSegment = {
   /** Start time in seconds. */
   start: number;
@@ -145,6 +148,9 @@ export type SiteInspectionSummary = {
   aiProcessingMessage: string | null;
   aiProcessingVideosTotal: number;
   aiProcessingVideosDone: number;
+  aiProcessingSummariesTotal: number;
+  aiProcessingSummariesDone: number;
+  aiProcessingPhase: AiProcessingPhase | null;
   aiProcessingStartedAt: string | null;
   aiProcessingFinishedAt: string | null;
 };

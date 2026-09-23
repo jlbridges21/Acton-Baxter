@@ -1,16 +1,16 @@
 /**
  * Regenerate a read-only AI summary for one checklist item (videos required).
+ * Awaits completion so the client receives the real outcome (not a fire-and-forget race).
  */
-import { after } from "next/server";
 import { z } from "zod";
 import { requireActiveUser } from "@/lib/auth/session";
 import { jsonError, jsonOk } from "@/lib/api";
 import { ValidationError } from "@/lib/errors";
 import { getSiteInspection } from "@/lib/inspections/records-store";
 import { regenerateItemSummary } from "@/lib/inspections/ai/run-job";
-import { upsertItemSummary } from "@/lib/inspections/ai/store";
+import { upsertItemSummary, getItemSummary } from "@/lib/inspections/ai/store";
 import { buildItemSummaryFingerprint } from "@/lib/inspections/ai/fingerprint";
-import { usesMemoryJobStore } from "@/lib/jobs/queue";
+import { logServerError } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -46,37 +46,48 @@ export async function POST(request: Request, { params }: Params) {
         mediaId: v.id,
         transcriptStatus: v.transcriptStatus,
         transcriptText: v.transcriptText,
+        transcriptSegments: v.transcriptSegments,
       })),
     });
 
+    const existing = await getItemSummary(inspectionId, parsed.snapshotItemId);
+    // Keep prior text visible while regenerating — never blank the UI before success.
     await upsertItemSummary({
       inspectionId,
       snapshotItemId: parsed.snapshotItemId,
-      summaryText: "",
+      summaryText: existing?.summaryText ?? "",
       contentFingerprint: fingerprint,
       sourceNotes: notes,
       sourceVideoIds: videos.map((v) => v.id),
       status: "processing",
+      error: null,
     });
 
-    const run = async () => {
-      try {
-        await regenerateItemSummary({
-          inspectionId,
-          snapshotItemId: parsed.snapshotItemId,
-        });
-      } catch (error) {
-        console.error("[summaries/regenerate] failed", error);
-      }
-    };
-
-    if (usesMemoryJobStore()) {
-      await run();
+    try {
+      await regenerateItemSummary({
+        inspectionId,
+        snapshotItemId: parsed.snapshotItemId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logServerError("POST /api/inspections/[id]/summaries/regenerate", error);
+      await upsertItemSummary({
+        inspectionId,
+        snapshotItemId: parsed.snapshotItemId,
+        summaryText: existing?.summaryText ?? "",
+        contentFingerprint: fingerprint,
+        sourceNotes: notes,
+        sourceVideoIds: videos.map((v) => v.id),
+        status: "failed",
+        error: message.slice(0, 500),
+      });
       const refreshed = await getSiteInspection(inspectionId);
-      return jsonOk({ inspection: refreshed });
+      return jsonOk({
+        inspection: refreshed,
+        error: { message },
+      });
     }
 
-    after(run);
     const refreshed = await getSiteInspection(inspectionId);
     return jsonOk({ inspection: refreshed });
   } catch (error) {

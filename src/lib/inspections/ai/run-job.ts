@@ -48,16 +48,25 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
       ai_processing_message: "No videos to transcribe",
       ai_processing_videos_total: 0,
       ai_processing_videos_done: 0,
+      ai_processing_summaries_total: 0,
+      ai_processing_summaries_done: 0,
+      ai_processing_phase: "complete",
       ai_processing_finished_at: new Date().toISOString(),
     });
     return;
   }
 
+  // Preview how many checklist items will need summaries (one per item with video).
+  const previewItemIds = new Set(videos.map((v) => v.snapshotItemId));
+
   await patchInspectionAiProgress(inspectionId, {
     ai_processing_status: "processing",
-    ai_processing_message: `Transcribing 0 of ${videos.length} videos`,
+    ai_processing_message: "Transcribing videos",
+    ai_processing_phase: "transcribing",
     ai_processing_videos_total: videos.length,
     ai_processing_videos_done: 0,
+    ai_processing_summaries_total: previewItemIds.size,
+    ai_processing_summaries_done: 0,
     ai_processing_started_at: inspection.aiProcessingStartedAt ?? new Date().toISOString(),
     ai_processing_finished_at: null,
   });
@@ -81,7 +90,8 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
 
     await updateMediaTranscript(video.id, { transcript_status: "processing" });
     await patchInspectionAiProgress(inspectionId, {
-      ai_processing_message: `Transcribing ${done + 1} of ${videos.length} videos`,
+      ai_processing_message: "Transcribing videos",
+      ai_processing_phase: "transcribing",
       ai_processing_videos_done: done,
     });
 
@@ -98,7 +108,8 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
 
     done += 1;
     await patchInspectionAiProgress(inspectionId, {
-      ai_processing_message: `Transcribed ${done} of ${videos.length} videos`,
+      ai_processing_message: "Transcribing videos",
+      ai_processing_phase: "transcribing",
       ai_processing_videos_done: done,
     });
   }
@@ -115,7 +126,16 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
   }
 
   const itemIds = [...videosByItem.keys()];
+  await patchInspectionAiProgress(inspectionId, {
+    ai_processing_message: "Generating summaries",
+    ai_processing_phase: "summarizing",
+    ai_processing_videos_done: videos.length,
+    ai_processing_summaries_total: itemIds.length,
+    ai_processing_summaries_done: 0,
+  });
+
   let summariesDone = 0;
+  let summaryFailures = 0;
   for (const snapshotItemId of itemIds) {
     const itemVideos = videosByItem.get(snapshotItemId) ?? [];
     const summarized = await summarizeOneItem({
@@ -128,9 +148,12 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
       itemVideos,
       force: false,
     });
+    if (summarized === "failed") summaryFailures += 1;
     if (summarized !== "skipped_not_ready") summariesDone += 1;
     await patchInspectionAiProgress(inspectionId, {
-      ai_processing_message: `Summarizing item ${summariesDone} of ${itemIds.length}`,
+      ai_processing_message: "Generating summaries",
+      ai_processing_phase: "summarizing",
+      ai_processing_summaries_done: summariesDone,
     });
   }
 
@@ -141,14 +164,25 @@ export async function runSiteInspectionAiJob(job: ReportJob): Promise<void> {
     (m) => m.mediaType === "video" && m.transcriptStatus === "failed",
   ).length;
 
+  const failureParts: string[] = [];
+  if (failedVideos > 0) {
+    failureParts.push(`${failedVideos} failed transcription${failedVideos === 1 ? "" : "s"}`);
+  }
+  if (summaryFailures > 0) {
+    failureParts.push(`${summaryFailures} failed summar${summaryFailures === 1 ? "y" : "ies"}`);
+  }
+
+  const allFailed = failedVideos > 0 && failedVideos === videos.length;
   await patchInspectionAiProgress(inspectionId, {
-    ai_processing_status:
-      failedVideos > 0 && failedVideos === videos.length ? "failed" : "complete",
-    ai_processing_message:
-      failedVideos > 0
-        ? `Finished with ${failedVideos} failed transcription${failedVideos === 1 ? "" : "s"}`
+    ai_processing_status: allFailed ? "failed" : "complete",
+    ai_processing_phase: allFailed ? "failed" : "complete",
+    ai_processing_message: allFailed
+      ? `AI processing failed — ${failureParts.join("; ")}`
+      : failureParts.length > 0
+        ? `Finished with errors — ${failureParts.join("; ")}`
         : "Transcription and summaries complete",
     ai_processing_videos_done: videos.length,
+    ai_processing_summaries_done: itemIds.length,
     ai_processing_finished_at: new Date().toISOString(),
   });
 }
@@ -230,11 +264,30 @@ async function summarizeOneItem(input: {
     })),
   });
 
-  if (result.kind === "complete") {
-    // Guard: never persist empty-input boilerplate when usable speech exists.
+  let finalResult = result;
+  if (
+    result.kind === "complete" &&
+    hasUsableSpeechTranscript(itemVideos) &&
+    /no spoken content or notes were available/i.test(result.summary)
+  ) {
+    // One retry with explicit instruction — this was a common false empty summary.
+    finalResult = await summarizeInspectionItem({
+      itemTitle: input.itemTitle,
+      guideNotes: input.guideNotes,
+      inspectorNotes: notes,
+      transcripts: itemVideos.map((v) => ({
+        mediaId: v.id,
+        text: effectiveTranscriptText(v),
+        status: v.transcriptStatus ?? "pending",
+      })),
+      forceUseTranscripts: true,
+    });
+  }
+
+  if (finalResult.kind === "complete") {
     if (
       hasUsableSpeechTranscript(itemVideos) &&
-      /no spoken content or notes were available/i.test(result.summary)
+      /no spoken content or notes were available/i.test(finalResult.summary)
     ) {
       await upsertItemSummary({
         inspectionId,
@@ -244,14 +297,15 @@ async function summarizeOneItem(input: {
         sourceNotes: notes,
         sourceVideoIds: itemVideos.map((v) => v.id),
         status: "failed",
-        error: "Model returned empty-input summary despite usable transcripts",
+        error:
+          "AI returned an empty summary even though a transcript exists. Tap Regenerate to try again.",
       });
       return "failed";
     }
     await upsertItemSummary({
       inspectionId,
       snapshotItemId,
-      summaryText: result.summary,
+      summaryText: finalResult.summary,
       contentFingerprint: fingerprint,
       sourceNotes: notes,
       sourceVideoIds: itemVideos.map((v) => v.id),
@@ -268,7 +322,7 @@ async function summarizeOneItem(input: {
     sourceNotes: notes,
     sourceVideoIds: itemVideos.map((v) => v.id),
     status: "failed",
-    error: result.message,
+    error: finalResult.message,
   });
   return "failed";
 }

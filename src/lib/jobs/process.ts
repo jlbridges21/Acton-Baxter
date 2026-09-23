@@ -174,6 +174,32 @@ async function processSiteInspectionAi(job: ReportJob): Promise<void> {
   await runSiteInspectionAiJob(job);
 }
 
+async function processSiteInspectionPdfExport(job: ReportJob): Promise<void> {
+  const inspectionId =
+    typeof job.metadata.inspectionId === "string" ? job.metadata.inspectionId : null;
+  if (!inspectionId) {
+    throw new Error("site_inspection_pdf_export requires metadata.inspectionId");
+  }
+  const { getSiteInspection } = await import("@/lib/inspections/records-store");
+  const { buildSiteInspectionPdf, storeSiteInspectionPdf } =
+    await import("@/lib/inspections/ai/export-pdf");
+  const inspection = await getSiteInspection(inspectionId);
+  const result = await buildSiteInspectionPdf(inspection);
+  const storagePath = await storeSiteInspectionPdf({
+    inspectionId,
+    bytes: result.bytes,
+  });
+  // Persist path on job metadata via complete — queue only stores last_error.
+  // Callers poll job status and download via known storage path convention.
+  console.info("[site-inspection-pdf] export ready", {
+    inspectionId,
+    storagePath,
+    byteSize: result.byteSize,
+    embeddedImageCount: result.embeddedImageCount,
+    jobId: job.id,
+  });
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -200,6 +226,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processExpenseJobsSync(job);
     } else if (job.jobType === "site_inspection_ai") {
       await processSiteInspectionAi(job);
+    } else if (job.jobType === "site_inspection_pdf_export") {
+      await processSiteInspectionPdfExport(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

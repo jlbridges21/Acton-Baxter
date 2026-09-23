@@ -24,6 +24,13 @@ export type AsyncRunProgressProps = {
   steps: AsyncRunStep[];
   /** Overall run status for header iconography / failure chrome. */
   runStatus: "running" | "complete" | "failed" | "timed_out";
+  /**
+   * Optional proportional bar (0–100). When set, shown above the step list —
+   * useful for single-pipeline progress (e.g. transcribe + summarize).
+   */
+  progressPercent?: number | null;
+  /** Plain-language phase under the bar (no time estimates). */
+  progressPhaseLabel?: ReactNode;
   /** Employee-facing failure / poll error message. */
   friendlyError?: string | null;
   isAdmin?: boolean;
@@ -42,6 +49,8 @@ export type AsyncRunProgressProps = {
   /** Shown when max poll duration elapsed. */
   onManualRefresh?: () => void;
   className?: string;
+  /** Compact mode for cards — hides step list chrome when steps are empty. */
+  compact?: boolean;
 };
 
 function StepIcon({ status }: { status: AsyncRunStepStatus }) {
@@ -78,6 +87,8 @@ export function AsyncRunProgress({
   description,
   steps,
   runStatus,
+  progressPercent = null,
+  progressPhaseLabel,
   friendlyError,
   isAdmin = false,
   adminTechnicalDetails,
@@ -87,10 +98,13 @@ export function AsyncRunProgress({
   footer,
   onManualRefresh,
   className,
+  compact = false,
 }: AsyncRunProgressProps) {
   const failed = runStatus === "failed";
   const timedOut = runStatus === "timed_out";
   const complete = runStatus === "complete";
+  const showBar = typeof progressPercent === "number" && Number.isFinite(progressPercent);
+  const clamped = showBar ? Math.max(0, Math.min(100, progressPercent)) : 0;
 
   return (
     <Card className={cn(failed && "border-red-200 bg-red-50", className)}>
@@ -118,6 +132,33 @@ export function AsyncRunProgress({
 
       {beforeSteps ? <div className="mt-4">{beforeSteps}</div> : null}
 
+      {showBar ? (
+        <div
+          className="mt-4"
+          role="progressbar"
+          aria-valuenow={clamped}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="h-2.5 overflow-hidden rounded-full bg-[var(--acton-gray-50)] ring-1 ring-[var(--acton-border)]">
+            <div
+              className={cn(
+                "h-full rounded-full transition-[width] duration-500 ease-out",
+                failed ? "bg-red-600" : complete ? "bg-emerald-600" : "bg-[var(--acton-navy)]",
+              )}
+              style={{ width: `${clamped}%` }}
+            />
+          </div>
+          {progressPhaseLabel ? (
+            <p
+              className={cn("mt-2 text-sm", failed ? "text-red-800" : "text-[var(--acton-muted)]")}
+            >
+              {progressPhaseLabel}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {timedOut ? (
         <div
           className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
@@ -142,53 +183,55 @@ export function AsyncRunProgress({
         </div>
       ) : null}
 
-      <ol className="mt-6 space-y-3">
-        {steps.map((step) => {
-          const active = step.status === "running";
-          const done = step.status === "complete" || step.status === "skipped";
-          const stepFailed = step.status === "failed";
-          const muted = step.status === "pending";
-          const labelExtra = statusLabel(step.status);
-          return (
-            <li
-              key={step.key}
-              className={cn(
-                "flex gap-3 rounded-md border px-3 py-2",
-                active && "border-[var(--acton-yellow)] bg-[var(--acton-yellow)]/20",
-                done && "border-[var(--acton-border)] bg-[var(--acton-gray-50)]",
-                stepFailed && "border-red-200 bg-white/70",
-                muted && "border-[var(--acton-border)]",
-                step.status === "planned" &&
-                  "border-[var(--acton-border)] bg-[var(--acton-gray-50)]",
-              )}
-            >
-              <StepIcon status={step.status} />
-              <div className="min-w-0 flex-1">
-                <p
-                  className={cn(
-                    "text-sm font-semibold",
-                    muted ? "text-[var(--acton-muted)]" : "text-[var(--acton-navy)]",
-                    stepFailed && "text-red-800",
-                  )}
-                >
-                  {step.label}
-                  {labelExtra && (stepFailed || step.status === "planned")
-                    ? ` — ${labelExtra}`
-                    : ""}
-                </p>
-                {step.detail ? (
-                  <div className="mt-1 text-xs text-[var(--acton-muted)]">{step.detail}</div>
-                ) : null}
-                {step.error ? (
-                  <p className="mt-1 text-xs text-red-700" role="alert">
-                    {step.error}
+      {!compact && steps.length > 0 ? (
+        <ol className="mt-6 space-y-3">
+          {steps.map((step) => {
+            const active = step.status === "running";
+            const done = step.status === "complete" || step.status === "skipped";
+            const stepFailed = step.status === "failed";
+            const muted = step.status === "pending";
+            const labelExtra = statusLabel(step.status);
+            return (
+              <li
+                key={step.key}
+                className={cn(
+                  "flex gap-3 rounded-md border px-3 py-2",
+                  active && "border-[var(--acton-yellow)] bg-[var(--acton-yellow)]/20",
+                  done && "border-[var(--acton-border)] bg-[var(--acton-gray-50)]",
+                  stepFailed && "border-red-200 bg-white/70",
+                  muted && "border-[var(--acton-border)]",
+                  step.status === "planned" &&
+                    "border-[var(--acton-border)] bg-[var(--acton-gray-50)]",
+                )}
+              >
+                <StepIcon status={step.status} />
+                <div className="min-w-0 flex-1">
+                  <p
+                    className={cn(
+                      "text-sm font-semibold",
+                      muted ? "text-[var(--acton-muted)]" : "text-[var(--acton-navy)]",
+                      stepFailed && "text-red-800",
+                    )}
+                  >
+                    {step.label}
+                    {labelExtra && (stepFailed || step.status === "planned")
+                      ? ` — ${labelExtra}`
+                      : ""}
                   </p>
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+                  {step.detail ? (
+                    <div className="mt-1 text-xs text-[var(--acton-muted)]">{step.detail}</div>
+                  ) : null}
+                  {step.error ? (
+                    <p className="mt-1 text-xs text-red-700" role="alert">
+                      {step.error}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
 
       {friendlyError ? (
         <p className="mt-4 text-sm text-red-800" role="alert">

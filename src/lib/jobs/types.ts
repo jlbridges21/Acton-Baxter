@@ -11,6 +11,7 @@ export const JOB_TYPES = [
   "knowledge_drive_ingest",
   "expense_jobs_sync",
   "site_inspection_ai",
+  "site_inspection_pdf_export",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

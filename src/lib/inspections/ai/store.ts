@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
 import type {
+  AiProcessingPhase,
   AiProcessingStatus,
   ItemSummaryStatus,
   SiteInspectionItemSummary,
@@ -21,6 +22,9 @@ export type AiProgressPatch = {
   ai_processing_message?: string | null;
   ai_processing_videos_total?: number;
   ai_processing_videos_done?: number;
+  ai_processing_summaries_total?: number;
+  ai_processing_summaries_done?: number;
+  ai_processing_phase?: AiProcessingPhase | null;
   ai_processing_started_at?: string | null;
   ai_processing_finished_at?: string | null;
 };

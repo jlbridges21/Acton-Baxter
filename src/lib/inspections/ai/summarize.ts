@@ -13,6 +13,8 @@ export type SummarizeItemInput = {
   guideNotes: string | null;
   inspectorNotes: string;
   transcripts: Array<{ mediaId: string; text: string; status: string }>;
+  /** When true, forbid empty-input boilerplate — transcripts are known usable. */
+  forceUseTranscripts?: boolean;
 };
 
 export type SummarizeItemResult =
@@ -67,6 +69,9 @@ export async function summarizeInspectionItem(
       : null,
     `Inspector notes:\n${input.inspectorNotes.trim() || "(none)"}`,
     `Video transcripts:\n${transcriptBlock}`,
+    input.forceUseTranscripts
+      ? "IMPORTANT: Usable transcript text is provided above. Do NOT say that no spoken content was available. Summarize what was actually said."
+      : null,
   ]
     .filter(Boolean)
     .join("\n\n");

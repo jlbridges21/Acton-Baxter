@@ -83,6 +83,9 @@ const detail: SiteInspectionDetail = {
   aiProcessingMessage: null,
   aiProcessingVideosTotal: 0,
   aiProcessingVideosDone: 0,
+  aiProcessingSummariesTotal: 0,
+  aiProcessingSummariesDone: 0,
+  aiProcessingPhase: null,
   aiProcessingStartedAt: null,
   aiProcessingFinishedAt: null,
   snapshot: {

@@ -15,6 +15,7 @@ import {
   type ProjectPick,
 } from "@/components/inspections/inspection-project-picker";
 import { purgeMediaQueueForInspection } from "@/lib/inspections/media-queue";
+import { InspectionAiPipelineProgress } from "@/components/inspections/inspection-ai-pipeline-progress";
 
 type Assignee = { id: string; displayName: string };
 
@@ -297,6 +298,21 @@ export function InspectionsListClient({
                   <p className="text-xs font-medium text-red-700">
                     {row.failedMediaCount} upload{row.failedMediaCount === 1 ? "" : "s"} failed
                   </p>
+                ) : null}
+                {row.aiProcessingStatus === "queued" ||
+                row.aiProcessingStatus === "processing" ||
+                row.aiProcessingStatus === "failed" ||
+                (row.aiProcessingStatus === "complete" &&
+                  row.aiProcessingMessage?.toLowerCase().includes("error")) ? (
+                  <div
+                    className="pt-1"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  >
+                    <InspectionAiPipelineProgress inspection={row} compact />
+                  </div>
                 ) : null}
               </div>
             </Link>

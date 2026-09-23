@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { InspectionMediaGallery } from "@/components/inspections/inspection-media-gallery";
 import { InspectionAiSummaryBlock } from "@/components/inspections/inspection-ai-summary";
+import { InspectionAiPipelineProgress } from "@/components/inspections/inspection-ai-pipeline-progress";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
 import { flushPendingResponses, type ResponseSaveResult } from "@/lib/inspections/response-sync";
@@ -86,6 +87,8 @@ export function InspectionRunnerClient({
     items: [],
   });
   const [exportModeHint, setExportModeHint] = useState<string | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfHint, setPdfHint] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -141,6 +144,10 @@ export function InspectionRunnerClient({
       aiProcessingMessage: server.aiProcessingMessage ?? prev.aiProcessingMessage,
       aiProcessingVideosTotal: server.aiProcessingVideosTotal ?? prev.aiProcessingVideosTotal,
       aiProcessingVideosDone: server.aiProcessingVideosDone ?? prev.aiProcessingVideosDone,
+      aiProcessingSummariesTotal:
+        server.aiProcessingSummariesTotal ?? prev.aiProcessingSummariesTotal,
+      aiProcessingSummariesDone: server.aiProcessingSummariesDone ?? prev.aiProcessingSummariesDone,
+      aiProcessingPhase: server.aiProcessingPhase ?? prev.aiProcessingPhase,
       aiProcessingStartedAt: server.aiProcessingStartedAt ?? prev.aiProcessingStartedAt,
       aiProcessingFinishedAt: server.aiProcessingFinishedAt ?? prev.aiProcessingFinishedAt,
     }));
@@ -155,6 +162,9 @@ export function InspectionRunnerClient({
       aiProcessingMessage: server.aiProcessingMessage,
       aiProcessingVideosTotal: server.aiProcessingVideosTotal,
       aiProcessingVideosDone: server.aiProcessingVideosDone,
+      aiProcessingSummariesTotal: server.aiProcessingSummariesTotal,
+      aiProcessingSummariesDone: server.aiProcessingSummariesDone,
+      aiProcessingPhase: server.aiProcessingPhase,
       aiProcessingStartedAt: server.aiProcessingStartedAt,
       aiProcessingFinishedAt: server.aiProcessingFinishedAt,
       updatedAt: server.updatedAt,
@@ -737,6 +747,55 @@ export function InspectionRunnerClient({
     }
   }
 
+  async function onExportPdf() {
+    setPdfBusy(true);
+    setPdfHint(null);
+    try {
+      let jobId: string | null = null;
+      for (let attempt = 0; attempt < 90; attempt += 1) {
+        const url = jobId
+          ? `/api/inspections/${inspection.id}/export-pdf?jobId=${encodeURIComponent(jobId)}`
+          : `/api/inspections/${inspection.id}/export-pdf`;
+        const res = await fetch(url);
+        const contentType = res.headers.get("content-type") ?? "";
+        if (contentType.includes("application/pdf")) {
+          const blob = await res.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = objectUrl;
+          a.download = `${inspection.projectName.replace(/[^\w.-]+/g, "_").slice(0, 40) || "inspection"}-site-inspection.pdf`;
+          a.click();
+          URL.revokeObjectURL(objectUrl);
+          setPdfHint(null);
+          return;
+        }
+        const json = (await res.json().catch(() => ({}))) as {
+          status?: string;
+          jobId?: string;
+          message?: string;
+          error?: { message?: string };
+        };
+        if (!res.ok && res.status !== 202) {
+          throw new Error(json.error?.message ?? json.message ?? "PDF export failed");
+        }
+        if (json.status === "generating" && json.jobId) {
+          jobId = json.jobId;
+          setPdfHint(json.message ?? "Building PDF report…");
+          await new Promise((r) => window.setTimeout(r, 2000));
+          continue;
+        }
+        throw new Error(json.error?.message ?? "PDF export failed");
+      }
+      throw new Error("PDF export is taking too long — refresh and try again");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "PDF export failed";
+      setPdfHint(message);
+      window.alert(message);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   async function confirmSoftDelete() {
     setDeleteBusy(true);
     setDeleteError(null);
@@ -849,21 +908,6 @@ export function InspectionRunnerClient({
                 {failedUploads} upload{failedUploads === 1 ? "" : "s"} failed
               </p>
             ) : null}
-            {inspection.aiProcessingStatus === "queued" ||
-            inspection.aiProcessingStatus === "processing" ? (
-              <p className="text-xs font-medium text-[var(--acton-navy)]" aria-live="polite">
-                {inspection.aiProcessingMessage ??
-                  `Transcribing ${inspection.aiProcessingVideosDone} of ${inspection.aiProcessingVideosTotal} videos`}
-              </p>
-            ) : null}
-            {inspection.aiProcessingStatus === "failed" ? (
-              <p className="text-xs font-medium text-red-700">
-                {inspection.aiProcessingMessage ?? "AI processing failed"}
-              </p>
-            ) : null}
-            {inspection.aiProcessingStatus === "complete" && inspection.aiProcessingMessage ? (
-              <p className="text-xs text-emerald-800">{inspection.aiProcessingMessage}</p>
-            ) : null}
             <span
               className={`mt-1 inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
                 inspection.status === "complete"
@@ -875,6 +919,9 @@ export function InspectionRunnerClient({
             </span>
           </div>
         </div>
+        {inspection.aiProcessingStatus !== "idle" ? (
+          <InspectionAiPipelineProgress inspection={inspection} />
+        ) : null}
         {failedQueueItems.length ? (
           <div className="space-y-1 rounded-md border border-red-200 bg-red-50 px-2 py-2 text-left text-xs text-red-900">
             {failedQueueItems.map((item) => (
@@ -917,6 +964,15 @@ export function InspectionRunnerClient({
           >
             Download all media
           </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="min-h-10"
+            disabled={pdfBusy}
+            onClick={() => void onExportPdf()}
+          >
+            {pdfBusy ? "Building PDF…" : "Export as PDF"}
+          </Button>
           {exportModeHint ? (
             <Button
               type="button"
@@ -940,6 +996,7 @@ export function InspectionRunnerClient({
           ) : null}
         </div>
         {deleteError ? <p className="text-sm text-red-700">{deleteError}</p> : null}
+        {pdfHint ? <p className="text-sm text-[var(--acton-muted)]">{pdfHint}</p> : null}
       </div>
 
       <ConfirmDialog

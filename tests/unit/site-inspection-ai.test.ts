@@ -217,6 +217,8 @@ describe("site inspection AI job", () => {
     }
 
     expect(detail.aiProcessingStatus).toBe("complete");
+    expect(detail.aiProcessingPhase).toBe("complete");
+    expect(detail.aiProcessingSummariesDone).toBeGreaterThanOrEqual(1);
   });
 
   it("resolves no-speech without treating it as a hard error", async () => {

@@ -30,6 +30,9 @@ export async function enqueueSiteInspectionAi(
   await patchInspectionAiProgress(inspectionId, {
     ai_processing_status: "queued",
     ai_processing_message: "Queued for transcription…",
+    ai_processing_phase: "transcribing",
+    ai_processing_summaries_total: 0,
+    ai_processing_summaries_done: 0,
     ai_processing_started_at: new Date().toISOString(),
     ai_processing_finished_at: null,
   });

@@ -29,6 +29,7 @@ import {
 } from "./media-storage";
 import { posterStoragePathForVideo } from "./video-remux";
 import {
+  type AiProcessingPhase,
   type AiProcessingStatus,
   type CreateSiteInspectionInput,
   SITE_INSPECTION_MEDIA_BUCKET,
@@ -73,6 +74,9 @@ type InspectionRow = {
   ai_processing_message?: string | null;
   ai_processing_videos_total?: number;
   ai_processing_videos_done?: number;
+  ai_processing_summaries_total?: number;
+  ai_processing_summaries_done?: number;
+  ai_processing_phase?: AiProcessingPhase | null;
   ai_processing_started_at?: string | null;
   ai_processing_finished_at?: string | null;
 };
@@ -284,7 +288,7 @@ function countMediaStatuses(media: MediaRow[]): { pending: number; failed: numbe
 }
 
 const LIST_COLUMNS =
-  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at, ai_processing_status, ai_processing_message, ai_processing_videos_total, ai_processing_videos_done, ai_processing_started_at, ai_processing_finished_at";
+  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at, ai_processing_status, ai_processing_message, ai_processing_videos_total, ai_processing_videos_done, ai_processing_summaries_total, ai_processing_summaries_done, ai_processing_phase, ai_processing_started_at, ai_processing_finished_at";
 
 type InspectionListRow = {
   id: string;
@@ -305,6 +309,9 @@ type InspectionListRow = {
   ai_processing_message?: string | null;
   ai_processing_videos_total?: number | null;
   ai_processing_videos_done?: number | null;
+  ai_processing_summaries_total?: number | null;
+  ai_processing_summaries_done?: number | null;
+  ai_processing_phase?: AiProcessingPhase | null;
   ai_processing_started_at?: string | null;
   ai_processing_finished_at?: string | null;
 };
@@ -315,6 +322,9 @@ function aiFieldsFromRow(row: {
   ai_processing_message?: string | null;
   ai_processing_videos_total?: number | null;
   ai_processing_videos_done?: number | null;
+  ai_processing_summaries_total?: number | null;
+  ai_processing_summaries_done?: number | null;
+  ai_processing_phase?: AiProcessingPhase | null;
   ai_processing_started_at?: string | null;
   ai_processing_finished_at?: string | null;
 }): Pick<
@@ -323,6 +333,9 @@ function aiFieldsFromRow(row: {
   | "aiProcessingMessage"
   | "aiProcessingVideosTotal"
   | "aiProcessingVideosDone"
+  | "aiProcessingSummariesTotal"
+  | "aiProcessingSummariesDone"
+  | "aiProcessingPhase"
   | "aiProcessingStartedAt"
   | "aiProcessingFinishedAt"
 > {
@@ -333,6 +346,11 @@ function aiFieldsFromRow(row: {
     aiProcessingMessage: mem?.ai_processing_message ?? row.ai_processing_message ?? null,
     aiProcessingVideosTotal: mem?.ai_processing_videos_total ?? row.ai_processing_videos_total ?? 0,
     aiProcessingVideosDone: mem?.ai_processing_videos_done ?? row.ai_processing_videos_done ?? 0,
+    aiProcessingSummariesTotal:
+      mem?.ai_processing_summaries_total ?? row.ai_processing_summaries_total ?? 0,
+    aiProcessingSummariesDone:
+      mem?.ai_processing_summaries_done ?? row.ai_processing_summaries_done ?? 0,
+    aiProcessingPhase: mem?.ai_processing_phase ?? row.ai_processing_phase ?? null,
     aiProcessingStartedAt: mem?.ai_processing_started_at ?? row.ai_processing_started_at ?? null,
     aiProcessingFinishedAt: mem?.ai_processing_finished_at ?? row.ai_processing_finished_at ?? null,
   };
@@ -488,6 +506,9 @@ export async function createSiteInspection(
     ai_processing_message: null,
     ai_processing_videos_total: 0,
     ai_processing_videos_done: 0,
+    ai_processing_summaries_total: 0,
+    ai_processing_summaries_done: 0,
+    ai_processing_phase: null,
     ai_processing_started_at: null,
     ai_processing_finished_at: null,
   };
@@ -542,6 +563,15 @@ export async function listSiteInspections(options?: {
         created_at: r.created_at,
         updated_at: r.updated_at,
         deleted_at: r.deleted_at,
+        ai_processing_status: r.ai_processing_status,
+        ai_processing_message: r.ai_processing_message,
+        ai_processing_videos_total: r.ai_processing_videos_total,
+        ai_processing_videos_done: r.ai_processing_videos_done,
+        ai_processing_summaries_total: r.ai_processing_summaries_total,
+        ai_processing_summaries_done: r.ai_processing_summaries_done,
+        ai_processing_phase: r.ai_processing_phase,
+        ai_processing_started_at: r.ai_processing_started_at,
+        ai_processing_finished_at: r.ai_processing_finished_at,
       }));
   } else {
     const supabase = createServiceClient();
