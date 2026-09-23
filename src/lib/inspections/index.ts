@@ -110,6 +110,7 @@ export {
   ZIP_FULL_EXPORT_MAX_BYTES,
   buildMediaExportFilename,
   sanitizeFilenamePart,
+  inferInspectionMediaType,
 } from "./media-limits";
 export {
   createSiteInspectionSchema,

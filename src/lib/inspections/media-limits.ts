@@ -10,6 +10,29 @@ export const VIDEO_WARN_MESSAGE =
   "Large videos can take a while to upload on cell signal. Keep the app open until the upload finishes — it will resume if the signal drops.";
 
 /**
+ * Route Attach-file / capture results by the file itself (MIME, then extension).
+ * Do not infer from which button was pressed — Attach file accepts both.
+ */
+export function inferInspectionMediaType(file: File): "photo" | "video" | null {
+  const mime = (file.type || "").trim().toLowerCase();
+  if (mime.startsWith("image/")) return "photo";
+  if (mime.startsWith("video/")) return "video";
+
+  const name = (file.name || "").trim().toLowerCase();
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+  if (
+    ext &&
+    ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff"].includes(ext)
+  ) {
+    return "photo";
+  }
+  if (ext && ["mp4", "mov", "m4v", "webm", "avi", "mkv", "3gp", "3gpp"].includes(ext)) {
+    return "video";
+  }
+  return null;
+}
+
+/**
  * @deprecated Soft guidance only — no longer enforced as a hard upload cap.
  * Kept so older call sites / tests can read a number if needed.
  */

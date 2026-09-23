@@ -30,6 +30,7 @@ import {
   VIDEO_WARN_MESSAGE,
   type MediaQueueSnapshot,
 } from "@/lib/inspections/media-queue";
+import { inferInspectionMediaType } from "@/lib/inspections/media-limits";
 import { listSnapshotItems } from "@/lib/inspections/snapshot";
 import type {
   SiteInspectionDetail,
@@ -419,10 +420,18 @@ export function InspectionRunnerClient({
     scheduleFlush();
   }
 
-  async function onMediaSelected(snapshotItemId: string, file: File, mediaType: "photo" | "video") {
+  async function onMediaSelected(snapshotItemId: string, file: File) {
     if (!file || file.size <= 0) {
       window.alert("That capture was empty. Please try again.");
       return;
+    }
+    const mediaType = inferInspectionMediaType(file);
+    if (!mediaType) {
+      window.alert("That file type is not supported. Choose a photo or video.");
+      return;
+    }
+    if (mediaType === "video") {
+      window.alert(VIDEO_WARN_MESSAGE);
     }
     try {
       const { clientMediaId, optimisticMedia } = await enqueueInspectionMedia({
@@ -1056,8 +1065,7 @@ export function InspectionRunnerClient({
           media={mediaByItem.get(item.id) ?? []}
           itemSummary={inspection.itemSummaries?.find((s) => s.snapshotItemId === item.id)}
           onPatch={(patch) => patchItemLocally(item.id, patch)}
-          onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
-          onVideo={(file) => void onMediaSelected(item.id, file, "video")}
+          onMedia={(file) => void onMediaSelected(item.id, file)}
           onRetry={(clientMediaId) => void onRetry(clientMediaId)}
           onRequestDeleteMedia={(m) => {
             setMediaDeleteError(null);
@@ -1115,8 +1123,7 @@ export function InspectionRunnerClient({
                       (s) => s.snapshotItemId === item.id,
                     )}
                     onPatch={(patch) => patchItemLocally(item.id, patch)}
-                    onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
-                    onVideo={(file) => void onMediaSelected(item.id, file, "video")}
+                    onMedia={(file) => void onMediaSelected(item.id, file)}
                     onRetry={(clientMediaId) => void onRetry(clientMediaId)}
                     onRequestDeleteMedia={(m) => {
                       setMediaDeleteError(null);
@@ -1242,14 +1249,28 @@ function mediaStatusLabel(m: SiteInspectionMedia): string | null {
   return "Queued";
 }
 
+function shouldShowCameraCaptureButtons(): boolean {
+  if (typeof window === "undefined") return true;
+  if (typeof window.matchMedia !== "function") return true;
+  try {
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
+    const fine = window.matchMedia("(pointer: fine)").matches;
+    if (coarse || navigator.maxTouchPoints > 0) return true;
+    // Fine-pointer desktop without touch: capture is ignored → hide Take photo/video.
+    if (fine) return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
 function ItemCard({
   item,
   response,
   media,
   itemSummary,
   onPatch,
-  onPhoto,
-  onVideo,
+  onMedia,
   onRetry,
   onRequestDeleteMedia,
   onRequestRotateMedia,
@@ -1266,8 +1287,7 @@ function ItemCard({
     notes?: string;
     answers?: Record<string, SubQuestionAnswer>;
   }) => void;
-  onPhoto: (file: File) => void;
-  onVideo: (file: File) => void;
+  onMedia: (file: File) => void;
   onRetry: (clientMediaId: string) => void;
   onRequestDeleteMedia: (media: SiteInspectionMedia) => void;
   onRequestRotateMedia: (media: SiteInspectionMedia) => void;
@@ -1276,8 +1296,10 @@ function ItemCard({
   inspectionId: string;
 }) {
   const complete = Boolean(response?.isComplete);
-  const photoRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLInputElement>(null);
+  const takePhotoRef = useRef<HTMLInputElement>(null);
+  const takeVideoRef = useRef<HTMLInputElement>(null);
+  const attachFileRef = useRef<HTMLInputElement>(null);
+  const [showCaptureButtons] = useState(shouldShowCameraCaptureButtons);
   const hasVideo = media.some((m) => m.mediaType === "video" && m.uploadStatus === "ready");
 
   return (
@@ -1328,52 +1350,74 @@ function ItemCard({
           {item.allowsMedia ? (
             <div className="space-y-2">
               <input
-                ref={photoRef}
+                ref={takePhotoRef}
                 type="file"
                 accept="image/*"
+                capture="environment"
                 className="sr-only"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) onPhoto(file);
+                  if (file) onMedia(file);
                   e.target.value = "";
                 }}
               />
               <input
-                ref={videoRef}
+                ref={takeVideoRef}
                 type="file"
                 accept="video/*"
+                capture="environment"
                 className="sr-only"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) onVideo(file);
+                  if (file) onMedia(file);
                   e.target.value = "";
                 }}
               />
-              <div className="flex flex-wrap gap-2">
+              <input
+                ref={attachFileRef}
+                type="file"
+                accept="image/*,video/*"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onMedia(file);
+                  e.target.value = "";
+                }}
+              />
+              <div className="flex flex-col gap-2">
+                {showCaptureButtons ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="min-h-11 w-full"
+                      onClick={() => takePhotoRef.current?.click()}
+                    >
+                      Take photo
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="min-h-11 w-full"
+                      onClick={() => takeVideoRef.current?.click()}
+                    >
+                      Take video
+                    </Button>
+                  </>
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"
-                  className="min-h-11"
-                  onClick={() => photoRef.current?.click()}
+                  className="min-h-11 w-full"
+                  onClick={() => attachFileRef.current?.click()}
                 >
-                  Attach photo
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="min-h-11"
-                  onClick={() => {
-                    window.alert(VIDEO_WARN_MESSAGE);
-                    videoRef.current?.click();
-                  }}
-                >
-                  Attach video
+                  Attach file
                 </Button>
                 {media.some((m) => m.uploadStatus === "ready") ? (
                   <Button
                     type="button"
                     variant="secondary"
-                    className="min-h-11"
+                    className="min-h-11 w-full"
                     onClick={() => {
                       const a = document.createElement("a");
                       a.href = `/api/inspections/${inspectionId}/export?mode=item&snapshotItemId=${encodeURIComponent(item.id)}`;

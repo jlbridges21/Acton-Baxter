@@ -30,14 +30,19 @@ describe("video poster — server path", () => {
 });
 
 describe("inspection capture inputs", () => {
-  it("does not force camera via capture= on photo/video inputs", () => {
+  it("uses capture=environment for Take photo/video and leaves Attach file without capture", () => {
     const runner = readFileSync(
       join(process.cwd(), "src/components/inspections/inspection-runner-client.tsx"),
       "utf8",
     );
-    expect(runner).not.toMatch(/capture=["']environment["']/);
+    expect(runner).toMatch(/capture=["']environment["']/);
     expect(runner).toContain('accept="image/*"');
     expect(runner).toContain('accept="video/*"');
+    expect(runner).toContain('accept="image/*,video/*"');
+    expect(runner).toContain("Take photo");
+    expect(runner).toContain("Take video");
+    expect(runner).toContain("Attach file");
+    expect(runner).toContain("inferInspectionMediaType");
   });
 
   it("photos still run through the client image pipeline on enqueue", () => {

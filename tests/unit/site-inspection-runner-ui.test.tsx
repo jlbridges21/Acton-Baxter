@@ -184,8 +184,9 @@ describe("Inspections UI at phone width", () => {
     expect(screen.getByText(/1 of 2 complete/i)).toBeTruthy();
     expect(screen.getAllByText(/Internal only/i).length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/Mark Access complete/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /Attach photo/i }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("button", { name: /Attach video/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /Take photo/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /Take video/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /Attach file/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Download all media/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Complete site inspection/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /ACCESS/i }));
