@@ -79,6 +79,12 @@ const detail: SiteInspectionDetail = {
   createdByName: "Tech",
   createdAt: "2026-01-02T00:00:00.000Z",
   updatedAt: "2026-01-02T00:00:00.000Z",
+  aiProcessingStatus: "idle",
+  aiProcessingMessage: null,
+  aiProcessingVideosTotal: 0,
+  aiProcessingVideosDone: 0,
+  aiProcessingStartedAt: null,
+  aiProcessingFinishedAt: null,
   snapshot: {
     version: 1,
     sourceTemplateId: "t1",
@@ -133,6 +139,7 @@ const detail: SiteInspectionDetail = {
     },
   ],
   media: [],
+  itemSummaries: [],
 };
 
 describe("complete site inspection UI", () => {

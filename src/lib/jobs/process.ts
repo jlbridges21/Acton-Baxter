@@ -169,6 +169,11 @@ async function processExpenseJobsSync(job: ReportJob): Promise<void> {
   await syncExpenseJobsFromMasterProjectLog({ updatedBy });
 }
 
+async function processSiteInspectionAi(job: ReportJob): Promise<void> {
+  const { runSiteInspectionAiJob } = await import("@/lib/inspections/ai/run-job");
+  await runSiteInspectionAiJob(job);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -193,6 +198,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processKnowledgeDriveIngest(job);
     } else if (job.jobType === "expense_jobs_sync") {
       await processExpenseJobsSync(job);
+    } else if (job.jobType === "site_inspection_ai") {
+      await processSiteInspectionAi(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

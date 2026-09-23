@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { InspectionMediaGallery } from "@/components/inspections/inspection-media-gallery";
+import { InspectionAiSummaryBlock } from "@/components/inspections/inspection-ai-summary";
+import { InspectionVideoTranscript } from "@/components/inspections/inspection-video-transcript";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
 import { flushPendingResponses, type ResponseSaveResult } from "@/lib/inspections/response-sync";
@@ -31,6 +33,7 @@ import {
 import { listSnapshotItems } from "@/lib/inspections/snapshot";
 import type {
   SiteInspectionDetail,
+  SiteInspectionItemSummary,
   SiteInspectionMedia,
   SiteInspectionResponse,
   SiteInspectionUploadStatus,
@@ -99,6 +102,7 @@ export function InspectionRunnerClient({
     snapshotItemId: string;
     itemTitle: string;
     index: number;
+    seekSeconds?: number | null;
   } | null>(null);
   const localMediaRef = useRef(new Map<string, SiteInspectionMedia>());
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
@@ -133,6 +137,29 @@ export function InspectionRunnerClient({
       coverMediaId: server.coverMediaId,
       coverSignedUrl: server.coverSignedUrl,
       updatedAt: server.updatedAt,
+      itemSummaries: server.itemSummaries ?? prev.itemSummaries,
+      aiProcessingStatus: server.aiProcessingStatus ?? prev.aiProcessingStatus,
+      aiProcessingMessage: server.aiProcessingMessage ?? prev.aiProcessingMessage,
+      aiProcessingVideosTotal: server.aiProcessingVideosTotal ?? prev.aiProcessingVideosTotal,
+      aiProcessingVideosDone: server.aiProcessingVideosDone ?? prev.aiProcessingVideosDone,
+      aiProcessingStartedAt: server.aiProcessingStartedAt ?? prev.aiProcessingStartedAt,
+      aiProcessingFinishedAt: server.aiProcessingFinishedAt ?? prev.aiProcessingFinishedAt,
+    }));
+  }, []);
+
+  const applyAiFieldsFromServer = useCallback((server: SiteInspectionDetail) => {
+    setInspection((prev) => ({
+      ...prev,
+      media: mergeMediaLists(server.media, localMediaRef.current),
+      itemSummaries: server.itemSummaries ?? [],
+      aiProcessingStatus: server.aiProcessingStatus,
+      aiProcessingMessage: server.aiProcessingMessage,
+      aiProcessingVideosTotal: server.aiProcessingVideosTotal,
+      aiProcessingVideosDone: server.aiProcessingVideosDone,
+      aiProcessingStartedAt: server.aiProcessingStartedAt,
+      aiProcessingFinishedAt: server.aiProcessingFinishedAt,
+      updatedAt: server.updatedAt,
+      status: server.status,
     }));
   }, []);
 
@@ -276,6 +303,28 @@ export function InspectionRunnerClient({
     };
   }, [applyServerMediaOnly, inspection.id]);
 
+  // Poll while transcription/summaries run after Complete.
+  useEffect(() => {
+    const status = inspection.aiProcessingStatus;
+    if (status !== "queued" && status !== "processing") return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/inspections/${inspection.id}`);
+        const json = (await res.json()) as { inspection?: SiteInspectionDetail };
+        if (!cancelled && json.inspection) applyAiFieldsFromServer(json.inspection);
+      } catch {
+        /* ignore transient */
+      }
+    };
+    const timer = window.setInterval(() => void tick(), 4000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [applyAiFieldsFromServer, inspection.aiProcessingStatus, inspection.id]);
+
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       // Scoped to this inspection only — other inspections' queue rows must not block.
@@ -325,11 +374,28 @@ export function InspectionRunnerClient({
       const others = prev.responses.filter((r) => r.snapshotItemId !== snapshotItemId);
       const responsesNext = [...others, nextResponse];
       const completed = responsesNext.filter((r) => r.isComplete).length;
+      // Mark AI summary stale when notes change so regenerate appears immediately.
+      let itemSummaries = prev.itemSummaries ?? [];
+      if (patch.notes !== undefined) {
+        itemSummaries = itemSummaries.map((s) => {
+          if (s.snapshotItemId !== snapshotItemId || s.status !== "complete") return s;
+          if (!s.summaryText.trim()) return s;
+          if (s.sourceNotes.trim() === nextResponse.notes.trim()) {
+            return { ...s, isStale: false, staleReason: null };
+          }
+          return {
+            ...s,
+            isStale: true,
+            staleReason: "notes changed since this summary",
+          };
+        });
+      }
       // Status is only changed via Complete / Reopen — never auto-derived from checkboxes.
       return {
         ...prev,
         responses: responsesNext,
         completedItemCount: completed,
+        itemSummaries,
       };
     });
 
@@ -525,14 +591,14 @@ export function InspectionRunnerClient({
 
   async function applyCompleteStatus() {
     const updated = await patchStatus("complete");
-    setInspection((prev) => ({
-      ...prev,
-      status: updated.status,
-      updatedAt: updated.updatedAt,
-    }));
+    applyAiFieldsFromServer(updated);
     setConfirmIncomplete(null);
+    const aiNote =
+      updated.aiProcessingStatus === "queued" || updated.aiProcessingStatus === "processing"
+        ? " Transcription and AI summaries are running in the background."
+        : "";
     setCompleteMessage(
-      "Site inspection marked complete. All checklist answers and ready media are saved.",
+      `Site inspection marked complete. All checklist answers and ready media are saved.${aiNote}`,
     );
   }
 
@@ -794,6 +860,21 @@ export function InspectionRunnerClient({
                 {failedUploads} upload{failedUploads === 1 ? "" : "s"} failed
               </p>
             ) : null}
+            {inspection.aiProcessingStatus === "queued" ||
+            inspection.aiProcessingStatus === "processing" ? (
+              <p className="text-xs font-medium text-[var(--acton-navy)]" aria-live="polite">
+                {inspection.aiProcessingMessage ??
+                  `Transcribing ${inspection.aiProcessingVideosDone} of ${inspection.aiProcessingVideosTotal} videos`}
+              </p>
+            ) : null}
+            {inspection.aiProcessingStatus === "failed" ? (
+              <p className="text-xs font-medium text-red-700">
+                {inspection.aiProcessingMessage ?? "AI processing failed"}
+              </p>
+            ) : null}
+            {inspection.aiProcessingStatus === "complete" && inspection.aiProcessingMessage ? (
+              <p className="text-xs text-emerald-800">{inspection.aiProcessingMessage}</p>
+            ) : null}
             <span
               className={`mt-1 inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
                 inspection.status === "complete"
@@ -923,6 +1004,7 @@ export function InspectionRunnerClient({
           item={item}
           response={responses.get(item.id)}
           media={mediaByItem.get(item.id) ?? []}
+          itemSummary={inspection.itemSummaries?.find((s) => s.snapshotItemId === item.id)}
           onPatch={(patch) => patchItemLocally(item.id, patch)}
           onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
           onVideo={(file) => void onMediaSelected(item.id, file, "video")}
@@ -932,9 +1014,15 @@ export function InspectionRunnerClient({
             setConfirmMediaDelete(m);
           }}
           onRequestRotateMedia={(m) => void rotateMedia(m)}
+          onAiUpdated={applyAiFieldsFromServer}
           inspectionId={inspection.id}
-          onOpenMedia={(index) =>
-            setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
+          onOpenMedia={(index, seekSeconds) =>
+            setGallery({
+              snapshotItemId: item.id,
+              itemTitle: item.title,
+              index,
+              seekSeconds: seekSeconds ?? null,
+            })
           }
         />
       ))}
@@ -973,6 +1061,9 @@ export function InspectionRunnerClient({
                     item={item}
                     response={responses.get(item.id)}
                     media={mediaByItem.get(item.id) ?? []}
+                    itemSummary={inspection.itemSummaries?.find(
+                      (s) => s.snapshotItemId === item.id,
+                    )}
                     onPatch={(patch) => patchItemLocally(item.id, patch)}
                     onPhoto={(file) => void onMediaSelected(item.id, file, "photo")}
                     onVideo={(file) => void onMediaSelected(item.id, file, "video")}
@@ -982,9 +1073,15 @@ export function InspectionRunnerClient({
                       setConfirmMediaDelete(m);
                     }}
                     onRequestRotateMedia={(m) => void rotateMedia(m)}
+                    onAiUpdated={applyAiFieldsFromServer}
                     inspectionId={inspection.id}
-                    onOpenMedia={(index) =>
-                      setGallery({ snapshotItemId: item.id, itemTitle: item.title, index })
+                    onOpenMedia={(index, seekSeconds) =>
+                      setGallery({
+                        snapshotItemId: item.id,
+                        itemTitle: item.title,
+                        index,
+                        seekSeconds: seekSeconds ?? null,
+                      })
                     }
                   />
                 ))}
@@ -1065,7 +1162,7 @@ export function InspectionRunnerClient({
 
       {gallery ? (
         <InspectionMediaGallery
-          key={`${gallery.snapshotItemId}:${gallery.index}`}
+          key={`${gallery.snapshotItemId}:${gallery.index}:${gallery.seekSeconds ?? ""}`}
           open
           onClose={() => setGallery(null)}
           inspectionId={inspection.id}
@@ -1073,6 +1170,7 @@ export function InspectionRunnerClient({
           itemTitle={gallery.itemTitle}
           media={galleryMedia}
           initialIndex={gallery.index}
+          initialSeekSeconds={gallery.seekSeconds ?? null}
           onRequestDelete={(m) => {
             setMediaDeleteError(null);
             setConfirmMediaDelete(m);
@@ -1098,6 +1196,7 @@ function ItemCard({
   item,
   response,
   media,
+  itemSummary,
   onPatch,
   onPhoto,
   onVideo,
@@ -1105,11 +1204,13 @@ function ItemCard({
   onRequestDeleteMedia,
   onRequestRotateMedia,
   onOpenMedia,
+  onAiUpdated,
   inspectionId,
 }: {
   item: SnapshotItem;
   response?: SiteInspectionResponse;
   media: SiteInspectionMedia[];
+  itemSummary?: SiteInspectionItemSummary;
   onPatch: (patch: {
     isComplete?: boolean;
     notes?: string;
@@ -1120,12 +1221,14 @@ function ItemCard({
   onRetry: (clientMediaId: string) => void;
   onRequestDeleteMedia: (media: SiteInspectionMedia) => void;
   onRequestRotateMedia: (media: SiteInspectionMedia) => void;
-  onOpenMedia: (index: number) => void;
+  onOpenMedia: (index: number, seekSeconds?: number | null) => void;
+  onAiUpdated: (inspection: SiteInspectionDetail) => void;
   inspectionId: string;
 }) {
   const complete = Boolean(response?.isComplete);
   const photoRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
+  const hasVideo = media.some((m) => m.mediaType === "video" && m.uploadStatus === "ready");
 
   return (
     <div
@@ -1150,6 +1253,13 @@ function ItemCard({
               <p className="text-xs font-medium text-[var(--acton-muted)]">Cover photo source</p>
             ) : null}
           </div>
+
+          <InspectionAiSummaryBlock
+            inspectionId={inspectionId}
+            summary={itemSummary}
+            hasVideo={hasVideo}
+            onUpdated={onAiUpdated}
+          />
 
           {item.guideNotes ? (
             <div className="rounded-md border border-amber-200 bg-amber-50/90 p-2">
@@ -1326,6 +1436,12 @@ function ItemCard({
                           >
                             <RotateCcw className="h-3.5 w-3.5" />
                           </button>
+                        ) : null}
+                        {m.mediaType === "video" ? (
+                          <InspectionVideoTranscript
+                            media={m}
+                            onSeek={(seconds) => onOpenMedia(mediaIndex, seconds)}
+                          />
                         ) : null}
                       </div>
                     );

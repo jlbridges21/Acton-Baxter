@@ -16,6 +16,59 @@ export type SiteInspectionUploadStatus = (typeof SITE_INSPECTION_UPLOAD_STATUSES
 
 export const SITE_INSPECTION_MEDIA_BUCKET = "site-inspection-media";
 
+export const TRANSCRIPT_STATUSES = [
+  "pending",
+  "processing",
+  "complete",
+  "failed",
+  "no_speech_detected",
+] as const;
+export type TranscriptStatus = (typeof TRANSCRIPT_STATUSES)[number];
+
+export const ITEM_SUMMARY_STATUSES = ["pending", "processing", "complete", "failed"] as const;
+export type ItemSummaryStatus = (typeof ITEM_SUMMARY_STATUSES)[number];
+
+export const AI_PROCESSING_STATUSES = [
+  "idle",
+  "queued",
+  "processing",
+  "complete",
+  "failed",
+] as const;
+export type AiProcessingStatus = (typeof AI_PROCESSING_STATUSES)[number];
+
+export type TranscriptSegment = {
+  /** Start time in seconds. */
+  start: number;
+  /** End time in seconds. */
+  end: number;
+  text: string;
+};
+
+export type SiteInspectionItemSummary = {
+  id: string;
+  inspectionId: string;
+  snapshotItemId: string;
+  summaryText: string;
+  contentFingerprint: string;
+  /** Notes captured when this summary was generated (for stale-reason copy). */
+  sourceNotes: string;
+  /** Video media ids captured when this summary was generated. */
+  sourceVideoIds: string[];
+  status: ItemSummaryStatus;
+  error: string | null;
+  generatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * Server-computed: true when current notes/videos/transcripts differ from fingerprint.
+   * When false/undefined, the regenerate control must not render.
+   */
+  isStale?: boolean;
+  /** Short reason shown next to regenerate when stale. */
+  staleReason?: string | null;
+};
+
 export type SubQuestionAnswerValue = string | string[] | null;
 
 export type SubQuestionAnswer = {
@@ -59,6 +112,12 @@ export type SiteInspectionMedia = {
   localPreviewUrl?: string | null;
   /** Local poster preview while the queue is uploading (client-only). */
   localPosterUrl?: string | null;
+  /** Transcription lifecycle — null for photos. */
+  transcriptStatus?: TranscriptStatus | null;
+  transcriptText?: string | null;
+  transcriptSegments?: TranscriptSegment[] | null;
+  transcriptError?: string | null;
+  transcriptUpdatedAt?: string | null;
 };
 
 export type SiteInspectionSummary = {
@@ -81,12 +140,20 @@ export type SiteInspectionSummary = {
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Background transcription/summary job after Complete. */
+  aiProcessingStatus: AiProcessingStatus;
+  aiProcessingMessage: string | null;
+  aiProcessingVideosTotal: number;
+  aiProcessingVideosDone: number;
+  aiProcessingStartedAt: string | null;
+  aiProcessingFinishedAt: string | null;
 };
 
 export type SiteInspectionDetail = SiteInspectionSummary & {
   snapshot: InspectionSnapshot;
   responses: SiteInspectionResponse[];
   media: SiteInspectionMedia[];
+  itemSummaries: SiteInspectionItemSummary[];
 };
 
 export type CreateSiteInspectionInput = {

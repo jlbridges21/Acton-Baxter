@@ -28,16 +28,28 @@ import {
 } from "./media-storage";
 import { posterStoragePathForVideo } from "./video-remux";
 import {
+  type AiProcessingStatus,
   type CreateSiteInspectionInput,
   SITE_INSPECTION_MEDIA_BUCKET,
   type SiteInspectionDetail,
+  type SiteInspectionItemSummary,
   type SiteInspectionMedia,
   type SiteInspectionResponse,
   type SiteInspectionStatus,
   type SiteInspectionSummary,
   type SubQuestionAnswer,
+  type TranscriptSegment,
+  type TranscriptStatus,
   type UpsertResponseInput,
 } from "./record-types";
+import {
+  listItemSummariesForInspection,
+  readAiProgressFromMemory,
+  readTranscriptFromMemory,
+  resetSiteInspectionAiMemoryForTests,
+} from "./ai/store";
+import { buildItemSummaryFingerprint, describeSummaryStaleReason } from "./ai/fingerprint";
+import { enqueueSiteInspectionAi } from "./ai/enqueue";
 
 type InspectionRow = {
   id: string;
@@ -55,6 +67,12 @@ type InspectionRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  ai_processing_status?: AiProcessingStatus;
+  ai_processing_message?: string | null;
+  ai_processing_videos_total?: number;
+  ai_processing_videos_done?: number;
+  ai_processing_started_at?: string | null;
+  ai_processing_finished_at?: string | null;
 };
 
 type ResponseRow = {
@@ -85,6 +103,11 @@ type MediaRow = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  transcript_status?: TranscriptStatus | null;
+  transcript_text?: string | null;
+  transcript_segments?: TranscriptSegment[] | null;
+  transcript_error?: string | null;
+  transcript_updated_at?: string | null;
 };
 
 type MemoryState = {
@@ -116,6 +139,7 @@ function getMemory(): MemoryState {
 
 export function resetSiteInspectionMemoryForTests() {
   globalMemory.__baxterSiteInspections = emptyMemory();
+  resetSiteInspectionAiMemoryForTests();
 }
 
 export function setSiteInspectionProfileNameForTests(userId: string, name: string) {
@@ -166,6 +190,7 @@ function mapMedia(
   signedUrl?: string | null,
   posterSignedUrl?: string | null,
 ): SiteInspectionMedia {
+  const memTx = shouldUseMemory() ? readTranscriptFromMemory(row.id) : null;
   return {
     id: row.id,
     inspectionId: row.inspection_id,
@@ -183,6 +208,11 @@ function mapMedia(
     updatedAt: row.updated_at,
     signedUrl: signedUrl ?? null,
     posterSignedUrl: posterSignedUrl ?? null,
+    transcriptStatus: memTx?.transcript_status ?? row.transcript_status ?? null,
+    transcriptText: memTx?.transcript_text ?? row.transcript_text ?? null,
+    transcriptSegments: memTx?.transcript_segments ?? row.transcript_segments ?? null,
+    transcriptError: memTx?.transcript_error ?? row.transcript_error ?? null,
+    transcriptUpdatedAt: memTx?.transcript_updated_at ?? row.transcript_updated_at ?? null,
   };
 }
 
@@ -252,7 +282,7 @@ function countMediaStatuses(media: MediaRow[]): { pending: number; failed: numbe
 }
 
 const LIST_COLUMNS =
-  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at";
+  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at, ai_processing_status, ai_processing_message, ai_processing_videos_total, ai_processing_videos_done, ai_processing_started_at, ai_processing_finished_at";
 
 type InspectionListRow = {
   id: string;
@@ -269,7 +299,42 @@ type InspectionListRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  ai_processing_status?: AiProcessingStatus | null;
+  ai_processing_message?: string | null;
+  ai_processing_videos_total?: number | null;
+  ai_processing_videos_done?: number | null;
+  ai_processing_started_at?: string | null;
+  ai_processing_finished_at?: string | null;
 };
+
+function aiFieldsFromRow(row: {
+  id: string;
+  ai_processing_status?: AiProcessingStatus | null;
+  ai_processing_message?: string | null;
+  ai_processing_videos_total?: number | null;
+  ai_processing_videos_done?: number | null;
+  ai_processing_started_at?: string | null;
+  ai_processing_finished_at?: string | null;
+}): Pick<
+  SiteInspectionSummary,
+  | "aiProcessingStatus"
+  | "aiProcessingMessage"
+  | "aiProcessingVideosTotal"
+  | "aiProcessingVideosDone"
+  | "aiProcessingStartedAt"
+  | "aiProcessingFinishedAt"
+> {
+  const mem = shouldUseMemory() ? readAiProgressFromMemory(row.id) : null;
+  return {
+    aiProcessingStatus:
+      mem?.ai_processing_status ?? row.ai_processing_status ?? ("idle" as AiProcessingStatus),
+    aiProcessingMessage: mem?.ai_processing_message ?? row.ai_processing_message ?? null,
+    aiProcessingVideosTotal: mem?.ai_processing_videos_total ?? row.ai_processing_videos_total ?? 0,
+    aiProcessingVideosDone: mem?.ai_processing_videos_done ?? row.ai_processing_videos_done ?? 0,
+    aiProcessingStartedAt: mem?.ai_processing_started_at ?? row.ai_processing_started_at ?? null,
+    aiProcessingFinishedAt: mem?.ai_processing_finished_at ?? row.ai_processing_finished_at ?? null,
+  };
+}
 
 function mapSummaryFromListRow(
   row: InspectionListRow,
@@ -297,6 +362,7 @@ function mapSummaryFromListRow(
     createdByName: nameById.get(row.created_by) ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...aiFieldsFromRow(row),
   };
 }
 
@@ -329,7 +395,49 @@ async function mapSummary(
     createdByName,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...aiFieldsFromRow(row),
   };
+}
+
+function enrichItemSummariesWithStale(
+  summaries: SiteInspectionItemSummary[],
+  media: SiteInspectionMedia[],
+  responses: SiteInspectionResponse[],
+): SiteInspectionItemSummary[] {
+  return summaries.map((summary) => {
+    const notes = responses.find((r) => r.snapshotItemId === summary.snapshotItemId)?.notes ?? "";
+    const videos = media.filter(
+      (m) =>
+        m.snapshotItemId === summary.snapshotItemId &&
+        m.mediaType === "video" &&
+        m.uploadStatus === "ready",
+    );
+    const currentFp = buildItemSummaryFingerprint({
+      notes,
+      videos: videos.map((v) => ({
+        mediaId: v.id,
+        transcriptStatus: v.transcriptStatus,
+        transcriptText: v.transcriptText,
+      })),
+    });
+    const isStale =
+      summary.status === "complete" &&
+      Boolean(summary.summaryText.trim()) &&
+      currentFp !== summary.contentFingerprint;
+    if (!isStale) {
+      return { ...summary, isStale: false, staleReason: null };
+    }
+    return {
+      ...summary,
+      isStale: true,
+      staleReason: describeSummaryStaleReason({
+        previousNotes: summary.sourceNotes,
+        currentNotes: notes,
+        previousVideoIds: summary.sourceVideoIds,
+        currentVideoIds: videos.map((v) => v.id),
+      }),
+    };
+  });
 }
 
 export async function createSiteInspection(
@@ -365,6 +473,12 @@ export async function createSiteInspection(
     created_at: now,
     updated_at: now,
     deleted_at: null,
+    ai_processing_status: "idle",
+    ai_processing_message: null,
+    ai_processing_videos_total: 0,
+    ai_processing_videos_done: 0,
+    ai_processing_started_at: null,
+    ai_processing_finished_at: null,
   };
 
   if (shouldUseMemory()) {
@@ -580,18 +694,26 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     countMediaStatuses(media).pending,
     countMediaStatuses(media).failed,
   );
+  const mappedMedia = media.map((m) => {
+    const poster = resolvedPosterPath(m);
+    return mapMedia(
+      m,
+      m.storage_path ? urlMap.get(m.storage_path) : null,
+      poster ? (urlMap.get(poster) ?? null) : null,
+    );
+  });
+  const mappedResponses = responses.map(mapResponse);
+  const itemSummaries = enrichItemSummariesWithStale(
+    await listItemSummariesForInspection(id),
+    mappedMedia,
+    mappedResponses,
+  );
   return {
     ...summary,
     snapshot: row.snapshot_json,
-    responses: responses.map(mapResponse),
-    media: media.map((m) => {
-      const poster = resolvedPosterPath(m);
-      return mapMedia(
-        m,
-        m.storage_path ? urlMap.get(m.storage_path) : null,
-        poster ? (urlMap.get(poster) ?? null) : null,
-      );
-    }),
+    responses: mappedResponses,
+    media: mappedMedia,
+    itemSummaries,
   };
 }
 
@@ -682,6 +804,30 @@ export async function setSiteInspectionStatus(input: {
       .update({ status: input.status })
       .eq("id", input.inspectionId);
     if (error) throw error;
+  }
+
+  if (input.status === "complete") {
+    let hasVideo = false;
+    if (shouldUseMemory()) {
+      hasVideo = Array.from(getMemory().media.values()).some(
+        (m) =>
+          m.inspection_id === input.inspectionId &&
+          m.media_type === "video" &&
+          m.upload_status === "ready",
+      );
+    } else {
+      const supabase = createServiceClient();
+      const { count } = await supabase
+        .from("site_inspection_media")
+        .select("id", { count: "exact", head: true })
+        .eq("inspection_id", input.inspectionId)
+        .eq("media_type", "video")
+        .eq("upload_status", "ready");
+      hasVideo = (count ?? 0) > 0;
+    }
+    if (hasVideo) {
+      await enqueueSiteInspectionAi(input.inspectionId);
+    }
   }
 
   return getSiteInspection(input.inspectionId);

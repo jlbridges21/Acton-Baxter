@@ -21,6 +21,8 @@ export type InspectionMediaGalleryProps = {
   itemTitle: string;
   media: SiteInspectionMedia[];
   initialIndex: number;
+  /** Seek video to this time (seconds) after metadata loads. */
+  initialSeekSeconds?: number | null;
   onRequestDelete?: (media: SiteInspectionMedia) => void;
   onInspectionUpdate?: (inspection: SiteInspectionDetail) => void;
 };
@@ -33,6 +35,7 @@ export function InspectionMediaGallery({
   itemTitle,
   media,
   initialIndex,
+  initialSeekSeconds = null,
   onRequestDelete,
   onInspectionUpdate,
 }: InspectionMediaGalleryProps) {
@@ -46,6 +49,7 @@ export function InspectionMediaGallery({
   const [rotateError, setRotateError] = useState<string | null>(null);
   const touchStartX = useRef<number | null>(null);
   const refreshing = useRef(false);
+  const seekApplied = useRef(false);
 
   const viewable = media.filter((m) => m.localPreviewUrl || m.signedUrl || m.storagePath);
   const safeIndex = Math.min(Math.max(0, index), Math.max(0, viewable.length - 1));
@@ -77,6 +81,10 @@ export function InspectionMediaGallery({
       refreshing.current = false;
     }
   }, [inspectionId, snapshotItemId]);
+
+  useEffect(() => {
+    seekApplied.current = false;
+  }, [initialSeekSeconds, current?.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -290,6 +298,17 @@ export function InspectionMediaGallery({
                 playsInline
                 preload="metadata"
                 className="max-h-full max-w-full object-contain"
+                onLoadedMetadata={(e) => {
+                  if (
+                    !seekApplied.current &&
+                    initialSeekSeconds != null &&
+                    Number.isFinite(initialSeekSeconds) &&
+                    initialSeekSeconds >= 0
+                  ) {
+                    e.currentTarget.currentTime = initialSeekSeconds;
+                    seekApplied.current = true;
+                  }
+                }}
                 onLoadedData={() => setMediaLoading(false)}
                 onError={() => {
                   setMediaLoading(false);

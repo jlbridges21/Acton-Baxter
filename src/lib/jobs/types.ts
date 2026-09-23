@@ -10,6 +10,7 @@ export const JOB_TYPES = [
   "project_setup",
   "knowledge_drive_ingest",
   "expense_jobs_sync",
+  "site_inspection_ai",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

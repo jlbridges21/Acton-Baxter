@@ -377,7 +377,7 @@ describe("list query shape (no snapshot_json)", () => {
     );
     expect(source).toContain("LIST_COLUMNS");
     expect(source).toMatch(
-      /const LIST_COLUMNS =\s*\n?\s*"id, project_name, address[\s\S]*?deleted_at";/,
+      /const LIST_COLUMNS =\s*\n?\s*"id, project_name, address[\s\S]*?deleted_at[\s\S]*?";/,
     );
     expect(source).toContain("select(LIST_COLUMNS)");
     expect(source).toMatch(/Never select snapshot_json on the card list/);

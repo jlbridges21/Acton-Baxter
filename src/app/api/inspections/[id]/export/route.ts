@@ -16,6 +16,11 @@ import {
   buildMediaExportFilename,
 } from "@/lib/inspections/media-limits";
 import { listSnapshotItems } from "@/lib/inspections/snapshot";
+import {
+  buildAiNotesExportFilename,
+  buildInspectionAiNotesText,
+  buildItemAiNotesText,
+} from "@/lib/inspections/ai/export-text";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -150,13 +155,53 @@ export async function GET(request: Request, { params }: Params) {
     for (const file of files) {
       archive.append(file.bytes, { name: file.name });
     }
+
+    // AI transcripts + summaries as text for BuilderTrend handoff.
+    if (mode === "full" || mode === "section") {
+      const aiText = buildInspectionAiNotesText(inspection);
+      if (aiText.includes("### ")) {
+        const scoped =
+          mode === "section" && sectionId
+            ? (() => {
+                const section = inspection.snapshot.sections.find((s) => s.id === sectionId);
+                if (!section) return aiText;
+                const slim = {
+                  ...inspection,
+                  snapshot: { ...inspection.snapshot, sections: [section] },
+                  media: media,
+                  itemSummaries: inspection.itemSummaries.filter((s) =>
+                    section.items.some((i) => i.id === s.snapshotItemId),
+                  ),
+                };
+                return buildInspectionAiNotesText(slim);
+              })()
+            : aiText;
+        if (scoped.includes("### ")) {
+          archive.append(scoped, {
+            name: `${safeNameForZip(inspection.projectName)}__ai_transcripts_and_summaries.txt`,
+          });
+        }
+      }
+    } else if (mode === "item" && snapshotItemId) {
+      const itemText = buildItemAiNotesText(inspection, snapshotItemId);
+      if (itemText) {
+        const meta = itemMeta.get(snapshotItemId);
+        archive.append(itemText, {
+          name: buildAiNotesExportFilename({
+            sectionTitle: meta?.sectionTitle ?? null,
+            itemTitle: meta?.title ?? "item",
+          }),
+        });
+      }
+    }
+
     void archive.finalize().catch((error: unknown) => {
       console.error("[GET /api/inspections/[id]/export] finalize failed", error);
       passthrough.destroy(error instanceof Error ? error : new Error("Export failed"));
     });
 
     const webStream = Readable.toWeb(passthrough) as unknown as ReadableStream;
-    const safeName = inspection.projectName.replace(/[^\w.-]+/g, "_").slice(0, 40) || "inspection";
+    const safeName = safeNameForZip(inspection.projectName);
     const itemTitle =
       mode === "item" && snapshotItemId
         ? (itemMeta.get(snapshotItemId)?.title ?? "item").replace(/[^\w.-]+/g, "_").slice(0, 40)
@@ -172,4 +217,8 @@ export async function GET(request: Request, { params }: Params) {
   } catch (error) {
     return jsonError(error, "GET /api/inspections/[id]/export");
   }
+}
+
+function safeNameForZip(projectName: string): string {
+  return projectName.replace(/[^\w.-]+/g, "_").slice(0, 40) || "inspection";
 }

@@ -53,6 +53,12 @@ const summary: SiteInspectionSummary = {
   createdByName: "Tech",
   createdAt: "2026-01-02T00:00:00.000Z",
   updatedAt: "2026-01-02T00:00:00.000Z",
+  aiProcessingStatus: "idle",
+  aiProcessingMessage: null,
+  aiProcessingVideosTotal: 0,
+  aiProcessingVideosDone: 0,
+  aiProcessingStartedAt: null,
+  aiProcessingFinishedAt: null,
 };
 
 const detail: SiteInspectionDetail = {
@@ -119,6 +125,7 @@ const detail: SiteInspectionDetail = {
     },
   ],
   media: [],
+  itemSummaries: [],
 };
 
 beforeEach(() => {
