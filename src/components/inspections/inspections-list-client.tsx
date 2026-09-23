@@ -312,7 +312,7 @@ export function InspectionsListClient({
                     }}
                   >
                     <InspectionAiPipelineProgress
-                      key={`${row.id}-${row.aiProcessingFinishedAt ?? row.aiProcessingStatus}`}
+                      key={`${row.id}-${row.aiProcessingStartedAt ?? row.aiProcessingStatus}`}
                       inspection={row}
                       inspectionId={row.id}
                       compact

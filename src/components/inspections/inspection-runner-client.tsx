@@ -921,7 +921,7 @@ export function InspectionRunnerClient({
         </div>
         {inspection.aiProcessingStatus !== "idle" ? (
           <InspectionAiPipelineProgress
-            key={`${inspection.id}-${inspection.aiProcessingFinishedAt ?? inspection.aiProcessingStatus}`}
+            key={`${inspection.id}-${inspection.aiProcessingStartedAt ?? inspection.aiProcessingStatus}`}
             inspection={inspection}
             inspectionId={inspection.id}
           />
