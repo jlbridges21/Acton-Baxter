@@ -16,6 +16,11 @@ describe("resumable video upload contracts", () => {
     expect(queue).toContain("removeFingerprintOnSuccess: false");
     expect(queue).toContain("uploadTus");
     expect(queue).toContain("TUS resume from previous upload");
+    expect(queue).toContain("tusUploadUrl");
+    // apikey / x-upsert stay in `headers` only. A second setHeader makes browser XHR concatenate.
+    expect(queue).not.toMatch(/req\.setHeader\("apikey"/);
+    expect(queue).not.toMatch(/req\.setHeader\("x-upsert"/);
+    expect(queue).toContain('req.setHeader("Authorization"');
   });
 
   it("serializes large videos while keeping photo concurrency", () => {
@@ -54,6 +59,24 @@ describe("resumable video upload contracts", () => {
     expect(migration).toContain("No client insert site inspection media");
     expect(migration).toContain("auth.uid()");
     expect(migration).toContain("site-inspection-media");
+  });
+
+  it("widens site-inspection-media RLS to the shared bucket, not the uploader UUID", () => {
+    const migration = readFileSync(
+      join(process.cwd(), "supabase/migrations/055_site_inspection_media_shared_tus_rls.sql"),
+      "utf8",
+    );
+    const sql = migration
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n");
+    expect(sql).toContain("bucket_id = 'site-inspection-media'");
+    expect(sql).toContain("for insert");
+    expect(sql).toContain("for update");
+    expect(sql).toContain("for select");
+    expect(sql).toContain("for delete");
+    expect(sql).not.toContain("auth.uid()");
+    expect(sql).not.toContain("storage.foldername");
   });
 
   it("keeps queue blobs disk-backed (no resident ArrayBuffer on items)", () => {

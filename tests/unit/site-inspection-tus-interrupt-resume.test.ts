@@ -16,6 +16,9 @@ describe("TUS interrupt-and-resume", () => {
     expect(source).toContain("TUS resume from previous upload");
     expect(source).toContain("removeFingerprintOnSuccess: false");
     expect(source).toContain("sizeUploaded");
+    expect(source).toContain("tusUploadUrl");
+    expect(source).toContain("uploadUrl: input.tusUploadUrl");
+    expect(source).toContain("abort(false)");
     // Signed-URL path has no resume — videos must not use it.
     expect(source).toMatch(/upload\.mode === "tus"/);
   });

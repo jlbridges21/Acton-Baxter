@@ -67,6 +67,8 @@ export type MediaQueueItem = {
   lastError: string | null;
   storagePath: string | null;
   posterStoragePath?: string | null;
+  /** Resumable TUS location. Kept so a retry continues at Upload-Offset, not byte 0. */
+  tusUploadUrl?: string | null;
   createdAt: number;
   /** Wall-clock of last progress/status activity — used for stall detection. */
   lastProgressAt?: number;
@@ -127,7 +129,9 @@ const inFlight = new Set<string>();
 /** clientMediaIds the user cancelled — processOne must not re-queue or patch failed. */
 const cancelledUploads = new Set<string>();
 /** Abort hooks for in-flight uploads. */
-const activeAbortByClientId = new Map<string, () => void>();
+const activeAbortByClientId = new Map<string, (terminate?: boolean) => void>();
+/** Latest TUS Location, set synchronously so a progress write cannot drop it. */
+const tusUrlByClientId = new Map<string, string>();
 let inspectionUpdateHandler: InspectionUpdateHandler | undefined;
 let onlineBound = false;
 let drainPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -752,6 +756,7 @@ function uploadTus(input: {
   bucket: string;
   tusEndpoint: string;
   mimeType: string;
+  tusUploadUrl?: string | null;
   onProgress: (ratio: number) => void;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -772,6 +777,8 @@ function uploadTus(input: {
         // which Supabase rejects as Invalid Compact JWS.
         upload = new TusUpload(input.blob, {
           endpoint: input.tusEndpoint,
+          // Resume the same server upload when we already have its Location.
+          ...(input.tusUploadUrl ? { uploadUrl: input.tusUploadUrl } : {}),
           retryDelays: [0, 1000, 3000, 5000, 10000, 20000],
           headers: {
             apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -795,14 +802,29 @@ function uploadTus(input: {
                 "[site-inspection-media] TUS Authorization",
                 redactAuthorizationForLog(authorization),
               );
+              // Authorization only. apikey and x-upsert are already in `headers`.
+              // A second setHeader makes browser XHR concatenate ("value, value").
+              // That previously turned Authorization into an invalid JWS. Keep the
+              // token in this callback only.
               req.setHeader("Authorization", authorization);
-              req.setHeader("apikey", env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
-              req.setHeader("x-upsert", "true");
             } catch (error) {
               settle(() =>
                 reject(error instanceof Error ? error : new Error(formatUploadError(error))),
               );
             }
+          },
+          onUploadUrlAvailable: () => {
+            const location = upload?.url;
+            if (!location) return;
+            tusUrlByClientId.set(input.clientMediaId, location);
+            void (async () => {
+              const current = await getItem(input.clientMediaId);
+              if (!current) return;
+              await putItem({
+                ...current,
+                tusUploadUrl: tusUrlByClientId.get(input.clientMediaId) ?? location,
+              });
+            })();
           },
           onShouldRetry: (err, _retryAttempt, _options) => {
             if (cancelledUploads.has(input.clientMediaId)) return false;
@@ -814,8 +836,18 @@ function uploadTus(input: {
                 "[site-inspection-media] TUS auth failure — will refresh token and retry",
                 { status, message: err.message },
               );
+              return true;
             }
-            return true;
+            // 409/423 are offset conflicts / locks — tus should retry the same URL.
+            if (
+              status === 409 ||
+              status === 423 ||
+              status === 0 ||
+              (status != null && status >= 500)
+            ) {
+              return true;
+            }
+            return false;
           },
           onError: (error) => {
             if (timeoutId) clearTimeout(timeoutId);
@@ -838,14 +870,21 @@ function uploadTus(input: {
             settle(() => resolve());
           },
         });
-        activeAbortByClientId.set(input.clientMediaId, () => {
+        activeAbortByClientId.set(input.clientMediaId, (terminate = true) => {
           try {
-            upload?.abort(true);
+            // terminate=true sends DELETE and drops the resume URL. Only do that
+            // for an explicit cancel. Retry pauses so the next start continues
+            // at the current Upload-Offset.
+            upload?.abort(terminate);
           } catch {
             /* ignore */
           }
           if (timeoutId) clearTimeout(timeoutId);
-          settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
+          if (terminate) {
+            settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
+            return;
+          }
+          settle(() => reject(new Error("Upload paused for retry")));
         });
         timeoutId = setTimeout(() => {
           try {
@@ -863,15 +902,20 @@ function uploadTus(input: {
           return;
         }
 
-        const previous = await upload.findPreviousUploads();
-        if (previous.length) {
-          const prior = previous[0] as { sizeUploaded?: number };
-          console.info("[site-inspection-media] TUS resume from previous upload", {
-            path: input.path,
-            previousCount: previous.length,
-            sizeUploaded: prior.sizeUploaded ?? null,
-          });
-          upload.resumeFromPreviousUpload(previous[0]!);
+        // Prefer the Location persisted on the queue item. A fingerprint hit is
+        // only used when we do not already have that URL — otherwise an older
+        // stored upload can override the offset we mean to resume.
+        if (!input.tusUploadUrl) {
+          const previous = await upload.findPreviousUploads();
+          if (previous.length) {
+            const prior = previous[0] as { sizeUploaded?: number };
+            console.info("[site-inspection-media] TUS resume from previous upload", {
+              path: input.path,
+              previousCount: previous.length,
+              sizeUploaded: prior.sizeUploaded ?? null,
+            });
+            upload.resumeFromPreviousUpload(previous[0]!);
+          }
         }
         upload.start();
       } catch (error) {
@@ -1129,7 +1173,12 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       void (async () => {
         const current = await getItem(clientMediaId);
         if (!current || current.status !== "uploading") return;
-        await putItem({ ...current, progress: ratio, lastProgressAt: Date.now() });
+        await putItem({
+          ...current,
+          tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? current.tusUploadUrl ?? null,
+          progress: ratio,
+          lastProgressAt: Date.now(),
+        });
         await emit();
       })();
     };
@@ -1143,6 +1192,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
         bucket: upload.bucket || SITE_INSPECTION_MEDIA_BUCKET,
         tusEndpoint: upload.tusEndpoint,
         mimeType: item.mimeType,
+        tusUploadUrl: item.tusUploadUrl,
         onProgress: reportProgress,
       });
     } else if (upload.mode === "signed") {
@@ -1257,6 +1307,10 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       await emit();
       return null;
     }
+    if (/upload paused for retry/i.test(baseMessage)) {
+      // Retry all already re-queued the row. Do not wipe progress or the TUS URL.
+      return null;
+    }
     if (isInspectionGoneMessage(baseMessage)) {
       await cancelAndDiscardMediaUpload(clientMediaId);
       return null;
@@ -1266,6 +1320,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     const message = exhausted
       ? `${baseMessage} (gave up after ${attempts} attempts — tap Retry or Discard)`
       : baseMessage;
+    const latest = (await getItem(clientMediaId)) ?? item;
     console.error("[site-inspection-media] upload attempt failed", {
       clientMediaId,
       inspectionId: item.inspectionId,
@@ -1273,20 +1328,24 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       attempts,
       exhausted,
       message,
+      tusUploadUrl: latest.tusUploadUrl ?? null,
+      progress: latest.progress,
       inFlightSize: inFlight.size,
       activeUploads,
       drainGeneration: generation,
     });
     // Keep finalizing if bytes already landed — retry should not re-upload.
-    const keepFinalizing = Boolean(bytesLandedPath);
+    // Keep the highest progress and the TUS location so the next attempt resumes.
+    const keepFinalizing = Boolean(bytesLandedPath || latest.storagePath);
     await putItem({
-      ...item,
+      ...latest,
       status: keepFinalizing ? "finalizing" : "failed",
-      storagePath: bytesLandedPath ?? item.storagePath,
+      storagePath: bytesLandedPath ?? latest.storagePath,
+      tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? latest.tusUploadUrl ?? null,
       attempts,
       nextAttemptAt: exhausted ? Number.MAX_SAFE_INTEGER : Date.now() + backoffMs(attempts),
       lastError: message,
-      progress: keepFinalizing ? 1 : item.progress,
+      progress: keepFinalizing ? 1 : latest.progress || item.progress || 0,
       lastProgressAt: Date.now(),
     });
     await emit();
@@ -1470,7 +1529,7 @@ export async function retryAllMediaUploads(inspectionId?: string): Promise<numbe
 
   for (const abort of activeAbortByClientId.values()) {
     try {
-      abort();
+      abort(false);
     } catch {
       /* ignore */
     }
@@ -1496,7 +1555,9 @@ export async function retryAllMediaUploads(inspectionId?: string): Promise<numbe
       attempts: 0,
       nextAttemptAt: 0,
       lastError: null,
-      progress: keepFinalizing ? 1 : 0,
+      // Do not zero progress or drop the TUS location — retry must resume.
+      progress: keepFinalizing ? 1 : item.progress,
+      tusUploadUrl: item.tusUploadUrl ?? null,
       lastProgressAt: now,
     });
     reset += 1;
