@@ -51,13 +51,14 @@ describe("upload auth + endpoint contract", () => {
     );
   });
 
-  it("prepare uses signed uploads for photo and video (no TUS in active path)", () => {
+  it("prepare uses TUS for video and signed uploads for photo", () => {
     const source = readFileSync(
       join(process.cwd(), "src/lib/inspections/records-store.ts"),
       "utf8",
     );
     expect(source).toContain("createSignedUploadForPath");
-    expect(source).not.toContain('mode: "tus"');
+    expect(source).toContain('mode: "tus"');
+    expect(source).toContain('mode: "signed"');
     expect(source).toContain("Does NOT create a media row");
   });
 

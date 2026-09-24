@@ -8,11 +8,20 @@
  * resident in memory (that caused connection reclaim under many large videos).
  */
 
+import { Upload as TusUpload } from "tus-js-client";
 import { createClient } from "@/lib/supabase/client";
 import { getPublicEnv } from "@/lib/env.public";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
-import { MEDIA_UPLOAD_CONCURRENCY, redactApiKeyForLog } from "./media-limits";
+import {
+  LARGE_VIDEO_SERIAL_BYTES,
+  MEDIA_UPLOAD_CONCURRENCY,
+  TUS_CHUNK_SIZE_BYTES,
+  normalizeAccessToken,
+  redactApiKeyForLog,
+  redactAuthorizationForLog,
+} from "./media-limits";
 import type { SiteInspectionDetail, SiteInspectionMedia } from "./record-types";
+import { SITE_INSPECTION_MEDIA_BUCKET } from "./record-types";
 
 const DB_NAME = "baxter-site-inspection-uploads";
 const DB_VERSION = 1;
@@ -29,6 +38,8 @@ export const UPLOAD_REQUEST_TIMEOUT_MS = 90_000;
 export const QUEUE_STALL_WATCHDOG_MS = 3 * 60_000;
 /** Periodic drain tick — recovers when backoff expires or a drain loop exited early. */
 export const DRAIN_POLL_INTERVAL_MS = 15_000;
+/** Large videos on cell need a long window; TUS resume handles shorter outages. */
+const TUS_UPLOAD_TIMEOUT_MS = 3 * 60 * 60 * 1000;
 
 export type QueueItemStatus = "queued" | "uploading" | "finalizing" | "uploaded" | "failed";
 
@@ -97,6 +108,7 @@ type PrepareResponse = {
         signedUrl: string;
         poster?: { path: string; token: string; signedUrl: string };
       }
+    | { mode: "tus"; path: string; bucket: string; tusEndpoint: string }
     | { mode: "memory"; path: string; poster?: { path: string } };
 };
 
@@ -687,6 +699,189 @@ async function patchServerStatus(
   }
 }
 
+function isLargeVideoItem(item: Pick<MediaQueueItem, "mediaType" | "byteSize">): boolean {
+  return item.mediaType === "video" && item.byteSize >= LARGE_VIDEO_SERIAL_BYTES;
+}
+
+function isSignedUrlExpiredError(message: string): boolean {
+  return (
+    /expir/i.test(message) ||
+    /jwt/i.test(message) ||
+    /token/i.test(message) ||
+    /signed upload failed \(40[013]\)/i.test(message) ||
+    /403/.test(message) ||
+    /401/.test(message)
+  );
+}
+
+async function resolveAccessToken(): Promise<string> {
+  const supabase = createClient();
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error(sessionError.message || "Sign in again to upload video");
+  }
+  if (!session?.access_token) {
+    throw new Error("Sign in again to upload video");
+  }
+
+  let token = session.access_token;
+  const expiresAtMs = (session.expires_at ?? 0) * 1000;
+  if (expiresAtMs && expiresAtMs - Date.now() < 60_000) {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error || !data.session?.access_token) {
+      throw new Error("Session expired — sign in again to finish the video upload");
+    }
+    token = data.session.access_token;
+  }
+
+  return normalizeAccessToken(token);
+}
+
+/**
+ * Resumable TUS upload for video. Fingerprints are kept until /media/complete so
+ * Retry / Retry all / reconnect continue from the last committed chunk rather
+ * than restarting at 0%.
+ */
+function uploadTus(input: {
+  clientMediaId: string;
+  blob: Blob;
+  path: string;
+  bucket: string;
+  tusEndpoint: string;
+  mimeType: string;
+  onProgress: (ratio: number) => void;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    void (async () => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let upload: TusUpload | null = null;
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        activeAbortByClientId.delete(input.clientMediaId);
+        fn();
+      };
+      try {
+        const env = getPublicEnv();
+        // Authorization is set ONLY in onBeforeRequest. Putting it in `headers` AND
+        // calling setHeader again makes XHR concatenate values → "Bearer a, Bearer a"
+        // which Supabase rejects as Invalid Compact JWS.
+        upload = new TusUpload(input.blob, {
+          endpoint: input.tusEndpoint,
+          retryDelays: [0, 1000, 3000, 5000, 10000, 20000],
+          headers: {
+            apikey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+            "x-upsert": "true",
+          },
+          uploadDataDuringCreation: true,
+          // Keep fingerprint until /media/complete succeeds so retries resume, not restart.
+          removeFingerprintOnSuccess: false,
+          chunkSize: TUS_CHUNK_SIZE_BYTES,
+          metadata: {
+            bucketName: input.bucket,
+            objectName: input.path,
+            contentType: input.mimeType,
+            cacheControl: "3600",
+          },
+          onBeforeRequest: async (req) => {
+            try {
+              const accessToken = await resolveAccessToken();
+              const authorization = `Bearer ${accessToken}`;
+              console.info(
+                "[site-inspection-media] TUS Authorization",
+                redactAuthorizationForLog(authorization),
+              );
+              req.setHeader("Authorization", authorization);
+              req.setHeader("apikey", env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+              req.setHeader("x-upsert", "true");
+            } catch (error) {
+              settle(() =>
+                reject(error instanceof Error ? error : new Error(formatUploadError(error))),
+              );
+            }
+          },
+          onShouldRetry: (err, _retryAttempt, _options) => {
+            if (cancelledUploads.has(input.clientMediaId)) return false;
+            const status = (
+              err as { originalResponse?: { getStatus?: () => number } }
+            ).originalResponse?.getStatus?.();
+            if (status === 401 || status === 403) {
+              console.warn(
+                "[site-inspection-media] TUS auth failure — will refresh token and retry",
+                { status, message: err.message },
+              );
+            }
+            return true;
+          },
+          onError: (error) => {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (cancelledUploads.has(input.clientMediaId)) {
+              settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
+              return;
+            }
+            const message = formatUploadError(error);
+            console.error("[site-inspection-media] TUS upload failed", {
+              path: input.path,
+              message,
+            });
+            settle(() => reject(new Error(message)));
+          },
+          onProgress: (bytesUploaded, bytesTotal) => {
+            if (bytesTotal > 0) input.onProgress(bytesUploaded / bytesTotal);
+          },
+          onSuccess: () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            settle(() => resolve());
+          },
+        });
+        activeAbortByClientId.set(input.clientMediaId, () => {
+          try {
+            upload?.abort(true);
+          } catch {
+            /* ignore */
+          }
+          if (timeoutId) clearTimeout(timeoutId);
+          settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
+        });
+        timeoutId = setTimeout(() => {
+          try {
+            upload?.abort(true);
+          } catch {
+            /* ignore */
+          }
+          settle(() =>
+            reject(new Error("Video upload timed out after 3 hours — check signal and tap Retry")),
+          );
+        }, TUS_UPLOAD_TIMEOUT_MS);
+
+        if (cancelledUploads.has(input.clientMediaId)) {
+          activeAbortByClientId.get(input.clientMediaId)?.();
+          return;
+        }
+
+        const previous = await upload.findPreviousUploads();
+        if (previous.length) {
+          const prior = previous[0] as { sizeUploaded?: number };
+          console.info("[site-inspection-media] TUS resume from previous upload", {
+            path: input.path,
+            previousCount: previous.length,
+            sizeUploaded: prior.sizeUploaded ?? null,
+          });
+          upload.resumeFromPreviousUpload(previous[0]!);
+        }
+        upload.start();
+      } catch (error) {
+        if (timeoutId) clearTimeout(timeoutId);
+        settle(() => reject(error instanceof Error ? error : new Error(formatUploadError(error))));
+      }
+    })();
+  });
+}
+
 async function uploadSigned(
   path: string,
   token: string,
@@ -920,7 +1115,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     }
 
     const uploadBlob = blobForUpload(item);
-    const { upload } = prepareJson;
+    let upload = prepareJson.upload;
     const abortController = { aborted: false };
     let xhrAbort: (() => void) | null = null;
     activeAbortByClientId.set(clientMediaId, () => {
@@ -928,30 +1123,90 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       xhrAbort?.();
     });
 
-    if (upload.mode === "signed") {
-      await uploadSigned(
-        upload.path,
-        upload.token,
-        upload.signedUrl,
-        uploadBlob,
-        item.mimeType,
-        (ratio) => {
-          if (abortController.aborted || cancelledUploads.has(clientMediaId)) return;
-          if (generation !== drainGeneration) return;
-          void (async () => {
-            const current = await getItem(clientMediaId);
-            if (!current || current.status !== "uploading") return;
-            await putItem({ ...current, progress: ratio, lastProgressAt: Date.now() });
-            await emit();
-          })();
-        },
-        {
-          onAbort: (abort) => {
-            xhrAbort = abort;
-          },
-        },
-      );
+    const reportProgress = (ratio: number) => {
+      if (abortController.aborted || cancelledUploads.has(clientMediaId)) return;
+      if (generation !== drainGeneration) return;
+      void (async () => {
+        const current = await getItem(clientMediaId);
+        if (!current || current.status !== "uploading") return;
+        await putItem({ ...current, progress: ratio, lastProgressAt: Date.now() });
+        await emit();
+      })();
+    };
+
+    if (upload.mode === "tus") {
       // Posters are generated server-side after complete — do not upload client frames.
+      await uploadTus({
+        clientMediaId,
+        blob: uploadBlob,
+        path: upload.path,
+        bucket: upload.bucket || SITE_INSPECTION_MEDIA_BUCKET,
+        tusEndpoint: upload.tusEndpoint,
+        mimeType: item.mimeType,
+        onProgress: reportProgress,
+      });
+    } else if (upload.mode === "signed") {
+      // Mint is already at processOne start. If the signed URL expired while this
+      // photo waited behind a long video, refresh once and retry the PUT.
+      try {
+        await uploadSigned(
+          upload.path,
+          upload.token,
+          upload.signedUrl,
+          uploadBlob,
+          item.mimeType,
+          reportProgress,
+          {
+            onAbort: (abort) => {
+              xhrAbort = abort;
+            },
+          },
+        );
+      } catch (signedError) {
+        const msg = formatUploadError(signedError);
+        if (!isSignedUrlExpiredError(msg) || cancelledUploads.has(clientMediaId)) {
+          throw signedError;
+        }
+        console.warn("[site-inspection-media] signed URL expired — re-preparing", {
+          clientMediaId,
+          message: msg,
+        });
+        const refreshRes = await fetchWithUploadTimeout(
+          `/api/inspections/${item.inspectionId}/media/prepare`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              snapshotItemId: item.snapshotItemId,
+              clientMediaId: item.clientMediaId,
+              mediaType: item.mediaType,
+              mimeType: item.mimeType,
+              byteSize: item.byteSize,
+            }),
+          },
+          UPLOAD_REQUEST_TIMEOUT_MS,
+        );
+        const refreshJson = (await refreshRes.json()) as PrepareResponse & {
+          error?: { message?: string };
+        };
+        if (!refreshRes.ok || !refreshJson.upload || refreshJson.upload.mode !== "signed") {
+          throw new Error(refreshJson.error?.message ?? "Could not refresh signed upload");
+        }
+        upload = refreshJson.upload;
+        await uploadSigned(
+          upload.path,
+          upload.token,
+          upload.signedUrl,
+          uploadBlob,
+          item.mimeType,
+          reportProgress,
+          {
+            onAbort: (abort) => {
+              xhrAbort = abort;
+            },
+          },
+        );
+      }
     } else {
       await uploadMemory(item.inspectionId, upload.path, uploadBlob, item.mimeType);
     }
@@ -994,6 +1249,14 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       return null;
     }
     const baseMessage = formatUploadError(error);
+    if (
+      (error instanceof DOMException && error.name === "AbortError") ||
+      /upload cancelled/i.test(baseMessage)
+    ) {
+      await deleteItem(clientMediaId).catch(() => undefined);
+      await emit();
+      return null;
+    }
     if (isInspectionGoneMessage(baseMessage)) {
       await cancelAndDiscardMediaUpload(clientMediaId);
       return null;
@@ -1126,19 +1389,35 @@ export async function drainMediaQueue(): Promise<void> {
       });
       if (!ready.length && activeUploads === 0) break;
 
+      const inFlightItems = items.filter((entry) => inFlight.has(entry.clientMediaId));
+      let largeVideoUploading = inFlightItems.some((entry) => isLargeVideoItem(entry));
+
       while (
         generation === drainGeneration &&
         activeUploads < MEDIA_UPLOAD_CONCURRENCY &&
         ready.length
       ) {
-        const next = ready.shift()!;
+        // Large videos are serial — skip them while another large video is in flight.
+        let pickIndex = 0;
+        if (largeVideoUploading) {
+          pickIndex = ready.findIndex((entry) => !isLargeVideoItem(entry));
+          if (pickIndex < 0) break;
+        } else {
+          // Prefer starting at most one large video; photos fill remaining slots.
+          pickIndex = 0;
+        }
+        const next = ready.splice(pickIndex, 1)[0]!;
         if (inFlight.has(next.clientMediaId)) continue;
+        if (isLargeVideoItem(next) && largeVideoUploading) continue;
         inFlight.add(next.clientMediaId);
         activeUploads += 1;
+        if (isLargeVideoItem(next)) largeVideoUploading = true;
         console.info("[site-inspection-media] drain starting upload", {
           clientMediaId: next.clientMediaId,
           status: next.status,
           mediaType: next.mediaType,
+          byteSize: next.byteSize,
+          largeVideoSerial: isLargeVideoItem(next),
           activeUploads,
           inFlight: inFlight.size,
         });
@@ -1514,7 +1793,13 @@ export async function enqueueInspectionMedia(input: {
   return { clientMediaId, localPreviewUrl, optimisticMedia };
 }
 
-export { VIDEO_WARN_MESSAGE, MEDIA_UPLOAD_CONCURRENCY, VIDEO_MAX_BYTES } from "./media-limits";
+export {
+  VIDEO_WARN_MESSAGE,
+  MEDIA_UPLOAD_CONCURRENCY,
+  LARGE_VIDEO_SERIAL_BYTES,
+  TUS_CHUNK_SIZE_BYTES,
+  VIDEO_MAX_BYTES,
+} from "./media-limits";
 export {
   normalizeAccessToken,
   redactAuthorizationForLog,

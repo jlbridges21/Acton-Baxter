@@ -1055,6 +1055,29 @@ export function InspectionRunnerClient({
                     <p className="min-w-0 flex-1">
                       {item.mediaType === "video" ? "Video" : "Photo"}: {item.statusReason}
                     </p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-8 min-h-8 shrink-0 px-2 text-xs text-red-800"
+                      onClick={() => {
+                        const label = item.mediaType === "video" ? "video" : "photo";
+                        const ok = window.confirm(
+                          `Cancel this ${label} upload and remove it from the queue? Other uploads will keep going. The file will be deleted from this device's upload queue (use Save queued media first if you need a copy).`,
+                        );
+                        if (!ok) return;
+                        void (async () => {
+                          await cancelAndDiscardMediaUpload(item.clientMediaId);
+                          localMediaRef.current.delete(item.clientMediaId);
+                          setInspection((prev) => ({
+                            ...prev,
+                            media: prev.media.filter((m) => m.clientMediaId !== item.clientMediaId),
+                            pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
+                          }));
+                        })();
+                      }}
+                    >
+                      Cancel
+                    </Button>
                   </div>
                 ))}
               </div>

@@ -28,6 +28,7 @@ import {
   putMemoryMediaBytes,
 } from "./media-storage";
 import { posterStoragePathForVideo } from "./video-remux";
+import { supabaseResumableUploadEndpoint } from "./media-limits";
 import {
   type AiProcessingPhase,
   type AiProcessingStatus,
@@ -1098,7 +1099,8 @@ export async function upsertSiteInspectionResponse(
 /**
  * Mint direct-to-storage upload credentials. Does NOT create a media row —
  * optimistic UI stays device-local until bytes land and complete() runs.
- * Photos and videos both use signed upload URLs.
+ * Photos use short-lived signed upload URLs (minted at upload time).
+ * Videos use resumable TUS against the storage hostname.
  * Video posters are generated server-side (ffmpeg) on complete — not client-uploaded.
  */
 export async function prepareSiteInspectionMedia(input: {
@@ -1119,6 +1121,7 @@ export async function prepareSiteInspectionMedia(input: {
         token: string;
         signedUrl: string;
       }
+    | { mode: "tus"; path: string; bucket: string; tusEndpoint: string }
     | { mode: "memory"; path: string };
 }> {
   const inspection = await loadInspectionRow(input.inspectionId);
@@ -1144,6 +1147,19 @@ export async function prepareSiteInspectionMedia(input: {
       upload: {
         mode: "memory",
         path: storagePath,
+      },
+    };
+  }
+
+  // Large / any video → resumable TUS (survives cell drops). Photos stay on signed URL.
+  if (input.mediaType === "video") {
+    const tusEndpoint = supabaseResumableUploadEndpoint(getEnv().NEXT_PUBLIC_SUPABASE_URL);
+    return {
+      upload: {
+        mode: "tus",
+        path: storagePath,
+        bucket: SITE_INSPECTION_MEDIA_BUCKET,
+        tusEndpoint,
       },
     };
   }

@@ -40,8 +40,17 @@ export const VIDEO_MAX_BYTES = Number.POSITIVE_INFINITY;
 /** @deprecated Duration is no longer enforced client-side. */
 export const VIDEO_MAX_DURATION_SECONDS = Number.POSITIVE_INFINITY;
 
-/** Concurrent background uploads — more saturates weak LTE. */
+/** Concurrent background uploads for photos / small media — more saturates weak LTE. */
 export const MEDIA_UPLOAD_CONCURRENCY = 2;
+
+/**
+ * Videos at or above this size upload one-at-a-time so two large phone uploads
+ * do not contend for bandwidth/memory. Smaller clips still share the photo pool.
+ */
+export const LARGE_VIDEO_SERIAL_BYTES = 20 * 1024 * 1024; // 20 MiB
+
+/** Supabase TUS requires exactly 6 MiB chunks — any other value fails. */
+export const TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024;
 
 /**
  * Zip export: above this, offer photos-only instead of failing mid-stream.

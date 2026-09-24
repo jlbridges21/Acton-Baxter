@@ -91,11 +91,13 @@ describe("media limits + export naming", () => {
     expect(source).toContain("withIdbRetry");
     expect(source).toContain("onclose");
     expect(source).toContain("onversionchange");
-    // Persist Blob only — resident ArrayBuffers caused Safari IDB reclaim under many videos.
-    expect(source).toContain("Persist the Blob only");
-    expect(source).not.toContain("tus-js-client");
+    // Videos use tus-js-client resumable uploads; photos stay on signed URLs.
+    expect(source).toContain("tus-js-client");
+    expect(source).toContain("uploadTus");
+    expect(source).toContain("LARGE_VIDEO_SERIAL_BYTES");
     // Auth for signed uploads is in the URL token — no Authorization header construction.
     expect(source).toContain("redactApiKeyForLog");
+    expect(source).toContain("redactAuthorizationForLog");
   });
 
   it("builds identifiable zip filenames from section + item + index", () => {
@@ -201,15 +203,18 @@ describe("prepare → complete direct-upload path", () => {
     expect(row.failedMediaCount).toBe(1);
   });
 
-  it("video and photo prepare both use signed/memory — not TUS (debt)", () => {
+  it("video prepare uses TUS; photo prepare uses signed upload", () => {
     const queueSource = readFileSync(
       join(process.cwd(), "src/lib/inspections/media-queue.ts"),
       "utf8",
     );
     expect(queueSource).toContain("uploadSigned");
+    expect(queueSource).toContain("uploadTus");
+    expect(queueSource).toContain("tus-js-client");
+    expect(queueSource).toContain("resumeFromPreviousUpload");
+    expect(queueSource).toContain("LARGE_VIDEO_SERIAL_BYTES");
     expect(queueSource).toContain("MEDIA_UPLOAD_CONCURRENCY");
     expect(queueSource).toContain("indexedDB");
-    expect(queueSource).not.toContain("tus-js-client");
 
     const storeSource = readFileSync(
       join(process.cwd(), "src/lib/inspections/records-store.ts"),
@@ -217,10 +222,11 @@ describe("prepare → complete direct-upload path", () => {
     );
     expect(storeSource).toContain("createSignedUploadForPath");
     expect(storeSource).toContain('mode: "signed"');
-    expect(storeSource).not.toContain('mode: "tus"');
-    // TUS endpoint helper kept for a future resumable return.
+    expect(storeSource).toContain('mode: "tus"');
+    expect(storeSource).toContain("supabaseResumableUploadEndpoint");
     const limits = readFileSync(join(process.cwd(), "src/lib/inspections/media-limits.ts"), "utf8");
     expect(limits).toContain("supabaseResumableUploadEndpoint");
+    expect(limits).toContain("TUS_CHUNK_SIZE_BYTES");
   });
 });
 
