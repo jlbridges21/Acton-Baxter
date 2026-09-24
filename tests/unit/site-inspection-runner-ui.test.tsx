@@ -16,12 +16,14 @@ vi.mock("@/lib/inspections/media-queue", () => ({
     "Large videos can take a while to upload on cell signal. Keep the app open until the upload finishes.",
   VIDEO_MAX_BYTES: Number.POSITIVE_INFINITY,
   subscribeMediaQueue: (listener: (s: unknown) => void) => {
-    listener({ pendingCount: 0, failedCount: 0, uploadingCount: 0, items: [] });
+    listener({ pendingCount: 0, failedCount: 0, uploadingCount: 0, stalledCount: 0, items: [] });
     return () => undefined;
   },
   startMediaQueueDrain: () => () => undefined,
   enqueueInspectionMedia: vi.fn(),
   retryMediaUpload: vi.fn(),
+  retryAllMediaUploads: vi.fn(async () => 0),
+  listQueuedMediaForDeviceExport: vi.fn(async () => []),
   discardMediaUpload: vi.fn(),
   cancelAndDiscardMediaUpload: vi.fn(),
   purgeMediaQueueForInspection: vi.fn(async () => 0),

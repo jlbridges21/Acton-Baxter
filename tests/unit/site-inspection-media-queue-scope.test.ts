@@ -1,8 +1,8 @@
 /**
  * @vitest-environment jsdom
  *
- * Media upload queue must be scoped per inspection, purge on delete/leave,
- * and clean orphans — without discarding on background/reload/offline.
+ * Media upload queue must be scoped per inspection, purge on delete,
+ * and clean orphans — without discarding on navigate-away / reload / offline.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -171,7 +171,7 @@ describe("background / offline resilience preserved", () => {
 });
 
 describe("runner wiring", () => {
-  it("scopes subscribe, purges on delete/leave, and warns that leave discards unsent media", () => {
+  it("scopes subscribe, purges on delete only, keeps pending on leave, and offers recovery controls", () => {
     const runner = readFileSync(
       join(process.cwd(), "src/components/inspections/inspection-runner-client.tsx"),
       "utf8",
@@ -179,8 +179,11 @@ describe("runner wiring", () => {
     expect(runner).toContain("{ inspectionId: inspection.id }");
     expect(runner).toContain("purgeMediaQueueForInspection");
     expect(runner).toContain("purgeOrphanMediaQueueEntries");
-    expect(runner).toContain("Leaving discards unsent photos and videos");
-    expect(runner).toContain("leaveAndDiscardQueue");
+    expect(runner).toContain("will continue in the background");
+    expect(runner).toContain("leaveInspectionKeepingQueue");
+    expect(runner).not.toContain("Leaving discards unsent");
+    expect(runner).toContain("Retry all uploads");
+    expect(runner).toContain("Save queued media to device");
 
     const list = readFileSync(
       join(process.cwd(), "src/components/inspections/inspections-list-client.tsx"),

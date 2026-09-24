@@ -22,8 +22,10 @@ import {
   countPendingForInspection,
   discardMediaUpload,
   enqueueInspectionMedia,
+  listQueuedMediaForDeviceExport,
   purgeMediaQueueForInspection,
   purgeOrphanMediaQueueEntries,
+  retryAllMediaUploads,
   retryMediaUpload,
   startMediaQueueDrain,
   subscribeMediaQueue,
@@ -86,8 +88,11 @@ export function InspectionRunnerClient({
     pendingCount: 0,
     failedCount: 0,
     uploadingCount: 0,
+    stalledCount: 0,
     items: [],
   });
+  const [saveQueuedBusy, setSaveQueuedBusy] = useState(false);
+  const [retryAllBusy, setRetryAllBusy] = useState(false);
   const [exportModeHint, setExportModeHint] = useState<string | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfHint, setPdfHint] = useState<string | null>(null);
@@ -462,15 +467,73 @@ export function InspectionRunnerClient({
     await retryMediaUpload(clientMediaId);
   }
 
+  async function onRetryAllUploads() {
+    setRetryAllBusy(true);
+    try {
+      const n = await retryAllMediaUploads(inspection.id);
+      console.info("[site-inspection-media] user Retry all", { inspectionId: inspection.id, n });
+    } finally {
+      setRetryAllBusy(false);
+    }
+  }
+
+  async function onSaveQueuedMediaToDevice() {
+    setSaveQueuedBusy(true);
+    try {
+      const files = await listQueuedMediaForDeviceExport(inspection.id);
+      if (!files.length) {
+        window.alert("Nothing is sitting in the upload queue to save.");
+        return;
+      }
+      // Sequential downloads — browsers often block parallel download floods.
+      for (const file of files) {
+        const url = URL.createObjectURL(file.blob);
+        try {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = file.filename;
+          a.rel = "noopener";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        await new Promise((r) => window.setTimeout(r, 250));
+      }
+      window.alert(
+        `Saved ${files.length} file${files.length === 1 ? "" : "s"} to your device. Keep them until uploads finish — you can re-attach via Attach file if needed.`,
+      );
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Could not save queued media");
+    } finally {
+      setSaveQueuedBusy(false);
+    }
+  }
+
   async function onDiscard(clientMediaId: string) {
-    await discardMediaUpload(clientMediaId);
-    localMediaRef.current.delete(clientMediaId);
-    setInspection((prev) => ({
-      ...prev,
-      media: prev.media.filter((m) => m.clientMediaId !== clientMediaId),
-      pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
-      failedMediaCount: Math.max(0, prev.failedMediaCount - 1),
-    }));
+    const item = queueSnap.items.find((i) => i.clientMediaId === clientMediaId);
+    if (!item || item.status !== "failed") {
+      window.alert("Only permanently failed uploads can be discarded.");
+      return;
+    }
+    const label = item.mediaType === "video" ? "video" : "photo";
+    const ok = window.confirm(
+      `Discard this failed ${label}? It will be permanently removed from the upload queue and cannot be recovered from this app.`,
+    );
+    if (!ok) return;
+    try {
+      await discardMediaUpload(clientMediaId);
+      localMediaRef.current.delete(clientMediaId);
+      setInspection((prev) => ({
+        ...prev,
+        media: prev.media.filter((m) => m.clientMediaId !== clientMediaId),
+        pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
+        failedMediaCount: Math.max(0, prev.failedMediaCount - 1),
+      }));
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Could not discard upload");
+    }
   }
 
   async function confirmDeleteMedia() {
@@ -823,18 +886,8 @@ export function InspectionRunnerClient({
     }
   }
 
-  async function leaveAndDiscardQueue() {
-    await purgeMediaQueueForInspection(inspection.id);
-    for (const local of localMediaRef.current.values()) {
-      if (local.localPreviewUrl) {
-        try {
-          URL.revokeObjectURL(local.localPreviewUrl);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    localMediaRef.current.clear();
+  async function leaveInspectionKeepingQueue() {
+    // Pending uploads must survive navigation — drain continues via IndexedDB.
     router.push("/inspections");
   }
 
@@ -852,8 +905,14 @@ export function InspectionRunnerClient({
 
   const pendingUploads = queueSnap.pendingCount;
   const failedUploads = queueSnap.failedCount;
+  const stalledUploads = queueSnap.stalledCount;
   // Snapshot is already scoped to this inspection — filter is belt-and-suspenders.
   const failedQueueItems = queueSnap.items.filter((i) => i.status === "failed");
+  const activeQueueItems = queueSnap.items.filter(
+    (i) => i.status === "queued" || i.status === "uploading" || i.status === "finalizing",
+  );
+  const showQueuePanel =
+    pendingUploads > 0 || failedUploads > 0 || stalledUploads > 0 || failedQueueItems.length > 0;
   const allItemsChecked =
     inspection.totalItemCount > 0 && inspection.completedItemCount >= inspection.totalItemCount;
   const galleryMedia = gallery
@@ -873,10 +932,20 @@ export function InspectionRunnerClient({
               onClick={(e) => {
                 if (pendingUploads > 0 || failedUploads > 0) {
                   e.preventDefault();
-                  const ok = window.confirm(
-                    `${pendingUploads} upload(s) pending, ${failedUploads} failed. Leaving discards unsent photos and videos for this inspection. Leave anyway?`,
-                  );
-                  if (ok) void leaveAndDiscardQueue();
+                  const parts: string[] = [];
+                  if (pendingUploads > 0) {
+                    parts.push(
+                      `${pendingUploads} upload${pendingUploads === 1 ? "" : "s"} will continue in the background. Nothing pending will be discarded.`,
+                    );
+                  }
+                  if (failedUploads > 0) {
+                    parts.push(
+                      `${failedUploads} failed upload${failedUploads === 1 ? "" : "s"} will stay in the queue until you Retry or Discard them.`,
+                    );
+                  }
+                  parts.push("Leave this inspection?");
+                  const ok = window.confirm(parts.join(" "));
+                  if (ok) leaveInspectionKeepingQueue();
                 }
               }}
             >
@@ -913,6 +982,11 @@ export function InspectionRunnerClient({
                 {pendingUploads} upload{pendingUploads === 1 ? "" : "s"} pending
               </p>
             ) : null}
+            {stalledUploads > 0 ? (
+              <p className="text-xs font-semibold text-red-700">
+                {stalledUploads} upload{stalledUploads === 1 ? "" : "s"} stalled — tap Retry all
+              </p>
+            ) : null}
             {failedUploads > 0 ? (
               <p className="text-xs font-medium text-red-700">
                 {failedUploads} upload{failedUploads === 1 ? "" : "s"} failed
@@ -936,37 +1010,88 @@ export function InspectionRunnerClient({
             inspectionId={inspection.id}
           />
         ) : null}
-        {failedQueueItems.length ? (
-          <div className="space-y-1 rounded-md border border-red-200 bg-red-50 px-2 py-2 text-left text-xs text-red-900">
-            {failedQueueItems.map((item) => (
-              <div
-                key={item.clientMediaId}
-                className="flex flex-wrap items-start justify-between gap-2"
+        {showQueuePanel ? (
+          <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/90 px-2 py-2 text-left text-xs text-amber-950">
+            {stalledUploads > 0 ? (
+              <p className="font-semibold text-red-800">
+                Uploads look stuck (no progress for several minutes while this page is open). Tap
+                Retry all, or Save queued media to your device so nothing is lost.
+              </p>
+            ) : pendingUploads > 0 ? (
+              <p>
+                Uploads continue in the background — leaving this page will not discard pending
+                photos or videos.
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-9 min-h-9 px-3 text-xs"
+                disabled={retryAllBusy || (pendingUploads === 0 && failedUploads === 0)}
+                onClick={() => void onRetryAllUploads()}
               >
-                <p className="min-w-0 flex-1">
-                  {item.mediaType === "video" ? "Video" : "Photo"}:{" "}
-                  {item.lastError ?? "Upload failed"}
-                </p>
-                <div className="flex shrink-0 gap-1">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="h-8 min-h-8 px-2 text-xs"
-                    onClick={() => void onRetry(item.clientMediaId)}
+                {retryAllBusy ? "Restarting…" : "Retry all uploads"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-9 min-h-9 px-3 text-xs"
+                disabled={saveQueuedBusy || (pendingUploads === 0 && failedUploads === 0)}
+                onClick={() => void onSaveQueuedMediaToDevice()}
+              >
+                {saveQueuedBusy ? "Saving…" : "Save queued media to device"}
+              </Button>
+            </div>
+            {activeQueueItems.length ? (
+              <div className="space-y-1 border-t border-amber-200/80 pt-2">
+                {activeQueueItems.map((item) => (
+                  <div
+                    key={item.clientMediaId}
+                    className={`flex flex-wrap items-start justify-between gap-2 ${
+                      item.isStalled ? "font-medium text-red-800" : ""
+                    }`}
                   >
-                    Retry
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="h-8 min-h-8 px-2 text-xs text-red-800"
-                    onClick={() => void onDiscard(item.clientMediaId)}
-                  >
-                    Discard
-                  </Button>
-                </div>
+                    <p className="min-w-0 flex-1">
+                      {item.mediaType === "video" ? "Video" : "Photo"}: {item.statusReason}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : null}
+            {failedQueueItems.length ? (
+              <div className="space-y-1 border-t border-red-200 pt-2 text-red-900">
+                {failedQueueItems.map((item) => (
+                  <div
+                    key={item.clientMediaId}
+                    className="flex flex-wrap items-start justify-between gap-2"
+                  >
+                    <p className="min-w-0 flex-1">
+                      {item.mediaType === "video" ? "Video" : "Photo"}:{" "}
+                      {item.statusReason || item.lastError || "Upload failed"}
+                    </p>
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="h-8 min-h-8 px-2 text-xs"
+                        onClick={() => void onRetry(item.clientMediaId)}
+                      >
+                        Retry
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-8 min-h-8 px-2 text-xs text-red-800"
+                        onClick={() => void onDiscard(item.clientMediaId)}
+                      >
+                        Discard
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
         <div className="flex flex-wrap gap-2">
