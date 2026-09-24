@@ -22,6 +22,8 @@ import {
   resetMediaQueueMemoryForTests,
   retryAllMediaUploads,
   seedMediaQueueItemForTests,
+  cancelAndDiscardMediaUpload,
+  describeUploadFailure,
 } from "@/lib/inspections/media-queue";
 
 beforeEach(() => {
@@ -212,5 +214,105 @@ describe("save queued media to device", () => {
     expect(files).toHaveLength(2);
     expect(files.every((f) => f.blob.size > 0)).toBe(true);
     expect(files.every((f) => f.filename.includes("inspection-video-"))).toBe(true);
+  });
+});
+
+describe("permanent upload failures", () => {
+  function tusError(status: number, body: string) {
+    const error = new Error(
+      `tus: unexpected response while uploading chunk, originated from request (method: PATCH, url: https://storage.example/upload, response code: ${status}, response text: ${body}, request id: n/a)`,
+    ) as Error & { originalResponse: { getStatus: () => number; getBody: () => string } };
+    error.originalResponse = { getStatus: () => status, getBody: () => body };
+    return error;
+  }
+
+  it("classifies 413, 400, 401, and 403 as permanent and keeps transient errors retryable", () => {
+    const tooLarge = describeUploadFailure(
+      tusError(413, JSON.stringify({ message: "Maximum size exceeded" })),
+    );
+    expect(tooLarge.permanent).toBe(true);
+    expect(tooLarge.message).toContain("Maximum size exceeded");
+    expect(tooLarge.message).toContain("Save the file to the device");
+    expect(tooLarge.message).not.toContain("originated from request");
+
+    expect(
+      describeUploadFailure(tusError(400, JSON.stringify({ message: "Invalid MIME" }))).permanent,
+    ).toBe(true);
+    const unauthorized = describeUploadFailure(
+      tusError(401, JSON.stringify({ message: "Unauthorized" })),
+    );
+    expect(unauthorized.permanent).toBe(true);
+    expect(unauthorized.message).toContain("Sign in again");
+    const forbidden = describeUploadFailure(
+      tusError(403, JSON.stringify({ message: "new row violates row-level security policy" })),
+    );
+    expect(forbidden.permanent).toBe(true);
+    expect(forbidden.message).toContain("Sign in with an account");
+
+    const explicit = new Error("disk quota") as Error & { retryable?: boolean };
+    explicit.retryable = false;
+    expect(describeUploadFailure(explicit).permanent).toBe(true);
+
+    const notRetryable = tusError(500, JSON.stringify({ message: "stopped", retryable: false }));
+    expect(describeUploadFailure(notRetryable).permanent).toBe(true);
+
+    expect(describeUploadFailure(tusError(429, "slow down")).permanent).toBe(false);
+    expect(describeUploadFailure(tusError(503, "unavailable")).permanent).toBe(false);
+    expect(
+      describeUploadFailure(new Error("Upload request timed out after 90s — tap Retry")).permanent,
+    ).toBe(false);
+    expect(describeUploadFailure(new Error("Signed upload failed — network error")).permanent).toBe(
+      false,
+    );
+  });
+
+  async function failPrepare(status: number, message: string) {
+    await seedQueued("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "queued");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: { message } }), { status })),
+    );
+    await drainMediaQueue();
+    await vi.waitFor(async () => {
+      const snap = await getMediaQueueSnapshot("insp-1");
+      expect(snap.items[0]?.status).toBe("failed");
+    });
+    const snap = await getMediaQueueSnapshot("insp-1");
+    return snap.items[0]!;
+  }
+
+  it("a 413 fails immediately with the server message and no retry countdown", async () => {
+    const item = await failPrepare(413, "Maximum size exceeded");
+    expect(item.nextAttemptAt).toBe(Number.MAX_SAFE_INTEGER);
+    expect(item.lastError).toContain("Maximum size exceeded");
+    expect(item.lastError).toContain("Save the file to the device");
+    expect(item.statusReason).toContain("Maximum size exceeded");
+    expect(item.statusReason).not.toMatch(/Waiting to retry/);
+    const exported = await listQueuedMediaForDeviceExport("insp-1");
+    expect(exported).toHaveLength(1);
+    await cancelAndDiscardMediaUpload(item.clientMediaId);
+    expect(await listMediaQueueItemsForTests()).toHaveLength(0);
+  });
+
+  it.each([
+    [400, "Invalid upload"],
+    [401, "Unauthorized"],
+    [403, "Forbidden"],
+  ])("HTTP %s terminates immediately", async (status, message) => {
+    const item = await failPrepare(status, message);
+    expect(item.nextAttemptAt).toBe(Number.MAX_SAFE_INTEGER);
+    expect(item.lastError).toContain(message);
+    expect(item.statusReason).not.toMatch(/Waiting to retry/);
+  });
+
+  it("429 and 5xx still schedule backoff", async () => {
+    const limited = await failPrepare(429, "Too many requests");
+    expect(limited.nextAttemptAt).not.toBe(Number.MAX_SAFE_INTEGER);
+    expect(limited.nextAttemptAt).toBeGreaterThan(Date.now());
+    resetMediaQueueMemoryForTests();
+    enableMemoryMediaQueueForTests();
+    const server = await failPrepare(503, "unavailable");
+    expect(server.nextAttemptAt).not.toBe(Number.MAX_SAFE_INTEGER);
+    expect(server.nextAttemptAt).toBeGreaterThan(Date.now());
   });
 });

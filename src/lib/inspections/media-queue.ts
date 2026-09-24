@@ -605,6 +605,158 @@ function formatUploadError(error: unknown): string {
   return "Upload failed";
 }
 
+/**
+ * Same terminal-error convention as the job queue (`error.retryable === false`
+ * in src/lib/jobs/process.ts): permanent failures are not scheduled for backoff.
+ */
+const PERMANENT_UPLOAD_STATUSES = new Set([400, 401, 403, 413]);
+
+type UploadAttemptError = Error & {
+  retryable?: boolean;
+  statusCode?: number;
+  responseText?: string;
+};
+
+function coerceHttpStatus(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 100) return value;
+  if (typeof value === "string" && /^\d{3}$/.test(value)) return Number(value);
+  return null;
+}
+
+function statusCodeFromUploadError(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const record = error as {
+    statusCode?: unknown;
+    status?: unknown;
+    originalResponse?: { getStatus?: () => number };
+    message?: unknown;
+  };
+  const explicit = coerceHttpStatus(record.statusCode) ?? coerceHttpStatus(record.status);
+  if (explicit) return explicit;
+  const tusStatus = record.originalResponse?.getStatus?.();
+  const fromTus = coerceHttpStatus(tusStatus);
+  if (fromTus) return fromTus;
+  if (typeof record.message === "string") {
+    const match = record.message.match(/response code:\s*(\d{3})/);
+    if (match?.[1]) return Number(match[1]);
+  }
+  return null;
+}
+
+function responseBodyFromUploadError(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const record = error as {
+    responseText?: unknown;
+    originalResponse?: { getBody?: () => string };
+  };
+  if (typeof record.responseText === "string" && record.responseText.trim()) {
+    return record.responseText;
+  }
+  const body = record.originalResponse?.getBody?.();
+  if (typeof body === "string" && body.trim()) return body;
+  return null;
+}
+
+function messageFromStorageBody(body: string): string | null {
+  const trimmed = body.trim();
+  if (!trimmed || trimmed === "n/a" || trimmed.startsWith("<")) return null;
+  try {
+    const json = JSON.parse(trimmed) as {
+      message?: unknown;
+      error?: unknown;
+      msg?: unknown;
+    };
+    if (typeof json.message === "string" && json.message.trim()) return json.message.trim();
+    if (typeof json.error === "string" && json.error.trim()) return json.error.trim();
+    if (typeof json.msg === "string" && json.msg.trim()) return json.msg.trim();
+  } catch {
+    if (trimmed.length <= 400) return trimmed;
+  }
+  return null;
+}
+
+function storageBodySaysNotRetryable(body: string | null): boolean {
+  if (!body) return false;
+  return /"retryable"\s*:\s*false/i.test(body) || /\bnot retryable\b/i.test(body);
+}
+
+function readableUploadMessage(error: unknown): string {
+  const fromBody = messageFromStorageBody(responseBodyFromUploadError(error) ?? "");
+  if (fromBody) return fromBody;
+  const raw = formatUploadError(error);
+  const marker = "response text: ";
+  const start = raw.indexOf(marker);
+  if (start >= 0) {
+    const rest = raw.slice(start + marker.length);
+    const idAt = rest.lastIndexOf(", request id:");
+    const text = (idAt >= 0 ? rest.slice(0, idAt) : rest).trim();
+    if (text && text !== "n/a") return messageFromStorageBody(text) ?? text;
+  }
+  return raw.replace(/, originated from request[\s\S]*$/, "").trim();
+}
+
+function permanentUserMessage(status: number | null, serverMessage: string): string {
+  const text = serverMessage.trim() || "Upload failed";
+  if (
+    status === 413 ||
+    /maximum size exceeded|payload too large|maximum allowed size/i.test(text)
+  ) {
+    const lead = /maximum size exceeded/i.test(text) ? "Maximum size exceeded" : text;
+    return `${lead}. Save the file to the device or record a shorter clip.`;
+  }
+  if (status === 401) return `${text}. Sign in again, then tap Retry.`;
+  if (status === 403) {
+    return `${text}. Sign in with an account that can access this inspection.`;
+  }
+  return text;
+}
+
+/** Permanent when the job-queue flag is set, or the status is a terminal HTTP error. */
+export function isPermanentUploadFailure(error: unknown): boolean {
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { retryable?: boolean }).retryable === false
+  ) {
+    return true;
+  }
+  const message = formatUploadError(error);
+  if (/\bnot retryable\b/i.test(message)) return true;
+  if (storageBodySaysNotRetryable(responseBodyFromUploadError(error))) return true;
+  const status = statusCodeFromUploadError(error);
+  if (status != null && PERMANENT_UPLOAD_STATUSES.has(status)) return true;
+  if (/maximum size exceeded|payload too large/i.test(message)) return true;
+  return false;
+}
+
+export function describeUploadFailure(error: unknown): { permanent: boolean; message: string } {
+  const permanent = isPermanentUploadFailure(error);
+  const serverMessage = readableUploadMessage(error);
+  if (!permanent) return { permanent: false, message: serverMessage };
+  return {
+    permanent: true,
+    message: permanentUserMessage(statusCodeFromUploadError(error), serverMessage),
+  };
+}
+
+function uploadAttemptError(
+  message: string,
+  statusCode?: number,
+  responseText?: string,
+): UploadAttemptError {
+  const error = new Error(message) as UploadAttemptError;
+  if (statusCode != null) error.statusCode = statusCode;
+  if (responseText) error.responseText = responseText;
+  if (
+    (statusCode != null && PERMANENT_UPLOAD_STATUSES.has(statusCode)) ||
+    storageBodySaysNotRetryable(responseText ?? null) ||
+    /\bnot retryable\b/i.test(message)
+  ) {
+    error.retryable = false;
+  }
+  return error;
+}
+
 function scheduleBackoffWakeup(): void {
   if (typeof window === "undefined") return;
   void listAllItems()
@@ -725,10 +877,10 @@ async function resolveAccessToken(): Promise<string> {
     error: sessionError,
   } = await supabase.auth.getSession();
   if (sessionError) {
-    throw new Error(sessionError.message || "Sign in again to upload video");
+    throw uploadAttemptError(sessionError.message || "Sign in again to upload video", 401);
   }
   if (!session?.access_token) {
-    throw new Error("Sign in again to upload video");
+    throw uploadAttemptError("Sign in again to upload video", 401);
   }
 
   let token = session.access_token;
@@ -736,7 +888,7 @@ async function resolveAccessToken(): Promise<string> {
   if (expiresAtMs && expiresAtMs - Date.now() < 60_000) {
     const { data, error } = await supabase.auth.refreshSession();
     if (error || !data.session?.access_token) {
-      throw new Error("Session expired — sign in again to finish the video upload");
+      throw uploadAttemptError("Session expired — sign in again to finish the video upload", 401);
     }
     token = data.session.access_token;
   }
@@ -828,22 +980,19 @@ function uploadTus(input: {
           },
           onShouldRetry: (err, _retryAttempt, _options) => {
             if (cancelledUploads.has(input.clientMediaId)) return false;
+            // 400/401/403/413 and retryable:false stop here. 409/423 stay retryable
+            // so a resume can recover an offset conflict or a short lock.
+            if (isPermanentUploadFailure(err)) return false;
             const status = (
               err as { originalResponse?: { getStatus?: () => number } }
             ).originalResponse?.getStatus?.();
-            if (status === 401 || status === 403) {
-              console.warn(
-                "[site-inspection-media] TUS auth failure — will refresh token and retry",
-                { status, message: err.message },
-              );
-              return true;
-            }
-            // 409/423 are offset conflicts / locks — tus should retry the same URL.
             if (
+              status == null ||
+              status === 0 ||
               status === 409 ||
               status === 423 ||
-              status === 0 ||
-              (status != null && status >= 500)
+              status === 429 ||
+              status >= 500
             ) {
               return true;
             }
@@ -855,12 +1004,16 @@ function uploadTus(input: {
               settle(() => reject(new DOMException("Upload cancelled", "AbortError")));
               return;
             }
-            const message = formatUploadError(error);
+            const failure = describeUploadFailure(error);
             console.error("[site-inspection-media] TUS upload failed", {
               path: input.path,
-              message,
+              message: failure.message,
+              permanent: failure.permanent,
             });
-            settle(() => reject(new Error(message)));
+            if (failure.permanent) {
+              (error as UploadAttemptError).retryable = false;
+            }
+            settle(() => reject(error));
           },
           onProgress: (bytesUploaded, bytesTotal) => {
             if (bytesTotal > 0) input.onProgress(bytesUploaded / bytesTotal);
@@ -1004,7 +1157,13 @@ async function uploadSigned(
             resolve();
             return;
           }
-          reject(new Error(`Signed upload failed (${xhr.status})`));
+          reject(
+            uploadAttemptError(
+              messageFromStorageBody(xhr.responseText) ?? `Signed upload failed (${xhr.status})`,
+              xhr.status,
+              xhr.responseText,
+            ),
+          );
         });
       };
       xhr.onerror = () => finish(() => reject(new Error("Signed upload failed — network error")));
@@ -1049,7 +1208,11 @@ async function uploadSigned(
           "Media upload failed — the file data went stale. Remove and re-attach, then retry.",
         );
       }
-      throw new Error(message);
+      const statusCode =
+        coerceHttpStatus((error as { status?: unknown }).status) ??
+        coerceHttpStatus((error as { statusCode?: unknown }).statusCode) ??
+        undefined;
+      throw uploadAttemptError(message, statusCode);
     }
     onProgress?.(1);
   } finally {
@@ -1070,7 +1233,8 @@ async function uploadMemory(inspectionId: string, path: string, blob: Blob, mime
   );
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(json.error?.message ?? "Memory upload failed");
+    const message = json.error?.message ?? "Memory upload failed";
+    throw uploadAttemptError(message, res.status, JSON.stringify(json));
   }
 }
 
@@ -1149,7 +1313,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
         await cancelAndDiscardMediaUpload(clientMediaId);
         return null;
       }
-      throw new Error(message);
+      throw uploadAttemptError(message, prepareRes.status, JSON.stringify(prepareJson));
     }
 
     if (generation !== drainGeneration) return null;
@@ -1240,7 +1404,11 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
           error?: { message?: string };
         };
         if (!refreshRes.ok || !refreshJson.upload || refreshJson.upload.mode !== "signed") {
-          throw new Error(refreshJson.error?.message ?? "Could not refresh signed upload");
+          throw uploadAttemptError(
+            refreshJson.error?.message ?? "Could not refresh signed upload",
+            refreshRes.status,
+            JSON.stringify(refreshJson),
+          );
         }
         upload = refreshJson.upload;
         await uploadSigned(
@@ -1315,11 +1483,14 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       await cancelAndDiscardMediaUpload(clientMediaId);
       return null;
     }
+    const failure = describeUploadFailure(error);
     const attempts = item.attempts + 1;
-    const exhausted = attempts >= MAX_UPLOAD_ATTEMPTS;
-    const message = exhausted
-      ? `${baseMessage} (gave up after ${attempts} attempts — tap Retry or Discard)`
-      : baseMessage;
+    const exhausted = !failure.permanent && attempts >= MAX_UPLOAD_ATTEMPTS;
+    const message = failure.permanent
+      ? failure.message
+      : exhausted
+        ? `${failure.message} (gave up after ${attempts} attempts — tap Retry or Discard)`
+        : failure.message;
     const latest = (await getItem(clientMediaId)) ?? item;
     console.error("[site-inspection-media] upload attempt failed", {
       clientMediaId,
@@ -1327,6 +1498,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       mediaType: item.mediaType,
       attempts,
       exhausted,
+      permanent: failure.permanent,
       message,
       tusUploadUrl: latest.tusUploadUrl ?? null,
       progress: latest.progress,
@@ -1343,7 +1515,8 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       storagePath: bytesLandedPath ?? latest.storagePath,
       tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? latest.tusUploadUrl ?? null,
       attempts,
-      nextAttemptAt: exhausted ? Number.MAX_SAFE_INTEGER : Date.now() + backoffMs(attempts),
+      nextAttemptAt:
+        failure.permanent || exhausted ? Number.MAX_SAFE_INTEGER : Date.now() + backoffMs(attempts),
       lastError: message,
       progress: keepFinalizing ? 1 : latest.progress || item.progress || 0,
       lastProgressAt: Date.now(),
@@ -1383,7 +1556,7 @@ async function finalizeMediaUpload(item: MediaQueueItem): Promise<SiteInspection
       await cancelAndDiscardMediaUpload(item.clientMediaId);
       return null;
     }
-    throw new Error(message);
+    throw uploadAttemptError(message, completeRes.status, JSON.stringify(completeJson));
   }
 
   await deleteItem(item.clientMediaId);
