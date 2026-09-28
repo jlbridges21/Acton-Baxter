@@ -200,6 +200,11 @@ async function processSiteInspectionPdfExport(job: ReportJob): Promise<void> {
   });
 }
 
+async function processStreetViewCoverBackfill(job: ReportJob): Promise<void> {
+  const { runStreetViewCoverBackfillJob } = await import("@/lib/inspections/street-view-backfill");
+  await runStreetViewCoverBackfillJob(job);
+}
+
 export async function processJob(job: ReportJob): Promise<"complete" | "deferred" | "failed"> {
   try {
     if (job.jobType === "property_research") {
@@ -228,6 +233,8 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processSiteInspectionAi(job);
     } else if (job.jobType === "site_inspection_pdf_export") {
       await processSiteInspectionPdfExport(job);
+    } else if (job.jobType === "site_inspection_street_view_backfill") {
+      await processStreetViewCoverBackfill(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

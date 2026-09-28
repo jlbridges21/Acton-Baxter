@@ -55,7 +55,12 @@ import {
 import { buildItemSummaryFingerprint, describeSummaryStaleReason } from "./ai/fingerprint";
 import { isPrematureEmptySummary } from "./ai/transcript-gate";
 import { enqueueSiteInspectionAi } from "./ai/enqueue";
-import { lookupStreetViewCover, streetViewStoragePath } from "./street-view-cover";
+import {
+  lookupStreetViewCover,
+  streetViewCoverReady,
+  streetViewLocationKey,
+  streetViewStoragePath,
+} from "./street-view-cover";
 
 type InspectionRow = {
   id: string;
@@ -73,6 +78,8 @@ type InspectionRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   street_view_storage_path?: string | null;
   street_view_address?: string | null;
   street_view_status?: "available" | "unavailable" | null;
@@ -310,6 +317,61 @@ function addressesMatch(a: string | null | undefined, b: string | null | undefin
   return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 }
 
+function sameCoordinate(a: number | null | undefined, b: number | null | undefined): boolean {
+  return (a ?? null) === (b ?? null);
+}
+
+function coordinatePair(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+): { latitude: number | null; longitude: number | null } {
+  if (latitude == null && longitude == null) return { latitude: null, longitude: null };
+  if (
+    typeof latitude !== "number" ||
+    typeof longitude !== "number" ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude)
+  ) {
+    throw new ValidationError("Latitude and longitude must be provided together");
+  }
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    throw new ValidationError("Coordinates are out of range");
+  }
+  return { latitude, longitude };
+}
+
+async function saveInspectionCoordinates(
+  inspectionId: string,
+  latitude: number | null,
+  longitude: number | null,
+): Promise<void> {
+  if (shouldUseMemory()) {
+    const row = getMemory().inspections.get(inspectionId);
+    if (!row) return;
+    getMemory().inspections.set(inspectionId, {
+      ...row,
+      latitude,
+      longitude,
+      updated_at: nowIso(),
+    });
+    return;
+  }
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("site_inspections")
+    .update({ latitude, longitude })
+    .eq("id", inspectionId);
+  if (error) {
+    if (/latitude|longitude/i.test(error.message)) {
+      console.warn("[site-inspection] coordinate columns are not migrated yet", {
+        message: error.message,
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
 type StreetViewFields = {
   street_view_storage_path: string | null;
   street_view_address: string | null;
@@ -317,9 +379,22 @@ type StreetViewFields = {
   street_view_captured_on: string | null;
 };
 
-async function clearMismatchedStreetView(row: InspectionRow, address: string): Promise<void> {
+type StreetViewSyncOutcome = "available" | "unavailable" | "skipped" | "cached";
+
+type StreetViewRow = {
+  id: string;
+  address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  street_view_storage_path?: string | null;
+  street_view_address?: string | null;
+  street_view_status?: "available" | "unavailable" | null;
+  street_view_captured_on?: string | null;
+};
+
+async function clearMismatchedStreetView(row: StreetViewRow, location: string): Promise<void> {
   const hasCache = Boolean(row.street_view_storage_path || row.street_view_status);
-  if (!hasCache || addressesMatch(row.street_view_address, address)) return;
+  if (!hasCache || addressesMatch(row.street_view_address, location)) return;
   try {
     if (row.street_view_storage_path) {
       await deleteSiteInspectionMediaObject(row.street_view_storage_path);
@@ -363,20 +438,23 @@ async function saveStreetViewFields(inspectionId: string, fields: StreetViewFiel
 }
 
 /**
- * One Google lookup per address. List renders read the stored JPEG.
- * Failures are logged and ignored so inspection create/update still succeeds.
+ * One Google lookup per location. List renders read the stored JPEG.
+ * Coordinates are preferred over the address string. Failures are logged and
+ * ignored so inspection create/update still succeeds.
  */
-async function syncStreetViewCover(row: InspectionRow): Promise<void> {
-  const address = row.address.trim();
+async function syncStreetViewCover(row: StreetViewRow): Promise<StreetViewSyncOutcome> {
+  const location = streetViewLocationKey(row);
   const cached =
-    addressesMatch(row.street_view_address, address) &&
+    Boolean(location) &&
+    addressesMatch(row.street_view_address, location) &&
     (row.street_view_status === "available" || row.street_view_status === "unavailable");
-  if (cached) return;
+  if (cached) return "cached";
+  if (!location) return "skipped";
 
-  const lookup = await lookupStreetViewCover(address);
+  const lookup = await lookupStreetViewCover(location);
   if (lookup.outcome === "skipped") {
-    await clearMismatchedStreetView(row, address);
-    return;
+    await clearMismatchedStreetView(row, location);
+    return "skipped";
   }
 
   if (lookup.outcome === "unavailable") {
@@ -385,11 +463,11 @@ async function syncStreetViewCover(row: InspectionRow): Promise<void> {
     }
     await saveStreetViewFields(row.id, {
       street_view_storage_path: null,
-      street_view_address: address,
+      street_view_address: location,
       street_view_status: "unavailable",
       street_view_captured_on: null,
     });
-    return;
+    return "unavailable";
   }
 
   const path = streetViewStoragePath(row.id);
@@ -404,14 +482,118 @@ async function syncStreetViewCover(row: InspectionRow): Promise<void> {
       inspectionId: row.id,
       message: error instanceof Error ? error.message : "unknown",
     });
-    return;
+    return "skipped";
   }
   await saveStreetViewFields(row.id, {
     street_view_storage_path: path,
-    street_view_address: address,
+    street_view_address: location,
     street_view_status: "available",
     street_view_captured_on: lookup.capturedOn,
   });
+  return "available";
+}
+
+export type StreetViewBackfillCounts = {
+  backfilled: number;
+  noCoverage: number;
+  failed: number;
+  remaining: number;
+};
+
+function toStreetViewRow(row: InspectionRow): StreetViewRow {
+  return {
+    id: row.id,
+    address: row.address,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    street_view_storage_path: row.street_view_storage_path ?? null,
+    street_view_address: row.street_view_address ?? null,
+    street_view_status: row.street_view_status ?? null,
+    street_view_captured_on: row.street_view_captured_on ?? null,
+  };
+}
+
+async function listStreetViewBackfillCandidates(): Promise<StreetViewRow[]> {
+  if (shouldUseMemory()) {
+    return Array.from(getMemory().inspections.values())
+      .filter((row) => !row.deleted_at && !row.cover_media_id && row.street_view_status == null)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map(toStreetViewRow);
+  }
+
+  const supabase = createServiceClient();
+  const columns =
+    "id, address, latitude, longitude, street_view_storage_path, street_view_address, street_view_status, street_view_captured_on";
+  let { data, error } = await supabase
+    .from("site_inspections")
+    .select(columns)
+    .is("deleted_at", null)
+    .is("cover_media_id", null)
+    .is("street_view_status", null)
+    .order("created_at", { ascending: true });
+  if (error && /latitude|longitude/i.test(error.message)) {
+    const fallback = await supabase
+      .from("site_inspections")
+      .select(
+        "id, address, street_view_storage_path, street_view_address, street_view_status, street_view_captured_on",
+      )
+      .is("deleted_at", null)
+      .is("cover_media_id", null)
+      .is("street_view_status", null)
+      .order("created_at", { ascending: true });
+    data = fallback.data as typeof data;
+    error = fallback.error;
+  }
+  if (error) {
+    if (/street_view_/i.test(error.message) || isMissingTable(error)) {
+      console.warn("[site-inspection] Street View backfill columns are not migrated yet", {
+        message: error.message,
+      });
+      return [];
+    }
+    throw error;
+  }
+  return (data ?? []) as StreetViewRow[];
+}
+
+/**
+ * Fetch Street View once for inspections that have neither a cover photo nor a
+ * recorded Street View result. Re-running skips stored images and no-coverage.
+ */
+export async function backfillPendingStreetViewCovers(options?: {
+  limit?: number;
+}): Promise<StreetViewBackfillCounts> {
+  const limit = options?.limit ?? 20;
+  const candidates = await listStreetViewBackfillCandidates();
+  const batch = candidates.slice(0, limit);
+  const counts: StreetViewBackfillCounts = {
+    backfilled: 0,
+    noCoverage: 0,
+    failed: 0,
+    remaining: Math.max(0, candidates.length - batch.length),
+  };
+  if (!batch.length) return counts;
+  if (!streetViewCoverReady()) {
+    console.warn("[site-inspection] Street View backfill skipped — lookup is not configured");
+    return { ...counts, remaining: candidates.length };
+  }
+
+  for (const row of batch) {
+    try {
+      const outcome = await syncStreetViewCover(row);
+      if (outcome === "available") counts.backfilled += 1;
+      else if (outcome === "unavailable") counts.noCoverage += 1;
+      else if (outcome === "skipped") counts.failed += 1;
+    } catch (error) {
+      counts.failed += 1;
+      console.warn("[site-inspection] Street View backfill failed for inspection", {
+        inspectionId: row.id,
+        message: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+  counts.remaining = Math.max(0, candidates.length - batch.length + counts.failed);
+  return counts;
 }
 
 const LIST_COLUMNS =
@@ -620,6 +802,7 @@ export async function createSiteInspection(
   const address = input.address.trim();
   if (!projectName) throw new ValidationError("Project name is required");
   if (!address) throw new ValidationError("Address is required");
+  const coordinates = coordinatePair(input.latitude, input.longitude);
 
   const template = await getTemplate(input.templateId);
   if (template.archivedAt) {
@@ -646,6 +829,8 @@ export async function createSiteInspection(
     created_at: now,
     updated_at: now,
     deleted_at: null,
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
     ai_processing_status: "idle",
     ai_processing_message: null,
     ai_processing_videos_total: 0,
@@ -676,6 +861,9 @@ export async function createSiteInspection(
       created_by: row.created_by,
     });
     if (error) throw error;
+    if (coordinates.latitude != null || coordinates.longitude != null) {
+      await saveInspectionCoordinates(id, coordinates.latitude, coordinates.longitude);
+    }
   }
 
   try {
@@ -693,13 +881,29 @@ export async function createSiteInspection(
 export async function updateSiteInspectionAddress(input: {
   inspectionId: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
   actorId: string;
 }): Promise<SiteInspectionDetail> {
   void input.actorId;
   const address = input.address.trim();
   if (!address) throw new ValidationError("Address is required");
   const existing = await loadInspectionRow(input.inspectionId);
-  if (addressesMatch(existing.address, address)) {
+  const addressChanged = !addressesMatch(existing.address, address);
+  const coordinatesProvided = input.latitude !== undefined || input.longitude !== undefined;
+  const coordinates = coordinatesProvided
+    ? coordinatePair(input.latitude, input.longitude)
+    : addressChanged
+      ? { latitude: null, longitude: null }
+      : {
+          latitude: existing.latitude ?? null,
+          longitude: existing.longitude ?? null,
+        };
+  if (
+    !addressChanged &&
+    sameCoordinate(existing.latitude, coordinates.latitude) &&
+    sameCoordinate(existing.longitude, coordinates.longitude)
+  ) {
     return getSiteInspection(input.inspectionId);
   }
 
@@ -707,15 +911,34 @@ export async function updateSiteInspectionAddress(input: {
     getMemory().inspections.set(input.inspectionId, {
       ...existing,
       address,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
       updated_at: nowIso(),
     });
   } else {
     const supabase = createServiceClient();
+    const patch = {
+      address,
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      updated_at: nowIso(),
+    };
     const { error } = await supabase
       .from("site_inspections")
-      .update({ address, updated_at: nowIso() })
+      .update(patch)
       .eq("id", input.inspectionId);
-    if (error) throw error;
+    if (error && /latitude|longitude/i.test(error.message)) {
+      console.warn("[site-inspection] coordinate columns are not migrated yet", {
+        message: error.message,
+      });
+      const retry = await supabase
+        .from("site_inspections")
+        .update({ address, updated_at: patch.updated_at })
+        .eq("id", input.inspectionId);
+      if (retry.error) throw retry.error;
+    } else if (error) {
+      throw error;
+    }
   }
 
   try {
@@ -988,6 +1211,8 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
 
   return {
     ...summary,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
     snapshot: row.snapshot_json,
     responses: mappedResponses,
     media: mappedMedia,

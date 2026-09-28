@@ -31,6 +31,8 @@ export async function POST(request: Request) {
     const inspection = await createSiteInspection({
       projectName: parsed.projectName,
       address: parsed.address,
+      latitude: parsed.latitude,
+      longitude: parsed.longitude,
       jobId: parsed.jobId ?? null,
       templateId: parsed.templateId,
       assignedTo: parsed.assignedTo ?? null,

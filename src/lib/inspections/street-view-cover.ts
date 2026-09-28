@@ -1,9 +1,10 @@
 /**
  * Default Street View cover for a site inspection.
  *
- * The Street View Static API accepts an address string as `location`, so we
- * don't geocode first. Metadata is checked before the image request — a miss
- * returns a grey tile if you skip that, and we never want that on a card.
+ * `location` prefers stored coordinates when a place was selected. Otherwise
+ * the Static API accepts the address string directly, so we don't geocode
+ * first. Metadata is checked before the image request — a miss returns a grey
+ * tile if you skip that, and we never want that on a card.
  * The Google key stays in this server module; callers persist the JPEG.
  */
 
@@ -53,6 +54,33 @@ export function streetViewLookupEnabled(): boolean {
 
 export function streetViewStoragePath(inspectionId: string): string {
   return `street-view/${inspectionId}.jpg`;
+}
+
+/** True when a lookup would call Google. Missing key or test opt-out is false. */
+export function streetViewCoverReady(): boolean {
+  return streetViewLookupEnabled() && Boolean(googleKey());
+}
+
+/**
+ * Coordinates win when both are finite. The Static API then looks up that
+ * point instead of resolving the address string onto a neighboring property.
+ */
+export function streetViewLocationKey(input: {
+  address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}): string {
+  const lat = input.latitude;
+  const lng = input.longitude;
+  if (
+    typeof lat === "number" &&
+    Number.isFinite(lat) &&
+    typeof lng === "number" &&
+    Number.isFinite(lng)
+  ) {
+    return `${lat},${lng}`;
+  }
+  return input.address.trim();
 }
 
 function metadataUrl(address: string, key: string): string {

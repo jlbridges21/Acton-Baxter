@@ -12,6 +12,7 @@ export const JOB_TYPES = [
   "expense_jobs_sync",
   "site_inspection_ai",
   "site_inspection_pdf_export",
+  "site_inspection_street_view_backfill",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

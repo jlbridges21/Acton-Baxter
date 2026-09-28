@@ -167,11 +167,16 @@ export type SiteInspectionDetail = SiteInspectionSummary & {
   responses: SiteInspectionResponse[];
   media: SiteInspectionMedia[];
   itemSummaries: SiteInspectionItemSummary[];
+  /** Set when the address was chosen from Places autocomplete. */
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export type CreateSiteInspectionInput = {
   projectName: string;
   address: string;
+  latitude?: number | null;
+  longitude?: number | null;
   jobId?: string | null;
   templateId: string;
   assignedTo?: string | null;

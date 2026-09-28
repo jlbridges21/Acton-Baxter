@@ -16,6 +16,8 @@ import {
 } from "@/components/inspections/inspection-project-picker";
 import { purgeMediaQueueForInspection } from "@/lib/inspections/media-queue";
 import { InspectionAiPipelineProgress } from "@/components/inspections/inspection-ai-pipeline-progress";
+import { AddressAutocomplete } from "@/components/address/address-autocomplete";
+import type { SelectedAddress } from "@/lib/address/types";
 
 type Assignee = { id: string; displayName: string };
 
@@ -44,7 +46,8 @@ export function InspectionsListClient({
   const [deleteTarget, setDeleteTarget] = useState<SiteInspectionSummary | null>(null);
 
   const [projectName, setProjectName] = useState("");
-  const [address, setAddress] = useState("");
+  const [addressQuery, setAddressQuery] = useState("");
+  const [selectedAddress, setSelectedAddress] = useState<SelectedAddress | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const activeTemplates = templates.filter((t) => !t.archivedAt);
   const [templateId, setTemplateId] = useState(activeTemplates[0]?.id ?? "");
@@ -81,13 +84,15 @@ export function InspectionsListClient({
 
   function onPick(pick: ProjectPick) {
     setProjectName(pick.projectName);
-    setAddress(pick.address);
+    setAddressQuery(pick.address);
+    setSelectedAddress(null);
     setJobId(pick.kind === "job" ? pick.job.id : null);
   }
 
   async function createInspection() {
     setBusy(true);
     setError(null);
+    const address = (selectedAddress?.formattedAddress || addressQuery).trim();
     try {
       const res = await fetch("/api/inspections", {
         method: "POST",
@@ -95,6 +100,9 @@ export function InspectionsListClient({
         body: JSON.stringify({
           projectName,
           address,
+          ...(selectedAddress
+            ? { latitude: selectedAddress.latitude, longitude: selectedAddress.longitude }
+            : {}),
           jobId,
           templateId,
           assignedTo: assignedTo || null,
@@ -180,12 +188,15 @@ export function InspectionsListClient({
             >
               Address <span className="text-red-600">*</span>
             </label>
-            <Input
+            <AddressAutocomplete
               id="insp-address"
-              className="min-h-11"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
+              value={selectedAddress}
+              query={addressQuery}
+              onChange={setSelectedAddress}
+              onQueryChange={setAddressQuery}
+              disabled={busy}
               placeholder="Street, city"
+              inputClassName="min-h-11"
             />
           </div>
           <div>
@@ -237,7 +248,7 @@ export function InspectionsListClient({
             <Button
               type="button"
               className="min-h-11"
-              disabled={busy || !projectName.trim() || !address.trim() || !templateId}
+              disabled={busy || !projectName.trim() || !addressQuery.trim() || !templateId}
               onClick={() => void createInspection()}
             >
               {busy ? "Creating…" : "Create & open checklist"}

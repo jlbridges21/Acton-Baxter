@@ -84,7 +84,9 @@ function mockGoogle(input?: { status?: string; fail?: boolean }) {
       }
       if (href.includes("/maps/api/streetview?")) {
         const image =
-          href.includes("9+Other+Rd") || href.includes("9%20Other%20Rd") ? JPEG_B : JPEG_A;
+          href.includes("9+Other+Rd") || href.includes("9%20Other%20Rd") || href.includes("30.27")
+            ? JPEG_B
+            : JPEG_A;
         return new Response(image, {
           status: 200,
           headers: { "content-type": "image/jpeg" },
@@ -202,6 +204,48 @@ describe("site inspection Street View covers", () => {
     expect(updated.coverSignedUrl).toBeTruthy();
     expect(updated.coverSignedUrl).not.toBe(firstUrl);
     expect(calls.length).toBe(4);
+  });
+
+  it("prefers stored coordinates over the address string and refreshes both on edit", async () => {
+    const calls = mockGoogle();
+    const template = await createTemplateFromSeed(
+      {
+        name: "Cover template",
+        standaloneItems: [
+          { title: "Front Photo of Main House", guideNotes: "• x", isCoverPhotoSource: true },
+        ],
+        sections: [],
+      },
+      "admin-1",
+    );
+    const created = await createSiteInspection({
+      projectName: "Visit",
+      address: "15170 woodard rd, San Jose",
+      latitude: 37.4419,
+      longitude: -122.143,
+      templateId: template.id,
+      createdBy: "user-1",
+    });
+    expect(created.latitude).toBe(37.4419);
+    expect(created.longitude).toBe(-122.143);
+    expect(created.coverSource).toBe("street_view");
+    const locations = calls.map((url) => new URL(url).searchParams.get("location"));
+    expect(locations).toContain("37.4419,-122.143");
+    expect(locations).not.toContain("15170 woodard rd, San Jose");
+
+    const updated = await updateSiteInspectionAddress({
+      inspectionId: created.id,
+      address: "9 Other Rd, Austin, TX",
+      latitude: 30.27,
+      longitude: -97.74,
+      actorId: "user-1",
+    });
+    expect(updated.address).toBe("9 Other Rd, Austin, TX");
+    expect(updated.latitude).toBe(30.27);
+    expect(updated.longitude).toBe(-97.74);
+    expect(updated.coverSignedUrl).not.toBe(created.coverSignedUrl);
+    const later = calls.map((url) => new URL(url).searchParams.get("location"));
+    expect(later).toContain("30.27,-97.74");
   });
 
   it("drops the previous Street View when an address change cannot be refreshed", async () => {

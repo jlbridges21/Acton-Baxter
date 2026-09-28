@@ -84,6 +84,8 @@ export {
   deleteSiteInspectionMedia,
   rotateSiteInspectionMedia,
   purgeOrphanPendingMediaRows,
+  backfillPendingStreetViewCovers,
+  type StreetViewBackfillCounts,
 } from "./records-store";
 export {
   resetSiteInspectionMediaMemoryForTests,

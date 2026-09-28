@@ -36,6 +36,8 @@ export async function PATCH(request: Request, { params }: Params) {
       const inspection = await updateSiteInspectionAddress({
         inspectionId: id,
         address: parsed.address,
+        latitude: parsed.latitude,
+        longitude: parsed.longitude,
         actorId: user.id,
       });
       return jsonOk({ inspection });

@@ -25,9 +25,12 @@ export async function POST(request: Request) {
     const scheduled = await maybeEnqueueScheduledGoogleSync();
     const { maybeEnqueueScheduledMonitoringSweep } = await import("@/lib/monitoring/schedule");
     const monitoring = await maybeEnqueueScheduledMonitoringSweep();
+    const { maybeEnqueueStreetViewCoverBackfill } =
+      await import("@/lib/inspections/street-view-backfill");
+    const streetViewBackfill = await maybeEnqueueStreetViewCoverBackfill();
     const result = await processQueuedJobs({ limit: 10 });
     recordCronInvocation({ ok: true, code: null });
-    return jsonOk({ ...result, googleSync: scheduled, monitoring });
+    return jsonOk({ ...result, googleSync: scheduled, monitoring, streetViewBackfill });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");
   }

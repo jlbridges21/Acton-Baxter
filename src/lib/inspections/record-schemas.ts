@@ -1,13 +1,35 @@
 import { z } from "zod";
 import { INSPECTION_SUB_QUESTION_TYPES } from "./types";
 
-export const createSiteInspectionSchema = z.object({
-  projectName: z.string().trim().min(1, "Project name is required").max(300),
-  address: z.string().trim().min(1, "Address is required").max(500),
-  jobId: z.string().uuid().nullable().optional(),
-  templateId: z.string().uuid(),
-  assignedTo: z.string().uuid().nullable().optional(),
-});
+const latitudeSchema = z.number().finite().gte(-90).lte(90).nullable().optional();
+const longitudeSchema = z.number().finite().gte(-180).lte(180).nullable().optional();
+
+function coordinatesTogether(
+  value: { latitude?: number | null; longitude?: number | null },
+  ctx: z.RefinementCtx,
+) {
+  const hasLat = value.latitude !== undefined && value.latitude !== null;
+  const hasLng = value.longitude !== undefined && value.longitude !== null;
+  if (hasLat !== hasLng) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Latitude and longitude must be provided together",
+      path: ["latitude"],
+    });
+  }
+}
+
+export const createSiteInspectionSchema = z
+  .object({
+    projectName: z.string().trim().min(1, "Project name is required").max(300),
+    address: z.string().trim().min(1, "Address is required").max(500),
+    latitude: latitudeSchema,
+    longitude: longitudeSchema,
+    jobId: z.string().uuid().nullable().optional(),
+    templateId: z.string().uuid(),
+    assignedTo: z.string().uuid().nullable().optional(),
+  })
+  .superRefine(coordinatesTogether);
 
 export const upsertResponseSchema = z.object({
   snapshotItemId: z.string().uuid(),
@@ -28,9 +50,13 @@ export const setInspectionStatusSchema = z.object({
   status: z.enum(["pending", "complete"]),
 });
 
-export const updateSiteInspectionAddressSchema = z.object({
-  address: z.string().trim().min(1, "Address is required").max(500),
-});
+export const updateSiteInspectionAddressSchema = z
+  .object({
+    address: z.string().trim().min(1, "Address is required").max(500),
+    latitude: latitudeSchema,
+    longitude: longitudeSchema,
+  })
+  .superRefine(coordinatesTogether);
 
 export const itemSignedUrlsSchema = z.object({
   snapshotItemId: z.string().uuid(),

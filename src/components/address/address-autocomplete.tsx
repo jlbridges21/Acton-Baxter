@@ -14,6 +14,7 @@ type AddressAutocompleteProps = {
   disabled?: boolean;
   placeholder?: string;
   id?: string;
+  inputClassName?: string;
 };
 
 export function AddressAutocomplete({
@@ -24,6 +25,7 @@ export function AddressAutocomplete({
   disabled = false,
   placeholder = "Start typing a California property address",
   id,
+  inputClassName,
 }: AddressAutocompleteProps) {
   const generatedId = useId();
   const listboxId = `${generatedId}-listbox`;
@@ -190,7 +192,7 @@ export function AddressAutocomplete({
           placeholder={placeholder}
           value={query}
           autoComplete="off"
-          className="pl-9"
+          className={cn("pl-9", inputClassName)}
           onChange={(event) => handleQueryChange(event.target.value)}
           onFocus={() => {
             if (suggestions.length > 0) setOpen(true);
