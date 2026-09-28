@@ -28,6 +28,10 @@ export const setInspectionStatusSchema = z.object({
   status: z.enum(["pending", "complete"]),
 });
 
+export const updateSiteInspectionAddressSchema = z.object({
+  address: z.string().trim().min(1, "Address is required").max(500),
+});
+
 export const itemSignedUrlsSchema = z.object({
   snapshotItemId: z.string().uuid(),
 });

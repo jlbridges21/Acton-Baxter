@@ -6,6 +6,8 @@ import {
   setInspectionStatusSchema,
   setSiteInspectionStatus,
   softDeleteSiteInspection,
+  updateSiteInspectionAddress,
+  updateSiteInspectionAddressSchema,
   upsertResponseSchema,
   upsertSiteInspectionResponse,
 } from "@/lib/inspections";
@@ -28,6 +30,16 @@ export async function PATCH(request: Request, { params }: Params) {
     const user = await requireActiveUser();
     const { id } = await params;
     const body = (await request.json()) as Record<string, unknown>;
+
+    if ("address" in body && !("snapshotItemId" in body) && !("status" in body)) {
+      const parsed = updateSiteInspectionAddressSchema.parse(body);
+      const inspection = await updateSiteInspectionAddress({
+        inspectionId: id,
+        address: parsed.address,
+        actorId: user.id,
+      });
+      return jsonOk({ inspection });
+    }
 
     if ("status" in body && !("snapshotItemId" in body)) {
       const parsed = setInspectionStatusSchema.parse(body);

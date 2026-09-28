@@ -171,10 +171,44 @@ describe("Inspections UI at phone width", () => {
       </div>,
     );
     expect(screen.getByText("Liniger")).toBeTruthy();
+    expect(screen.getByText("No cover photo yet")).toBeTruthy();
+    expect(screen.queryByText(/Street View/)).toBeNull();
     expect(screen.getByText(/1 of 2 items/i)).toBeTruthy();
     expect(screen.getAllByText(/^Pending$/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Create New Site Inspection/i })).toBeTruthy();
     expect((container.firstElementChild as HTMLElement).style.width).toBe("375px");
+  });
+
+  it("labels a Street View cover and hides the tag when a photo is the cover", () => {
+    render(
+      <InspectionsListClient
+        initialInspections={[
+          {
+            ...summary,
+            id: "insp-sv",
+            projectName: "Street",
+            coverSignedUrl: "data:image/jpeg;base64,abc",
+            coverSource: "street_view",
+            streetViewCapturedOn: "2024-06",
+          },
+          {
+            ...summary,
+            id: "insp-photo",
+            projectName: "Photo",
+            coverSignedUrl: "data:image/jpeg;base64,def",
+            coverSource: "photo",
+          },
+        ]}
+        jobs={[]}
+        templates={[]}
+        assignees={[]}
+        currentUserId="u1"
+        isAdmin={false}
+      />,
+    );
+    expect(screen.getByText("Street View · 2024")).toBeTruthy();
+    expect(screen.getAllByText("Street View · 2024")).toHaveLength(1);
+    expect(screen.queryByText("No cover photo yet")).toBeNull();
   });
 
   it("runner shows internal guide notes, progress, photo/video attach, export, and complete", () => {

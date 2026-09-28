@@ -134,6 +134,13 @@ export type SiteInspectionSummary = {
   status: SiteInspectionStatus;
   coverMediaId: string | null;
   coverSignedUrl: string | null;
+  /**
+   * Where the card image came from. Uploaded cover photos win; Street View is
+   * only the default when no cover photo is attached.
+   */
+  coverSource?: "photo" | "street_view" | null;
+  /** Street View metadata date (for example "2024-06") when the card image is Street View. */
+  streetViewCapturedOn?: string | null;
   totalItemCount: number;
   completedItemCount: number;
   /** Media still queued/uploading/failed — shown on cards. */

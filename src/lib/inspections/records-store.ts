@@ -26,6 +26,7 @@ import {
   downloadSiteInspectionMediaBytes,
   ensureChromePlayableVideoObject,
   putMemoryMediaBytes,
+  uploadSiteInspectionMediaBytes,
 } from "./media-storage";
 import { posterStoragePathForVideo } from "./video-remux";
 import { supabaseResumableUploadEndpoint } from "./media-limits";
@@ -54,6 +55,7 @@ import {
 import { buildItemSummaryFingerprint, describeSummaryStaleReason } from "./ai/fingerprint";
 import { isPrematureEmptySummary } from "./ai/transcript-gate";
 import { enqueueSiteInspectionAi } from "./ai/enqueue";
+import { lookupStreetViewCover, streetViewStoragePath } from "./street-view-cover";
 
 type InspectionRow = {
   id: string;
@@ -71,6 +73,10 @@ type InspectionRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  street_view_storage_path?: string | null;
+  street_view_address?: string | null;
+  street_view_status?: "available" | "unavailable" | null;
+  street_view_captured_on?: string | null;
   ai_processing_status?: AiProcessingStatus;
   ai_processing_message?: string | null;
   ai_processing_videos_total?: number;
@@ -288,8 +294,133 @@ function countMediaStatuses(media: MediaRow[]): { pending: number; failed: numbe
   return { pending, failed };
 }
 
+function preferredCover(input: {
+  photoPath: string | null;
+  streetViewStatus?: "available" | "unavailable" | null;
+  streetViewPath?: string | null;
+}): { path: string | null; source: "photo" | "street_view" | null } {
+  if (input.photoPath) return { path: input.photoPath, source: "photo" };
+  if (input.streetViewStatus === "available" && input.streetViewPath) {
+    return { path: input.streetViewPath, source: "street_view" };
+  }
+  return { path: null, source: null };
+}
+
+function addressesMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+}
+
+type StreetViewFields = {
+  street_view_storage_path: string | null;
+  street_view_address: string | null;
+  street_view_status: "available" | "unavailable" | null;
+  street_view_captured_on: string | null;
+};
+
+async function clearMismatchedStreetView(row: InspectionRow, address: string): Promise<void> {
+  const hasCache = Boolean(row.street_view_storage_path || row.street_view_status);
+  if (!hasCache || addressesMatch(row.street_view_address, address)) return;
+  try {
+    if (row.street_view_storage_path) {
+      await deleteSiteInspectionMediaObject(row.street_view_storage_path);
+    }
+    await saveStreetViewFields(row.id, {
+      street_view_storage_path: null,
+      street_view_address: null,
+      street_view_status: null,
+      street_view_captured_on: null,
+    });
+  } catch (error) {
+    console.warn("[site-inspection] could not clear a stale Street View cover", {
+      inspectionId: row.id,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  }
+}
+
+async function saveStreetViewFields(inspectionId: string, fields: StreetViewFields): Promise<void> {
+  if (shouldUseMemory()) {
+    const row = getMemory().inspections.get(inspectionId);
+    if (!row) return;
+    getMemory().inspections.set(inspectionId, {
+      ...row,
+      ...fields,
+      updated_at: nowIso(),
+    });
+    return;
+  }
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("site_inspections").update(fields).eq("id", inspectionId);
+  if (error) {
+    if (/street_view_/i.test(error.message)) {
+      console.warn("[site-inspection] Street View columns are not migrated yet", {
+        message: error.message,
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * One Google lookup per address. List renders read the stored JPEG.
+ * Failures are logged and ignored so inspection create/update still succeeds.
+ */
+async function syncStreetViewCover(row: InspectionRow): Promise<void> {
+  const address = row.address.trim();
+  const cached =
+    addressesMatch(row.street_view_address, address) &&
+    (row.street_view_status === "available" || row.street_view_status === "unavailable");
+  if (cached) return;
+
+  const lookup = await lookupStreetViewCover(address);
+  if (lookup.outcome === "skipped") {
+    await clearMismatchedStreetView(row, address);
+    return;
+  }
+
+  if (lookup.outcome === "unavailable") {
+    if (row.street_view_storage_path) {
+      await deleteSiteInspectionMediaObject(row.street_view_storage_path);
+    }
+    await saveStreetViewFields(row.id, {
+      street_view_storage_path: null,
+      street_view_address: address,
+      street_view_status: "unavailable",
+      street_view_captured_on: null,
+    });
+    return;
+  }
+
+  const path = streetViewStoragePath(row.id);
+  try {
+    await uploadSiteInspectionMediaBytes({
+      storagePath: path,
+      bytes: lookup.bytes,
+      mimeType: lookup.mimeType,
+    });
+  } catch (error) {
+    console.warn("[site-inspection] Street View image could not be stored", {
+      inspectionId: row.id,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+    return;
+  }
+  await saveStreetViewFields(row.id, {
+    street_view_storage_path: path,
+    street_view_address: address,
+    street_view_status: "available",
+    street_view_captured_on: lookup.capturedOn,
+  });
+}
+
 const LIST_COLUMNS =
-  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at, ai_processing_status, ai_processing_message, ai_processing_videos_total, ai_processing_videos_done, ai_processing_summaries_total, ai_processing_summaries_done, ai_processing_phase, ai_processing_started_at, ai_processing_finished_at";
+  "id, project_name, address, job_id, assigned_to, source_template_id, status, cover_media_id, total_item_count, completed_item_count, created_by, created_at, updated_at, deleted_at, ai_processing_status, ai_processing_message, ai_processing_videos_total, ai_processing_videos_done, ai_processing_summaries_total, ai_processing_summaries_done, ai_processing_phase, ai_processing_started_at, ai_processing_finished_at, street_view_storage_path, street_view_status, street_view_captured_on";
+
+const LIST_COLUMNS_BASE = LIST_COLUMNS.replace(
+  ", street_view_storage_path, street_view_status, street_view_captured_on",
+  "",
+);
 
 type InspectionListRow = {
   id: string;
@@ -306,6 +437,10 @@ type InspectionListRow = {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  street_view_storage_path?: string | null;
+  street_view_address?: string | null;
+  street_view_status?: "available" | "unavailable" | null;
+  street_view_captured_on?: string | null;
   ai_processing_status?: AiProcessingStatus | null;
   ai_processing_message?: string | null;
   ai_processing_videos_total?: number | null;
@@ -363,6 +498,7 @@ function mapSummaryFromListRow(
   pendingMediaCount: number,
   failedMediaCount: number,
   nameById: Map<string, string>,
+  coverSource: "photo" | "street_view" | null = null,
 ): SiteInspectionSummary {
   return {
     id: row.id,
@@ -375,6 +511,9 @@ function mapSummaryFromListRow(
     status: row.status,
     coverMediaId: row.cover_media_id,
     coverSignedUrl,
+    coverSource,
+    streetViewCapturedOn:
+      coverSource === "street_view" ? (row.street_view_captured_on ?? null) : null,
     totalItemCount: row.total_item_count,
     completedItemCount: row.completed_item_count,
     pendingMediaCount,
@@ -392,6 +531,7 @@ async function mapSummary(
   coverSignedUrl: string | null,
   pendingMediaCount = 0,
   failedMediaCount = 0,
+  coverSource: "photo" | "street_view" | null = null,
 ): Promise<SiteInspectionSummary> {
   const [assignedToName, createdByName] = await Promise.all([
     resolveProfileName(row.assigned_to),
@@ -408,6 +548,9 @@ async function mapSummary(
     status: row.status,
     coverMediaId: row.cover_media_id,
     coverSignedUrl,
+    coverSource,
+    streetViewCapturedOn:
+      coverSource === "street_view" ? (row.street_view_captured_on ?? null) : null,
     totalItemCount: row.total_item_count,
     completedItemCount: row.completed_item_count,
     pendingMediaCount,
@@ -535,7 +678,55 @@ export async function createSiteInspection(
     if (error) throw error;
   }
 
+  try {
+    await syncStreetViewCover(await loadInspectionRow(id));
+  } catch (error) {
+    console.warn("[site-inspection] Street View cover failed during create", {
+      inspectionId: id,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  }
+
   return getSiteInspection(id);
+}
+
+export async function updateSiteInspectionAddress(input: {
+  inspectionId: string;
+  address: string;
+  actorId: string;
+}): Promise<SiteInspectionDetail> {
+  void input.actorId;
+  const address = input.address.trim();
+  if (!address) throw new ValidationError("Address is required");
+  const existing = await loadInspectionRow(input.inspectionId);
+  if (addressesMatch(existing.address, address)) {
+    return getSiteInspection(input.inspectionId);
+  }
+
+  if (shouldUseMemory()) {
+    getMemory().inspections.set(input.inspectionId, {
+      ...existing,
+      address,
+      updated_at: nowIso(),
+    });
+  } else {
+    const supabase = createServiceClient();
+    const { error } = await supabase
+      .from("site_inspections")
+      .update({ address, updated_at: nowIso() })
+      .eq("id", input.inspectionId);
+    if (error) throw error;
+  }
+
+  try {
+    await syncStreetViewCover(await loadInspectionRow(input.inspectionId));
+  } catch (error) {
+    console.warn("[site-inspection] Street View cover failed after address change", {
+      inspectionId: input.inspectionId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+  }
+  return getSiteInspection(input.inspectionId);
 }
 
 export async function listSiteInspections(options?: {
@@ -573,15 +764,28 @@ export async function listSiteInspections(options?: {
         ai_processing_phase: r.ai_processing_phase,
         ai_processing_started_at: r.ai_processing_started_at,
         ai_processing_finished_at: r.ai_processing_finished_at,
+        street_view_storage_path: r.street_view_storage_path ?? null,
+        street_view_address: r.street_view_address ?? null,
+        street_view_status: r.street_view_status ?? null,
+        street_view_captured_on: r.street_view_captured_on ?? null,
       }));
   } else {
     const supabase = createServiceClient();
     // Never select snapshot_json on the card list — it dwarfs every other column.
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("site_inspections")
       .select(LIST_COLUMNS)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
+    if (error && /street_view_/i.test(error.message)) {
+      const fallback = await supabase
+        .from("site_inspections")
+        .select(LIST_COLUMNS_BASE)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false });
+      data = fallback.data as typeof data;
+      error = fallback.error;
+    }
     if (error) {
       if (isMissingTable(error)) return [];
       throw error;
@@ -625,6 +829,19 @@ export async function listSiteInspections(options?: {
     }
   }
 
+  const preferredById = new Map<string, { path: string; source: "photo" | "street_view" }>();
+  for (const row of rows) {
+    const preferred = preferredCover({
+      photoPath: coverPathById.get(row.id) ?? null,
+      streetViewStatus: row.street_view_status,
+      streetViewPath: row.street_view_storage_path,
+    });
+    if (preferred.path && preferred.source) {
+      preferredById.set(row.id, { path: preferred.path, source: preferred.source });
+      coverPaths.push(preferred.path);
+    }
+  }
+
   const [urlMap, nameById, mediaStatusByInspection] = await Promise.all([
     createSiteInspectionMediaSignedUrlMap(coverPaths, 600),
     resolveProfileNamesBatch(rows.flatMap((r) => [r.assigned_to, r.created_by])),
@@ -659,14 +876,16 @@ export async function listSiteInspections(options?: {
   ]);
 
   return rows.map((row) => {
-    const path = coverPathById.get(row.id);
+    const preferred = preferredById.get(row.id);
+    const coverSignedUrl = preferred ? (urlMap.get(preferred.path) ?? null) : null;
     const counts = mediaStatusByInspection.get(row.id) ?? { pending: 0, failed: 0 };
     return mapSummaryFromListRow(
       row,
-      path ? (urlMap.get(path) ?? null) : null,
+      coverSignedUrl,
       counts.pending,
       counts.failed,
       nameById,
+      coverSignedUrl ? preferred!.source : null,
     );
   });
 }
@@ -723,11 +942,23 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     if (poster) list.push(poster);
     return list;
   });
+  if (row.street_view_status === "available" && row.street_view_storage_path) {
+    paths.push(row.street_view_storage_path);
+  }
   const urlMap = await createSiteInspectionMediaSignedUrlMap(paths, 600);
   let coverSignedUrl: string | null = null;
-  if (row.cover_media_id) {
-    const cover = media.find((m) => m.id === row.cover_media_id);
-    if (cover?.storage_path) coverSignedUrl = urlMap.get(cover.storage_path) ?? null;
+  let coverSource: "photo" | "street_view" | null = null;
+  const photoPath = row.cover_media_id
+    ? (media.find((m) => m.id === row.cover_media_id)?.storage_path ?? null)
+    : null;
+  const preferred = preferredCover({
+    photoPath,
+    streetViewStatus: row.street_view_status,
+    streetViewPath: row.street_view_storage_path,
+  });
+  if (preferred.path) {
+    coverSignedUrl = urlMap.get(preferred.path) ?? null;
+    coverSource = coverSignedUrl ? preferred.source : null;
   }
 
   const summary = await mapSummary(
@@ -735,6 +966,7 @@ export async function getSiteInspection(id: string): Promise<SiteInspectionDetai
     coverSignedUrl,
     countMediaStatuses(media).pending,
     countMediaStatuses(media).failed,
+    coverSource,
   );
   const mappedMedia = media.map((m) => {
     const poster = resolvedPosterPath(m);

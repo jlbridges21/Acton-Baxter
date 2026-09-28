@@ -270,10 +270,20 @@ export function InspectionsListClient({
               >
                 {row.status === "complete" ? "Complete" : "Pending"}
               </span>
-              <div className="aspect-[16/10] bg-[var(--acton-gray-50)]">
+              <div className="relative aspect-[16/10] bg-[var(--acton-gray-50)]">
                 {row.coverSignedUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={row.coverSignedUrl} alt="" className="h-full w-full object-cover" />
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={row.coverSignedUrl} alt="" className="h-full w-full object-cover" />
+                    {row.coverSource === "street_view" ? (
+                      <span className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-white">
+                        Street View
+                        {row.streetViewCapturedOn
+                          ? ` · ${row.streetViewCapturedOn.slice(0, 4)}`
+                          : ""}
+                      </span>
+                    ) : null}
+                  </>
                 ) : (
                   <div className="flex h-full items-center justify-center text-xs text-[var(--acton-muted)]">
                     No cover photo yet
