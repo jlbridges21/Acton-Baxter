@@ -2,10 +2,12 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { InspectionsListClient } from "@/components/inspections/inspections-list-client";
+import { InspectionsPageClient } from "@/components/inspections/inspections-page-client";
 import { InspectionRunnerClient } from "@/components/inspections/inspection-runner-client";
 import type { SiteInspectionDetail, SiteInspectionSummary } from "@/lib/inspections/record-types";
+import { SITE_INSPECTION_VIEW_STORAGE_KEY } from "@/lib/inspections/view-preference";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -177,6 +179,118 @@ describe("Inspections UI at phone width", () => {
     expect(screen.getAllByText(/^Pending$/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Create New Site Inspection/i })).toBeTruthy();
     expect((container.firstElementChild as HTMLElement).style.width).toBe("375px");
+  });
+
+  it("switches to a compact list and keeps that choice after remount", async () => {
+    window.localStorage.clear();
+    const props = {
+      initialInspections: [summary],
+      jobs: [],
+      templates: [],
+      assignees: [],
+      currentUserId: "u1",
+      isAdmin: false,
+    };
+    const first = render(<InspectionsPageClient {...props} />);
+    const listButton = screen.getByRole("button", { name: "List view" });
+    const gridButton = screen.getByRole("button", { name: "Grid view" });
+    expect(gridButton.getAttribute("aria-pressed")).toBe("true");
+    expect(gridButton.className).toContain("bg-[var(--acton-navy)]");
+    expect(screen.queryByRole("table")).toBeNull();
+
+    fireEvent.click(listButton);
+    expect(listButton.getAttribute("aria-pressed")).toBe("true");
+    expect(listButton.className).toContain("bg-[var(--acton-navy)]");
+    expect(gridButton.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(window.localStorage.getItem(SITE_INSPECTION_VIEW_STORAGE_KEY)).toBe("list");
+    first.unmount();
+
+    render(<InspectionsPageClient {...props} />);
+    await waitFor(() => {
+      expect(screen.getByRole("table")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: "List view" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+
+  it("shows compact list fields, a placeholder thumbnail, and the same filters as the grid", () => {
+    const other: SiteInspectionSummary = {
+      ...summary,
+      id: "insp-2",
+      projectName: "Other House",
+      address: "9 Side St",
+      status: "complete",
+      assignedToName: "Alex",
+      completedItemCount: 0,
+      totalItemCount: 19,
+      coverSignedUrl: "data:image/jpeg;base64,abc",
+      coverSource: "photo",
+    };
+    const { rerender, container } = render(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient
+          initialInspections={[summary, other]}
+          jobs={[]}
+          templates={[]}
+          assignees={[]}
+          currentUserId="u1"
+          isAdmin={false}
+          view="grid"
+        />
+      </div>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Search by project"), {
+      target: { value: "Liniger" },
+    });
+    expect(screen.getByText("Liniger")).toBeTruthy();
+    expect(screen.queryByText("Other House")).toBeNull();
+
+    rerender(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient
+          initialInspections={[summary, other]}
+          jobs={[]}
+          templates={[]}
+          assignees={[]}
+          currentUserId="u1"
+          isAdmin={false}
+          view="list"
+        />
+      </div>,
+    );
+    expect(screen.queryByText("Other House")).toBeNull();
+    expect(screen.getAllByText("No cover photo yet").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("25 N Avalon").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Unassigned").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^Pending$/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 of 2 items/i).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("button", { name: "Delete inspection Liniger" }).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("columnheader", { name: "Project" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Address" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Assigned to" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Status" })).toBeTruthy();
+
+    const table = screen.getByRole("table");
+    expect(table.parentElement?.className).toContain("hidden");
+    expect(table.parentElement?.className).toContain("md:block");
+    expect(table.className).not.toContain("min-w-");
+    const mobile = screen.getByRole("list");
+    expect(mobile.className).toContain("md:hidden");
+    expect(container.innerHTML).not.toContain("overflow-x-auto");
+    expect(container.innerHTML).not.toContain("min-w-[");
+
+    fireEvent.change(screen.getByPlaceholderText("Search by project"), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "complete" } });
+    expect(screen.queryByText("Liniger")).toBeNull();
+    expect(screen.getAllByText("Other House").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Alex").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/0 of 19 items/i).length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("img").length).toBeGreaterThan(0);
   });
 
   it("labels a Street View cover and hides the tag when a photo is the cover", () => {

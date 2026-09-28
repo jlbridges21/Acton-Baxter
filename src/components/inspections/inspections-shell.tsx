@@ -48,7 +48,7 @@ export function InspectionsShell({
             <p className="mt-1 max-w-2xl text-sm text-[var(--acton-muted)]">{subtitle}</p>
           ) : null}
         </div>
-        {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+        {actions ? <div className="ml-auto flex flex-wrap justify-end gap-2">{actions}</div> : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[200px_minmax(0,1fr)]">
