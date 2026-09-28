@@ -336,7 +336,15 @@ function InspectionCover({
       {row.coverSignedUrl ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={row.coverSignedUrl} alt="" className="h-full w-full object-cover" />
+          <img
+            src={row.coverSignedUrl}
+            alt=""
+            className={
+              compact
+                ? "block h-12 max-h-12 w-16 max-w-16 object-cover"
+                : "h-full w-full object-cover"
+            }
+          />
           {row.coverSource === "street_view" ? (
             <span
               className={
@@ -514,17 +522,26 @@ function InspectionListRows({
     <>
       <div className="hidden overflow-hidden rounded-xl border border-[var(--acton-border)] bg-white shadow-sm md:block">
         <table className="w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col className="w-[5.5rem]" />
+            <col />
+            <col />
+            <col />
+            <col className="w-28" />
+            <col className="w-36" />
+            <col className="w-14" />
+          </colgroup>
           <thead className="border-b border-[var(--acton-border)] text-xs text-[var(--acton-muted)]">
             <tr>
-              <th className="w-16 py-2 pr-2 pl-3 font-medium">
-                <span className="sr-only">Cover</span>
+              <th className="w-[5.5rem] max-w-[5.5rem] overflow-hidden py-2 pl-3 font-medium">
+                <span className="sr-only">Thumbnail</span>
               </th>
-              <th className="w-[22%] py-2 pr-3 font-medium">Project</th>
-              <th className="w-[24%] py-2 pr-3 font-medium">Address</th>
-              <th className="w-[16%] py-2 pr-3 font-medium">Assigned to</th>
-              <th className="w-[12%] py-2 pr-3 font-medium">Status</th>
-              <th className="py-2 pr-3 font-medium">Progress</th>
-              <th className="w-12 py-2 pr-3 font-medium">
+              <th className="py-2 pr-3 font-medium">Project</th>
+              <th className="py-2 pr-3 font-medium">Address</th>
+              <th className="py-2 pr-3 font-medium">Assigned to</th>
+              <th className="w-28 py-2 pr-3 font-medium">Status</th>
+              <th className="w-36 py-2 pr-3 font-medium">Progress</th>
+              <th className="w-14 py-2 pr-3 font-medium">
                 <span className="sr-only">Delete</span>
               </th>
             </tr>
@@ -532,12 +549,12 @@ function InspectionListRows({
           <tbody>
             {rows.map((row) => (
               <tr key={row.id} className="border-b border-[var(--acton-border)] last:border-0">
-                <td className="py-2 pr-2 pl-3">
-                  <Link href={`/inspections/${row.id}`} className="block">
+                <td className="w-[5.5rem] max-w-[5.5rem] overflow-hidden py-2 pl-3 align-middle">
+                  <Link href={`/inspections/${row.id}`} className="block w-16 max-w-full">
                     <InspectionCover row={row} compact />
                   </Link>
                 </td>
-                <td className="py-2 pr-3">
+                <td className="max-w-0 overflow-hidden py-2 pr-3 align-middle">
                   <Link
                     href={`/inspections/${row.id}`}
                     className="block truncate font-semibold text-[var(--acton-navy)] hover:underline"
@@ -545,18 +562,20 @@ function InspectionListRows({
                     {row.projectName}
                   </Link>
                 </td>
-                <td className="truncate py-2 pr-3 text-[var(--acton-muted)]">{row.address}</td>
-                <td className="truncate py-2 pr-3 text-[var(--acton-muted)]">
+                <td className="max-w-0 truncate overflow-hidden py-2 pr-3 align-middle text-[var(--acton-muted)]">
+                  {row.address}
+                </td>
+                <td className="max-w-0 truncate overflow-hidden py-2 pr-3 align-middle text-[var(--acton-muted)]">
                   {row.assignedToName ?? "Unassigned"}
                 </td>
-                <td className="py-2 pr-3">
+                <td className="w-28 overflow-hidden py-2 pr-3 align-middle">
                   <StatusBadge status={row.status} />
                 </td>
-                <td className="py-2 pr-3 text-xs font-medium text-[var(--acton-navy)]">
-                  <p>{progressLabel(row)}</p>
+                <td className="w-36 overflow-hidden py-2 pr-3 align-middle text-xs font-medium text-[var(--acton-navy)]">
+                  <p className="truncate">{progressLabel(row)}</p>
                   <UploadNotes row={row} />
                 </td>
-                <td className="py-2 pr-3">
+                <td className="w-14 overflow-hidden py-2 pr-2 align-middle">
                   {canDelete(row) ? <DeleteInspectionButton row={row} onDelete={onDelete} /> : null}
                 </td>
               </tr>
@@ -569,11 +588,13 @@ function InspectionListRows({
         {rows.map((row) => (
           <li
             key={row.id}
-            className="flex items-start gap-2 rounded-lg border border-[var(--acton-border)] bg-white p-2 shadow-sm"
+            className="flex items-start gap-2 overflow-hidden rounded-lg border border-[var(--acton-border)] bg-white p-2 shadow-sm"
           >
-            <Link href={`/inspections/${row.id}`} className="flex min-w-0 flex-1 gap-2">
-              <InspectionCover row={row} compact />
-              <div className="min-w-0 space-y-0.5">
+            <Link href={`/inspections/${row.id}`} className="flex min-w-0 flex-1 items-start gap-3">
+              <span className="block h-12 w-16 shrink-0 overflow-hidden">
+                <InspectionCover row={row} compact />
+              </span>
+              <div className="min-w-0 flex-1 space-y-0.5">
                 <p className="truncate text-sm font-semibold text-[var(--acton-navy)]">
                   {row.projectName}
                 </p>

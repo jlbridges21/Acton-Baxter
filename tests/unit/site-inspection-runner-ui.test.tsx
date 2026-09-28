@@ -325,6 +325,81 @@ describe("Inspections UI at phone width", () => {
     expect(screen.queryByText("No cover photo yet")).toBeNull();
   });
 
+  it("keeps each list thumbnail in a fixed first column so project names stay visible", () => {
+    const longName = "CHECHETENKO";
+    const { container } = render(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient
+          initialInspections={[
+            { ...summary, id: "placeholder", projectName: longName, coverSignedUrl: null },
+            {
+              ...summary,
+              id: "wide",
+              projectName: "Wide Source",
+              coverSignedUrl: "data:image/jpeg;base64,wide",
+            },
+            {
+              ...summary,
+              id: "tall",
+              projectName: "Tall Source",
+              coverSignedUrl: "data:image/jpeg;base64,tall",
+            },
+          ]}
+          jobs={[]}
+          templates={[]}
+          assignees={[]}
+          currentUserId="u1"
+          isAdmin={false}
+          view="list"
+        />
+      </div>,
+    );
+
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers).toHaveLength(7);
+    expect(headers[0]?.className).toContain("w-[5.5rem]");
+    expect(headers.map((header) => header.textContent?.trim())).toEqual([
+      "Thumbnail",
+      "Project",
+      "Address",
+      "Assigned to",
+      "Status",
+      "Progress",
+      "Delete",
+    ]);
+
+    const bodyRows = screen.getByRole("table").querySelectorAll("tbody tr");
+    expect(bodyRows).toHaveLength(3);
+
+    const placeholderCells = bodyRows[0]?.querySelectorAll("td");
+    expect(placeholderCells).toHaveLength(7);
+    expect(placeholderCells?.[0]?.textContent).toContain("No cover photo yet");
+    expect(placeholderCells?.[0]?.textContent).not.toContain(longName);
+    expect(placeholderCells?.[0]?.className).toContain("w-[5.5rem]");
+    expect(placeholderCells?.[0]?.className).toContain("overflow-hidden");
+    expect(placeholderCells?.[1]?.textContent).toContain(longName);
+    expect(placeholderCells?.[1]?.querySelector("a")?.className).toContain("truncate");
+
+    for (const row of [bodyRows[1], bodyRows[2]]) {
+      const cells = row?.querySelectorAll("td");
+      const img = cells?.[0]?.querySelector("img");
+      expect(img?.className).toContain("h-12");
+      expect(img?.className).toContain("w-16");
+      expect(img?.className).toContain("max-w-16");
+      expect(img?.className).toContain("object-cover");
+      expect(cells?.[0]?.contains(img ?? null)).toBe(true);
+      expect(cells?.[1]?.querySelector("img")).toBeNull();
+    }
+
+    const mobileThumb = container.querySelector("ul.md\\:hidden span");
+    expect(mobileThumb?.className).toContain("w-16");
+    expect(mobileThumb?.className).toContain("shrink-0");
+    expect(mobileThumb?.className).toContain("overflow-hidden");
+    expect(mobileThumb?.textContent).not.toContain(longName);
+    expect(container.innerHTML).not.toContain("overflow-x-auto");
+    expect(container.innerHTML).not.toContain("min-w-[");
+  });
+
   it("runner shows internal guide notes, progress, photo/video attach, export, and complete", () => {
     render(
       <div style={{ width: 375 }}>
