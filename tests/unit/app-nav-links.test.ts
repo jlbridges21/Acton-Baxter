@@ -13,6 +13,7 @@ const EMPLOYEE_NAV = [
   "New Project Setup",
   "Receipt Log",
   "Site Inspections",
+  "Inventory",
   "Property Research",
   "Customer Center",
   "Integrations",
@@ -97,6 +98,7 @@ describe("getAdminNavSections", () => {
       "Expense Jobs",
       "Receipt Log",
       "Site Inspections",
+      "Inventory",
       "New Project Setup",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([

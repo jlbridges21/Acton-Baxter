@@ -4,6 +4,7 @@ import {
   ClipboardList,
   FolderKanban,
   LayoutDashboard,
+  Package,
   Plug,
   Receipt,
   Search,
@@ -67,6 +68,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "Site Inspections",
       icon: ClipboardCheck,
       match: (pathname) => pathname.startsWith("/inspections"),
+    },
+    {
+      href: "/inventory",
+      label: "Inventory",
+      icon: Package,
+      match: (pathname) => pathname === "/inventory" || pathname.startsWith("/inventory/"),
     },
     {
       href: "/dashboard",

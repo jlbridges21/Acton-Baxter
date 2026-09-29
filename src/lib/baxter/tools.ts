@@ -6,6 +6,7 @@ import {
   ClipboardList,
   FolderKanban,
   House,
+  Package,
   Receipt,
   UsersRound,
 } from "lucide-react";
@@ -130,6 +131,17 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     ctaLabel: "Open Knowledge Center",
     aliases: ["knowledge", "knowledge center", "knowledge base", "wiki"],
   },
+  {
+    key: "inventory",
+    name: "Inventory",
+    description: "Track ordered items and whether they are still in the office or out on a job.",
+    href: "/inventory",
+    createHref: "/inventory",
+    enabled: true,
+    icon: Package,
+    ctaLabel: "Open Inventory",
+    aliases: ["inventory", "materials", "build.com", "shop", "storage"],
+  },
 ];
 
 /** Admin-only platform cards (not employee tools). */
@@ -172,6 +184,7 @@ export type NavContext =
   | "customer-dossier"
   | "knowledge"
   | "site-inspections"
+  | "inventory"
   | "platform-admin";
 
 export function getNavContext(pathname: string): NavContext {
@@ -193,6 +206,9 @@ export function getNavContext(pathname: string): NavContext {
   }
   if (pathname.startsWith("/inspections")) {
     return "site-inspections";
+  }
+  if (pathname.startsWith("/inventory")) {
+    return "inventory";
   }
   if (pathname.startsWith("/receipts")) {
     return "platform";

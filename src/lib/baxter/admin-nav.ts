@@ -9,6 +9,7 @@ import {
   FolderKanban,
   Landmark,
   LayoutDashboard,
+  Package,
   MessageSquare,
   MessageCircle,
   Palette,
@@ -92,6 +93,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Site Inspections",
       icon: ClipboardCheck,
       match: (pathname) => pathname.startsWith("/inspections"),
+    },
+    {
+      href: "/inventory",
+      label: "Inventory",
+      icon: Package,
+      match: (pathname) => pathname === "/inventory" || pathname.startsWith("/inventory/"),
     },
     {
       href: "/projects/setup",
@@ -179,6 +186,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Project Setup Settings",
       icon: FolderKanban,
       match: (pathname) => pathname.startsWith("/admin/project-setup"),
+    },
+    {
+      href: "/admin/inventory-settings",
+      label: "Inventory settings",
+      icon: Package,
+      match: (pathname) => pathname.startsWith("/admin/inventory-settings"),
     },
     {
       href: "/admin/settings",
