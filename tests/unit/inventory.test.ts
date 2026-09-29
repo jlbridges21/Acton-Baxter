@@ -17,6 +17,7 @@ import {
   deleteInventoryVocab,
   listInventoryVocab,
   queryInventory,
+  softDeleteInventoryItems,
   rememberInventoryJobLabelForTests,
   resetInventoryMemoryForTests,
   type InventoryItemInput,
@@ -337,5 +338,41 @@ describe("inventory RLS migration", () => {
     expect(sql).not.toMatch(
       /inventory_statuses for (insert|update|delete)[\s\S]{0,80}is_app_access/,
     );
+  });
+
+  it("batches photo signing for the visible page and checks delete permission on the server", () => {
+    const page = readFileSync(path.join(process.cwd(), "src/app/inventory/page.tsx"), "utf8");
+    const files = readFileSync(
+      path.join(process.cwd(), "src/lib/inventory/order-files.ts"),
+      "utf8",
+    );
+    const bulkDelete = readFileSync(
+      path.join(process.cwd(), "src/app/api/inventory/delete/route.ts"),
+      "utf8",
+    );
+    const singleDelete = readFileSync(
+      path.join(process.cwd(), "src/app/api/inventory/[id]/route.ts"),
+      "utf8",
+    );
+    expect(page).toContain("signInventoryFiles(");
+    expect(page).not.toContain("signInventoryFile(");
+    expect(files).toContain("createSignedUrls");
+    expect(bulkDelete).toContain("requireActiveUser");
+    expect(singleDelete).toContain("await requireActiveUser()");
+  });
+
+  it("soft-deletes items out of the table, filters, and export without removing an order", async () => {
+    const first = await createInventoryItem(baseInput({ itemName: "Faucet", sku: "A" }));
+    const second = await createInventoryItem(baseInput({ itemName: "Valve", sku: "B" }));
+    await createInventoryItem(baseInput({ itemName: "Keep", sku: "C" }));
+    await softDeleteInventoryItems([first.id, second.id], ACTOR);
+    const listed = await queryInventory(emptyInventoryFilters());
+    expect(listed.rows.map((row) => row.sku)).toEqual(["C"]);
+    expect(listed.total).toBe(1);
+    const filtered = await queryInventory({ ...emptyInventoryFilters(), q: "Faucet" });
+    expect(filtered.total).toBe(0);
+    expect(buildInventoryCsv(listed.rows)).not.toContain("Faucet");
+    expect(buildInventoryCsv(listed.rows)).toContain("Keep");
+    await expect(softDeleteInventoryItems([first.id], ACTOR)).rejects.toThrow(/no matching/i);
   });
 });

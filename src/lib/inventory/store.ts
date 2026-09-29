@@ -15,10 +15,12 @@ import {
   type InventoryVocabValue,
 } from "./types";
 
+type MemoryItem = InventoryItem & { deletedAt: string | null };
+
 type Memory = {
   statuses: InventoryVocabValue[];
   storage: InventoryVocabValue[];
-  items: InventoryItem[];
+  items: MemoryItem[];
   jobLabels: Map<string, string>;
 };
 
@@ -272,7 +274,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<In
   );
 
   if (shouldUseMemory()) {
-    memory().items.push(row);
+    memory().items.push({ ...row, deletedAt: null });
     return row;
   }
 
@@ -349,7 +351,9 @@ export async function updateInventoryItem(
   if (!next.sku) throw new ValidationError("SKU is required");
 
   if (shouldUseMemory()) {
-    memory().items = memory().items.map((item) => (item.id === id ? next : item));
+    memory().items = memory().items.map((item) =>
+      item.id === id ? { ...next, deletedAt: item.deletedAt } : item,
+    );
     return next;
   }
   const supabase = createServiceClient();
@@ -390,7 +394,11 @@ export async function getInventoryItem(id: string): Promise<InventoryItem> {
 }
 
 export async function listAllInventoryItems(): Promise<InventoryItem[]> {
-  if (shouldUseMemory()) return memory().items.filter((item) => item.id);
+  if (shouldUseMemory()) {
+    return memory()
+      .items.filter((item) => !item.deletedAt)
+      .map(({ deletedAt: _deletedAt, ...item }) => item);
+  }
   const supabase = createServiceClient();
   const [{ data, error }, statuses, storage, jobs] = await Promise.all([
     supabase.from("inventory_items").select("*").is("deleted_at", null),
@@ -473,12 +481,13 @@ export async function bulkUpdateInventoryItems(input: {
     const statuses = await listInventoryVocab("status");
     const storage = await listInventoryVocab("storage");
     memory().items = memory().items.map((item) => {
-      if (!idSet.has(item.id)) return item;
+      if (!idSet.has(item.id) || item.deletedAt) return item;
       const patched = applyInventoryBulkPatch(item, input.patch);
       const status = statuses.find((value) => value.id === patched.statusId);
       const state = storage.find((value) => value.id === patched.storageStateId);
       return {
         ...patched,
+        deletedAt: null,
         statusLabel: status?.label ?? patched.statusLabel,
         storageLabel: state?.label ?? (patched.storageStateId ? patched.storageLabel : null),
         updatedBy: input.actorId,
@@ -510,22 +519,39 @@ export async function bulkUpdateInventoryItems(input: {
 }
 
 export async function softDeleteInventoryItem(id: string, actorId: string): Promise<void> {
-  await getInventoryItem(id);
+  await softDeleteInventoryItems([id], actorId);
+}
+
+export async function softDeleteInventoryItems(ids: string[], actorId: string): Promise<number> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) throw new ValidationError("Select at least one item");
+  const stamp = nowIso();
   if (shouldUseMemory()) {
-    memory().items = memory().items.filter((item) => item.id !== id);
-    return;
+    let count = 0;
+    memory().items = memory().items.map((item) => {
+      if (!unique.includes(item.id) || item.deletedAt) return item;
+      count += 1;
+      return { ...item, deletedAt: stamp, updatedBy: actorId, updatedAt: stamp };
+    });
+    if (!count) throw new NotFoundError("No matching inventory items");
+    return count;
   }
   const supabase = createServiceClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("inventory_items")
-    .update({ deleted_at: nowIso(), updated_by: actorId, updated_at: nowIso() })
-    .eq("id", id);
+    .update({ deleted_at: stamp, updated_by: actorId, updated_at: stamp })
+    .in("id", unique)
+    .is("deleted_at", null)
+    .select("id");
   if (error) throw error;
+  if (!data?.length) throw new NotFoundError("No matching inventory items");
+  return data.length;
 }
 
 function referenceCount(kind: InventoryVocabKind, id: string): number {
-  return memory().items.filter((item) =>
-    kind === "status" ? item.statusId === id : item.storageStateId === id,
+  return memory().items.filter(
+    (item) =>
+      !item.deletedAt && (kind === "status" ? item.statusId === id : item.storageStateId === id),
   ).length;
 }
 

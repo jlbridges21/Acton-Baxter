@@ -21,6 +21,7 @@ import {
   queryInventory,
   rememberInventoryJobLabelForTests,
   resetInventoryMemoryForTests,
+  softDeleteInventoryItems,
 } from "@/lib/inventory/store";
 
 const SAMPLE = path.join(process.cwd(), "tests/fixtures/build-com-dev-order.pdf");
@@ -304,6 +305,11 @@ describe("import review and commit", () => {
       }),
     ).rejects.toThrow(/already imported/i);
 
+    await softDeleteInventoryItems(
+      (await queryInventory(emptyInventoryFilters())).rows.map((row) => row.id),
+      "user-1",
+    );
+    expect((await queryInventory(emptyInventoryFilters())).total).toBe(0);
     const file = await readInventoryOrderPdf(committed.orderId);
     expect(file?.bytes.subarray(0, 5).toString()).toBe("%PDF-");
     expect(file?.bytes.equals(pdf)).toBe(true);

@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
-import { ExternalLink, Pencil, Plus } from "lucide-react";
+import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ExternalLink, Image as ImageIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { Button } from "@/components/ui/button";
 import {
+  ConfirmDialog,
   Dialog,
   DialogBody,
   DialogDescription,
@@ -14,7 +14,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { buildInventoryQuery } from "@/lib/inventory/filters";
+import { applyInventoryBulkPatch, type InventoryBulkPatch } from "@/lib/inventory/bulk";
+import {
+  buildInventoryQuery,
+  itemMatchesFilters,
+  sortInventoryItems,
+} from "@/lib/inventory/filters";
+import { parseInventoryUnitCostToCents } from "@/lib/inventory/money";
+import {
+  getInventoryThumbSize,
+  getServerInventoryThumbSize,
+  INVENTORY_THUMB_CLASS,
+  INVENTORY_THUMB_SIZES,
+  setInventoryThumbSize,
+  subscribeInventoryThumbSize,
+  type InventoryThumbSize,
+} from "@/lib/inventory/thumb-size";
 import {
   INVENTORY_SORT_KEYS,
   type InventoryFilterState,
@@ -63,6 +78,55 @@ const SORT_LABELS: Record<InventorySortKey, string> = {
 
 function money(cents: number) {
   return `$${formatCentsAsDecimalDollars(cents)}`;
+}
+
+type TableView = {
+  scope: string;
+  rows: InventoryItem[];
+  total: number;
+  matchingIds: string[];
+};
+
+function viewScope(filters: InventoryFilterState) {
+  return JSON.stringify(filters);
+}
+
+function placeItem(
+  current: TableView,
+  next: InventoryItem,
+  filters: InventoryFilterState,
+): TableView {
+  const visible = itemMatchesFilters(next, filters);
+  const had = current.matchingIds.includes(next.id);
+  const rest = current.rows.filter((row) => row.id !== next.id);
+  return {
+    ...current,
+    rows: visible ? sortInventoryItems([...rest, next], filters.sort, filters.dir) : rest,
+    matchingIds: visible
+      ? [...current.matchingIds.filter((id) => id !== next.id), next.id]
+      : current.matchingIds.filter((id) => id !== next.id),
+    total: current.total + (visible ? 1 : 0) - (had ? 1 : 0),
+  };
+}
+
+function replaceItem(
+  current: TableView,
+  tempId: string,
+  saved: InventoryItem,
+  filters: InventoryFilterState,
+): TableView {
+  const visible = itemMatchesFilters(saved, filters);
+  const had = current.matchingIds.includes(tempId);
+  const rest = current.rows.filter((row) => row.id !== tempId && row.id !== saved.id);
+  return {
+    ...current,
+    rows: visible ? sortInventoryItems([...rest, saved], filters.sort, filters.dir) : rest,
+    matchingIds: [
+      ...current.matchingIds.filter((id) => id !== tempId && id !== saved.id),
+      ...(visible ? [saved.id] : []),
+    ],
+    total: current.total + (visible ? 1 : 0) - (had ? 1 : 0),
+  };
 }
 
 function todayInputValue() {
@@ -153,16 +217,54 @@ async function readError(response: Response) {
 }
 
 export function InventoryClient(props: Props) {
-  const router = useRouter();
+  const thumbSize = useSyncExternalStore(
+    subscribeInventoryThumbSize,
+    getInventoryThumbSize,
+    getServerInventoryThumbSize,
+  );
+  const scope = viewScope(props.filters);
+  const [view, setView] = useState<TableView>({
+    scope,
+    rows: props.rows,
+    total: props.total,
+    matchingIds: props.matchingIds,
+  });
+  if (view.scope !== scope) {
+    setView({
+      scope,
+      rows: props.rows,
+      total: props.total,
+      matchingIds: props.matchingIds,
+    });
+  }
+  const table =
+    view.scope === scope
+      ? view
+      : { scope, rows: props.rows, total: props.total, matchingIds: props.matchingIds };
+  const snapshot = useRef<TableView | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedScope, setSelectedScope] = useState(scope);
+  if (selectedScope !== scope) {
+    setSelectedScope(scope);
+    setSelected(new Set());
+  }
   const [editor, setEditor] = useState<InventoryItem | "new" | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const visibleIds = props.rows.map((row) => row.id);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<{ url: string; name: string } | null>(null);
+  const visibleIds = table.rows.map((row) => row.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someVisibleSelected = visibleIds.some((id) => selected.has(id));
   const selectedCount = selected.size;
-  const canSelectRest = props.matchingIds.some((id) => !selected.has(id));
+  const canSelectRest = table.matchingIds.some((id) => !selected.has(id));
+  const singleSelected = table.rows.find((row) => selected.has(row.id));
+  const deleteTitle =
+    selectedCount === 1 && singleSelected
+      ? `Delete ${singleSelected.itemName}?`
+      : `Delete ${selectedCount} item${selectedCount === 1 ? "" : "s"}?`;
 
   function toggleVisible() {
     setSelected((current) => {
@@ -185,6 +287,47 @@ export function InventoryClient(props: Props) {
     });
   }
 
+  function remember(current: TableView) {
+    snapshot.current = current;
+    return current;
+  }
+
+  async function confirmDelete() {
+    const ids = [...selected];
+    setDeleteError(null);
+    setDeleteBusy(true);
+    let previous: TableView | null = null;
+    setView((current) => {
+      previous = current;
+      const removed = current.matchingIds.filter((id) => selected.has(id)).length;
+      return {
+        ...current,
+        rows: current.rows.filter((row) => !selected.has(row.id)),
+        matchingIds: current.matchingIds.filter((id) => !selected.has(id)),
+        total: Math.max(0, current.total - removed),
+      };
+    });
+    try {
+      const response = await fetch("/api/inventory/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!response.ok) {
+        if (previous) setView(previous);
+        setDeleteError(await readError(response));
+        return;
+      }
+      setSelected(new Set());
+      setDeleteOpen(false);
+    } catch {
+      if (previous) setView(previous);
+      setDeleteError("Could not delete those items");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   const query = buildInventoryQuery(props.filters);
   const exportHref = `/inventory/export${query}`;
 
@@ -194,7 +337,7 @@ export function InventoryClient(props: Props) {
         <div>
           <h1 className="text-2xl font-semibold text-[var(--acton-navy)]">Inventory</h1>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            {props.total} item{props.total === 1 ? "" : "s"}
+            {table.total} item{table.total === 1 ? "" : "s"}
             {selectedCount ? ` · ${selectedCount} selected` : ""}
           </p>
         </div>
@@ -225,34 +368,74 @@ export function InventoryClient(props: Props) {
 
       <FilterPanel {...props} />
 
-      {selectedCount > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm">
-          <span className="font-semibold text-[var(--acton-navy)]">{selectedCount} selected</span>
-          {canSelectRest ? (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm">
+        {selectedCount > 0 ? (
+          <>
+            <span className="font-semibold text-[var(--acton-navy)]">{selectedCount} selected</span>
+            {canSelectRest ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => setSelected(new Set(table.matchingIds))}
+              >
+                Select all {table.total} matching
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelected(new Set())}
+              >
+                Clear selection
+              </Button>
+            )}
             <Button
               type="button"
               size="sm"
-              variant="secondary"
-              onClick={() => setSelected(new Set(props.matchingIds))}
+              aria-label="Edit selected"
+              onClick={() => setBulkOpen(true)}
             >
-              Select all {props.total} matching
+              <Pencil className="h-4 w-4" aria-hidden />
+              Edit
             </Button>
-          ) : (
-            <Button type="button" size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
-              Clear selection
+            <Button
+              type="button"
+              size="sm"
+              variant="danger"
+              aria-label="Delete selected"
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden />
+              Delete
             </Button>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            aria-label="Edit selected"
-            onClick={() => setBulkOpen(true)}
-          >
-            <Pencil className="h-4 w-4" aria-hidden />
-            Edit
-          </Button>
+          </>
+        ) : (
+          <span className="text-[var(--acton-muted)]">Select items to edit or delete</span>
+        )}
+        <div className="ml-auto flex items-center gap-1" role="group" aria-label="Thumbnail size">
+          {INVENTORY_THUMB_SIZES.map((size) => (
+            <Button
+              key={size}
+              type="button"
+              size="sm"
+              variant={thumbSize === size ? "secondary" : "ghost"}
+              aria-label={`${size.charAt(0).toUpperCase()}${size.slice(1)} thumbnails`}
+              aria-pressed={thumbSize === size}
+              onClick={() => setInventoryThumbSize(size)}
+            >
+              <ImageIcon
+                className={size === "small" ? "h-3 w-3" : size === "medium" ? "h-4 w-4" : "h-5 w-5"}
+                aria-hidden
+              />
+            </Button>
+          ))}
         </div>
-      ) : null}
+      </div>
 
       <div className="hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block">
         <table className="w-full min-w-[72rem] text-left text-xs">
@@ -282,7 +465,7 @@ export function InventoryClient(props: Props) {
             </tr>
           </thead>
           <tbody>
-            {props.rows.length === 0 ? (
+            {table.rows.length === 0 ? (
               <tr>
                 <td
                   colSpan={18}
@@ -292,7 +475,7 @@ export function InventoryClient(props: Props) {
                 </td>
               </tr>
             ) : (
-              props.rows.map((row) => (
+              table.rows.map((row) => (
                 <tr
                   key={row.id}
                   className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
@@ -333,14 +516,12 @@ export function InventoryClient(props: Props) {
                   <Cell>{row.outDate}</Cell>
                   <Cell>{row.notes}</Cell>
                   <td className="px-2 py-1" onClick={(event) => event.stopPropagation()}>
-                    {row.photoUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={row.photoUrl}
-                        alt=""
-                        className="h-8 max-h-8 w-10 max-w-10 object-cover"
-                      />
-                    ) : null}
+                    <PhotoThumb
+                      url={row.photoUrl}
+                      name={row.itemName}
+                      size={thumbSize}
+                      onOpen={(url, name) => setPhoto({ url, name })}
+                    />
                   </td>
                   <td className="px-2 py-1" onClick={(event) => event.stopPropagation()}>
                     {row.productUrl ? (
@@ -363,12 +544,12 @@ export function InventoryClient(props: Props) {
       </div>
 
       <ul className="space-y-2 md:hidden" data-testid="inventory-cards">
-        {props.rows.length === 0 ? (
+        {table.rows.length === 0 ? (
           <li className="rounded-md border border-[var(--acton-border)] bg-white px-3 py-6 text-center text-sm text-[var(--acton-muted)]">
             No items match these filters.
           </li>
         ) : (
-          props.rows.map((row) => (
+          table.rows.map((row) => (
             <li
               key={row.id}
               className="overflow-hidden rounded-md border border-[var(--acton-border)] bg-white"
@@ -381,14 +562,12 @@ export function InventoryClient(props: Props) {
                   checked={selected.has(row.id)}
                   onChange={() => toggleRow(row.id)}
                 />
-                {row.photoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={row.photoUrl}
-                    alt=""
-                    className="h-12 w-16 shrink-0 overflow-hidden object-cover"
-                  />
-                ) : null}
+                <PhotoThumb
+                  url={row.photoUrl}
+                  name={row.itemName}
+                  size={thumbSize}
+                  onOpen={(url, name) => setPhoto({ url, name })}
+                />
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left"
@@ -454,9 +633,15 @@ export function InventoryClient(props: Props) {
         storageStates={props.storageStates}
         jobs={props.jobs}
         onClose={() => setEditor(null)}
-        onSaved={() => {
+        onOptimistic={(next) => {
+          setView((current) => placeItem(remember(current), next, props.filters));
+        }}
+        onRollback={() => {
+          if (snapshot.current) setView(snapshot.current);
+        }}
+        onCommitted={(saved, tempId) => {
+          setView((current) => replaceItem(current, tempId, saved, props.filters));
           setEditor(null);
-          router.refresh();
         }}
       />
       <BulkDialog
@@ -465,13 +650,101 @@ export function InventoryClient(props: Props) {
         statuses={props.statuses}
         storageStates={props.storageStates}
         onClose={() => setBulkOpen(false)}
+        onPreview={(patch) => {
+          setView((current) => {
+            snapshot.current = current;
+            return {
+              ...current,
+              rows: current.rows.map((row) =>
+                selected.has(row.id)
+                  ? labeledBulk(row, patch, props.statuses, props.storageStates)
+                  : row,
+              ),
+            };
+          });
+        }}
+        onRollback={() => {
+          if (snapshot.current) setView(snapshot.current);
+        }}
         onSaved={() => {
           setBulkOpen(false);
           setSelected(new Set());
-          router.refresh();
         }}
       />
+      <ConfirmDialog
+        open={deleteOpen}
+        onClose={() => {
+          if (!deleteBusy) setDeleteOpen(false);
+        }}
+        onConfirm={() => void confirmDelete()}
+        title={deleteTitle}
+        description={
+          deleteError ??
+          "This removes the selection from the inventory list. An imported order and its PDF stay on file."
+        }
+        confirmLabel={selectedCount === 1 ? "Delete item" : "Delete items"}
+        destructive
+        busy={deleteBusy}
+      />
+      <Dialog open={photo !== null} onClose={() => setPhoto(null)} size="lg">
+        <DialogHeader>
+          <DialogTitle>{photo?.name ?? "Photo"}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {photo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={photo.url} alt={photo.name} className="max-h-[70vh] w-full object-contain" />
+          ) : null}
+        </DialogBody>
+      </Dialog>
     </div>
+  );
+}
+
+function labeledBulk(
+  row: InventoryItem,
+  patch: InventoryBulkPatch,
+  statuses: InventoryVocabValue[],
+  storageStates: InventoryVocabValue[],
+): InventoryItem {
+  const next = applyInventoryBulkPatch(row, patch);
+  const status = statuses.find((value) => value.id === next.statusId);
+  const storage = storageStates.find((value) => value.id === next.storageStateId);
+  return {
+    ...next,
+    statusLabel: status?.label ?? next.statusLabel,
+    storageLabel: next.storageStateId ? (storage?.label ?? next.storageLabel) : null,
+  };
+}
+
+function PhotoThumb({
+  url,
+  name,
+  size,
+  onOpen,
+}: {
+  url: string | null;
+  name: string;
+  size: InventoryThumbSize;
+  onOpen: (url: string, name: string) => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const box = `${INVENTORY_THUMB_CLASS[size]} shrink-0 overflow-hidden rounded`;
+  if (!url || failed) {
+    return (
+      <div
+        className={`${box} flex items-center justify-center border border-dashed border-[var(--acton-border)] bg-[var(--acton-gray-50)] px-0.5 text-center text-[10px] leading-tight text-[var(--acton-muted)]`}
+        aria-label={`No photo for ${name}`}
+      >
+        No photo
+      </div>
+    );
+  }
+  return (
+    <button type="button" aria-label={`View photo of ${name}`} onClick={() => onOpen(url, name)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="" className={`${box} object-cover`} onError={() => setFailed(true)} />
+    </button>
   );
 }
 
@@ -629,6 +902,7 @@ function ProjectField({
     <div className="relative">
       <Input
         aria-label="Project"
+        required
         value={query}
         placeholder="Search the shared project list"
         onChange={(event) => {
@@ -677,6 +951,76 @@ function ProjectField({
   );
 }
 
+function RequiredMark() {
+  return (
+    <abbr title="required" className="text-red-700 no-underline">
+      *
+    </abbr>
+  );
+}
+
+function validateDraft(draft: ItemDraft): string | null {
+  if (!draft.itemName.trim()) return "Item name is required";
+  if (!draft.sku.trim()) return "SKU is required";
+  if (!draft.quantity.trim()) return "Quantity is required";
+  const quantity = Number.parseInt(draft.quantity, 10);
+  if (!Number.isInteger(quantity) || quantity < 1) return "Quantity must be at least 1";
+  try {
+    parseInventoryUnitCostToCents(draft.unitCost);
+  } catch (error) {
+    return error instanceof Error ? error.message : "Unit cost is required";
+  }
+  if (!draft.statusId) return "Status is required";
+  if (!draft.jobId && !draft.customProjectLabel.trim()) return "Project is required";
+  return null;
+}
+
+function itemFromDraft(
+  draft: ItemDraft,
+  id: string,
+  existing: InventoryItem | null,
+  statuses: InventoryVocabValue[],
+  storageStates: InventoryVocabValue[],
+  jobs: InventoryJobOption[],
+): InventoryItem {
+  const quantity = Number.parseInt(draft.quantity, 10);
+  const unitCostCents = parseInventoryUnitCostToCents(draft.unitCost);
+  const status = statuses.find((value) => value.id === draft.statusId);
+  const storage = storageStates.find((value) => value.id === draft.storageStateId);
+  const job = jobs.find((value) => value.id === draft.jobId);
+  const now = new Date().toISOString();
+  return {
+    id,
+    orderId: existing?.orderId ?? null,
+    jobId: draft.jobId || null,
+    customProjectLabel: draft.customProjectLabel.trim() || null,
+    projectLabel: job?.label || draft.customProjectLabel.trim(),
+    vendor: draft.vendor.trim() || null,
+    orderNumber: draft.orderNumber.trim() || null,
+    category: draft.category.trim() || null,
+    itemName: draft.itemName.trim(),
+    description: draft.description.trim() || null,
+    sku: draft.sku.trim(),
+    quantity,
+    unitCostCents,
+    totalCostCents: quantity * unitCostCents,
+    productUrl: draft.productUrl.trim() || null,
+    photoUrl: draft.photoUrl.trim() || existing?.photoUrl || null,
+    photoStoragePath: existing?.photoStoragePath ?? null,
+    statusId: draft.statusId,
+    statusLabel: status?.label ?? existing?.statusLabel ?? "",
+    storageStateId: draft.storageStateId || null,
+    storageLabel: draft.storageStateId ? (storage?.label ?? existing?.storageLabel ?? null) : null,
+    deliveryDate: draft.deliveryDate || null,
+    outDate: draft.outDate || null,
+    notes: draft.notes.trim() || null,
+    createdBy: existing?.createdBy ?? null,
+    updatedBy: existing?.updatedBy ?? null,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
 function ItemDialog({
   open,
   item,
@@ -684,7 +1028,9 @@ function ItemDialog({
   storageStates,
   jobs,
   onClose,
-  onSaved,
+  onOptimistic,
+  onRollback,
+  onCommitted,
 }: {
   open: boolean;
   item: InventoryItem | null;
@@ -692,7 +1038,9 @@ function ItemDialog({
   storageStates: InventoryVocabValue[];
   jobs: InventoryJobOption[];
   onClose: () => void;
-  onSaved: () => void;
+  onOptimistic: (next: InventoryItem) => void;
+  onRollback: () => void;
+  onCommitted: (saved: InventoryItem, tempId: string) => void;
 }) {
   const draftKey = item?.id ?? "new";
 
@@ -706,7 +1054,9 @@ function ItemDialog({
         jobs={jobs}
         initial={item ? draftFromItem(item) : emptyDraft(statuses)}
         onClose={onClose}
-        onSaved={onSaved}
+        onOptimistic={onOptimistic}
+        onRollback={onRollback}
+        onCommitted={onCommitted}
       />
     </Dialog>
   );
@@ -719,7 +1069,9 @@ function ItemDialogForm({
   jobs,
   initial,
   onClose,
-  onSaved,
+  onOptimistic,
+  onRollback,
+  onCommitted,
 }: {
   item: InventoryItem | null;
   statuses: InventoryVocabValue[];
@@ -727,7 +1079,9 @@ function ItemDialogForm({
   jobs: InventoryJobOption[];
   initial: ItemDraft;
   onClose: () => void;
-  onSaved: () => void;
+  onOptimistic: (next: InventoryItem) => void;
+  onRollback: () => void;
+  onCommitted: (saved: InventoryItem, tempId: string) => void;
 }) {
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -751,6 +1105,14 @@ function ItemDialogForm({
   }
 
   async function save() {
+    const problem = validateDraft(draft);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    const tempId = item?.id ?? `optimistic-${crypto.randomUUID()}`;
+    const optimistic = itemFromDraft(draft, tempId, item, statuses, storageStates, jobs);
+    onOptimistic(optimistic);
     setPending(true);
     setError(null);
     try {
@@ -779,10 +1141,20 @@ function ItemDialogForm({
         body: JSON.stringify(body),
       });
       if (!response.ok) {
+        onRollback();
         setError(await readError(response));
         return;
       }
-      onSaved();
+      const payload = (await response.json()) as { item?: InventoryItem };
+      if (!payload.item) {
+        onRollback();
+        setError("The server did not return the saved item");
+        return;
+      }
+      onCommitted(payload.item, tempId);
+    } catch {
+      onRollback();
+      setError("Could not save this item");
     } finally {
       setPending(false);
     }
@@ -793,32 +1165,35 @@ function ItemDialogForm({
       <DialogHeader>
         <DialogTitle>{item ? "Edit item" : "Add item"}</DialogTitle>
         <DialogDescription>
-          Total cost is quantity times unit cost. Required fields are checked on the server.
+          Fields marked with * are required. Total cost is quantity times unit cost.
         </DialogDescription>
       </DialogHeader>
       <DialogBody className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold sm:col-span-2">
-          Item name
+          Item name <RequiredMark />
           <Input
             aria-label="Item name"
+            required
             value={draft.itemName}
             onChange={(event) => patch({ itemName: event.target.value })}
             className="mt-1"
           />
         </label>
         <label className="text-xs font-semibold">
-          SKU
+          SKU <RequiredMark />
           <Input
             aria-label="SKU"
+            required
             value={draft.sku}
             onChange={(event) => patch({ sku: event.target.value })}
             className="mt-1"
           />
         </label>
         <label className="text-xs font-semibold">
-          Quantity
+          Quantity <RequiredMark />
           <Input
             aria-label="Quantity"
+            required
             inputMode="numeric"
             value={draft.quantity}
             onChange={(event) => patch({ quantity: event.target.value })}
@@ -826,9 +1201,10 @@ function ItemDialogForm({
           />
         </label>
         <label className="text-xs font-semibold">
-          Unit cost
+          Unit cost <RequiredMark />
           <Input
             aria-label="Unit cost"
+            required
             inputMode="decimal"
             value={draft.unitCost}
             onChange={(event) => patch({ unitCost: event.target.value })}
@@ -838,7 +1214,7 @@ function ItemDialogForm({
         </label>
         <p className="self-end text-sm text-[var(--acton-navy)]">Total {preview ?? "—"}</p>
         <label className="text-xs font-semibold sm:col-span-2">
-          Project
+          Project <RequiredMark />
           <div className="mt-1">
             <ProjectField
               jobs={jobs}
@@ -849,9 +1225,10 @@ function ItemDialogForm({
           </div>
         </label>
         <label className="text-xs font-semibold">
-          Status
+          Status <RequiredMark />
           <select
             aria-label="Status"
+            required
             value={draft.statusId}
             onChange={(event) => patch({ statusId: event.target.value })}
             className="mt-1 h-11 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
@@ -962,25 +1339,6 @@ function ItemDialogForm({
         {error ? <p className="text-sm text-red-700 sm:col-span-2">{error}</p> : null}
       </DialogBody>
       <DialogFooter>
-        {item ? (
-          <Button
-            type="button"
-            variant="danger"
-            disabled={pending}
-            onClick={async () => {
-              setPending(true);
-              const response = await fetch(`/api/inventory/${item.id}`, { method: "DELETE" });
-              setPending(false);
-              if (!response.ok) {
-                setError(await readError(response));
-                return;
-              }
-              onSaved();
-            }}
-          >
-            Remove
-          </Button>
-        ) : null}
         <Button type="button" variant="secondary" onClick={onClose}>
           Cancel
         </Button>
@@ -998,6 +1356,8 @@ function BulkDialog({
   statuses,
   storageStates,
   onClose,
+  onPreview,
+  onRollback,
   onSaved,
 }: {
   open: boolean;
@@ -1005,6 +1365,8 @@ function BulkDialog({
   statuses: InventoryVocabValue[];
   storageStates: InventoryVocabValue[];
   onClose: () => void;
+  onPreview: (patch: InventoryBulkPatch) => void;
+  onRollback: () => void;
   onSaved: () => void;
 }) {
   const [setStatus, setSetStatus] = useState(false);
@@ -1019,7 +1381,7 @@ function BulkDialog({
   const [pending, setPending] = useState(false);
 
   async function apply() {
-    const patch: Record<string, string | null> = {};
+    const patch: InventoryBulkPatch = {};
     if (setStatus && statusId) patch.statusId = statusId;
     if (setStorage) patch.storageStateId = storageStateId || null;
     if (setDelivery) patch.deliveryDate = deliveryDate || null;
@@ -1028,6 +1390,7 @@ function BulkDialog({
       setError("Check a field to change it. Unchecked fields stay as they are.");
       return;
     }
+    onPreview(patch);
     setPending(true);
     setError(null);
     try {
@@ -1037,10 +1400,14 @@ function BulkDialog({
         body: JSON.stringify({ ids, patch }),
       });
       if (!response.ok) {
+        onRollback();
         setError(await readError(response));
         return;
       }
       onSaved();
+    } catch {
+      onRollback();
+      setError("Could not update those items");
     } finally {
       setPending(false);
     }

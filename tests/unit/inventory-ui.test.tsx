@@ -62,6 +62,7 @@ function item(
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -137,6 +138,151 @@ describe("inventory table", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review lines" }));
     expect(screen.getByText(/Choose a build.com order PDF/)).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes one item and a bulk selection only after confirm", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      void init;
+      return new Response(JSON.stringify({ deleted: 1 }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+
+    fireEvent.click(screen.getAllByLabelText("Select Faucet")[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(screen.getByRole("heading", { name: "Delete Faucet?" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getAllByText("Faucet").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete item" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.ids).toEqual(["a"]);
+    expect(screen.queryByText("Faucet")).toBeNull();
+
+    cleanup();
+    fetchMock.mockClear();
+    renderTable();
+    fireEvent.click(screen.getByLabelText("Select all visible rows"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(screen.getByRole("heading", { name: "Delete 2 items?" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Delete items" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(screen.queryByText("Faucet")).toBeNull();
+    expect(screen.queryByText("Valve")).toBeNull();
+  });
+
+  it("renders thumbnail sizes, persists the choice, and leaves a gap when there is no photo", () => {
+    const { unmount } = render(
+      <InventoryClient
+        rows={[item({ id: "a", itemName: "Faucet", photoUrl: "https://example.com/faucet.png" })]}
+        matchingIds={["a"]}
+        total={1}
+        page={1}
+        pageCount={1}
+        filters={emptyInventoryFilters()}
+        statuses={statuses}
+        storageStates={storage}
+        jobs={[{ id: "job-1", label: "Chechetenko ADU" }]}
+        projectOptions={[{ value: "job-1", label: "Chechetenko ADU" }]}
+        vendors={["build.com"]}
+        orderNumbers={["B-100"]}
+        isAdmin={false}
+      />,
+    );
+    const photo = screen.getAllByRole("button", { name: "View photo of Faucet" })[0]!;
+    expect(photo.querySelector("img")?.className).toContain("h-8");
+    expect(screen.queryAllByLabelText("No photo for Valve")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Large thumbnails" }));
+    expect(photo.querySelector("img")?.className).toContain("h-24");
+    expect(
+      screen.getByRole("button", { name: "Large thumbnails" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(photo);
+    expect(screen.getByRole("img", { name: "Faucet" }).getAttribute("src")).toBe(
+      "https://example.com/faucet.png",
+    );
+    unmount();
+    renderTable();
+    expect(
+      screen.getByRole("button", { name: "Large thumbnails" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.getAllByLabelText("No photo for Faucet")[0]?.className).toContain("h-24");
+    expect(screen.getAllByLabelText("No photo for Faucet")[0]?.className).not.toContain("min-w-");
+  });
+
+  it("inserts a saved item immediately and rolls a failed save back", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.itemName === "Broken") {
+        return new Response(JSON.stringify({ error: { message: "SKU is required" } }), {
+          status: 400,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          item: item({
+            id: "11111111-1111-4111-8111-111111111111",
+            itemName: body.itemName,
+            sku: body.sku,
+            quantity: body.quantity,
+            unitCostCents: 500,
+            totalCostCents: 500,
+          }),
+        }),
+        { status: 201 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    expect(screen.getByLabelText("Item name").closest("label")?.textContent).toMatch(
+      /Item name\s*\*/,
+    );
+    const vendor = screen
+      .getAllByLabelText("Vendor")
+      .find((element) => element.tagName === "INPUT");
+    expect(vendor?.closest("label")?.textContent).not.toMatch(/\*/);
+    expect(screen.getByLabelText("Notes").closest("label")?.textContent).not.toMatch(/\*/);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByText("Item name is required")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Item name"), { target: { value: "Broken" } });
+    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "BAD" } });
+    fireEvent.change(screen.getByLabelText("Unit cost"), { target: { value: "1.00" } });
+    const project = screen
+      .getAllByLabelText("Project")
+      .find((element) => element.tagName === "INPUT");
+    if (!project) throw new Error("missing project field");
+    fireEvent.focus(project);
+    fireEvent.click(screen.getByRole("button", { name: "Chechetenko ADU" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText("SKU is required")).toBeTruthy());
+    expect(screen.queryByText("Broken")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Item name"), { target: { value: "New faucet" } });
+    fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "NEW-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getAllByText("New faucet").length).toBeGreaterThan(0));
+  });
+
+  it("updates an edited item without a refresh", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ item: item({ id: "a", itemName: "Faucet revised" }) }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+    fireEvent.click(screen.getAllByText("Faucet")[0]!);
+    fireEvent.change(screen.getByLabelText("Item name"), { target: { value: "Faucet revised" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getAllByText("Faucet revised").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Faucet")).toBeNull();
   });
 
   it("uses a card list on small screens without a wide table", () => {

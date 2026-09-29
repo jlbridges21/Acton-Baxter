@@ -90,6 +90,31 @@ export async function readInventoryFile(storagePath: string): Promise<StoredFile
   };
 }
 
+export async function signInventoryFiles(
+  storagePaths: string[],
+  expiresInSeconds = 600,
+): Promise<Map<string, string>> {
+  const unique = [...new Set(storagePaths.filter(Boolean))];
+  const signed = new Map<string, string>();
+  if (!unique.length) return signed;
+  if (shouldUseMemory()) {
+    for (const storagePath of unique) {
+      const url = await signInventoryFile(storagePath, expiresInSeconds);
+      if (url) signed.set(storagePath, url);
+    }
+    return signed;
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.storage
+    .from(INVENTORY_FILES_BUCKET)
+    .createSignedUrls(unique, expiresInSeconds);
+  if (error || !data) return signed;
+  for (const row of data) {
+    if (row.path && row.signedUrl) signed.set(row.path, row.signedUrl);
+  }
+  return signed;
+}
+
 export async function signInventoryFile(
   storagePath: string,
   expiresInSeconds = 600,
