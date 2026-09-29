@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { applyInventoryBulkPatch, type InventoryBulkPatch } from "@/lib/inventory/bulk";
 import {
   buildInventoryQuery,
+  countActiveInventoryFilters,
   itemMatchesFilters,
   sortInventoryItems,
 } from "@/lib/inventory/filters";
@@ -78,6 +79,38 @@ const SORT_LABELS: Record<InventorySortKey, string> = {
 
 function money(cents: number) {
   return `$${formatCentsAsDecimalDollars(cents)}`;
+}
+
+function stopRowClick(event: { stopPropagation: () => void }) {
+  event.stopPropagation();
+}
+
+function vocabChoices(values: InventoryVocabValue[], currentId: string | null) {
+  return [...values]
+    .filter((value) => value.isActive || value.id === currentId)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+}
+
+function itemWriteBody(row: InventoryItem) {
+  return {
+    itemName: row.itemName,
+    sku: row.sku,
+    quantity: row.quantity,
+    unitCost: formatCentsAsDecimalDollars(row.unitCostCents),
+    statusId: row.statusId,
+    jobId: row.jobId,
+    customProjectLabel: row.customProjectLabel,
+    vendor: row.vendor,
+    orderNumber: row.orderNumber,
+    category: row.category,
+    description: row.description,
+    productUrl: row.productUrl,
+    photoUrl: row.photoStoragePath ? null : row.photoUrl,
+    storageStateId: row.storageStateId,
+    deliveryDate: row.deliveryDate,
+    outDate: row.outDate,
+    notes: row.notes,
+  };
 }
 
 type TableView = {
@@ -242,6 +275,11 @@ export function InventoryClient(props: Props) {
       ? view
       : { scope, rows: props.rows, total: props.total, matchingIds: props.matchingIds };
   const snapshot = useRef<TableView | null>(null);
+  const rowsRef = useRef(table.rows);
+  const saveChain = useRef(new Map<string, Promise<void>>());
+  const saveGen = useRef(new Map<string, number>());
+  const ackedRow = useRef(new Map<string, InventoryItem>());
+  const [inlineError, setInlineError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedScope, setSelectedScope] = useState(scope);
   if (selectedScope !== scope) {
@@ -328,6 +366,137 @@ export function InventoryClient(props: Props) {
     }
   }
 
+  function restoreInline(rowId: string) {
+    const baseline = ackedRow.current.get(rowId);
+    if (!baseline) return;
+    setView((current) => {
+      const next = placeItem(current, baseline, props.filters);
+      rowsRef.current = next.rows;
+      return next;
+    });
+  }
+
+  function changeInline(rowId: string, patch: (current: InventoryItem) => InventoryItem) {
+    setView((current) => {
+      const existing = current.rows.find((item) => item.id === rowId);
+      if (!existing) return current;
+      if (!ackedRow.current.has(rowId)) ackedRow.current.set(rowId, existing);
+      const next = placeItem(current, patch(existing), props.filters);
+      rowsRef.current = next.rows;
+      return next;
+    });
+    const gen = (saveGen.current.get(rowId) ?? 0) + 1;
+    saveGen.current.set(rowId, gen);
+    const previous = saveChain.current.get(rowId) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(async () => {
+        if (saveGen.current.get(rowId) !== gen) return;
+        const latest = rowsRef.current.find((item) => item.id === rowId);
+        if (!latest) return;
+        let response: Response;
+        try {
+          response = await fetch(`/api/inventory/${rowId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(itemWriteBody(latest)),
+          });
+        } catch {
+          if (saveGen.current.get(rowId) !== gen) return;
+          restoreInline(rowId);
+          setInlineError(`Couldn't update ${latest.itemName}. Check the connection and try again.`);
+          return;
+        }
+        if (saveGen.current.get(rowId) !== gen) return;
+        if (!response.ok) {
+          restoreInline(rowId);
+          setInlineError(`Couldn't update ${latest.itemName}. ${await readError(response)}`);
+          return;
+        }
+        ackedRow.current.set(rowId, latest);
+        setInlineError((current) => (current?.includes(latest.itemName) ? null : current));
+      });
+    saveChain.current.set(rowId, run);
+  }
+
+  function renderDataCell(row: InventoryItem, key: InventorySortKey) {
+    if (key === "status") {
+      return (
+        <td key={key} className="px-2 py-1" onClick={stopRowClick} onMouseDown={stopRowClick}>
+          <InlineVocabSelect
+            label={`Status for ${row.itemName}`}
+            value={row.statusId}
+            options={vocabChoices(props.statuses, row.statusId)}
+            onChange={(statusId) => {
+              const status = props.statuses.find((value) => value.id === statusId);
+              if (!status) return;
+              changeInline(row.id, (current) => ({
+                ...current,
+                statusId,
+                statusLabel: status.label,
+              }));
+            }}
+          />
+        </td>
+      );
+    }
+    if (key === "storage") {
+      return (
+        <td key={key} className="px-2 py-1" onClick={stopRowClick} onMouseDown={stopRowClick}>
+          <InlineVocabSelect
+            label={`Out of storage for ${row.itemName}`}
+            value={row.storageStateId ?? ""}
+            options={vocabChoices(props.storageStates, row.storageStateId)}
+            allowEmpty
+            emptyLabel="Not set"
+            onChange={(storageStateId) => {
+              const storage = props.storageStates.find((value) => value.id === storageStateId);
+              changeInline(row.id, (current) => ({
+                ...current,
+                storageStateId: storageStateId || null,
+                storageLabel: storage?.label ?? null,
+              }));
+            }}
+          />
+        </td>
+      );
+    }
+    if (key === "orderNumber") {
+      return (
+        <Cell key={key}>
+          {row.orderNumber}
+          {row.orderId ? (
+            <a
+              href={`/api/inventory/orders/${row.orderId}/pdf`}
+              className="ml-1 underline"
+              onClick={stopRowClick}
+            >
+              PDF
+            </a>
+          ) : null}
+        </Cell>
+      );
+    }
+    const text: Record<InventorySortKey, ReactNode> = {
+      vendor: row.vendor,
+      orderNumber: row.orderNumber,
+      project: row.projectLabel,
+      category: row.category,
+      itemName: row.itemName,
+      description: row.description,
+      sku: row.sku,
+      quantity: row.quantity,
+      unitCostCents: money(row.unitCostCents),
+      totalCostCents: money(row.totalCostCents),
+      status: row.statusLabel,
+      deliveryDate: row.deliveryDate,
+      storage: row.storageLabel,
+      outDate: row.outDate,
+      notes: row.notes,
+    };
+    return <Cell key={key}>{text[key]}</Cell>;
+  }
+
   const query = buildInventoryQuery(props.filters);
   const exportHref = `/inventory/export${query}`;
 
@@ -367,6 +536,14 @@ export function InventoryClient(props: Props) {
       </div>
 
       <FilterPanel {...props} />
+      {inlineError ? (
+        <p
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
+          {inlineError}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm">
         {selectedCount > 0 ? (
@@ -438,7 +615,11 @@ export function InventoryClient(props: Props) {
       </div>
 
       <div className="hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block">
-        <table className="w-full min-w-[72rem] text-left text-xs">
+        <table className="w-full min-w-[72rem] table-fixed text-left text-xs">
+          <colgroup>
+            <col className="w-8" />
+            <col className="w-36" />
+          </colgroup>
           <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
             <tr>
               <th className="w-8 px-2 py-1.5">
@@ -452,6 +633,7 @@ export function InventoryClient(props: Props) {
                   onChange={toggleVisible}
                 />
               </th>
+              <th className="w-36 px-2 py-1.5 font-semibold">Photo</th>
               {INVENTORY_SORT_KEYS.map((key) => (
                 <th key={key} className="px-2 py-1.5 font-semibold">
                   <a href={`/inventory${sortHref(props.filters, key)}`} className="hover:underline">
@@ -460,7 +642,6 @@ export function InventoryClient(props: Props) {
                   </a>
                 </th>
               ))}
-              <th className="px-2 py-1.5 font-semibold">Photo</th>
               <th className="px-2 py-1.5 font-semibold">Link</th>
             </tr>
           </thead>
@@ -481,7 +662,7 @@ export function InventoryClient(props: Props) {
                   className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
                   onClick={() => setEditor(row)}
                 >
-                  <td className="px-2 py-1" onClick={(event) => event.stopPropagation()}>
+                  <td className="px-2 py-1" onClick={stopRowClick}>
                     <input
                       type="checkbox"
                       aria-label={`Select ${row.itemName}`}
@@ -489,33 +670,11 @@ export function InventoryClient(props: Props) {
                       onChange={() => toggleRow(row.id)}
                     />
                   </td>
-                  <Cell>{row.vendor}</Cell>
-                  <Cell>
-                    {row.orderNumber}
-                    {row.orderId ? (
-                      <a
-                        href={`/api/inventory/orders/${row.orderId}/pdf`}
-                        className="ml-1 underline"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        PDF
-                      </a>
-                    ) : null}
-                  </Cell>
-                  <Cell>{row.projectLabel}</Cell>
-                  <Cell>{row.category}</Cell>
-                  <Cell>{row.itemName}</Cell>
-                  <Cell>{row.description}</Cell>
-                  <Cell>{row.sku}</Cell>
-                  <Cell>{row.quantity}</Cell>
-                  <Cell>{money(row.unitCostCents)}</Cell>
-                  <Cell>{money(row.totalCostCents)}</Cell>
-                  <Cell>{row.statusLabel}</Cell>
-                  <Cell>{row.deliveryDate}</Cell>
-                  <Cell>{row.storageLabel}</Cell>
-                  <Cell>{row.outDate}</Cell>
-                  <Cell>{row.notes}</Cell>
-                  <td className="px-2 py-1" onClick={(event) => event.stopPropagation()}>
+                  <td
+                    className="w-36 overflow-hidden px-2 py-1 align-middle"
+                    data-testid="inventory-photo"
+                    onClick={stopRowClick}
+                  >
                     <PhotoThumb
                       url={row.photoUrl}
                       name={row.itemName}
@@ -523,6 +682,7 @@ export function InventoryClient(props: Props) {
                       onOpen={(url, name) => setPhoto({ url, name })}
                     />
                   </td>
+                  {INVENTORY_SORT_KEYS.map((key) => renderDataCell(row, key))}
                   <td className="px-2 py-1" onClick={(event) => event.stopPropagation()}>
                     {row.productUrl ? (
                       <a
@@ -580,15 +740,46 @@ export function InventoryClient(props: Props) {
                     {row.projectLabel} · {row.sku}
                   </p>
                   <p className="mt-1 text-xs">
-                    {row.statusLabel}
-                    {row.vendor ? ` · ${row.vendor}` : ""}
+                    {row.vendor ? row.vendor : ""}
                     {row.orderNumber ? ` · #${row.orderNumber}` : ""}
                   </p>
                   <p className="text-xs text-[var(--acton-muted)]">
                     Qty {row.quantity} · {money(row.totalCostCents)}
-                    {row.storageLabel ? ` · ${row.storageLabel}` : ""}
                   </p>
                 </button>
+              </div>
+              <div className="grid gap-2 px-3 pb-3" onClick={stopRowClick}>
+                <InlineVocabSelect
+                  label={`Status for ${row.itemName}`}
+                  value={row.statusId}
+                  options={vocabChoices(props.statuses, row.statusId)}
+                  onChange={(statusId) => {
+                    const status = props.statuses.find((value) => value.id === statusId);
+                    if (!status) return;
+                    changeInline(row.id, (current) => ({
+                      ...current,
+                      statusId,
+                      statusLabel: status.label,
+                    }));
+                  }}
+                />
+                <InlineVocabSelect
+                  label={`Out of storage for ${row.itemName}`}
+                  value={row.storageStateId ?? ""}
+                  options={vocabChoices(props.storageStates, row.storageStateId)}
+                  allowEmpty
+                  emptyLabel="Not set"
+                  onChange={(storageStateId) => {
+                    const storage = props.storageStates.find(
+                      (value) => value.id === storageStateId,
+                    );
+                    changeInline(row.id, (current) => ({
+                      ...current,
+                      storageStateId: storageStateId || null,
+                      storageLabel: storage?.label ?? null,
+                    }));
+                  }}
+                />
               </div>
             </li>
           ))
@@ -760,116 +951,181 @@ function sortHref(filters: InventoryFilterState, key: InventorySortKey) {
 }
 
 function FilterPanel(props: Props) {
+  const activeCount = countActiveInventoryFilters(props.filters);
+  const scope = viewScope(props.filters);
+  const [open, setOpen] = useState(activeCount > 0);
+  const [seenScope, setSeenScope] = useState(scope);
+  if (seenScope !== scope) {
+    setSeenScope(scope);
+    setOpen(activeCount > 0);
+  }
+
   return (
-    <details open className="rounded-md border border-[var(--acton-border)] bg-white">
-      <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-[var(--acton-navy)]">
-        Filters
-      </summary>
-      <form
-        method="get"
-        action="/inventory"
-        className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3"
-      >
-        {props.filters.sort !== "itemName" ? (
-          <input type="hidden" name="sort" value={props.filters.sort} />
-        ) : null}
-        {props.filters.dir !== "asc" ? (
-          <input type="hidden" name="dir" value={props.filters.dir} />
-        ) : null}
-        <label className="text-xs font-semibold text-[var(--acton-navy)]">
-          Search
-          <Input
-            name="q"
-            defaultValue={props.filters.q}
-            placeholder="Item, SKU, or description"
-            className="mt-1 h-9"
-          />
-        </label>
-        <label className="text-xs font-semibold text-[var(--acton-navy)]">
-          Project
-          <select
-            name="project"
-            defaultValue={props.filters.project}
-            className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+    <div className="rounded-md border border-[var(--acton-border)] bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+        <p className="text-sm font-semibold text-[var(--acton-navy)]">Filters</p>
+        <div className="flex items-center gap-2">
+          {activeCount > 0 ? (
+            <span className="rounded-full bg-[var(--acton-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--acton-navy)]">
+              {activeCount} {activeCount === 1 ? "filter" : "filters"} active
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            aria-expanded={open}
+            onClick={() => setOpen((current) => !current)}
           >
-            <option value="">All projects</option>
-            {props.projectOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-semibold text-[var(--acton-navy)]">
-          Vendor
-          <select
-            name="vendor"
-            defaultValue={props.filters.vendor}
-            className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
-          >
-            <option value="">All vendors</option>
-            {props.vendors.map((vendor) => (
-              <option key={vendor} value={vendor}>
-                {vendor}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-semibold text-[var(--acton-navy)]">
-          Order #
-          <select
-            name="order"
-            defaultValue={props.filters.orderNumber}
-            className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
-          >
-            <option value="">All orders</option>
-            {props.orderNumbers.map((order) => (
-              <option key={order} value={order}>
-                {order}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-semibold text-[var(--acton-navy)]">
-          Status
-          <select
-            name="status"
-            defaultValue={props.filters.statusId}
-            className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
-          >
-            <option value="">All statuses</option>
-            {props.statuses.map((status) => (
-              <option key={status.id} value={status.id}>
-                {status.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-semibold text-[var(--acton-navy)]">
-          Out of storage
-          <select
-            name="storage"
-            defaultValue={props.filters.storageStateId}
-            className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
-          >
-            <option value="">Any</option>
-            {props.storageStates.map((state) => (
-              <option key={state.id} value={state.id}>
-                {state.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex items-end gap-2">
-          <Button type="submit" size="sm">
-            Apply filters
+            {open ? "Hide filters" : "Filters"}
           </Button>
-          <a href="/inventory" className="text-sm underline">
-            Clear
-          </a>
         </div>
-      </form>
-    </details>
+      </div>
+      {open ? (
+        <form
+          method="get"
+          action="/inventory"
+          className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3"
+        >
+          {props.filters.sort !== "itemName" ? (
+            <input type="hidden" name="sort" value={props.filters.sort} />
+          ) : null}
+          {props.filters.dir !== "asc" ? (
+            <input type="hidden" name="dir" value={props.filters.dir} />
+          ) : null}
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Search
+            <Input
+              name="q"
+              defaultValue={props.filters.q}
+              placeholder="Item, SKU, or description"
+              className="mt-1 h-9"
+            />
+          </label>
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Project
+            <select
+              name="project"
+              defaultValue={props.filters.project}
+              className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+            >
+              <option value="">All projects</option>
+              {props.projectOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Vendor
+            <select
+              name="vendor"
+              defaultValue={props.filters.vendor}
+              className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+            >
+              <option value="">All vendors</option>
+              {props.vendors.map((vendor) => (
+                <option key={vendor} value={vendor}>
+                  {vendor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Order #
+            <select
+              name="order"
+              defaultValue={props.filters.orderNumber}
+              className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+            >
+              <option value="">All orders</option>
+              {props.orderNumbers.map((order) => (
+                <option key={order} value={order}>
+                  {order}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Status
+            <select
+              name="status"
+              defaultValue={props.filters.statusId}
+              className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+            >
+              <option value="">All statuses</option>
+              {props.statuses.map((status) => (
+                <option key={status.id} value={status.id}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Out of storage
+            <select
+              name="storage"
+              defaultValue={props.filters.storageStateId}
+              className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+            >
+              <option value="">Any</option>
+              {props.storageStates.map((state) => (
+                <option key={state.id} value={state.id}>
+                  {state.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-end gap-2">
+            <Button type="submit" size="sm">
+              Apply filters
+            </Button>
+            <a href="/inventory" className="text-sm underline">
+              Clear
+            </a>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+function InlineVocabSelect({
+  label,
+  value,
+  options,
+  allowEmpty = false,
+  emptyLabel = "Not set",
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: InventoryVocabValue[];
+  allowEmpty?: boolean;
+  emptyLabel?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      className="h-8 w-full max-w-full rounded-md border border-[var(--acton-border)] bg-white px-1 text-xs"
+      onClick={stopRowClick}
+      onMouseDown={stopRowClick}
+      onKeyDown={stopRowClick}
+      onChange={(event) => {
+        stopRowClick(event);
+        onChange(event.target.value);
+      }}
+    >
+      {allowEmpty ? <option value="">{emptyLabel}</option> : null}
+      {options.map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.label}
+        </option>
+      ))}
+    </select>
   );
 }
 

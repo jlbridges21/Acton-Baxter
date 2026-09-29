@@ -6,6 +6,17 @@ import {
   type InventorySortKey,
 } from "./types";
 
+export function countActiveInventoryFilters(filters: InventoryFilterState): number {
+  let count = 0;
+  if (filters.q) count += 1;
+  if (filters.project) count += 1;
+  if (filters.vendor) count += 1;
+  if (filters.orderNumber) count += 1;
+  if (filters.statusId) count += 1;
+  if (filters.storageStateId) count += 1;
+  return count;
+}
+
 export function emptyInventoryFilters(): InventoryFilterState {
   return {
     q: "",

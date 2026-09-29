@@ -285,6 +285,126 @@ describe("inventory table", () => {
     expect(screen.queryByText("Faucet")).toBeNull();
   });
 
+  it("keeps filters collapsed until the URL already has some", () => {
+    renderTable();
+    const toggle = screen.getByRole("button", { name: "Filters" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Apply filters" })).toBeNull();
+    cleanup();
+    render(
+      <InventoryClient
+        rows={rows}
+        matchingIds={["a", "b"]}
+        total={2}
+        page={1}
+        pageCount={1}
+        filters={{ ...emptyInventoryFilters(), vendor: "build.com", q: "faucet" }}
+        statuses={statuses}
+        storageStates={storage}
+        jobs={[{ id: "job-1", label: "Chechetenko ADU" }]}
+        projectOptions={[{ value: "job-1", label: "Chechetenko ADU" }]}
+        vendors={["build.com"]}
+        orderNumbers={["B-100"]}
+        isAdmin={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Hide filters" }).getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    expect(screen.getByText("2 filters active")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply filters" })).toBeTruthy();
+  });
+
+  it("puts the photo in the first column without crowding vendor", () => {
+    renderTable();
+    const headers = screen.getAllByRole("columnheader").map((header) => header.textContent?.trim());
+    expect(headers[1]).toBe("Photo");
+    expect(headers[2]).toMatch(/^Vendor/);
+    const photo = screen.getAllByTestId("inventory-photo")[0];
+    expect(photo?.className).toContain("overflow-hidden");
+    expect(photo?.className).toContain("w-36");
+    expect(photo?.nextElementSibling?.textContent).toContain("build.com");
+    fireEvent.click(screen.getByRole("button", { name: "Large thumbnails" }));
+    expect(photo?.querySelector("[aria-label^='No photo']")?.className).toContain("h-24");
+    expect(photo?.nextElementSibling?.textContent).toContain("build.com");
+  });
+
+  it("saves status inline, keeps rapid edits, and rolls a failure back", async () => {
+    const pending = new Map<string, (response: Response) => void>();
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      void init;
+      return new Promise<Response>((resolve) => {
+        pending.set(String(url), resolve);
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+
+    const faucetStatus = screen.getAllByLabelText("Status for Faucet")[0] as HTMLSelectElement;
+    faucetStatus.focus();
+    expect(document.activeElement).toBe(faucetStatus);
+    fireEvent.click(faucetStatus);
+    expect(screen.queryByRole("heading", { name: "Edit item" })).toBeNull();
+    fireEvent.keyDown(faucetStatus, { key: "ArrowDown" });
+    fireEvent.change(faucetStatus, { target: { value: "status-office" } });
+    fireEvent.change(screen.getAllByLabelText("Status for Valve")[0]!, {
+      target: { value: "status-office" },
+    });
+    expect(faucetStatus.value).toBe("status-office");
+    expect((screen.getAllByLabelText("Status for Valve")[0] as HTMLSelectElement).value).toBe(
+      "status-office",
+    );
+
+    await waitFor(() => expect(pending.size).toBe(2));
+    const stale = (id: string, name: string) =>
+      new Response(
+        JSON.stringify({
+          item: item({
+            id,
+            itemName: name,
+            statusId: "status-ordered",
+            statusLabel: "Ordered – not in",
+          }),
+        }),
+        { status: 200 },
+      );
+    pending.get("/api/inventory/b")?.(stale("b", "Valve"));
+    pending.get("/api/inventory/a")?.(stale("a", "Faucet"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect((screen.getAllByLabelText("Status for Faucet")[0] as HTMLSelectElement).value).toBe(
+      "status-office",
+    );
+    expect((screen.getAllByLabelText("Status for Valve")[0] as HTMLSelectElement).value).toBe(
+      "status-office",
+    );
+    const sent = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).statusId);
+    expect(sent).toEqual(["status-office", "status-office"]);
+
+    fireEvent.click(screen.getAllByText("Faucet")[0]!);
+    expect(screen.getByRole("heading", { name: "Edit item" })).toBeTruthy();
+  });
+
+  it("rolls an inline save back when the server rejects it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: "Status is no longer available" } }), {
+            status: 400,
+          }),
+      ),
+    );
+    renderTable();
+    fireEvent.change(screen.getAllByLabelText("Out of storage for Faucet")[0]!, {
+      target: { value: "storage-yes" },
+    });
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Faucet/));
+    expect(screen.getByRole("alert").textContent).toMatch(/Status is no longer available/);
+    expect(
+      (screen.getAllByLabelText("Out of storage for Faucet")[0] as HTMLSelectElement).value,
+    ).toBe("");
+  });
+
   it("uses a card list on small screens without a wide table", () => {
     const { container } = renderTable();
     const cards = screen.getByTestId("inventory-cards");
