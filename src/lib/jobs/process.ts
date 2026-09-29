@@ -235,6 +235,9 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
       await processSiteInspectionPdfExport(job);
     } else if (job.jobType === "site_inspection_street_view_backfill") {
       await processStreetViewCoverBackfill(job);
+    } else if (job.jobType === "inventory_order_import") {
+      const { runInventoryOrderImportJob } = await import("@/lib/inventory/import-order");
+      await runInventoryOrderImportJob(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }

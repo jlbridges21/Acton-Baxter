@@ -130,6 +130,8 @@ export type InventoryItemInput = {
   description?: string | null;
   productUrl?: string | null;
   photoUrl?: string | null;
+  photoStoragePath?: string | null;
+  orderId?: string | null;
   storageStateId?: string | null;
   deliveryDate?: string | null;
   outDate?: string | null;
@@ -237,7 +239,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<In
   const row: InventoryItem = withLabels(
     {
       id: randomUUID(),
-      orderId: null,
+      orderId: input.orderId ?? null,
       jobId: project.jobId,
       customProjectLabel: project.customProjectLabel,
       projectLabel: project.projectLabel,
@@ -252,6 +254,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<In
       totalCostCents: inventoryTotalCents(input.quantity, input.unitCostCents),
       productUrl: assertUrl(clean(input.productUrl), "Link"),
       photoUrl: assertUrl(clean(input.photoUrl), "Photo"),
+      photoStoragePath: clean(input.photoStoragePath),
       statusId: status.id,
       statusLabel: status.label,
       storageStateId: storage?.id ?? null,
@@ -278,6 +281,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<In
     .from("inventory_items")
     .insert({
       id: row.id,
+      order_id: row.orderId,
       job_id: row.jobId,
       custom_project_label: row.customProjectLabel,
       vendor: row.vendor,
@@ -290,6 +294,7 @@ export async function createInventoryItem(input: InventoryItemInput): Promise<In
       unit_cost_cents: row.unitCostCents,
       product_url: row.productUrl,
       photo_url: row.photoUrl,
+      photo_storage_path: row.photoStoragePath,
       status_id: row.statusId,
       storage_state_id: row.storageStateId,
       delivery_date: row.deliveryDate,
@@ -430,6 +435,7 @@ function mapDbItem(
       (row.total_cost_cents as number | null) ?? inventoryTotalCents(quantity, unitCostCents),
     productUrl: (row.product_url as string | null) ?? null,
     photoUrl: (row.photo_url as string | null) ?? null,
+    photoStoragePath: (row.photo_storage_path as string | null) ?? null,
     statusId,
     statusLabel: statusById.get(statusId) ?? "Status",
     storageStateId,

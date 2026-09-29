@@ -3,6 +3,7 @@ import { InventoryClient } from "@/components/inventory/inventory-client";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { applyInventoryQuery, parseInventoryFilters } from "@/lib/inventory/filters";
+import { signInventoryFile } from "@/lib/inventory/order-files";
 import { listAllInventoryItems, listInventoryVocab } from "@/lib/inventory/store";
 import { listExpenseJobs } from "@/lib/receipts";
 
@@ -13,12 +14,19 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 export default async function InventoryPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireActiveUser();
   const filters = parseInventoryFilters(await searchParams);
-  const [items, statuses, storageStates, jobs] = await Promise.all([
+  const [rawItems, statuses, storageStates, jobs] = await Promise.all([
     listAllInventoryItems(),
     listInventoryVocab("status"),
     listInventoryVocab("storage"),
     listExpenseJobs({ includeInactive: false }),
   ]);
+  const items = await Promise.all(
+    rawItems.map(async (item) => {
+      if (!item.photoStoragePath) return item;
+      const photoUrl = await signInventoryFile(item.photoStoragePath);
+      return photoUrl ? { ...item, photoUrl } : item;
+    }),
+  );
   const result = applyInventoryQuery(items, filters);
   const projectOptions = new Map<string, string>();
   for (const job of jobs) projectOptions.set(job.id, job.label);

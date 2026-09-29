@@ -44,6 +44,7 @@ function item(
     totalCostCents: 100,
     productUrl: null,
     photoUrl: null,
+    photoStoragePath: null,
     statusId: "status-ordered",
     statusLabel: "Ordered – not in",
     storageStateId: null,
@@ -124,6 +125,18 @@ describe("inventory table", () => {
     expect(body.patch).toEqual({ statusId: "status-office", deliveryDate: "2026-09-29" });
     expect(body.patch).not.toHaveProperty("storageStateId");
     expect(body.patch).not.toHaveProperty("outDate");
+  });
+
+  it("keeps a build.com PDF in review until the user imports", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+    fireEvent.click(screen.getByRole("button", { name: "Import PDF" }));
+    expect(screen.getByText(/review every line before it is saved/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Import \d+ items/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review lines" }));
+    expect(screen.getByText(/Choose a build.com order PDF/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uses a card list on small screens without a wide table", () => {

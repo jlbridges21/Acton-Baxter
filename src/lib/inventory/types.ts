@@ -25,6 +25,8 @@ export type InventoryItem = {
   totalCostCents: number;
   productUrl: string | null;
   photoUrl: string | null;
+  /** Private-bucket path for an imported product photo. Signed into photoUrl for display. */
+  photoStoragePath: string | null;
   statusId: string;
   statusLabel: string;
   storageStateId: string | null;

@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ExternalLink, Pencil, Plus } from "lucide-react";
+import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -155,6 +156,7 @@ export function InventoryClient(props: Props) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editor, setEditor] = useState<InventoryItem | "new" | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const visibleIds = props.rows.map((row) => row.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
@@ -211,6 +213,9 @@ export function InventoryClient(props: Props) {
           >
             Export CSV
           </a>
+          <Button type="button" variant="secondary" onClick={() => setImportOpen(true)}>
+            Import PDF
+          </Button>
           <Button type="button" onClick={() => setEditor("new")}>
             <Plus className="h-4 w-4" aria-hidden />
             Add item
@@ -302,7 +307,18 @@ export function InventoryClient(props: Props) {
                     />
                   </td>
                   <Cell>{row.vendor}</Cell>
-                  <Cell>{row.orderNumber}</Cell>
+                  <Cell>
+                    {row.orderNumber}
+                    {row.orderId ? (
+                      <a
+                        href={`/api/inventory/orders/${row.orderId}/pdf`}
+                        className="ml-1 underline"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        PDF
+                      </a>
+                    ) : null}
+                  </Cell>
                   <Cell>{row.projectLabel}</Cell>
                   <Cell>{row.category}</Cell>
                   <Cell>{row.itemName}</Cell>
@@ -426,6 +442,11 @@ export function InventoryClient(props: Props) {
         </div>
       ) : null}
 
+      <InventoryImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        jobs={props.jobs}
+      />
       <ItemDialog
         open={editor !== null}
         item={editor && editor !== "new" ? editor : null}
