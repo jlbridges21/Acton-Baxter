@@ -327,11 +327,18 @@ export function InventoryClient(props: Props) {
   const [catalog, setCatalog] = useState(props.rows);
   const [filters, setFilters] = useState(props.filters);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectionBarHeld, setSelectionBarHeld] = useState(false);
+  const [selectionBarOpen, setSelectionBarOpen] = useState(false);
   if (catalogScope !== serverScope) {
     setCatalogScope(serverScope);
     setCatalog(props.rows);
     setFilters(props.filters);
     setSelected(new Set());
+  }
+  if (selected.size > 0 && !selectionBarHeld) {
+    setSelectionBarHeld(true);
+  } else if (selected.size === 0 && selectionBarOpen) {
+    setSelectionBarOpen(false);
   }
   const table = useMemo(() => applyInventoryQuery(catalog, filters), [catalog, filters]);
   const snapshot = useRef<InventoryItem[] | null>(null);
@@ -348,6 +355,14 @@ export function InventoryClient(props: Props) {
     const current = `${window.location.pathname}${window.location.search}`;
     if (current !== next) window.history.replaceState(null, "", next);
   }, [filters]);
+  useEffect(() => {
+    if (selected.size > 0) {
+      const frame = window.requestAnimationFrame(() => setSelectionBarOpen(true));
+      return () => window.cancelAnimationFrame(frame);
+    }
+    const timer = window.setTimeout(() => setSelectionBarHeld(false), 200);
+    return () => window.clearTimeout(timer);
+  }, [selected]);
   const [editor, setEditor] = useState<InventoryItem | "new" | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -709,306 +724,323 @@ export function InventoryClient(props: Props) {
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm">
-        {selectedCount > 0 ? (
-          <>
-            <span className="font-semibold text-[var(--acton-navy)]">{selectedCount} selected</span>
-            {canSelectRest ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => setSelected(new Set(table.matchingIds))}
-              >
-                Select all {table.total} matching
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelected(new Set())}
-              >
-                Clear selection
-              </Button>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              aria-label="Edit selected"
-              onClick={() => setBulkOpen(true)}
-            >
-              <Pencil className="h-4 w-4" aria-hidden />
-              Edit
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="danger"
-              aria-label="Delete selected"
-              onClick={() => {
-                setDeleteError(null);
-                setDeleteOpen(true);
-              }}
-            >
-              <Trash2 className="h-4 w-4" aria-hidden />
-              Delete
-            </Button>
-          </>
-        ) : (
-          <span className="text-[var(--acton-muted)]">Select items to edit or delete</span>
-        )}
-      </div>
-
-      <div
-        className={`relative hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block ${selectLocked ? "select-none" : ""}`}
-      >
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={onColumnDragStart}
-          onDragOver={onColumnDragOver}
-          onDragEnd={onColumnDragEnd}
-          onDragCancel={onColumnDragCancel}
+      <div>
+        <div
+          className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+            selectionBarOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+          }`}
         >
-          <div ref={tableFrameRef} className="relative">
-            <table
-              className={`table-fixed text-left text-xs ${selectLocked ? "select-none" : ""}`}
-              style={{
-                width:
-                  columnWidths.select + displayOrder.reduce((sum, id) => sum + columnWidths[id], 0),
-              }}
-            >
-              <colgroup>
-                <col style={{ width: columnWidths.select }} />
-                {displayOrder.map((id) => (
-                  <col key={id} style={{ width: columnWidths[id] }} />
-                ))}
-              </colgroup>
-              <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
-                <tr>
-                  <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
-                    <input
-                      type="checkbox"
-                      aria-label="Select all visible rows"
-                      checked={allVisibleSelected}
-                      ref={(node) => {
-                        if (node) node.indeterminate = someVisibleSelected && !allVisibleSelected;
-                      }}
-                      onChange={toggleVisible}
-                    />
-                  </th>
-                  <SortableContext items={displayOrder} strategy={horizontalListSortingStrategy}>
-                    {displayOrder.map((id) => (
-                      <ColumnHeader
-                        key={id}
-                        columnId={id}
-                        label={columnHeaderLabel(id)}
-                        sortable={id !== "photo" && id !== "link"}
-                        sortActive={filters.sort === id}
-                        sortDir={filters.dir}
-                        width={columnWidths[id]}
-                        onSort={id === "photo" || id === "link" ? undefined : () => toggleSort(id)}
-                        resizing={resizingColumn === id}
-                        dragging={activeColumn === id}
-                        onResizeStart={(startX) => beginResize(id, startX)}
-                        onSelectionLock={() => setSelectLocked(true)}
-                      />
-                    ))}
-                  </SortableContext>
-                </tr>
-              </thead>
-              <tbody>
-                {table.rows.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={18}
-                      className="px-3 py-8 text-center text-sm text-[var(--acton-muted)]"
-                    >
-                      No items match these filters.
-                    </td>
-                  </tr>
-                ) : (
-                  table.rows.map((row) => (
-                    <tr
-                      key={row.id}
-                      className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
-                      onClick={() => setEditor(row)}
-                    >
-                      <td className="px-2 py-1" onClick={stopRowClick}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${row.itemName}`}
-                          checked={selected.has(row.id)}
-                          onChange={() => toggleRow(row.id)}
-                        />
-                      </td>
-                      {displayOrder.map((id) =>
-                        id === "photo" ? (
-                          <td
-                            key={id}
-                            className="w-36 overflow-hidden px-2 py-1 align-middle"
-                            data-testid="inventory-photo"
-                            onClick={stopRowClick}
-                          >
-                            <PhotoThumb
-                              url={row.photoUrl}
-                              name={row.itemName}
-                              size={thumbSize}
-                              onOpen={(url, name) => setPhoto({ url, name })}
-                            />
-                          </td>
-                        ) : id === "link" ? (
-                          <td
-                            key={id}
-                            className="px-2 py-1"
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            {row.productUrl ? (
-                              <a
-                                href={row.productUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                aria-label={`Open link for ${row.itemName}`}
-                                className="text-[var(--acton-navy)]"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </a>
-                            ) : null}
-                          </td>
-                        ) : (
-                          renderDataCell(row, id)
-                        ),
-                      )}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-            {resizeGuide != null ? (
+          <div className="overflow-hidden">
+            {selectionBarHeld ? (
               <div
-                data-testid="column-resize-guide"
-                className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
-                style={{ left: resizeGuide }}
-              />
+                data-testid="inventory-selection-bar"
+                className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-2 text-sm"
+                inert={selectedCount === 0}
+                aria-hidden={selectedCount === 0}
+              >
+                <span className="font-semibold text-[var(--acton-navy)]">
+                  {selectedCount} selected
+                </span>
+                {canSelectRest ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setSelected(new Set(table.matchingIds))}
+                  >
+                    Select all {table.total} matching
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelected(new Set())}
+                >
+                  Clear selection
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-label="Edit selected"
+                  onClick={() => setBulkOpen(true)}
+                >
+                  <Pencil className="h-4 w-4" aria-hidden />
+                  Edit
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="danger"
+                  aria-label="Delete selected"
+                  onClick={() => {
+                    setDeleteError(null);
+                    setDeleteOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                  Delete
+                </Button>
+              </div>
             ) : null}
           </div>
-          <DragOverlay dropAnimation={null}>
-            {activeColumn ? (
-              <div
-                data-testid="column-drag-preview"
-                className="pointer-events-none rounded-md border border-[var(--acton-navy)] bg-white/75 shadow-xl"
-                style={{ width: Math.max(columnWidths[activeColumn], 96) }}
-              >
-                <div className="truncate bg-[var(--acton-gray-50)] px-2 py-1.5 text-xs font-semibold text-[var(--acton-navy)]">
-                  {columnHeaderLabel(activeColumn)}
-                </div>
-                <div className="h-16 bg-[var(--acton-navy)]/10" />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      </div>
+        </div>
 
-      <ul className="space-y-2 md:hidden" data-testid="inventory-cards">
-        {table.rows.length === 0 ? (
-          <li className="rounded-md border border-[var(--acton-border)] bg-white px-3 py-6 text-center text-sm text-[var(--acton-muted)]">
-            No items match these filters.
-          </li>
-        ) : (
-          table.rows.map((row) => (
-            <li
-              key={row.id}
-              className="overflow-hidden rounded-md border border-[var(--acton-border)] bg-white"
-            >
-              <div className="flex items-start gap-2 p-3">
-                <input
-                  type="checkbox"
-                  aria-label={`Select ${row.itemName}`}
-                  className="mt-1 shrink-0"
-                  checked={selected.has(row.id)}
-                  onChange={() => toggleRow(row.id)}
+        <div
+          className={`relative hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block ${selectLocked ? "select-none" : ""}`}
+        >
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={onColumnDragStart}
+            onDragOver={onColumnDragOver}
+            onDragEnd={onColumnDragEnd}
+            onDragCancel={onColumnDragCancel}
+          >
+            <div ref={tableFrameRef} className="relative">
+              <table
+                className={`table-fixed text-left text-xs ${selectLocked ? "select-none" : ""}`}
+                style={{
+                  width:
+                    columnWidths.select +
+                    displayOrder.reduce((sum, id) => sum + columnWidths[id], 0),
+                }}
+              >
+                <colgroup>
+                  <col style={{ width: columnWidths.select }} />
+                  {displayOrder.map((id) => (
+                    <col key={id} style={{ width: columnWidths[id] }} />
+                  ))}
+                </colgroup>
+                <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
+                  <tr>
+                    <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
+                      <input
+                        type="checkbox"
+                        aria-label="Select all visible rows"
+                        checked={allVisibleSelected}
+                        ref={(node) => {
+                          if (node) node.indeterminate = someVisibleSelected && !allVisibleSelected;
+                        }}
+                        onChange={toggleVisible}
+                      />
+                    </th>
+                    <SortableContext items={displayOrder} strategy={horizontalListSortingStrategy}>
+                      {displayOrder.map((id) => (
+                        <ColumnHeader
+                          key={id}
+                          columnId={id}
+                          label={columnHeaderLabel(id)}
+                          sortable={id !== "photo" && id !== "link"}
+                          sortActive={filters.sort === id}
+                          sortDir={filters.dir}
+                          width={columnWidths[id]}
+                          onSort={
+                            id === "photo" || id === "link" ? undefined : () => toggleSort(id)
+                          }
+                          resizing={resizingColumn === id}
+                          dragging={activeColumn === id}
+                          onResizeStart={(startX) => beginResize(id, startX)}
+                          onSelectionLock={() => setSelectLocked(true)}
+                        />
+                      ))}
+                    </SortableContext>
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={18}
+                        className="px-3 py-8 text-center text-sm text-[var(--acton-muted)]"
+                      >
+                        No items match these filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    table.rows.map((row) => (
+                      <tr
+                        key={row.id}
+                        className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
+                        onClick={() => setEditor(row)}
+                      >
+                        <td className="px-2 py-1" onClick={stopRowClick}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${row.itemName}`}
+                            checked={selected.has(row.id)}
+                            onChange={() => toggleRow(row.id)}
+                          />
+                        </td>
+                        {displayOrder.map((id) =>
+                          id === "photo" ? (
+                            <td
+                              key={id}
+                              className="w-36 overflow-hidden px-2 py-1 align-middle"
+                              data-testid="inventory-photo"
+                              onClick={stopRowClick}
+                            >
+                              <PhotoThumb
+                                url={row.photoUrl}
+                                name={row.itemName}
+                                size={thumbSize}
+                                onOpen={(url, name) => setPhoto({ url, name })}
+                              />
+                            </td>
+                          ) : id === "link" ? (
+                            <td
+                              key={id}
+                              className="px-2 py-1"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {row.productUrl ? (
+                                <a
+                                  href={row.productUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  aria-label={`Open link for ${row.itemName}`}
+                                  className="text-[var(--acton-navy)]"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                </a>
+                              ) : null}
+                            </td>
+                          ) : (
+                            renderDataCell(row, id)
+                          ),
+                        )}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+              {resizeGuide != null ? (
+                <div
+                  data-testid="column-resize-guide"
+                  className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
+                  style={{ left: resizeGuide }}
                 />
-                <PhotoThumb
-                  url={row.photoUrl}
-                  name={row.itemName}
-                  size={thumbSize}
-                  onOpen={(url, name) => setPhoto({ url, name })}
-                />
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 text-left"
-                  onClick={() => setEditor(row)}
+              ) : null}
+            </div>
+            <DragOverlay dropAnimation={null}>
+              {activeColumn ? (
+                <div
+                  data-testid="column-drag-preview"
+                  className="pointer-events-none rounded-md border border-[var(--acton-navy)] bg-white/75 shadow-xl"
+                  style={{ width: Math.max(columnWidths[activeColumn], 96) }}
                 >
-                  <p className="truncate text-sm font-semibold text-[var(--acton-navy)]">
-                    {row.itemName}
-                  </p>
-                  {row.description ? (
-                    <p className="truncate text-xs text-[var(--acton-muted)]">{row.description}</p>
-                  ) : null}
-                  <p className="truncate text-xs text-[var(--acton-muted)]">
-                    {row.projectLabel} · {row.sku}
-                  </p>
-                  <p className="mt-1 text-xs">
-                    {row.vendor ? row.vendor : ""}
-                    {row.orderNumber ? ` · #${row.orderNumber}` : ""}
-                  </p>
-                  <p className="text-xs text-[var(--acton-muted)]">
-                    Qty {row.quantity} · {money(row.totalCostCents)}
-                  </p>
-                </button>
-              </div>
-              <div className="grid gap-2 px-3 pb-3" onClick={stopRowClick}>
-                <InlineVocabSelect
-                  label={`Status for ${row.itemName}`}
-                  value={row.statusId}
-                  options={vocabChoices(props.statuses, row.statusId)}
-                  onChange={(statusId) => {
-                    const status = props.statuses.find((value) => value.id === statusId);
-                    if (!status) return;
-                    changeInline(row.id, (current) => ({
-                      ...current,
-                      statusId,
-                      statusLabel: status.label,
-                    }));
-                  }}
-                />
-                <InlineVocabSelect
-                  label={`Out of storage for ${row.itemName}`}
-                  value={row.storageStateId ?? ""}
-                  options={vocabChoices(props.storageStates, row.storageStateId)}
-                  allowEmpty
-                  emptyLabel="Not set"
-                  onChange={(storageStateId) => {
-                    const storage = props.storageStates.find(
-                      (value) => value.id === storageStateId,
-                    );
-                    changeInline(row.id, (current) => ({
-                      ...current,
-                      storageStateId: storageStateId || null,
-                      storageLabel: storage?.label ?? null,
-                    }));
-                  }}
-                />
-                <InlineDateEditor
-                  label={`Delivery date for ${row.itemName}`}
-                  value={row.deliveryDate}
-                  onCommit={(next) => {
-                    changeInline(row.id, (current) => ({ ...current, deliveryDate: next }));
-                  }}
-                />
-                <InlineDateEditor
-                  label={`Out date for ${row.itemName}`}
-                  value={row.outDate}
-                  onCommit={(next) => {
-                    changeInline(row.id, (current) => ({ ...current, outDate: next }));
-                  }}
-                />
-              </div>
+                  <div className="truncate bg-[var(--acton-gray-50)] px-2 py-1.5 text-xs font-semibold text-[var(--acton-navy)]">
+                    {columnHeaderLabel(activeColumn)}
+                  </div>
+                  <div className="h-16 bg-[var(--acton-navy)]/10" />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        </div>
+
+        <ul className="space-y-2 md:hidden" data-testid="inventory-cards">
+          {table.rows.length === 0 ? (
+            <li className="rounded-md border border-[var(--acton-border)] bg-white px-3 py-6 text-center text-sm text-[var(--acton-muted)]">
+              No items match these filters.
             </li>
-          ))
-        )}
-      </ul>
+          ) : (
+            table.rows.map((row) => (
+              <li
+                key={row.id}
+                className="overflow-hidden rounded-md border border-[var(--acton-border)] bg-white"
+              >
+                <div className="flex items-start gap-2 p-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${row.itemName}`}
+                    className="mt-1 shrink-0"
+                    checked={selected.has(row.id)}
+                    onChange={() => toggleRow(row.id)}
+                  />
+                  <PhotoThumb
+                    url={row.photoUrl}
+                    name={row.itemName}
+                    size={thumbSize}
+                    onOpen={(url, name) => setPhoto({ url, name })}
+                  />
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => setEditor(row)}
+                  >
+                    <p className="truncate text-sm font-semibold text-[var(--acton-navy)]">
+                      {row.itemName}
+                    </p>
+                    {row.description ? (
+                      <p className="truncate text-xs text-[var(--acton-muted)]">
+                        {row.description}
+                      </p>
+                    ) : null}
+                    <p className="truncate text-xs text-[var(--acton-muted)]">
+                      {row.projectLabel} · {row.sku}
+                    </p>
+                    <p className="mt-1 text-xs">
+                      {row.vendor ? row.vendor : ""}
+                      {row.orderNumber ? ` · #${row.orderNumber}` : ""}
+                    </p>
+                    <p className="text-xs text-[var(--acton-muted)]">
+                      Qty {row.quantity} · {money(row.totalCostCents)}
+                    </p>
+                  </button>
+                </div>
+                <div className="grid gap-2 px-3 pb-3" onClick={stopRowClick}>
+                  <InlineVocabSelect
+                    label={`Status for ${row.itemName}`}
+                    value={row.statusId}
+                    options={vocabChoices(props.statuses, row.statusId)}
+                    onChange={(statusId) => {
+                      const status = props.statuses.find((value) => value.id === statusId);
+                      if (!status) return;
+                      changeInline(row.id, (current) => ({
+                        ...current,
+                        statusId,
+                        statusLabel: status.label,
+                      }));
+                    }}
+                  />
+                  <InlineVocabSelect
+                    label={`Out of storage for ${row.itemName}`}
+                    value={row.storageStateId ?? ""}
+                    options={vocabChoices(props.storageStates, row.storageStateId)}
+                    allowEmpty
+                    emptyLabel="Not set"
+                    onChange={(storageStateId) => {
+                      const storage = props.storageStates.find(
+                        (value) => value.id === storageStateId,
+                      );
+                      changeInline(row.id, (current) => ({
+                        ...current,
+                        storageStateId: storageStateId || null,
+                        storageLabel: storage?.label ?? null,
+                      }));
+                    }}
+                  />
+                  <InlineDateEditor
+                    label={`Delivery date for ${row.itemName}`}
+                    value={row.deliveryDate}
+                    onCommit={(next) => {
+                      changeInline(row.id, (current) => ({ ...current, deliveryDate: next }));
+                    }}
+                  />
+                  <InlineDateEditor
+                    label={`Out date for ${row.itemName}`}
+                    value={row.outDate}
+                    onCommit={(next) => {
+                      changeInline(row.id, (current) => ({ ...current, outDate: next }));
+                    }}
+                  />
+                </div>
+              </li>
+            ))
+          )}
+        </ul>
+      </div>
 
       {table.pageCount > 1 ? (
         <div className="flex items-center justify-between text-sm">
@@ -1566,7 +1598,7 @@ function ColumnHeader({
             className={`h-full ${
               resizing
                 ? "w-0.5 bg-[var(--acton-navy)]"
-                : "w-px bg-[#4a5c6e] group-hover:w-0.5 group-hover:bg-[#1a2733]"
+                : "w-px bg-[#b3c0cc] group-hover:w-0.5 group-hover:bg-[#1a2733]"
             }`}
           />
         </span>

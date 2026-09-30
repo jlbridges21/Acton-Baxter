@@ -122,6 +122,14 @@ describe("inventory table", { timeout: 15000 }, () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderTable();
+    expect(screen.queryByText("Select items to edit or delete")).toBeNull();
+    expect(screen.queryByTestId("inventory-selection-bar")).toBeNull();
+
+    fireEvent.click(screen.getAllByLabelText("Select Faucet")[0]!);
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    expect(screen.getByTestId("inventory-selection-bar")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    await waitFor(() => expect(screen.queryByTestId("inventory-selection-bar")).toBeNull());
 
     fireEvent.click(screen.getAllByLabelText("Select Faucet")[0]!);
     expect(screen.getByText("1 selected")).toBeTruthy();
@@ -553,7 +561,7 @@ describe("inventory table", { timeout: 15000 }, () => {
       expect(handle.className).toContain("cursor-col-resize");
       const line = handle.firstElementChild;
       expect(line?.className).toContain("w-px");
-      expect(line?.className).toContain("bg-[#4a5c6e]");
+      expect(line?.className).toContain("bg-[#b3c0cc]");
       expect(line?.className).toContain("group-hover:bg-[#1a2733]");
     }
     const handle = screen.getByRole("separator", { name: "Resize Item column" });
