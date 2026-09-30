@@ -8,13 +8,17 @@ import {
 
 export function countActiveInventoryFilters(filters: InventoryFilterState): number {
   let count = 0;
-  if (filters.q) count += 1;
   if (filters.project) count += 1;
   if (filters.vendor) count += 1;
   if (filters.orderNumber) count += 1;
   if (filters.statusId) count += 1;
   if (filters.storageStateId) count += 1;
   return count;
+}
+
+/** One sort rule is active once the table leaves the default item-name ascending order. */
+export function countActiveInventorySorts(filters: InventoryFilterState): number {
+  return filters.sort === "itemName" && filters.dir === "asc" ? 0 : 1;
 }
 
 export function emptyInventoryFilters(): InventoryFilterState {

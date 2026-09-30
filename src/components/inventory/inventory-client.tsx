@@ -19,8 +19,28 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ExternalLink, Image as ImageIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ExternalLink,
+  Filter,
+  Image as ImageIcon,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+} from "lucide-react";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,10 +73,10 @@ import {
   type InventoryColumnId,
 } from "@/lib/inventory/column-widths";
 import {
+  applyInventoryQuery,
   buildInventoryQuery,
   countActiveInventoryFilters,
-  itemMatchesFilters,
-  sortInventoryItems,
+  countActiveInventorySorts,
 } from "@/lib/inventory/filters";
 import { parseInventoryUnitCostToCents } from "@/lib/inventory/money";
 import {
@@ -69,6 +89,7 @@ import {
   type InventoryThumbSize,
 } from "@/lib/inventory/thumb-size";
 import {
+  INVENTORY_SORT_KEYS,
   type InventoryFilterState,
   type InventoryItem,
   type InventorySortKey,
@@ -80,11 +101,8 @@ import { normalizeCustomJobLabel, shouldOfferCreateCustomJob } from "@/lib/recei
 export type InventoryJobOption = { id: string; label: string };
 
 type Props = {
+  /** Every inventory row. Sorting, filtering, and search run in the browser. */
   rows: InventoryItem[];
-  matchingIds: string[];
-  total: number;
-  page: number;
-  pageCount: number;
   filters: InventoryFilterState;
   statuses: InventoryVocabValue[];
   storageStates: InventoryVocabValue[];
@@ -155,55 +173,12 @@ function itemWriteBody(row: InventoryItem) {
   };
 }
 
-type TableView = {
-  scope: string;
-  rows: InventoryItem[];
-  total: number;
-  matchingIds: string[];
-  page: number;
-  pageCount: number;
-};
-
-function viewScope(filters: InventoryFilterState) {
-  return JSON.stringify(filters);
+function upsertCatalog(items: InventoryItem[], item: InventoryItem) {
+  return [...items.filter((row) => row.id !== item.id), item];
 }
 
-function placeItem(
-  current: TableView,
-  next: InventoryItem,
-  filters: InventoryFilterState,
-): TableView {
-  const visible = itemMatchesFilters(next, filters);
-  const had = current.matchingIds.includes(next.id);
-  const rest = current.rows.filter((row) => row.id !== next.id);
-  return {
-    ...current,
-    rows: visible ? sortInventoryItems([...rest, next], filters.sort, filters.dir) : rest,
-    matchingIds: visible
-      ? [...current.matchingIds.filter((id) => id !== next.id), next.id]
-      : current.matchingIds.filter((id) => id !== next.id),
-    total: current.total + (visible ? 1 : 0) - (had ? 1 : 0),
-  };
-}
-
-function replaceItem(
-  current: TableView,
-  tempId: string,
-  saved: InventoryItem,
-  filters: InventoryFilterState,
-): TableView {
-  const visible = itemMatchesFilters(saved, filters);
-  const had = current.matchingIds.includes(tempId);
-  const rest = current.rows.filter((row) => row.id !== tempId && row.id !== saved.id);
-  return {
-    ...current,
-    rows: visible ? sortInventoryItems([...rest, saved], filters.sort, filters.dir) : rest,
-    matchingIds: [
-      ...current.matchingIds.filter((id) => id !== tempId && id !== saved.id),
-      ...(visible ? [saved.id] : []),
-    ],
-    total: current.total + (visible ? 1 : 0) - (had ? 1 : 0),
-  };
+function swapCatalog(items: InventoryItem[], tempId: string, saved: InventoryItem) {
+  return [...items.filter((row) => row.id !== tempId && row.id !== saved.id), saved];
 }
 
 function todayInputValue() {
@@ -347,98 +322,32 @@ export function InventoryClient(props: Props) {
     window.addEventListener("pointerup", release);
     return () => window.removeEventListener("pointerup", release);
   }, [selectLocked, activeColumn]);
-  const scope = viewScope(props.filters);
-  const [searchText, setSearchText] = useState(props.filters.q);
-  const [appliedQ, setAppliedQ] = useState(props.filters.q);
-  const [view, setView] = useState<TableView>({
-    scope,
-    rows: props.rows,
-    total: props.total,
-    matchingIds: props.matchingIds,
-    page: props.page,
-    pageCount: props.pageCount,
-  });
-  if (view.scope !== scope) {
-    setView({
-      scope,
-      rows: props.rows,
-      total: props.total,
-      matchingIds: props.matchingIds,
-      page: props.page,
-      pageCount: props.pageCount,
-    });
-    setSearchText(props.filters.q);
-    setAppliedQ(props.filters.q);
+  const serverScope = props.rows.map((row) => `${row.id}:${row.updatedAt}`).join("|");
+  const [catalogScope, setCatalogScope] = useState(serverScope);
+  const [catalog, setCatalog] = useState(props.rows);
+  const [filters, setFilters] = useState(props.filters);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  if (catalogScope !== serverScope) {
+    setCatalogScope(serverScope);
+    setCatalog(props.rows);
+    setFilters(props.filters);
+    setSelected(new Set());
   }
-  const table =
-    view.scope === scope
-      ? view
-      : {
-          scope,
-          rows: props.rows,
-          total: props.total,
-          matchingIds: props.matchingIds,
-          page: props.page,
-          pageCount: props.pageCount,
-        };
-  const liveFilters = { ...props.filters, q: appliedQ };
-  const snapshot = useRef<TableView | null>(null);
-  const rowsRef = useRef(table.rows);
+  const table = useMemo(() => applyInventoryQuery(catalog, filters), [catalog, filters]);
+  const snapshot = useRef<InventoryItem[] | null>(null);
+  const rowsRef = useRef(catalog);
   const saveChain = useRef(new Map<string, Promise<void>>());
   const saveGen = useRef(new Map<string, number>());
   const ackedRow = useRef(new Map<string, InventoryItem>());
   const [inlineError, setInlineError] = useState<string | null>(null);
-  const searchGen = useRef(0);
   useEffect(() => {
-    const q = searchText.trim();
-    if (q === appliedQ) return;
-    const gen = searchGen.current + 1;
-    searchGen.current = gen;
-    const filters = props.filters;
-    const handle = window.setTimeout(() => {
-      void (async () => {
-        const next = { ...filters, q, page: 1 };
-        const qs = buildInventoryQuery(next);
-        window.history.replaceState(null, "", `/inventory${qs}`);
-        try {
-          const response = await fetch(`/api/inventory${qs}`);
-          if (searchGen.current !== gen) return;
-          if (!response.ok) {
-            setInlineError("Couldn't search inventory. Try again.");
-            return;
-          }
-          const payload = (await response.json()) as {
-            rows?: InventoryItem[];
-            total?: number;
-            matchingIds?: string[];
-            page?: number;
-            pageCount?: number;
-          };
-          if (searchGen.current !== gen) return;
-          setAppliedQ(q);
-          setView((current) => ({
-            ...current,
-            rows: payload.rows ?? [],
-            total: payload.total ?? 0,
-            matchingIds: payload.matchingIds ?? [],
-            page: payload.page ?? 1,
-            pageCount: payload.pageCount ?? 1,
-          }));
-          setInlineError((current) => (current?.startsWith("Couldn't search") ? null : current));
-        } catch {
-          if (searchGen.current !== gen) return;
-          setInlineError("Couldn't search inventory. Try again.");
-        }
-      })();
-    }, 300);
-    return () => window.clearTimeout(handle);
-  }, [searchText, appliedQ, props.filters]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [selectedScope, setSelectedScope] = useState(scope);
-  if (selectedScope !== scope) {
-    setSelectedScope(scope);
-    setSelected(new Set());
-  }
+    rowsRef.current = catalog;
+  }, [catalog]);
+  useEffect(() => {
+    const next = `/inventory${buildInventoryQuery(filters)}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current !== next) window.history.replaceState(null, "", next);
+  }, [filters]);
   const [editor, setEditor] = useState<InventoryItem | "new" | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -478,25 +387,27 @@ export function InventoryClient(props: Props) {
     });
   }
 
-  function remember(current: TableView) {
-    snapshot.current = current;
-    return current;
+  function remember(items: InventoryItem[]) {
+    snapshot.current = items;
+    return items;
+  }
+
+  function writeCatalog(updater: (items: InventoryItem[]) => InventoryItem[]) {
+    setCatalog((current) => {
+      const next = updater(current);
+      rowsRef.current = next;
+      return next;
+    });
   }
 
   async function confirmDelete() {
     const ids = [...selected];
     setDeleteError(null);
     setDeleteBusy(true);
-    let previous: TableView | null = null;
-    setView((current) => {
+    let previous: InventoryItem[] | null = null;
+    writeCatalog((current) => {
       previous = current;
-      const removed = current.matchingIds.filter((id) => selected.has(id)).length;
-      return {
-        ...current,
-        rows: current.rows.filter((row) => !selected.has(row.id)),
-        matchingIds: current.matchingIds.filter((id) => !selected.has(id)),
-        total: Math.max(0, current.total - removed),
-      };
+      return current.filter((row) => !selected.has(row.id));
     });
     try {
       const response = await fetch("/api/inventory/delete", {
@@ -505,14 +416,14 @@ export function InventoryClient(props: Props) {
         body: JSON.stringify({ ids }),
       });
       if (!response.ok) {
-        if (previous) setView(previous);
+        if (previous) writeCatalog(() => previous as InventoryItem[]);
         setDeleteError(await readError(response));
         return;
       }
       setSelected(new Set());
       setDeleteOpen(false);
     } catch {
-      if (previous) setView(previous);
+      if (previous) writeCatalog(() => previous as InventoryItem[]);
       setDeleteError("Could not delete those items");
     } finally {
       setDeleteBusy(false);
@@ -522,21 +433,15 @@ export function InventoryClient(props: Props) {
   function restoreInline(rowId: string) {
     const baseline = ackedRow.current.get(rowId);
     if (!baseline) return;
-    setView((current) => {
-      const next = placeItem(current, baseline, liveFilters);
-      rowsRef.current = next.rows;
-      return next;
-    });
+    writeCatalog((current) => upsertCatalog(current, baseline));
   }
 
   function changeInline(rowId: string, patch: (current: InventoryItem) => InventoryItem) {
-    setView((current) => {
-      const existing = current.rows.find((item) => item.id === rowId);
+    writeCatalog((current) => {
+      const existing = current.find((item) => item.id === rowId);
       if (!existing) return current;
       if (!ackedRow.current.has(rowId)) ackedRow.current.set(rowId, existing);
-      const next = placeItem(current, patch(existing), liveFilters);
-      rowsRef.current = next.rows;
-      return next;
+      return upsertCatalog(current, patch(existing));
     });
     const gen = (saveGen.current.get(rowId) ?? 0) + 1;
     saveGen.current.set(rowId, gen);
@@ -661,6 +566,18 @@ export function InventoryClient(props: Props) {
       outDate: row.outDate,
       notes: row.notes,
     };
+    if (key === "itemName") {
+      return (
+        <td key={key} className="max-w-0 px-2 py-1">
+          <div className="truncate font-semibold text-[var(--acton-navy)]">{row.itemName}</div>
+          {row.description ? (
+            <div className="truncate text-[11px] leading-tight text-[var(--acton-muted)]">
+              {row.description}
+            </div>
+          ) : null}
+        </td>
+      );
+    }
     return <Cell key={key}>{text[key]}</Cell>;
   }
 
@@ -728,7 +645,14 @@ export function InventoryClient(props: Props) {
     setSelectLocked(false);
   }
 
-  const query = buildInventoryQuery(liveFilters);
+  function toggleSort(key: InventorySortKey) {
+    setFilters((current) => {
+      const dir = current.sort === key && current.dir === "asc" ? "desc" : "asc";
+      return { ...current, sort: key, dir };
+    });
+  }
+
+  const query = buildInventoryQuery(filters);
   const exportHref = `/inventory/export${query}`;
 
   return (
@@ -766,11 +690,15 @@ export function InventoryClient(props: Props) {
         </div>
       </div>
 
-      <FilterPanel
-        {...props}
-        filters={liveFilters}
-        searchText={searchText}
-        onSearchText={setSearchText}
+      <InventoryToolbar
+        filters={filters}
+        statuses={props.statuses}
+        storageStates={props.storageStates}
+        projectOptions={props.projectOptions}
+        vendors={props.vendors}
+        orderNumbers={props.orderNumbers}
+        thumbSize={thumbSize}
+        onFilters={setFilters}
       />
       {inlineError ? (
         <p
@@ -830,35 +758,6 @@ export function InventoryClient(props: Props) {
         ) : (
           <span className="text-[var(--acton-muted)]">Select items to edit or delete</span>
         )}
-        <div className="ml-auto flex items-center gap-1" role="group" aria-label="Thumbnail size">
-          {INVENTORY_THUMB_SIZES.map((size) => (
-            <Button
-              key={size}
-              type="button"
-              size="sm"
-              variant={thumbSize === size ? "secondary" : "ghost"}
-              aria-label={`${size.charAt(0).toUpperCase()}${size.slice(1)} thumbnails`}
-              aria-pressed={thumbSize === size}
-              onClick={() => setInventoryThumbSize(size)}
-            >
-              <ImageIcon
-                className={size === "small" ? "h-3 w-3" : size === "medium" ? "h-4 w-4" : "h-5 w-5"}
-                aria-hidden
-              />
-            </Button>
-          ))}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              resetInventoryColumnWidths();
-              resetInventoryColumnOrder();
-            }}
-          >
-            Reset columns
-          </Button>
-        </div>
       </div>
 
       <div
@@ -905,19 +804,11 @@ export function InventoryClient(props: Props) {
                         key={id}
                         columnId={id}
                         label={columnHeaderLabel(id)}
-                        sortMark={
-                          id !== "photo" && id !== "link" && liveFilters.sort === id
-                            ? liveFilters.dir === "asc"
-                              ? " ↑"
-                              : " ↓"
-                            : ""
-                        }
+                        sortable={id !== "photo" && id !== "link"}
+                        sortActive={filters.sort === id}
+                        sortDir={filters.dir}
                         width={columnWidths[id]}
-                        href={
-                          id === "photo" || id === "link"
-                            ? undefined
-                            : `/inventory${sortHref(liveFilters, id)}`
-                        }
+                        onSort={id === "photo" || id === "link" ? undefined : () => toggleSort(id)}
                         resizing={resizingColumn === id}
                         dragging={activeColumn === id}
                         onResizeStart={(startX) => beginResize(id, startX)}
@@ -1052,6 +943,9 @@ export function InventoryClient(props: Props) {
                   <p className="truncate text-sm font-semibold text-[var(--acton-navy)]">
                     {row.itemName}
                   </p>
+                  {row.description ? (
+                    <p className="truncate text-xs text-[var(--acton-muted)]">{row.description}</p>
+                  ) : null}
                   <p className="truncate text-xs text-[var(--acton-muted)]">
                     {row.projectLabel} · {row.sku}
                   </p>
@@ -1123,20 +1017,22 @@ export function InventoryClient(props: Props) {
           </span>
           <div className="flex gap-2">
             {table.page > 1 ? (
-              <a
+              <button
+                type="button"
                 className="underline"
-                href={`/inventory${buildInventoryQuery(liveFilters, { page: table.page - 1 })}`}
+                onClick={() => setFilters((current) => ({ ...current, page: current.page - 1 }))}
               >
                 Previous
-              </a>
+              </button>
             ) : null}
             {table.page < table.pageCount ? (
-              <a
+              <button
+                type="button"
                 className="underline"
-                href={`/inventory${buildInventoryQuery(liveFilters, { page: table.page + 1 })}`}
+                onClick={() => setFilters((current) => ({ ...current, page: current.page + 1 }))}
               >
                 Next
-              </a>
+              </button>
             ) : null}
           </div>
         </div>
@@ -1148,19 +1044,19 @@ export function InventoryClient(props: Props) {
         jobs={props.jobs}
         statuses={props.statuses}
         onOptimistic={(items) => {
-          snapshot.current = table;
-          setView((current) =>
-            items.reduce((next, item) => placeItem(next, item, liveFilters), current),
-          );
+          writeCatalog((current) => {
+            snapshot.current = current;
+            return items.reduce((next, item) => upsertCatalog(next, item), current);
+          });
         }}
         onRollback={() => {
-          if (snapshot.current) setView(snapshot.current);
+          if (snapshot.current) writeCatalog(() => snapshot.current as InventoryItem[]);
         }}
         onCommitted={(saved, tempIds) => {
-          setView((current) =>
+          writeCatalog((current) =>
             tempIds.reduce((next, tempId, index) => {
               const item = saved[index];
-              return item ? replaceItem(next, tempId, item, liveFilters) : next;
+              return item ? swapCatalog(next, tempId, item) : next;
             }, current),
           );
         }}
@@ -1173,13 +1069,13 @@ export function InventoryClient(props: Props) {
         jobs={props.jobs}
         onClose={() => setEditor(null)}
         onOptimistic={(next) => {
-          setView((current) => placeItem(remember(current), next, liveFilters));
+          writeCatalog((current) => upsertCatalog(remember(current), next));
         }}
         onRollback={() => {
-          if (snapshot.current) setView(snapshot.current);
+          if (snapshot.current) writeCatalog(() => snapshot.current as InventoryItem[]);
         }}
         onCommitted={(saved, tempId) => {
-          setView((current) => replaceItem(current, tempId, saved, liveFilters));
+          writeCatalog((current) => swapCatalog(current, tempId, saved));
           setEditor(null);
         }}
       />
@@ -1190,20 +1086,17 @@ export function InventoryClient(props: Props) {
         storageStates={props.storageStates}
         onClose={() => setBulkOpen(false)}
         onPreview={(patch) => {
-          setView((current) => {
+          writeCatalog((current) => {
             snapshot.current = current;
-            return {
-              ...current,
-              rows: current.rows.map((row) =>
-                selected.has(row.id)
-                  ? labeledBulk(row, patch, props.statuses, props.storageStates)
-                  : row,
-              ),
-            };
+            return current.map((row) =>
+              selected.has(row.id)
+                ? labeledBulk(row, patch, props.statuses, props.storageStates)
+                : row,
+            );
           });
         }}
         onRollback={() => {
-          if (snapshot.current) setView(snapshot.current);
+          if (snapshot.current) writeCatalog(() => snapshot.current as InventoryItem[]);
         }}
         onSaved={() => {
           setBulkOpen(false);
@@ -1288,64 +1181,105 @@ function PhotoThumb({
 }
 
 function Cell({ children }: { children: ReactNode }) {
-  return <td className="max-w-0 truncate px-2 py-1 text-[var(--acton-navy)]">{children || "—"}</td>;
+  return (
+    <td className="max-w-0 truncate px-2 py-1 font-medium text-[var(--acton-navy)]">
+      {children || "—"}
+    </td>
+  );
 }
 
-function sortHref(filters: InventoryFilterState, key: InventorySortKey) {
-  const dir = filters.sort === key && filters.dir === "asc" ? "desc" : "asc";
-  return buildInventoryQuery({ ...filters, sort: key, dir, page: 1 });
-}
+function InventoryToolbar(props: {
+  filters: InventoryFilterState;
+  statuses: InventoryVocabValue[];
+  storageStates: InventoryVocabValue[];
+  projectOptions: { value: string; label: string }[];
+  vendors: string[];
+  orderNumbers: string[];
+  thumbSize: InventoryThumbSize;
+  onFilters: (updater: (current: InventoryFilterState) => InventoryFilterState) => void;
+}) {
+  const filterCount = countActiveInventoryFilters(props.filters);
+  const sortCount = countActiveInventorySorts(props.filters);
+  const [filtersOpen, setFiltersOpen] = useState(filterCount > 0);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
 
-function FilterPanel(props: Props & { searchText: string; onSearchText: (value: string) => void }) {
-  const activeCount = countActiveInventoryFilters(props.filters);
-  const scope = viewScope(props.filters);
-  const [open, setOpen] = useState(activeCount > 0);
-  const [seenScope, setSeenScope] = useState(scope);
-  if (seenScope !== scope) {
-    setSeenScope(scope);
-    setOpen(activeCount > 0);
+  function applyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    props.onFilters((current) => ({
+      ...current,
+      project: String(data.get("project") ?? ""),
+      vendor: String(data.get("vendor") ?? ""),
+      orderNumber: String(data.get("order") ?? ""),
+      statusId: String(data.get("status") ?? ""),
+      storageStateId: String(data.get("storage") ?? ""),
+      page: 1,
+    }));
+  }
+
+  function clearFilters() {
+    props.onFilters((current) => ({
+      ...current,
+      q: "",
+      project: "",
+      vendor: "",
+      orderNumber: "",
+      statusId: "",
+      storageStateId: "",
+      page: 1,
+    }));
   }
 
   return (
-    <div>
-      <div className={`flex items-center justify-end gap-2 ${open ? "px-3 pt-2" : ""}`}>
-        {activeCount > 0 ? (
-          <span className="rounded-full bg-[var(--acton-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--acton-navy)]">
-            {activeCount} {activeCount === 1 ? "filter" : "filters"} active
-          </span>
-        ) : null}
-        <Button
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <ToolbarPill
+          label="Filters"
+          count={filterCount}
+          open={filtersOpen}
+          icon={<Filter className="h-4 w-4" aria-hidden />}
+          onClick={() => setFiltersOpen((current) => !current)}
+        />
+        <ToolbarPill
+          label="Sort"
+          count={sortCount}
+          open={sortOpen}
+          icon={<ArrowUpDown className="h-4 w-4" aria-hidden />}
+          onClick={() => setSortOpen((current) => !current)}
+        />
+        <label className="relative min-w-[12rem] flex-1 basis-full sm:basis-auto">
+          <span className="sr-only">Search inventory</span>
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-[var(--acton-muted)]"
+            aria-hidden
+          />
+          <Input
+            value={props.filters.q}
+            placeholder="Search inventory"
+            className="h-9 pl-9"
+            onChange={(event) => {
+              const q = event.target.value;
+              props.onFilters((current) => ({ ...current, q, page: 1 }));
+            }}
+          />
+        </label>
+        <button
           type="button"
-          variant="secondary"
-          size="sm"
-          aria-expanded={open}
-          onClick={() => setOpen((current) => !current)}
+          aria-expanded={columnsOpen}
+          className="inline-flex h-9 items-center gap-1.5 rounded-full border border-[var(--acton-border)] bg-white px-3 text-sm font-semibold text-[var(--acton-navy)]"
+          onClick={() => setColumnsOpen((current) => !current)}
         >
-          {open ? "Hide filters" : "Filters"}
-        </Button>
+          <Settings className="h-4 w-4" aria-hidden />
+          Manage columns
+        </button>
       </div>
-      {open ? (
+      {filtersOpen ? (
         <form
-          method="get"
-          action="/inventory"
-          className="mt-2 grid gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-3 sm:grid-cols-2 lg:grid-cols-3"
+          key={`${props.filters.project}|${props.filters.vendor}|${props.filters.orderNumber}|${props.filters.statusId}|${props.filters.storageStateId}`}
+          onSubmit={applyFilters}
+          className="grid gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-3 sm:grid-cols-2 lg:grid-cols-3"
         >
-          {props.filters.sort !== "itemName" ? (
-            <input type="hidden" name="sort" value={props.filters.sort} />
-          ) : null}
-          {props.filters.dir !== "asc" ? (
-            <input type="hidden" name="dir" value={props.filters.dir} />
-          ) : null}
-          <label className="text-xs font-semibold text-[var(--acton-navy)]">
-            Search
-            <Input
-              name="q"
-              value={props.searchText}
-              placeholder="Search by item, vendor, order #, category, description…"
-              className="mt-1 h-9"
-              onChange={(event) => props.onSearchText(event.target.value)}
-            />
-          </label>
           <label className="text-xs font-semibold text-[var(--acton-navy)]">
             Project
             <select
@@ -1425,40 +1359,170 @@ function FilterPanel(props: Props & { searchText: string; onSearchText: (value: 
             <Button type="submit" size="sm">
               Apply filters
             </Button>
-            <a href="/inventory" className="text-sm underline">
+            <button type="button" className="text-sm underline" onClick={clearFilters}>
               Clear
-            </a>
+            </button>
           </div>
         </form>
       ) : null}
+      {sortOpen ? (
+        <div className="flex flex-wrap gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-3">
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Column
+            <select
+              aria-label="Sort column"
+              value={props.filters.sort}
+              className="mt-1 h-9 w-full min-w-40 rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+              onChange={(event) => {
+                const sort = event.target.value as InventorySortKey;
+                props.onFilters((current) => ({ ...current, sort }));
+              }}
+            >
+              {INVENTORY_SORT_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {SORT_LABELS[key]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-[var(--acton-navy)]">
+            Direction
+            <select
+              aria-label="Sort direction"
+              value={props.filters.dir}
+              className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
+              onChange={(event) => {
+                const dir = event.target.value === "desc" ? "desc" : "asc";
+                props.onFilters((current) => ({ ...current, dir }));
+              }}
+            >
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          </label>
+        </div>
+      ) : null}
+      {columnsOpen ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-3">
+          <div className="flex items-center gap-1" role="group" aria-label="Thumbnail size">
+            {INVENTORY_THUMB_SIZES.map((size) => (
+              <Button
+                key={size}
+                type="button"
+                size="sm"
+                variant={props.thumbSize === size ? "secondary" : "ghost"}
+                aria-label={`${size.charAt(0).toUpperCase()}${size.slice(1)} thumbnails`}
+                aria-pressed={props.thumbSize === size}
+                onClick={() => setInventoryThumbSize(size)}
+              >
+                <ImageIcon
+                  className={
+                    size === "small" ? "h-3 w-3" : size === "medium" ? "h-4 w-4" : "h-5 w-5"
+                  }
+                  aria-hidden
+                />
+              </Button>
+            ))}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              resetInventoryColumnWidths();
+              resetInventoryColumnOrder();
+            }}
+          >
+            Reset columns
+          </Button>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function ToolbarPill({
+  label,
+  count,
+  open,
+  icon,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  open: boolean;
+  icon: ReactNode;
+  onClick: () => void;
+}) {
+  const active = count > 0;
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-label={active ? `${label}, ${count} active` : label}
+      className={`inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-sm font-semibold ${
+        active
+          ? "border-[var(--acton-navy)] bg-[var(--acton-navy)] text-white"
+          : "border-[var(--acton-border)] bg-white text-[var(--acton-navy)]"
+      }`}
+      onClick={onClick}
+    >
+      {icon}
+      {label}
+      <span
+        aria-hidden
+        className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-xs ${
+          active
+            ? "bg-white text-[var(--acton-navy)]"
+            : "bg-[var(--acton-gray-100)] text-[var(--acton-muted)]"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
   );
 }
 
 function ColumnHeader({
   columnId,
   label,
-  sortMark = "",
+  sortable,
+  sortActive,
+  sortDir,
   width,
-  href,
   resizing,
   dragging,
+  onSort,
   onResizeStart,
   onSelectionLock,
 }: {
   columnId: InventoryMovableColumnId;
   label: string;
-  sortMark?: string;
+  sortable: boolean;
+  sortActive: boolean;
+  sortDir: "asc" | "desc";
   width: number;
-  href?: string;
   resizing: boolean;
   dragging: boolean;
+  onSort?: () => void;
   onResizeStart: (startX: number) => void;
   onSelectionLock: () => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({ id: columnId });
   return (
-    <th className="relative px-2 py-1.5 font-semibold" style={{ width }}>
+    <th
+      className="relative px-2 py-1.5 font-semibold"
+      style={{ width }}
+      aria-sort={
+        sortable
+          ? sortActive
+            ? sortDir === "asc"
+              ? "ascending"
+              : "descending"
+            : "none"
+          : undefined
+      }
+    >
       <div className="flex items-stretch">
         <div
           ref={setNodeRef}
@@ -1471,11 +1535,15 @@ function ColumnHeader({
             onSelectionLock();
           }}
         >
-          {href ? (
-            <a href={href} className="block truncate hover:underline">
-              {label}
-              {sortMark}
-            </a>
+          {sortable ? (
+            <button
+              type="button"
+              className="flex w-full min-w-0 items-center gap-1 text-left"
+              onClick={() => onSort?.()}
+            >
+              <span className="truncate">{label}</span>
+              <SortGlyph active={sortActive} dir={sortDir} />
+            </button>
           ) : (
             <span className="block truncate">{label}</span>
           )}
@@ -1504,6 +1572,20 @@ function ColumnHeader({
         </span>
       </div>
     </th>
+  );
+}
+
+function SortGlyph({ active, dir }: { active: boolean; dir: "asc" | "desc" }) {
+  if (!active) {
+    return <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-[var(--acton-muted)]" aria-hidden />;
+  }
+  const Icon = dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <Icon
+      className="h-3.5 w-3.5 shrink-0 text-[var(--acton-navy)]"
+      fill="currentColor"
+      aria-hidden
+    />
   );
 }
 

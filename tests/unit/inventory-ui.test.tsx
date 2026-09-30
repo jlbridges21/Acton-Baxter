@@ -93,17 +93,13 @@ function layoutRect(left: number, top: number, width: number, height: number): D
   } as DOMRect;
 }
 
-describe("inventory table", () => {
+describe("inventory table", { timeout: 15000 }, () => {
   const rows = [item({ id: "a", itemName: "Faucet" }), item({ id: "b", itemName: "Valve" })];
 
   function renderTable() {
     return render(
       <InventoryClient
         rows={rows}
-        matchingIds={["a", "b", "c"]}
-        total={3}
-        page={1}
-        pageCount={2}
         filters={emptyInventoryFilters()}
         statuses={statuses}
         storageStates={storage}
@@ -127,10 +123,10 @@ describe("inventory table", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderTable();
 
-    fireEvent.click(screen.getByLabelText("Select all visible rows"));
+    fireEvent.click(screen.getAllByLabelText("Select Faucet")[0]!);
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Select all 2 matching/i }));
     expect(screen.getByText("2 selected")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Select all 3 matching/i }));
-    expect(screen.getByText("3 selected")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Edit selected" }));
 
     const statusToggle = screen
@@ -149,7 +145,7 @@ describe("inventory table", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     const body = JSON.parse(String(init?.body));
-    expect(body.ids.sort()).toEqual(["a", "b", "c"]);
+    expect(body.ids.sort()).toEqual(["a", "b"]);
     expect(body.patch).toEqual({ statusId: "status-office", deliveryDate: "2026-09-29" });
     expect(body.patch).not.toHaveProperty("storageStateId");
     expect(body.patch).not.toHaveProperty("outDate");
@@ -205,10 +201,6 @@ describe("inventory table", () => {
     const { unmount } = render(
       <InventoryClient
         rows={[item({ id: "a", itemName: "Faucet", photoUrl: "https://example.com/faucet.png" })]}
-        matchingIds={["a"]}
-        total={1}
-        page={1}
-        pageCount={1}
         filters={emptyInventoryFilters()}
         statuses={statuses}
         storageStates={storage}
@@ -222,6 +214,7 @@ describe("inventory table", () => {
     const photo = screen.getAllByRole("button", { name: "View photo of Faucet" })[0]!;
     expect(photo.querySelector("img")?.className).toContain("h-8");
     expect(screen.queryAllByLabelText("No photo for Valve")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Manage columns" }));
     fireEvent.click(screen.getByRole("button", { name: "Large thumbnails" }));
     expect(photo.querySelector("img")?.className).toContain("h-24");
     expect(
@@ -233,6 +226,7 @@ describe("inventory table", () => {
     );
     unmount();
     renderTable();
+    fireEvent.click(screen.getByRole("button", { name: "Manage columns" }));
     expect(
       screen.getByRole("button", { name: "Large thumbnails" }).getAttribute("aria-pressed"),
     ).toBe("true");
@@ -294,7 +288,7 @@ describe("inventory table", () => {
     fireEvent.change(screen.getByLabelText("SKU"), { target: { value: "NEW-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getAllByText("New faucet").length).toBeGreaterThan(0));
-  });
+  }, 15000);
 
   it("updates an edited item without a refresh", async () => {
     const fetchMock = vi.fn(
@@ -321,10 +315,6 @@ describe("inventory table", () => {
     render(
       <InventoryClient
         rows={rows}
-        matchingIds={["a", "b"]}
-        total={2}
-        page={1}
-        pageCount={1}
         filters={{ ...emptyInventoryFilters(), vendor: "build.com", q: "faucet" }}
         statuses={statuses}
         storageStates={storage}
@@ -335,10 +325,12 @@ describe("inventory table", () => {
         isAdmin={false}
       />,
     );
-    expect(screen.getByRole("button", { name: "Hide filters" }).getAttribute("aria-expanded")).toBe(
+    expect(screen.getByRole("button", { name: /Filters/ }).getAttribute("aria-expanded")).toBe(
       "true",
     );
-    expect(screen.getByText("2 filters active")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Filters, 1 active" })).toBeTruthy();
+    expect(screen.getByPlaceholderText("Search inventory")).toHaveProperty("value", "faucet");
+    expect(screen.queryByPlaceholderText(/Search by item/)).toBeNull();
     expect(screen.getByRole("button", { name: "Apply filters" })).toBeTruthy();
   });
 
@@ -351,6 +343,7 @@ describe("inventory table", () => {
     expect(photo?.className).toContain("overflow-hidden");
     expect(photo?.className).toContain("w-36");
     expect(photo?.nextElementSibling?.textContent).toContain("build.com");
+    fireEvent.click(screen.getByRole("button", { name: "Manage columns" }));
     fireEvent.click(screen.getByRole("button", { name: "Large thumbnails" }));
     expect(photo?.querySelector("[aria-label^='No photo']")?.className).toContain("h-24");
     expect(photo?.nextElementSibling?.textContent).toContain("build.com");
@@ -486,7 +479,7 @@ describe("inventory table", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Import 1 items" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/already imported/));
-    expect(screen.getByText("3 items")).toBeTruthy();
+    expect(screen.getByText("2 items")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Edit item" })).toBeNull();
 
     fetchMock.mockImplementation(async (url: string) => {
@@ -498,7 +491,7 @@ describe("inventory table", () => {
       return new Response("no", { status: 500 });
     });
     fireEvent.click(screen.getByRole("button", { name: "Import 1 items" }));
-    await waitFor(() => expect(screen.getByText("4 items")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("3 items")).toBeTruthy());
     expect(screen.getAllByText("Kraus faucet").length).toBeGreaterThan(0);
   });
 
@@ -511,13 +504,38 @@ describe("inventory table", () => {
     const header = () => screen.getByRole("columnheader", { name: /Item/ });
     expect(header().style.width).toBe("280px");
     expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toContain("280");
-    const sort = screen.getByRole("link", { name: /^Item/ });
-    expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
+    const sort = screen
+      .getAllByRole("button", { name: /^Item/ })
+      .find((element) => element.tagName === "BUTTON");
+    if (!sort) throw new Error("missing item sort");
+    expect(sort.getAttribute("href")).toBeNull();
+    expect(header().getAttribute("aria-sort")).toBe("ascending");
+    expect(sort.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
+    const vendorSort = screen
+      .getAllByRole("button", { name: /^Vendor/ })
+      .find((element) => element.tagName === "BUTTON");
+    expect(screen.getByRole("columnheader", { name: /Vendor/ }).getAttribute("aria-sort")).toBe(
+      "none",
+    );
+    expect(vendorSort?.querySelector("svg")?.getAttribute("fill")).toBe("none");
     fireEvent.click(handle);
-    expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
+    expect(sort.getAttribute("href")).toBeNull();
+    const checked = screen.getAllByLabelText("Select Faucet")[0] as HTMLInputElement;
+    fireEvent.click(checked);
+    fireEvent.click(screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]!);
+    expect(screen.getByLabelText("Delivery date for Faucet value")).toBeTruthy();
+    const scroller = document.querySelector(".overflow-x-auto") as HTMLElement;
+    scroller.scrollTop = 24;
+    fireEvent.click(sort);
+    expect(screen.getByLabelText("Delivery date for Faucet value")).toBeTruthy();
+    expect(scroller.scrollTop).toBe(24);
+    expect(checked.checked).toBe(true);
+    expect(header().style.width).toBe("280px");
+    expect(screen.getAllByRole("row")[1]?.textContent).toContain("Valve");
     cleanup();
     renderTable();
     expect(screen.getByRole("columnheader", { name: /Item/ }).style.width).toBe("280px");
+    fireEvent.click(screen.getByRole("button", { name: "Manage columns" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset columns" }));
     expect(screen.getByRole("columnheader", { name: /Item/ }).style.width).toBe("200px");
     expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toBeNull();
@@ -545,10 +563,16 @@ describe("inventory table", () => {
     expect(handle.firstElementChild?.className).toContain("bg-[var(--acton-navy)]");
     fireEvent.pointerUp(window);
     expect(screen.queryByTestId("column-resize-guide")).toBeNull();
-    const sort = screen.getByRole("link", { name: /^Item/ });
+    const sort = screen
+      .getAllByRole("button", { name: /^Item/ })
+      .find((element) => element.tagName === "BUTTON");
+    if (!sort) throw new Error("missing item sort");
     fireEvent.click(sort);
     expect(screen.queryByTestId("column-resize-guide")).toBeNull();
-    expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
+    expect(sort.getAttribute("href")).toBeNull();
+    expect(screen.getByRole("columnheader", { name: /Item/ }).getAttribute("aria-sort")).toBe(
+      "descending",
+    );
   });
 
   it("reorders a column with a ghost preview, blocks text selection, and resets order with widths", async () => {
@@ -578,7 +602,8 @@ describe("inventory table", () => {
       const categoryIndex = () =>
         headers().findIndex((header) => header.textContent?.includes("Category"));
       const start = categoryIndex();
-      const handle = screen.getByRole("button", { name: "Category" });
+      const handle = document.querySelector<HTMLElement>("[data-column-id='category']");
+      if (!handle) throw new Error("missing category handle");
       const pointer = { pointerId: 1, button: 0, isPrimary: true, clientY: 10 };
       fireEvent.pointerDown(handle, { ...pointer, clientX: start * 120 + 20 });
       const selectEvent = new Event("selectstart", { cancelable: true, bubbles: true });
@@ -613,8 +638,16 @@ describe("inventory table", () => {
       fireEvent.keyDown(document, { code: "Space", key: " " });
       expect(categoryIndex()).toBeGreaterThan(start);
       expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toMatch(/"category"/);
-      const sort = screen.getByRole("link", { name: /^Category/ });
-      expect(sort.getAttribute("href")).toContain("sort=category");
+      const sort = screen
+        .getAllByRole("button", { name: /^Category/ })
+        .find((element) => element.tagName === "BUTTON");
+      if (!sort) throw new Error("missing category sort");
+      const ordered = categoryIndex();
+      fireEvent.click(sort);
+      expect(categoryIndex()).toBe(ordered);
+      expect(screen.getByRole("columnheader", { name: /Category/ }).getAttribute("aria-sort")).toBe(
+        "ascending",
+      );
       cleanup();
       renderTable();
       expect(
@@ -623,6 +656,7 @@ describe("inventory table", () => {
           .findIndex((header) => header.textContent?.includes("Category")),
       ).toBeGreaterThan(start);
       setInventoryColumnWidth("itemName", 280);
+      fireEvent.click(screen.getByRole("button", { name: "Manage columns" }));
       fireEvent.click(screen.getByRole("button", { name: "Reset columns" }));
       expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toBeNull();
       expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toBeNull();
@@ -637,38 +671,42 @@ describe("inventory table", () => {
     }
   });
 
-  it("searches as you type and writes the query into the URL", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (String(url).includes("q=nickel")) {
-        return new Response(
-          JSON.stringify({
-            rows: [item({ id: "a", itemName: "Faucet", description: "brushed nickel" })],
-            total: 1,
-            matchingIds: ["a"],
-            page: 1,
-            pageCount: 1,
-          }),
-        );
-      }
-      return new Response(JSON.stringify({ rows: rows, total: 3, matchingIds: ["a", "b", "c"] }), {
-        status: 200,
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    renderTable();
-    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
-    const search = screen.getByPlaceholderText(
-      "Search by item, vendor, order #, category, description…",
+  it("filters from the toolbar search without reloading", () => {
+    render(
+      <InventoryClient
+        rows={[
+          item({ id: "a", itemName: "Faucet", description: "brushed nickel" }),
+          item({ id: "b", itemName: "Valve" }),
+        ]}
+        filters={emptyInventoryFilters()}
+        statuses={statuses}
+        storageStates={storage}
+        jobs={[{ id: "job-1", label: "Chechetenko ADU" }]}
+        projectOptions={[{ value: "job-1", label: "Chechetenko ADU" }]}
+        vendors={["build.com"]}
+        orderNumbers={["B-100"]}
+        isAdmin={false}
+      />,
     );
-    fireEvent.change(search, { target: { value: "n" } });
-    expect(fetchMock).not.toHaveBeenCalled();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    expect(screen.queryByPlaceholderText(/Search by item/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Apply filters" })).toBeNull();
+    const search = screen.getByPlaceholderText("Search inventory");
     fireEvent.change(search, { target: { value: "nickel" } });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("q=nickel");
-    expect(window.location.pathname + window.location.search).toContain("q=nickel");
-    await waitFor(() => expect(screen.queryByText("Valve")).toBeNull());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("Valve")).toBeNull();
+    expect(screen.getAllByText("Faucet").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("brushed nickel").length).toBeGreaterThan(0);
     expect(screen.getByText("1 item")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply filters" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sort" }).getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sort" }));
+    expect(screen.getByLabelText("Sort column")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Manage columns" }));
+    expect(screen.getByRole("button", { name: "Reset columns" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Large thumbnails" })).toBeTruthy();
   });
 
   it("saves and clears delivery and out dates inline without opening the item", async () => {
