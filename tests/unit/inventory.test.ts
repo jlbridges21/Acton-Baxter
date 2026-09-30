@@ -155,6 +155,8 @@ describe("inventory query", () => {
     expect(storage.rows.map((row) => row.itemName)).toEqual(["Valve"]);
     const search = await queryInventory({ ...emptyInventoryFilters(), q: "nickel" });
     expect(search.rows.map((row) => row.sku)).toEqual(["AAA"]);
+    const byOrder = await queryInventory({ ...emptyInventoryFilters(), q: "O-9" });
+    expect(byOrder.rows.map((row) => row.itemName)).toEqual(["Tile"]);
     const combined = await queryInventory({
       ...emptyInventoryFilters(),
       vendor: "build.com",

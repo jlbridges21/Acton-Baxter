@@ -96,7 +96,16 @@ export function itemMatchesFilters(item: InventoryItem, filters: InventoryFilter
     return false;
   const q = filters.q.trim().toLowerCase();
   if (!q) return true;
-  const haystack = [item.itemName, item.sku, item.description ?? ""].join("\n").toLowerCase();
+  const haystack = [
+    item.itemName,
+    item.sku,
+    item.description ?? "",
+    item.vendor ?? "",
+    item.orderNumber ?? "",
+    item.category ?? "",
+  ]
+    .join("\n")
+    .toLowerCase();
   return haystack.includes(q);
 }
 

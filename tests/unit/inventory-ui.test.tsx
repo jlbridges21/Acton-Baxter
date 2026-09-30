@@ -4,6 +4,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InventoryClient } from "@/components/inventory/inventory-client";
+import {
+  INVENTORY_COLUMN_WIDTH_KEY,
+  resetInventoryColumnWidths,
+} from "@/lib/inventory/column-widths";
 import type { InventoryItem, InventoryVocabValue } from "@/lib/inventory/types";
 import { emptyInventoryFilters } from "@/lib/inventory/filters";
 
@@ -62,6 +66,7 @@ function item(
 
 afterEach(() => {
   cleanup();
+  resetInventoryColumnWidths();
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -403,6 +408,249 @@ describe("inventory table", () => {
     expect(
       (screen.getAllByLabelText("Out of storage for Faucet")[0] as HTMLSelectElement).value,
     ).toBe("");
+  });
+
+  it("shows imported rows immediately and rolls them back if the commit fails", async () => {
+    const saved = item({ id: "imported", itemName: "Kraus faucet", sku: "KR-1" });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/api/inventory/import")) {
+        return new Response(
+          JSON.stringify({
+            status: "ready",
+            draft: {
+              sha256: "a".repeat(64),
+              storagePath: "orders/x.pdf",
+              orderNumber: "95855811",
+              vendor: "build.com",
+              source: "text",
+              correctionAttempted: false,
+              textUsable: true,
+              duplicate: null,
+              lines: [
+                {
+                  itemName: "Kraus faucet",
+                  sku: "KR-1",
+                  description: "Brushed gold",
+                  quantity: 1,
+                  unitCostCents: 100,
+                  lineTotalCents: 100,
+                  productUrl: null,
+                  photoStoragePath: null,
+                  photoUrl: null,
+                  source: "text",
+                  flags: [],
+                  pageNumber: 1,
+                },
+              ],
+            },
+          }),
+        );
+      }
+      return new Response(
+        JSON.stringify({ error: { message: "This order is already imported" } }),
+        { status: 400 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+    fireEvent.click(screen.getByRole("button", { name: "Import PDF" }));
+    const file = new File(["%PDF-1.4"], "order.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("Order PDF"), { target: { files: [file] } });
+    fireEvent.focus(screen.getByLabelText("Import project"));
+    fireEvent.click(screen.getByRole("button", { name: "Chechetenko ADU" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review lines" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Import 1 items" })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Import 1 items" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/already imported/));
+    expect(screen.getByText("3 items")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Edit item" })).toBeNull();
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith("/api/inventory/import/commit")) {
+        return new Response(JSON.stringify({ orderId: "order-1", itemCount: 1, items: [saved] }), {
+          status: 201,
+        });
+      }
+      return new Response("no", { status: 500 });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import 1 items" }));
+    await waitFor(() => expect(screen.getByText("4 items")).toBeTruthy());
+    expect(screen.getAllByText("Kraus faucet").length).toBeGreaterThan(0);
+  });
+
+  it("resizes a column, keeps the width, and still sorts from the header", () => {
+    renderTable();
+    const handle = screen.getByRole("separator", { name: "Resize Item column" });
+    fireEvent.pointerDown(handle, { clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 180 });
+    fireEvent.pointerUp(window);
+    const header = () => screen.getByRole("columnheader", { name: /Item/ });
+    expect(header().style.width).toBe("280px");
+    expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toContain("280");
+    const sort = screen.getByRole("link", { name: /^Item/ });
+    expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
+    fireEvent.click(handle);
+    expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
+    cleanup();
+    renderTable();
+    expect(screen.getByRole("columnheader", { name: /Item/ }).style.width).toBe("280px");
+    fireEvent.click(screen.getByRole("button", { name: "Reset columns" }));
+    expect(screen.getByRole("columnheader", { name: /Item/ }).style.width).toBe("200px");
+    expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toBeNull();
+  });
+
+  it("searches as you type and writes the query into the URL", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes("q=nickel")) {
+        return new Response(
+          JSON.stringify({
+            rows: [item({ id: "a", itemName: "Faucet", description: "brushed nickel" })],
+            total: 1,
+            matchingIds: ["a"],
+            page: 1,
+            pageCount: 1,
+          }),
+        );
+      }
+      return new Response(JSON.stringify({ rows: rows, total: 3, matchingIds: ["a", "b", "c"] }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+    fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    const search = screen.getByPlaceholderText(
+      "Search by item, vendor, order #, category, description…",
+    );
+    fireEvent.change(search, { target: { value: "n" } });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.change(search, { target: { value: "nickel" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("q=nickel");
+    expect(window.location.pathname + window.location.search).toContain("q=nickel");
+    await waitFor(() => expect(screen.queryByText("Valve")).toBeNull());
+    expect(screen.getByText("1 item")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Apply filters" })).toBeTruthy();
+  });
+
+  it("saves and clears delivery and out dates inline without opening the item", async () => {
+    const pending: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      void init;
+      return new Promise<Response>((resolve) => {
+        pending.push(resolve);
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderTable();
+    const stale = () =>
+      new Response(
+        JSON.stringify({
+          item: item({
+            id: "stale",
+            itemName: "Stale",
+            deliveryDate: null,
+            outDate: "2020-01-01",
+            statusId: "status-ordered",
+            statusLabel: "Ordered – not in",
+          }),
+        }),
+        { status: 200 },
+      );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]!);
+    expect(screen.queryByRole("heading", { name: "Edit item" })).toBeNull();
+    const delivery = screen.getAllByLabelText(
+      "Delivery date for Faucet value",
+    )[0] as HTMLInputElement;
+    expect(delivery.type).toBe("date");
+    fireEvent.change(delivery, { target: { value: "2026-10-02" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save date" })[0]!);
+    fireEvent.change(screen.getAllByLabelText("Status for Valve")[0]!, {
+      target: { value: "status-office" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "Out date for Valve" })[0]!);
+    fireEvent.change(screen.getAllByLabelText("Out date for Valve value")[0]!, {
+      target: { value: "2026-11-03" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save date" })[0]!);
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(2));
+    expect(
+      screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]?.textContent,
+    ).toBe("2026-10-02");
+    expect((screen.getAllByLabelText("Status for Valve")[0] as HTMLSelectElement).value).toBe(
+      "status-office",
+    );
+    expect(screen.getAllByRole("button", { name: "Out date for Valve" })[0]?.textContent).toBe(
+      "2026-11-03",
+    );
+    pending[0]?.(stale());
+    pending[1]?.(stale());
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Out date for Valve" })[0]?.textContent).toBe(
+        "2026-11-03",
+      ),
+    );
+    expect((screen.getAllByLabelText("Status for Valve")[0] as HTMLSelectElement).value).toBe(
+      "status-office",
+    );
+    expect(
+      screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]?.textContent,
+    ).toBe("2026-10-02");
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(bodies.some((body) => body.deliveryDate === "2026-10-02")).toBe(true);
+    expect(
+      bodies.some((body) => body.outDate === "2026-11-03" && body.statusId === "status-office"),
+    ).toBe(true);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Clear date" })[0]!);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          (call) => JSON.parse(String(call[1]?.body)).deliveryDate === null,
+        ),
+      ).toBe(true),
+    );
+    expect(screen.queryByRole("heading", { name: "Edit item" })).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]?.textContent,
+    ).toBe("—");
+  });
+
+  it("drops the extra Filters label and matches Import PDF to Add item", () => {
+    renderTable();
+    expect(screen.getAllByText("Filters")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Filters" }).getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+    const add = screen.getByRole("button", { name: "Add item" });
+    const imported = screen.getByRole("button", { name: "Import PDF" });
+    expect(imported.className).toContain("bg-[var(--acton-navy)]");
+    expect(add.className).toContain("bg-[var(--acton-navy)]");
+    expect(imported.className).not.toContain("bg-white");
+  });
+
+  it("accepts a dropped PDF, rejects other files, and stays keyboard reachable", () => {
+    renderTable();
+    fireEvent.click(screen.getByRole("button", { name: "Import PDF" }));
+    const zone = screen.getByRole("button", { name: "Upload order PDF" });
+    expect(zone.tabIndex).toBe(0);
+    fireEvent.keyDown(zone, { key: "Enter" });
+    fireEvent.drop(zone, {
+      dataTransfer: { files: [new File(["%PDF"], "order.pdf", { type: "application/pdf" })] },
+    });
+    expect(screen.getByText("order.pdf")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove file" }));
+    expect(screen.queryByText("order.pdf")).toBeNull();
+    fireEvent.drop(zone, {
+      dataTransfer: { files: [new File(["hello"], "notes.txt", { type: "text/plain" })] },
+    });
+    expect(screen.getByRole("alert").textContent).toMatch(/Only PDF files can be imported/);
+    expect(screen.queryByText("notes.txt")).toBeNull();
   });
 
   it("uses a card list on small screens without a wide table", () => {

@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { dollarsToCents } from "@/lib/inventory/build-com-parse";
 import type { ImportDraft, ImportDraftLine } from "@/lib/inventory/import-types";
+import type { InventoryItem, InventoryVocabValue } from "@/lib/inventory/types";
 import { normalizeCustomJobLabel, shouldOfferCreateCustomJob } from "@/lib/receipts/job-select";
 import { formatCentsAsDecimalDollars } from "@/lib/receipts/amount";
 
@@ -59,17 +59,80 @@ function blankLine(): EditableLine {
   };
 }
 
+function pdfFileError(file: File) {
+  const name = file.name.toLowerCase();
+  if (file.type === "application/pdf" || name.endsWith(".pdf")) return null;
+  return "Only PDF files can be imported.";
+}
+
+function optimisticImportItems(input: {
+  lines: EditableLine[];
+  jobs: Job[];
+  statuses: InventoryVocabValue[];
+  jobId: string;
+  customProjectLabel: string;
+  vendor: string;
+  orderNumber: string;
+}): InventoryItem[] {
+  const status =
+    input.statuses.find((value) => value.isDefault) ??
+    input.statuses.find((value) => value.label === "Ordered – not in") ??
+    input.statuses[0];
+  const projectLabel =
+    input.jobs.find((job) => job.id === input.jobId)?.label || input.customProjectLabel || "—";
+  const now = new Date().toISOString();
+  return input.lines.map((line) => ({
+    id: `optimistic-${crypto.randomUUID()}`,
+    orderId: null,
+    jobId: input.jobId || null,
+    customProjectLabel: input.customProjectLabel || null,
+    projectLabel,
+    vendor: input.vendor.trim() || "build.com",
+    orderNumber: input.orderNumber.trim() || null,
+    category: null,
+    itemName: line.itemName,
+    description: line.description,
+    sku: line.sku,
+    quantity: line.quantity ?? 1,
+    unitCostCents: line.unitCostCents ?? 0,
+    totalCostCents: (line.quantity ?? 1) * (line.unitCostCents ?? 0),
+    productUrl: line.productUrl,
+    photoUrl: line.photoUrl,
+    photoStoragePath: line.photoStoragePath,
+    statusId: status?.id ?? "",
+    statusLabel: status?.label ?? "Ordered – not in",
+    storageStateId: null,
+    storageLabel: null,
+    deliveryDate: null,
+    outDate: null,
+    notes: null,
+    createdBy: null,
+    updatedBy: null,
+    createdAt: now,
+    updatedAt: now,
+  }));
+}
+
 export function InventoryImportDialog({
   open,
   onClose,
   jobs,
+  statuses,
+  onOptimistic,
+  onRollback,
+  onCommitted,
 }: {
   open: boolean;
   onClose: () => void;
   jobs: Job[];
+  statuses: InventoryVocabValue[];
+  onOptimistic: (items: InventoryItem[]) => void;
+  onRollback: () => void;
+  onCommitted: (saved: InventoryItem[], tempIds: string[]) => void;
 }) {
-  const router = useRouter();
+  const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [jobId, setJobId] = useState("");
   const [customProjectLabel, setCustomProjectLabel] = useState("");
   const [query, setQuery] = useState("");
@@ -176,8 +239,33 @@ export function InventoryImportDialog({
     return null;
   }
 
+  function takeFile(next: File | null) {
+    if (!next) {
+      setFile(null);
+      return;
+    }
+    const message = pdfFileError(next);
+    if (message) {
+      setFile(null);
+      setError(message);
+      return;
+    }
+    setError(null);
+    setFile(next);
+  }
+
   async function commit() {
     if (!draft) return;
+    const optimistic = optimisticImportItems({
+      lines,
+      jobs,
+      statuses,
+      jobId,
+      customProjectLabel,
+      vendor,
+      orderNumber,
+    });
+    onOptimistic(optimistic);
     setPending(true);
     setError(null);
     try {
@@ -202,13 +290,27 @@ export function InventoryImportDialog({
           })),
         }),
       });
-      const payload = (await response.json()) as { error?: { message?: string } };
-      if (!response.ok) {
+      const payload = (await response.json()) as {
+        items?: InventoryItem[];
+        error?: { message?: string };
+      };
+      if (!response.ok || !payload.items) {
+        onRollback();
         setError(payload.error?.message ?? "Import was not saved");
         return;
       }
+      const saved = payload.items.map((item, index) => ({
+        ...item,
+        photoUrl: item.photoUrl || optimistic[index]?.photoUrl || null,
+      }));
+      onCommitted(
+        saved,
+        optimistic.map((item) => item.id),
+      );
       onClose();
-      router.refresh();
+    } catch {
+      onRollback();
+      setError("Import was not saved. Check the connection and try again.");
     } finally {
       setPending(false);
     }
@@ -227,16 +329,61 @@ export function InventoryImportDialog({
       <DialogBody className="space-y-3">
         {phase === "upload" ? (
           <>
-            <label className="block text-xs font-semibold">
-              Order PDF
+            <div className="space-y-2">
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Upload order PDF"
+                onClick={() => fileInput.current?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    fileInput.current?.click();
+                  }
+                }}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDragOver(false);
+                  takeFile(event.dataTransfer.files[0] ?? null);
+                }}
+                className={`rounded-md border-2 border-dashed px-4 py-8 text-center text-sm ${
+                  dragOver
+                    ? "border-[var(--acton-navy)] bg-[var(--acton-soft)] text-[var(--acton-navy)]"
+                    : "border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)] hover:border-[var(--acton-navy)] hover:bg-white"
+                }`}
+              >
+                Drag a build.com order PDF here, or click to choose a file.
+              </div>
               <input
+                ref={fileInput}
                 aria-label="Order PDF"
                 type="file"
                 accept="application/pdf,.pdf"
-                className="mt-1 block w-full text-sm"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                tabIndex={-1}
+                className="sr-only"
+                onChange={(event) => {
+                  takeFile(event.target.files?.[0] ?? null);
+                  event.target.value = "";
+                }}
               />
-            </label>
+              {file ? (
+                <p className="flex items-center justify-between gap-2 text-sm text-[var(--acton-navy)]">
+                  <span className="min-w-0 truncate">{file.name}</span>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setFile(null)}>
+                    Remove file
+                  </Button>
+                </p>
+              ) : null}
+            </div>
             <label className="block text-xs font-semibold">
               Project
               <Input
@@ -490,7 +637,11 @@ export function InventoryImportDialog({
             </Button>
           </>
         )}
-        {error ? <p className="text-sm text-red-700">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-sm text-red-700">
+            {error}
+          </p>
+        ) : null}
       </DialogBody>
       <DialogFooter>
         <Button type="button" variant="secondary" onClick={onClose}>

@@ -18,6 +18,7 @@ import {
   type PdfPageLayout,
 } from "./build-com-parse";
 import { createInventoryItem, listInventoryVocab } from "./store";
+import type { InventoryItem } from "./types";
 import { readBuildComPdfLayout } from "./pdf-layout";
 import type {
   CommitImportLine,
@@ -348,7 +349,7 @@ export async function commitInventoryImport(input: {
   lines: CommitImportLine[];
   allowDuplicate: boolean;
   actorId: string;
-}): Promise<{ orderId: string; itemCount: number }> {
+}): Promise<{ orderId: string; itemCount: number; items: InventoryItem[] }> {
   if (!input.lines.length) throw new ValidationError("Add at least one line before importing");
   const duplicate = await findInventoryOrderDuplicate({
     sha256: input.sha256,
@@ -408,25 +409,28 @@ export async function commitInventoryImport(input: {
 
   const statuses = await listInventoryVocab("status");
   const defaultStatus = statuses.find((status) => status.isDefault) ?? statuses[0];
+  const items: InventoryItem[] = [];
   for (const line of input.lines) {
-    await createInventoryItem({
-      itemName: line.itemName,
-      sku: line.sku,
-      quantity: line.quantity,
-      unitCostCents: line.unitCostCents,
-      description: line.description ?? null,
-      productUrl: line.productUrl ?? null,
-      photoStoragePath: line.photoStoragePath ?? null,
-      orderId,
-      orderNumber: input.orderNumber,
-      vendor,
-      jobId: input.jobId,
-      customProjectLabel: input.customProjectLabel,
-      statusId: defaultStatus?.id,
-      actorId: input.actorId,
-    });
+    items.push(
+      await createInventoryItem({
+        itemName: line.itemName,
+        sku: line.sku,
+        quantity: line.quantity,
+        unitCostCents: line.unitCostCents,
+        description: line.description ?? null,
+        productUrl: line.productUrl ?? null,
+        photoStoragePath: line.photoStoragePath ?? null,
+        orderId,
+        orderNumber: input.orderNumber,
+        vendor,
+        jobId: input.jobId,
+        customProjectLabel: input.customProjectLabel,
+        statusId: defaultStatus?.id,
+        actorId: input.actorId,
+      }),
+    );
   }
-  return { orderId, itemCount: input.lines.length };
+  return { orderId, itemCount: items.length, items };
 }
 
 export async function readInventoryOrderPdf(

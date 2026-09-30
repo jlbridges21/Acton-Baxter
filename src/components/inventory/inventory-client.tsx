@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ExternalLink, Image as ImageIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { applyInventoryBulkPatch, type InventoryBulkPatch } from "@/lib/inventory/bulk";
+import {
+  getInventoryColumnWidths,
+  getServerInventoryColumnWidths,
+  inventoryColumnMinWidth,
+  INVENTORY_COLUMN_IDS,
+  resetInventoryColumnWidths,
+  setInventoryColumnWidth,
+  subscribeInventoryColumnWidths,
+  type InventoryColumnId,
+} from "@/lib/inventory/column-widths";
 import {
   buildInventoryQuery,
   countActiveInventoryFilters,
@@ -118,6 +128,8 @@ type TableView = {
   rows: InventoryItem[];
   total: number;
   matchingIds: string[];
+  page: number;
+  pageCount: number;
 };
 
 function viewScope(filters: InventoryFilterState) {
@@ -255,12 +267,21 @@ export function InventoryClient(props: Props) {
     getInventoryThumbSize,
     getServerInventoryThumbSize,
   );
+  const columnWidths = useSyncExternalStore(
+    subscribeInventoryColumnWidths,
+    getInventoryColumnWidths,
+    getServerInventoryColumnWidths,
+  );
   const scope = viewScope(props.filters);
+  const [searchText, setSearchText] = useState(props.filters.q);
+  const [appliedQ, setAppliedQ] = useState(props.filters.q);
   const [view, setView] = useState<TableView>({
     scope,
     rows: props.rows,
     total: props.total,
     matchingIds: props.matchingIds,
+    page: props.page,
+    pageCount: props.pageCount,
   });
   if (view.scope !== scope) {
     setView({
@@ -268,18 +289,75 @@ export function InventoryClient(props: Props) {
       rows: props.rows,
       total: props.total,
       matchingIds: props.matchingIds,
+      page: props.page,
+      pageCount: props.pageCount,
     });
+    setSearchText(props.filters.q);
+    setAppliedQ(props.filters.q);
   }
   const table =
     view.scope === scope
       ? view
-      : { scope, rows: props.rows, total: props.total, matchingIds: props.matchingIds };
+      : {
+          scope,
+          rows: props.rows,
+          total: props.total,
+          matchingIds: props.matchingIds,
+          page: props.page,
+          pageCount: props.pageCount,
+        };
+  const liveFilters = { ...props.filters, q: appliedQ };
   const snapshot = useRef<TableView | null>(null);
   const rowsRef = useRef(table.rows);
   const saveChain = useRef(new Map<string, Promise<void>>());
   const saveGen = useRef(new Map<string, number>());
   const ackedRow = useRef(new Map<string, InventoryItem>());
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const searchGen = useRef(0);
+  useEffect(() => {
+    const q = searchText.trim();
+    if (q === appliedQ) return;
+    const gen = searchGen.current + 1;
+    searchGen.current = gen;
+    const filters = props.filters;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        const next = { ...filters, q, page: 1 };
+        const qs = buildInventoryQuery(next);
+        window.history.replaceState(null, "", `/inventory${qs}`);
+        try {
+          const response = await fetch(`/api/inventory${qs}`);
+          if (searchGen.current !== gen) return;
+          if (!response.ok) {
+            setInlineError("Couldn't search inventory. Try again.");
+            return;
+          }
+          const payload = (await response.json()) as {
+            rows?: InventoryItem[];
+            total?: number;
+            matchingIds?: string[];
+            page?: number;
+            pageCount?: number;
+          };
+          if (searchGen.current !== gen) return;
+          setAppliedQ(q);
+          setView((current) => ({
+            ...current,
+            rows: payload.rows ?? [],
+            total: payload.total ?? 0,
+            matchingIds: payload.matchingIds ?? [],
+            page: payload.page ?? 1,
+            pageCount: payload.pageCount ?? 1,
+          }));
+          setInlineError((current) => (current?.startsWith("Couldn't search") ? null : current));
+        } catch {
+          if (searchGen.current !== gen) return;
+          setInlineError("Couldn't search inventory. Try again.");
+        }
+      })();
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [searchText, appliedQ, props.filters]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedScope, setSelectedScope] = useState(scope);
   if (selectedScope !== scope) {
@@ -370,7 +448,7 @@ export function InventoryClient(props: Props) {
     const baseline = ackedRow.current.get(rowId);
     if (!baseline) return;
     setView((current) => {
-      const next = placeItem(current, baseline, props.filters);
+      const next = placeItem(current, baseline, liveFilters);
       rowsRef.current = next.rows;
       return next;
     });
@@ -381,7 +459,7 @@ export function InventoryClient(props: Props) {
       const existing = current.rows.find((item) => item.id === rowId);
       if (!existing) return current;
       if (!ackedRow.current.has(rowId)) ackedRow.current.set(rowId, existing);
-      const next = placeItem(current, patch(existing), props.filters);
+      const next = placeItem(current, patch(existing), liveFilters);
       rowsRef.current = next.rows;
       return next;
     });
@@ -461,6 +539,20 @@ export function InventoryClient(props: Props) {
         </td>
       );
     }
+    if (key === "deliveryDate" || key === "outDate") {
+      const label = key === "deliveryDate" ? "Delivery date" : "Out date";
+      return (
+        <td key={key} className="px-2 py-1" onClick={stopRowClick} onMouseDown={stopRowClick}>
+          <InlineDateEditor
+            label={`${label} for ${row.itemName}`}
+            value={row[key]}
+            onCommit={(next) => {
+              changeInline(row.id, (current) => ({ ...current, [key]: next }));
+            }}
+          />
+        </td>
+      );
+    }
     if (key === "orderNumber") {
       return (
         <Cell key={key}>
@@ -497,7 +589,21 @@ export function InventoryClient(props: Props) {
     return <Cell key={key}>{text[key]}</Cell>;
   }
 
-  const query = buildInventoryQuery(props.filters);
+  function beginResize(id: InventoryColumnId, startX: number) {
+    const startWidth = columnWidths[id];
+    const min = inventoryColumnMinWidth(id);
+    function move(event: PointerEvent) {
+      setInventoryColumnWidth(id, Math.max(min, startWidth + event.clientX - startX));
+    }
+    function end() {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+  }
+
+  const query = buildInventoryQuery(liveFilters);
   const exportHref = `/inventory/export${query}`;
 
   return (
@@ -525,7 +631,7 @@ export function InventoryClient(props: Props) {
           >
             Export CSV
           </a>
-          <Button type="button" variant="secondary" onClick={() => setImportOpen(true)}>
+          <Button type="button" onClick={() => setImportOpen(true)}>
             Import PDF
           </Button>
           <Button type="button" onClick={() => setEditor("new")}>
@@ -535,7 +641,12 @@ export function InventoryClient(props: Props) {
         </div>
       </div>
 
-      <FilterPanel {...props} />
+      <FilterPanel
+        {...props}
+        filters={liveFilters}
+        searchText={searchText}
+        onSearchText={setSearchText}
+      />
       {inlineError ? (
         <p
           role="alert"
@@ -611,18 +722,30 @@ export function InventoryClient(props: Props) {
               />
             </Button>
           ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => resetInventoryColumnWidths()}
+          >
+            Reset columns
+          </Button>
         </div>
       </div>
 
       <div className="hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block">
-        <table className="w-full min-w-[72rem] table-fixed text-left text-xs">
+        <table
+          className="table-fixed text-left text-xs"
+          style={{ width: INVENTORY_COLUMN_IDS.reduce((sum, id) => sum + columnWidths[id], 0) }}
+        >
           <colgroup>
-            <col className="w-8" />
-            <col className="w-36" />
+            {INVENTORY_COLUMN_IDS.map((id) => (
+              <col key={id} style={{ width: columnWidths[id] }} />
+            ))}
           </colgroup>
           <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
             <tr>
-              <th className="w-8 px-2 py-1.5">
+              <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
                 <input
                   type="checkbox"
                   aria-label="Select all visible rows"
@@ -633,16 +756,28 @@ export function InventoryClient(props: Props) {
                   onChange={toggleVisible}
                 />
               </th>
-              <th className="w-36 px-2 py-1.5 font-semibold">Photo</th>
+              <ColumnHeader
+                label="Photo"
+                width={columnWidths.photo}
+                onResizeStart={(startX) => beginResize("photo", startX)}
+              />
               {INVENTORY_SORT_KEYS.map((key) => (
-                <th key={key} className="px-2 py-1.5 font-semibold">
-                  <a href={`/inventory${sortHref(props.filters, key)}`} className="hover:underline">
-                    {SORT_LABELS[key]}
-                    {props.filters.sort === key ? (props.filters.dir === "asc" ? " ↑" : " ↓") : ""}
-                  </a>
-                </th>
+                <ColumnHeader
+                  key={key}
+                  label={SORT_LABELS[key]}
+                  sortMark={
+                    liveFilters.sort === key ? (liveFilters.dir === "asc" ? " ↑" : " ↓") : ""
+                  }
+                  width={columnWidths[key]}
+                  href={`/inventory${sortHref(liveFilters, key)}`}
+                  onResizeStart={(startX) => beginResize(key, startX)}
+                />
               ))}
-              <th className="px-2 py-1.5 font-semibold">Link</th>
+              <ColumnHeader
+                label="Link"
+                width={columnWidths.link}
+                onResizeStart={(startX) => beginResize("link", startX)}
+              />
             </tr>
           </thead>
           <tbody>
@@ -780,30 +915,44 @@ export function InventoryClient(props: Props) {
                     }));
                   }}
                 />
+                <InlineDateEditor
+                  label={`Delivery date for ${row.itemName}`}
+                  value={row.deliveryDate}
+                  onCommit={(next) => {
+                    changeInline(row.id, (current) => ({ ...current, deliveryDate: next }));
+                  }}
+                />
+                <InlineDateEditor
+                  label={`Out date for ${row.itemName}`}
+                  value={row.outDate}
+                  onCommit={(next) => {
+                    changeInline(row.id, (current) => ({ ...current, outDate: next }));
+                  }}
+                />
               </div>
             </li>
           ))
         )}
       </ul>
 
-      {props.pageCount > 1 ? (
+      {table.pageCount > 1 ? (
         <div className="flex items-center justify-between text-sm">
           <span>
-            Page {props.page} of {props.pageCount}
+            Page {table.page} of {table.pageCount}
           </span>
           <div className="flex gap-2">
-            {props.page > 1 ? (
+            {table.page > 1 ? (
               <a
                 className="underline"
-                href={`/inventory${buildInventoryQuery(props.filters, { page: props.page - 1 })}`}
+                href={`/inventory${buildInventoryQuery(liveFilters, { page: table.page - 1 })}`}
               >
                 Previous
               </a>
             ) : null}
-            {props.page < props.pageCount ? (
+            {table.page < table.pageCount ? (
               <a
                 className="underline"
-                href={`/inventory${buildInventoryQuery(props.filters, { page: props.page + 1 })}`}
+                href={`/inventory${buildInventoryQuery(liveFilters, { page: table.page + 1 })}`}
               >
                 Next
               </a>
@@ -816,6 +965,24 @@ export function InventoryClient(props: Props) {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         jobs={props.jobs}
+        statuses={props.statuses}
+        onOptimistic={(items) => {
+          snapshot.current = table;
+          setView((current) =>
+            items.reduce((next, item) => placeItem(next, item, liveFilters), current),
+          );
+        }}
+        onRollback={() => {
+          if (snapshot.current) setView(snapshot.current);
+        }}
+        onCommitted={(saved, tempIds) => {
+          setView((current) =>
+            tempIds.reduce((next, tempId, index) => {
+              const item = saved[index];
+              return item ? replaceItem(next, tempId, item, liveFilters) : next;
+            }, current),
+          );
+        }}
       />
       <ItemDialog
         open={editor !== null}
@@ -825,13 +992,13 @@ export function InventoryClient(props: Props) {
         jobs={props.jobs}
         onClose={() => setEditor(null)}
         onOptimistic={(next) => {
-          setView((current) => placeItem(remember(current), next, props.filters));
+          setView((current) => placeItem(remember(current), next, liveFilters));
         }}
         onRollback={() => {
           if (snapshot.current) setView(snapshot.current);
         }}
         onCommitted={(saved, tempId) => {
-          setView((current) => replaceItem(current, tempId, saved, props.filters));
+          setView((current) => replaceItem(current, tempId, saved, liveFilters));
           setEditor(null);
         }}
       />
@@ -940,9 +1107,7 @@ function PhotoThumb({
 }
 
 function Cell({ children }: { children: ReactNode }) {
-  return (
-    <td className="max-w-[9rem] truncate px-2 py-1 text-[var(--acton-navy)]">{children || "—"}</td>
-  );
+  return <td className="max-w-0 truncate px-2 py-1 text-[var(--acton-navy)]">{children || "—"}</td>;
 }
 
 function sortHref(filters: InventoryFilterState, key: InventorySortKey) {
@@ -950,7 +1115,7 @@ function sortHref(filters: InventoryFilterState, key: InventorySortKey) {
   return buildInventoryQuery({ ...filters, sort: key, dir, page: 1 });
 }
 
-function FilterPanel(props: Props) {
+function FilterPanel(props: Props & { searchText: string; onSearchText: (value: string) => void }) {
   const activeCount = countActiveInventoryFilters(props.filters);
   const scope = viewScope(props.filters);
   const [open, setOpen] = useState(activeCount > 0);
@@ -961,31 +1126,28 @@ function FilterPanel(props: Props) {
   }
 
   return (
-    <div className="rounded-md border border-[var(--acton-border)] bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-        <p className="text-sm font-semibold text-[var(--acton-navy)]">Filters</p>
-        <div className="flex items-center gap-2">
-          {activeCount > 0 ? (
-            <span className="rounded-full bg-[var(--acton-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--acton-navy)]">
-              {activeCount} {activeCount === 1 ? "filter" : "filters"} active
-            </span>
-          ) : null}
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            aria-expanded={open}
-            onClick={() => setOpen((current) => !current)}
-          >
-            {open ? "Hide filters" : "Filters"}
-          </Button>
-        </div>
+    <div>
+      <div className={`flex items-center justify-end gap-2 ${open ? "px-3 pt-2" : ""}`}>
+        {activeCount > 0 ? (
+          <span className="rounded-full bg-[var(--acton-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--acton-navy)]">
+            {activeCount} {activeCount === 1 ? "filter" : "filters"} active
+          </span>
+        ) : null}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open ? "Hide filters" : "Filters"}
+        </Button>
       </div>
       {open ? (
         <form
           method="get"
           action="/inventory"
-          className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3"
+          className="mt-2 grid gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-3 sm:grid-cols-2 lg:grid-cols-3"
         >
           {props.filters.sort !== "itemName" ? (
             <input type="hidden" name="sort" value={props.filters.sort} />
@@ -997,9 +1159,10 @@ function FilterPanel(props: Props) {
             Search
             <Input
               name="q"
-              defaultValue={props.filters.q}
-              placeholder="Item, SKU, or description"
+              value={props.searchText}
+              placeholder="Search by item, vendor, order #, category, description…"
               className="mt-1 h-9"
+              onChange={(event) => props.onSearchText(event.target.value)}
             />
           </label>
           <label className="text-xs font-semibold text-[var(--acton-navy)]">
@@ -1086,6 +1249,104 @@ function FilterPanel(props: Props) {
             </a>
           </div>
         </form>
+      ) : null}
+    </div>
+  );
+}
+
+function ColumnHeader({
+  label,
+  sortMark = "",
+  width,
+  href,
+  onResizeStart,
+}: {
+  label: string;
+  sortMark?: string;
+  width: number;
+  href?: string;
+  onResizeStart: (startX: number) => void;
+}) {
+  return (
+    <th className="relative px-2 py-1.5 font-semibold" style={{ width }}>
+      {href ? (
+        <a href={href} className="block truncate hover:underline">
+          {label}
+          {sortMark}
+        </a>
+      ) : (
+        <span className="block truncate">{label}</span>
+      )}
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize ${label} column`}
+        className="absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onResizeStart(event.clientX);
+        }}
+        onClick={stopRowClick}
+      />
+    </th>
+  );
+}
+
+function InlineDateEditor({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string | null;
+  onCommit: (next: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value ?? "");
+  return (
+    <div onClick={stopRowClick} onMouseDown={stopRowClick} onKeyDown={stopRowClick}>
+      <button
+        type="button"
+        className="text-left text-[var(--acton-navy)] underline-offset-2 hover:underline"
+        aria-label={label}
+        onClick={() => {
+          setDraft(value ?? "");
+          setOpen(true);
+        }}
+      >
+        {value || "—"}
+      </button>
+      {open ? (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <input
+            type="date"
+            aria-label={`${label} value`}
+            className="h-8 rounded-md border border-[var(--acton-border)] px-1 text-xs"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <button
+            type="button"
+            className="rounded-md bg-[var(--acton-navy)] px-2 py-1 text-xs font-semibold text-white"
+            onClick={() => {
+              onCommit(draft || null);
+              setOpen(false);
+            }}
+          >
+            Save date
+          </button>
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-xs font-semibold text-[var(--acton-navy)] underline"
+            onClick={() => {
+              onCommit(null);
+              setOpen(false);
+            }}
+          >
+            Clear date
+          </button>
+        </div>
       ) : null}
     </div>
   );

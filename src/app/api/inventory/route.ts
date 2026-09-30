@@ -4,6 +4,7 @@ import { parseInventoryUnitCostToCents } from "@/lib/inventory/money";
 import { inventoryItemWriteSchema } from "@/lib/inventory/schemas";
 import { createInventoryItem, queryInventory } from "@/lib/inventory/store";
 import { parseInventoryFilters } from "@/lib/inventory/filters";
+import { signInventoryFiles } from "@/lib/inventory/order-files";
 import type { InventoryItemInput } from "@/lib/inventory/store";
 
 export const runtime = "nodejs";
@@ -40,7 +41,17 @@ export async function GET(request: Request) {
     await requireActiveUser();
     const url = new URL(request.url);
     const result = await queryInventory(parseInventoryFilters(url.searchParams));
-    return jsonOk(result);
+    const signedPhotos = await signInventoryFiles(
+      result.rows.flatMap((item) => (item.photoStoragePath ? [item.photoStoragePath] : [])),
+    );
+    return jsonOk({
+      ...result,
+      rows: result.rows.map((item) => {
+        if (!item.photoStoragePath) return item;
+        const photoUrl = signedPhotos.get(item.photoStoragePath);
+        return photoUrl ? { ...item, photoUrl } : item;
+      }),
+    });
   } catch (error) {
     return jsonError(error, "GET /api/inventory");
   }
