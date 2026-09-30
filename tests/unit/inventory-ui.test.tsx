@@ -8,6 +8,10 @@ import {
   INVENTORY_COLUMN_WIDTH_KEY,
   resetInventoryColumnWidths,
 } from "@/lib/inventory/column-widths";
+import {
+  INVENTORY_COLUMN_ORDER_KEY,
+  resetInventoryColumnOrder,
+} from "@/lib/inventory/column-order";
 import type { InventoryItem, InventoryVocabValue } from "@/lib/inventory/types";
 import { emptyInventoryFilters } from "@/lib/inventory/filters";
 
@@ -67,6 +71,7 @@ function item(
 afterEach(() => {
   cleanup();
   resetInventoryColumnWidths();
+  resetInventoryColumnOrder();
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -499,6 +504,55 @@ describe("inventory table", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset columns" }));
     expect(screen.getByRole("columnheader", { name: /Item/ }).style.width).toBe("200px");
     expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toBeNull();
+    expect(screen.queryByTestId("column-resize-guide")).toBeNull();
+  });
+
+  it("shows a resize divider at rest, a guide while dragging, and no divider on the checkbox", () => {
+    renderTable();
+    const headers = screen.getAllByRole("columnheader");
+    expect(headers[0]?.querySelector("[role='separator']")).toBeNull();
+    const handles = screen.getAllByRole("separator");
+    expect(handles).toHaveLength(headers.length - 1);
+    for (const handle of handles) {
+      expect(handle.className).toContain("w-4");
+      expect(handle.className).toContain("cursor-col-resize");
+      const line = handle.firstElementChild;
+      expect(line?.className).toContain("w-px");
+      expect(line?.className).toContain("bg-[#4a5c6e]");
+      expect(line?.className).toContain("group-hover:bg-[#1a2733]");
+    }
+    const handle = screen.getByRole("separator", { name: "Resize Item column" });
+    fireEvent.pointerDown(handle, { clientX: 100 });
+    fireEvent.pointerMove(window, { clientX: 140 });
+    expect(screen.getByTestId("column-resize-guide")).toBeTruthy();
+    expect(handle.firstElementChild?.className).toContain("bg-[var(--acton-navy)]");
+    fireEvent.pointerUp(window);
+    expect(screen.queryByTestId("column-resize-guide")).toBeNull();
+    const sort = screen.getByRole("link", { name: /^Item/ });
+    fireEvent.click(sort);
+    expect(screen.queryByTestId("column-resize-guide")).toBeNull();
+    expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
+  });
+
+  it("reorders a column when its header is dragged and keeps that order", () => {
+    renderTable();
+    const category = screen.getByRole("link", { name: /^Category/ });
+    expect(category.getAttribute("href")).toContain("sort=category");
+    fireEvent.pointerDown(category, { clientX: 20 });
+    fireEvent.pointerMove(window, { clientX: 24 });
+    fireEvent.pointerUp(window, { clientX: 24 });
+    expect(screen.getAllByRole("columnheader").at(-1)?.textContent).not.toMatch(/Category/);
+    fireEvent.pointerDown(category, { clientX: 20 });
+    fireEvent.pointerMove(window, { clientX: 420 });
+    expect(screen.getByTestId("column-reorder-guide")).toBeTruthy();
+    fireEvent.pointerUp(window, { clientX: 420 });
+    expect(screen.getAllByRole("columnheader").at(-1)?.textContent).toMatch(/Category/);
+    expect(screen.getAllByRole("columnheader")[1]?.textContent).toMatch(/Photo/);
+    expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toMatch(/"category"/);
+    expect(category.getAttribute("href")).toContain("sort=category");
+    cleanup();
+    renderTable();
+    expect(screen.getAllByRole("columnheader").at(-1)?.textContent).toMatch(/Category/);
   });
 
   it("searches as you type and writes the query into the URL", async () => {
@@ -618,7 +672,10 @@ describe("inventory table", () => {
     expect(screen.queryByRole("heading", { name: "Edit item" })).toBeNull();
     expect(
       screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]?.textContent,
-    ).toBe("—");
+    ).toMatch(/—{8,}/);
+    expect(
+      screen.getAllByRole("button", { name: "Delivery date for Faucet" })[0]?.className,
+    ).toContain("w-full");
   });
 
   it("drops the extra Filters label and matches Import PDF to Add item", () => {

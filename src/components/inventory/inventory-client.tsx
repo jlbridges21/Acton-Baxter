@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { ExternalLink, Image as ImageIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { Button } from "@/components/ui/button";
@@ -16,10 +24,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { applyInventoryBulkPatch, type InventoryBulkPatch } from "@/lib/inventory/bulk";
 import {
+  getInventoryColumnOrder,
+  getServerInventoryColumnOrder,
+  moveInventoryColumn,
+  setInventoryColumnOrder,
+  subscribeInventoryColumnOrder,
+  type InventoryMovableColumnId,
+} from "@/lib/inventory/column-order";
+import {
   getInventoryColumnWidths,
   getServerInventoryColumnWidths,
   inventoryColumnMinWidth,
-  INVENTORY_COLUMN_IDS,
   resetInventoryColumnWidths,
   setInventoryColumnWidth,
   subscribeInventoryColumnWidths,
@@ -42,7 +57,6 @@ import {
   type InventoryThumbSize,
 } from "@/lib/inventory/thumb-size";
 import {
-  INVENTORY_SORT_KEYS,
   type InventoryFilterState,
   type InventoryItem,
   type InventorySortKey,
@@ -272,6 +286,16 @@ export function InventoryClient(props: Props) {
     getInventoryColumnWidths,
     getServerInventoryColumnWidths,
   );
+  const columnOrder = useSyncExternalStore(
+    subscribeInventoryColumnOrder,
+    getInventoryColumnOrder,
+    getServerInventoryColumnOrder,
+  );
+  const tableFrameRef = useRef<HTMLDivElement>(null);
+  const [resizingColumn, setResizingColumn] = useState<InventoryColumnId | null>(null);
+  const [resizeGuide, setResizeGuide] = useState<number | null>(null);
+  const [draggingColumn, setDraggingColumn] = useState<InventoryMovableColumnId | null>(null);
+  const [reorderGuide, setReorderGuide] = useState<number | null>(null);
   const scope = viewScope(props.filters);
   const [searchText, setSearchText] = useState(props.filters.q);
   const [appliedQ, setAppliedQ] = useState(props.filters.q);
@@ -589,18 +613,65 @@ export function InventoryClient(props: Props) {
     return <Cell key={key}>{text[key]}</Cell>;
   }
 
+  function frameX(clientX: number) {
+    const frame = tableFrameRef.current;
+    if (!frame) return clientX;
+    return clientX - frame.getBoundingClientRect().left;
+  }
+
+  function dropIndexFor(clientX: number) {
+    const frame = tableFrameRef.current;
+    if (!frame) return columnOrder.length;
+    const nodes = [...frame.querySelectorAll<HTMLElement>("[data-column-id]")];
+    for (let index = 0; index < nodes.length; index += 1) {
+      const rect = nodes[index]?.getBoundingClientRect();
+      if (!rect) continue;
+      if (clientX < rect.left + rect.width / 2) return index;
+    }
+    return nodes.length;
+  }
+
   function beginResize(id: InventoryColumnId, startX: number) {
     const startWidth = columnWidths[id];
     const min = inventoryColumnMinWidth(id);
+    setResizingColumn(id);
+    setResizeGuide(frameX(startX));
     function move(event: PointerEvent) {
       setInventoryColumnWidth(id, Math.max(min, startWidth + event.clientX - startX));
+      setResizeGuide(frameX(event.clientX));
     }
     function end() {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
+      setResizingColumn(null);
+      setResizeGuide(null);
     }
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
+  }
+
+  function previewReorder(id: InventoryMovableColumnId, clientX: number) {
+    setDraggingColumn(id);
+    const frame = tableFrameRef.current;
+    const nodes = frame ? [...frame.querySelectorAll<HTMLElement>("[data-column-id]")] : [];
+    const index = dropIndexFor(clientX);
+    const edge =
+      index >= nodes.length
+        ? nodes[nodes.length - 1]?.getBoundingClientRect().right
+        : nodes[index]?.getBoundingClientRect().left;
+    setReorderGuide(edge == null ? frameX(clientX) : frameX(edge));
+  }
+
+  function finishReorder(id: InventoryMovableColumnId, clientX: number) {
+    const next = moveInventoryColumn(getInventoryColumnOrder(), id, dropIndexFor(clientX));
+    setInventoryColumnOrder(next);
+    setDraggingColumn(null);
+    setReorderGuide(null);
+  }
+
+  function cancelReorder() {
+    setDraggingColumn(null);
+    setReorderGuide(null);
   }
 
   const query = buildInventoryQuery(liveFilters);
@@ -733,109 +804,151 @@ export function InventoryClient(props: Props) {
         </div>
       </div>
 
-      <div className="hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block">
-        <table
-          className="table-fixed text-left text-xs"
-          style={{ width: INVENTORY_COLUMN_IDS.reduce((sum, id) => sum + columnWidths[id], 0) }}
-        >
-          <colgroup>
-            {INVENTORY_COLUMN_IDS.map((id) => (
-              <col key={id} style={{ width: columnWidths[id] }} />
-            ))}
-          </colgroup>
-          <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
-            <tr>
-              <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
-                <input
-                  type="checkbox"
-                  aria-label="Select all visible rows"
-                  checked={allVisibleSelected}
-                  ref={(node) => {
-                    if (node) node.indeterminate = someVisibleSelected && !allVisibleSelected;
-                  }}
-                  onChange={toggleVisible}
-                />
-              </th>
-              <ColumnHeader
-                label="Photo"
-                width={columnWidths.photo}
-                onResizeStart={(startX) => beginResize("photo", startX)}
-              />
-              {INVENTORY_SORT_KEYS.map((key) => (
-                <ColumnHeader
-                  key={key}
-                  label={SORT_LABELS[key]}
-                  sortMark={
-                    liveFilters.sort === key ? (liveFilters.dir === "asc" ? " ↑" : " ↓") : ""
-                  }
-                  width={columnWidths[key]}
-                  href={`/inventory${sortHref(liveFilters, key)}`}
-                  onResizeStart={(startX) => beginResize(key, startX)}
-                />
+      <div className="relative hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block">
+        <div ref={tableFrameRef} className="relative">
+          <table
+            className="table-fixed text-left text-xs"
+            style={{
+              width:
+                columnWidths.select + columnOrder.reduce((sum, id) => sum + columnWidths[id], 0),
+            }}
+          >
+            <colgroup>
+              <col style={{ width: columnWidths.select }} />
+              {columnOrder.map((id) => (
+                <col key={id} style={{ width: columnWidths[id] }} />
               ))}
-              <ColumnHeader
-                label="Link"
-                width={columnWidths.link}
-                onResizeStart={(startX) => beginResize("link", startX)}
-              />
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.length === 0 ? (
+            </colgroup>
+            <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
               <tr>
-                <td
-                  colSpan={18}
-                  className="px-3 py-8 text-center text-sm text-[var(--acton-muted)]"
-                >
-                  No items match these filters.
-                </td>
+                <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible rows"
+                    checked={allVisibleSelected}
+                    ref={(node) => {
+                      if (node) node.indeterminate = someVisibleSelected && !allVisibleSelected;
+                    }}
+                    onChange={toggleVisible}
+                  />
+                </th>
+                {columnOrder.map((id) =>
+                  id === "photo" || id === "link" ? (
+                    <ColumnHeader
+                      key={id}
+                      columnId={id}
+                      label={id === "photo" ? "Photo" : "Link"}
+                      width={columnWidths[id]}
+                      resizing={resizingColumn === id}
+                      dragging={draggingColumn === id}
+                      onResizeStart={(startX) => beginResize(id, startX)}
+                      onReorderMove={(clientX) => previewReorder(id, clientX)}
+                      onReorderEnd={(clientX) => finishReorder(id, clientX)}
+                      onReorderCancel={cancelReorder}
+                    />
+                  ) : (
+                    <ColumnHeader
+                      key={id}
+                      columnId={id}
+                      label={SORT_LABELS[id]}
+                      sortMark={
+                        liveFilters.sort === id ? (liveFilters.dir === "asc" ? " ↑" : " ↓") : ""
+                      }
+                      width={columnWidths[id]}
+                      href={`/inventory${sortHref(liveFilters, id)}`}
+                      resizing={resizingColumn === id}
+                      dragging={draggingColumn === id}
+                      onResizeStart={(startX) => beginResize(id, startX)}
+                      onReorderMove={(clientX) => previewReorder(id, clientX)}
+                      onReorderEnd={(clientX) => finishReorder(id, clientX)}
+                      onReorderCancel={cancelReorder}
+                    />
+                  ),
+                )}
               </tr>
-            ) : (
-              table.rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
-                  onClick={() => setEditor(row)}
-                >
-                  <td className="px-2 py-1" onClick={stopRowClick}>
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${row.itemName}`}
-                      checked={selected.has(row.id)}
-                      onChange={() => toggleRow(row.id)}
-                    />
-                  </td>
+            </thead>
+            <tbody>
+              {table.rows.length === 0 ? (
+                <tr>
                   <td
-                    className="w-36 overflow-hidden px-2 py-1 align-middle"
-                    data-testid="inventory-photo"
-                    onClick={stopRowClick}
+                    colSpan={18}
+                    className="px-3 py-8 text-center text-sm text-[var(--acton-muted)]"
                   >
-                    <PhotoThumb
-                      url={row.photoUrl}
-                      name={row.itemName}
-                      size={thumbSize}
-                      onOpen={(url, name) => setPhoto({ url, name })}
-                    />
-                  </td>
-                  {INVENTORY_SORT_KEYS.map((key) => renderDataCell(row, key))}
-                  <td className="px-2 py-1" onClick={(event) => event.stopPropagation()}>
-                    {row.productUrl ? (
-                      <a
-                        href={row.productUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`Open link for ${row.itemName}`}
-                        className="text-[var(--acton-navy)]"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
+                    No items match these filters.
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                table.rows.map((row) => (
+                  <tr
+                    key={row.id}
+                    className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
+                    onClick={() => setEditor(row)}
+                  >
+                    <td className="px-2 py-1" onClick={stopRowClick}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.itemName}`}
+                        checked={selected.has(row.id)}
+                        onChange={() => toggleRow(row.id)}
+                      />
+                    </td>
+                    {columnOrder.map((id) =>
+                      id === "photo" ? (
+                        <td
+                          key={id}
+                          className="w-36 overflow-hidden px-2 py-1 align-middle"
+                          data-testid="inventory-photo"
+                          onClick={stopRowClick}
+                        >
+                          <PhotoThumb
+                            url={row.photoUrl}
+                            name={row.itemName}
+                            size={thumbSize}
+                            onOpen={(url, name) => setPhoto({ url, name })}
+                          />
+                        </td>
+                      ) : id === "link" ? (
+                        <td
+                          key={id}
+                          className="px-2 py-1"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          {row.productUrl ? (
+                            <a
+                              href={row.productUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={`Open link for ${row.itemName}`}
+                              className="text-[var(--acton-navy)]"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          ) : null}
+                        </td>
+                      ) : (
+                        renderDataCell(row, id)
+                      ),
+                    )}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          {resizeGuide != null ? (
+            <div
+              data-testid="column-resize-guide"
+              className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
+              style={{ left: resizeGuide }}
+            />
+          ) : null}
+          {reorderGuide != null ? (
+            <div
+              data-testid="column-reorder-guide"
+              className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
+              style={{ left: reorderGuide }}
+            />
+          ) : null}
+        </div>
       </div>
 
       <ul className="space-y-2 md:hidden" data-testid="inventory-cards">
@@ -1255,22 +1368,67 @@ function FilterPanel(props: Props & { searchText: string; onSearchText: (value: 
 }
 
 function ColumnHeader({
+  columnId,
   label,
   sortMark = "",
   width,
   href,
+  resizing,
+  dragging,
   onResizeStart,
+  onReorderMove,
+  onReorderEnd,
+  onReorderCancel,
 }: {
+  columnId: InventoryMovableColumnId;
   label: string;
   sortMark?: string;
   width: number;
   href?: string;
+  resizing: boolean;
+  dragging: boolean;
   onResizeStart: (startX: number) => void;
+  onReorderMove: (clientX: number) => void;
+  onReorderEnd: (clientX: number) => void;
+  onReorderCancel: () => void;
 }) {
+  const reorderMoved = useRef(false);
+  function trackReorder(event: ReactPointerEvent) {
+    if ((event.target as HTMLElement).closest("[data-column-resize]")) return;
+    const startX = event.clientX;
+    reorderMoved.current = false;
+    function move(pointer: PointerEvent) {
+      if (!reorderMoved.current && Math.abs(pointer.clientX - startX) < 6) return;
+      reorderMoved.current = true;
+      onReorderMove(pointer.clientX);
+    }
+    function end(pointer: PointerEvent) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      if (reorderMoved.current) onReorderEnd(pointer.clientX);
+      else onReorderCancel();
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+  }
   return (
-    <th className="relative px-2 py-1.5 font-semibold" style={{ width }}>
+    <th
+      data-column-id={columnId}
+      className={`relative px-2 py-1.5 font-semibold ${dragging ? "cursor-grabbing opacity-60" : "cursor-grab"}`}
+      style={{ width }}
+      onPointerDown={trackReorder}
+    >
       {href ? (
-        <a href={href} className="block truncate hover:underline">
+        <a
+          href={href}
+          className="block truncate hover:underline"
+          onClick={(event) => {
+            if (!reorderMoved.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            reorderMoved.current = false;
+          }}
+        >
           {label}
           {sortMark}
         </a>
@@ -1281,14 +1439,24 @@ function ColumnHeader({
         role="separator"
         aria-orientation="vertical"
         aria-label={`Resize ${label} column`}
-        className="absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none"
+        data-column-resize=""
+        className="group absolute top-0 right-0 z-20 flex h-full w-4 translate-x-1/2 cursor-col-resize touch-none items-stretch justify-center"
         onPointerDown={(event) => {
           event.preventDefault();
           event.stopPropagation();
           onResizeStart(event.clientX);
         }}
         onClick={stopRowClick}
-      />
+      >
+        <span
+          aria-hidden
+          className={`h-full ${
+            resizing
+              ? "w-0.5 bg-[var(--acton-navy)]"
+              : "w-px bg-[#4a5c6e] group-hover:w-0.5 group-hover:bg-[#1a2733]"
+          }`}
+        />
+      </span>
     </th>
   );
 }
@@ -1305,17 +1473,26 @@ function InlineDateEditor({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
   return (
-    <div onClick={stopRowClick} onMouseDown={stopRowClick} onKeyDown={stopRowClick}>
+    <div
+      className="w-full"
+      onClick={stopRowClick}
+      onMouseDown={stopRowClick}
+      onKeyDown={stopRowClick}
+    >
       <button
         type="button"
-        className="text-left text-[var(--acton-navy)] underline-offset-2 hover:underline"
+        className="block w-full text-left text-[var(--acton-navy)] underline-offset-2 hover:underline"
         aria-label={label}
         onClick={() => {
           setDraft(value ?? "");
           setOpen(true);
         }}
       >
-        {value || "—"}
+        {value ? (
+          value
+        ) : (
+          <span className="block w-full overflow-hidden whitespace-nowrap">{"—".repeat(24)}</span>
+        )}
       </button>
       {open ? (
         <div className="mt-1 flex flex-wrap items-center gap-1">
