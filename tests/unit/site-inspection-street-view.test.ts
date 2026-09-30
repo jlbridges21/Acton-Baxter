@@ -14,6 +14,7 @@ import {
   resetSiteInspectionMemoryForTests,
   setSiteInspectionProfileNameForTests,
   updateSiteInspectionAddress,
+  updateSiteInspectionDetails,
   uploadSiteInspectionPhoto,
 } from "@/lib/inspections";
 
@@ -246,6 +247,62 @@ describe("site inspection Street View covers", () => {
     expect(updated.coverSignedUrl).not.toBe(created.coverSignedUrl);
     const later = calls.map((url) => new URL(url).searchParams.get("location"));
     expect(later).toContain("30.27,-97.74");
+  });
+
+  it("refreshes Street View and coordinates when details edit the address", async () => {
+    const calls = mockGoogle();
+    const created = await inspectionAt("1 Covered St, Austin, TX");
+    const firstUrl = created.coverSignedUrl;
+    const updated = await updateSiteInspectionDetails({
+      inspectionId: created.id,
+      projectName: created.projectName,
+      address: "9 Other Rd, Austin, TX",
+      latitude: 30.27,
+      longitude: -97.74,
+      assignedTo: null,
+      actorId: "user-1",
+    });
+    expect(updated.address).toBe("9 Other Rd, Austin, TX");
+    expect(updated.latitude).toBe(30.27);
+    expect(updated.longitude).toBe(-97.74);
+    expect(updated.coverSource).toBe("street_view");
+    expect(updated.coverSignedUrl).toBeTruthy();
+    expect(updated.coverSignedUrl).not.toBe(firstUrl);
+    const locations = calls.map((url) => new URL(url).searchParams.get("location"));
+    expect(locations).toContain("30.27,-97.74");
+  });
+
+  it("keeps an uploaded cover photo when the address is edited", async () => {
+    mockGoogle();
+    const created = await inspectionAt("1 Covered St, Austin, TX");
+    const cover = created.snapshot.standaloneItems[0]!;
+    const uploaded = await uploadSiteInspectionPhoto({
+      userId: "user-1",
+      inspectionId: created.id,
+      buffer: COVER_JPEG,
+      filename: "front.jpg",
+    });
+    const withPhoto = await attachSiteInspectionPhoto({
+      inspectionId: created.id,
+      snapshotItemId: cover.id,
+      storagePath: uploaded.storagePath,
+      mimeType: uploaded.mimeType,
+      byteSize: uploaded.sizeBytes,
+      actorId: "user-1",
+    });
+    const updated = await updateSiteInspectionDetails({
+      inspectionId: created.id,
+      projectName: created.projectName,
+      address: "9 Other Rd, Austin, TX",
+      latitude: 30.27,
+      longitude: -97.74,
+      assignedTo: null,
+      actorId: "user-1",
+    });
+    expect(updated.coverSource).toBe("photo");
+    expect(updated.coverMediaId).toBe(withPhoto.coverMediaId);
+    expect(updated.latitude).toBe(30.27);
+    expect(updated.address).toBe("9 Other Rd, Austin, TX");
   });
 
   it("drops the previous Street View when an address change cannot be refreshed", async () => {

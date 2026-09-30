@@ -321,6 +321,65 @@ function sameCoordinate(a: number | null | undefined, b: number | null | undefin
   return (a ?? null) === (b ?? null);
 }
 
+function assertCanEditInspection(row: InspectionRow, actorId: string, actorRole?: string | null) {
+  if (row.created_by === actorId || isAdminRole(actorRole)) return;
+  throw new AuthorizationError("Only the creator or an admin can edit this inspection");
+}
+
+type InspectionDetailsPatch = {
+  project_name?: string;
+  address?: string;
+  assigned_to?: string | null;
+  job_id?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  updated_at: string;
+};
+
+async function writeInspectionFields(
+  id: string,
+  existing: InspectionRow,
+  patch: InspectionDetailsPatch,
+): Promise<void> {
+  if (shouldUseMemory()) {
+    getMemory().inspections.set(id, { ...existing, ...patch });
+    return;
+  }
+  const supabase = createServiceClient();
+  const { error } = await supabase.from("site_inspections").update(patch).eq("id", id);
+  if (
+    error &&
+    /latitude|longitude/i.test(error.message) &&
+    ("latitude" in patch || "longitude" in patch)
+  ) {
+    console.warn("[site-inspection] coordinate columns are not migrated yet", {
+      message: error.message,
+    });
+    const rest = { ...patch };
+    delete rest.latitude;
+    delete rest.longitude;
+    const retry = await supabase.from("site_inspections").update(rest).eq("id", id);
+    if (retry.error) throw retry.error;
+    return;
+  }
+  if (error) throw error;
+}
+
+function resolveEditedCoordinates(
+  existing: InspectionRow,
+  addressChanged: boolean,
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+): { latitude: number | null; longitude: number | null } {
+  const coordinatesProvided = latitude !== undefined || longitude !== undefined;
+  if (coordinatesProvided) return coordinatePair(latitude, longitude);
+  if (addressChanged) return { latitude: null, longitude: null };
+  return {
+    latitude: existing.latitude ?? null,
+    longitude: existing.longitude ?? null,
+  };
+}
+
 function coordinatePair(
   latitude: number | null | undefined,
   longitude: number | null | undefined,
@@ -884,21 +943,19 @@ export async function updateSiteInspectionAddress(input: {
   latitude?: number | null;
   longitude?: number | null;
   actorId: string;
+  actorRole?: string | null;
 }): Promise<SiteInspectionDetail> {
-  void input.actorId;
   const address = input.address.trim();
   if (!address) throw new ValidationError("Address is required");
   const existing = await loadInspectionRow(input.inspectionId);
+  assertCanEditInspection(existing, input.actorId, input.actorRole);
   const addressChanged = !addressesMatch(existing.address, address);
-  const coordinatesProvided = input.latitude !== undefined || input.longitude !== undefined;
-  const coordinates = coordinatesProvided
-    ? coordinatePair(input.latitude, input.longitude)
-    : addressChanged
-      ? { latitude: null, longitude: null }
-      : {
-          latitude: existing.latitude ?? null,
-          longitude: existing.longitude ?? null,
-        };
+  const coordinates = resolveEditedCoordinates(
+    existing,
+    addressChanged,
+    input.latitude,
+    input.longitude,
+  );
   if (
     !addressChanged &&
     sameCoordinate(existing.latitude, coordinates.latitude) &&
@@ -907,49 +964,85 @@ export async function updateSiteInspectionAddress(input: {
     return getSiteInspection(input.inspectionId);
   }
 
-  if (shouldUseMemory()) {
-    getMemory().inspections.set(input.inspectionId, {
-      ...existing,
-      address,
-      latitude: coordinates.latitude,
-      longitude: coordinates.longitude,
-      updated_at: nowIso(),
-    });
-  } else {
-    const supabase = createServiceClient();
-    const patch = {
-      address,
-      latitude: coordinates.latitude,
-      longitude: coordinates.longitude,
-      updated_at: nowIso(),
-    };
-    const { error } = await supabase
-      .from("site_inspections")
-      .update(patch)
-      .eq("id", input.inspectionId);
-    if (error && /latitude|longitude/i.test(error.message)) {
-      console.warn("[site-inspection] coordinate columns are not migrated yet", {
-        message: error.message,
-      });
-      const retry = await supabase
-        .from("site_inspections")
-        .update({ address, updated_at: patch.updated_at })
-        .eq("id", input.inspectionId);
-      if (retry.error) throw retry.error;
-    } else if (error) {
-      throw error;
-    }
+  await writeInspectionFields(input.inspectionId, existing, {
+    address,
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
+    updated_at: nowIso(),
+  });
+  await refreshStreetViewAfterMove(input.inspectionId);
+  return getSiteInspection(input.inspectionId);
+}
+
+/**
+ * Rename, reassign, or correct the address. Does not touch the template
+ * snapshot, status, responses, media, transcripts, or summaries.
+ * An address or coordinate change refreshes the cached Street View image;
+ * an uploaded cover photo still wins over that cache.
+ */
+export async function updateSiteInspectionDetails(input: {
+  inspectionId: string;
+  projectName: string;
+  address: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  assignedTo?: string | null;
+  jobId?: string | null;
+  actorId: string;
+  actorRole?: string | null;
+}): Promise<SiteInspectionDetail> {
+  const projectName = input.projectName.trim();
+  const address = input.address.trim();
+  if (!projectName) throw new ValidationError("Project name is required");
+  if (!address) throw new ValidationError("Address is required");
+
+  const existing = await loadInspectionRow(input.inspectionId);
+  assertCanEditInspection(existing, input.actorId, input.actorRole);
+
+  const addressChanged = !addressesMatch(existing.address, address);
+  const coordinates = resolveEditedCoordinates(
+    existing,
+    addressChanged,
+    input.latitude,
+    input.longitude,
+  );
+  const assignedTo = input.assignedTo === undefined ? existing.assigned_to : input.assignedTo;
+  const jobId = input.jobId === undefined ? existing.job_id : input.jobId;
+  const locationChanged =
+    addressChanged ||
+    !sameCoordinate(existing.latitude, coordinates.latitude) ||
+    !sameCoordinate(existing.longitude, coordinates.longitude);
+  const metaChanged =
+    existing.project_name !== projectName ||
+    existing.assigned_to !== assignedTo ||
+    existing.job_id !== jobId;
+
+  if (!locationChanged && !metaChanged) {
+    return getSiteInspection(input.inspectionId);
   }
 
+  await writeInspectionFields(input.inspectionId, existing, {
+    project_name: projectName,
+    address,
+    assigned_to: assignedTo,
+    job_id: jobId,
+    latitude: coordinates.latitude,
+    longitude: coordinates.longitude,
+    updated_at: nowIso(),
+  });
+  if (locationChanged) await refreshStreetViewAfterMove(input.inspectionId);
+  return getSiteInspection(input.inspectionId);
+}
+
+async function refreshStreetViewAfterMove(inspectionId: string): Promise<void> {
   try {
-    await syncStreetViewCover(await loadInspectionRow(input.inspectionId));
+    await syncStreetViewCover(await loadInspectionRow(inspectionId));
   } catch (error) {
     console.warn("[site-inspection] Street View cover failed after address change", {
-      inspectionId: input.inspectionId,
+      inspectionId,
       message: error instanceof Error ? error.message : "unknown",
     });
   }
-  return getSiteInspection(input.inspectionId);
 }
 
 export async function listSiteInspections(options?: {

@@ -58,6 +58,21 @@ export const updateSiteInspectionAddressSchema = z
   })
   .superRefine(coordinatesTogether);
 
+/**
+ * Visit details only. The template snapshot is fixed at creation and is not
+ * part of this payload — swapping it would orphan responses and media.
+ */
+export const updateSiteInspectionDetailsSchema = z
+  .object({
+    projectName: z.string().trim().min(1, "Project name is required").max(300),
+    address: z.string().trim().min(1, "Address is required").max(500),
+    latitude: latitudeSchema,
+    longitude: longitudeSchema,
+    assignedTo: z.string().uuid().nullable().optional(),
+    jobId: z.string().uuid().nullable().optional(),
+  })
+  .superRefine(coordinatesTogether);
+
 export const itemSignedUrlsSchema = z.object({
   snapshotItemId: z.string().uuid(),
 });

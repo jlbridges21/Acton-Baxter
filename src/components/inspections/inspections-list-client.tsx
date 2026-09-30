@@ -3,13 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import type { ExpenseJob } from "@/lib/receipts/types";
 import type { InspectionTemplateSummary } from "@/lib/inspections/types";
-import type { SiteInspectionSummary } from "@/lib/inspections/record-types";
+import type { SiteInspectionDetail, SiteInspectionSummary } from "@/lib/inspections/record-types";
+import { EditInspectionDialog } from "@/components/inspections/edit-inspection-dialog";
 import {
   InspectionProjectPicker,
   type ProjectPick,
@@ -47,6 +48,7 @@ export function InspectionsListClient({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SiteInspectionSummary | null>(null);
+  const [editTarget, setEditTarget] = useState<SiteInspectionSummary | null>(null);
 
   const [projectName, setProjectName] = useState("");
   const [addressQuery, setAddressQuery] = useState("");
@@ -269,10 +271,38 @@ export function InspectionsListClient({
       ) : null}
 
       {view === "list" ? (
-        <InspectionListRows rows={visible} canDelete={canDelete} onDelete={setDeleteTarget} />
+        <InspectionListRows
+          rows={visible}
+          canDelete={canDelete}
+          onDelete={setDeleteTarget}
+          onEdit={setEditTarget}
+        />
       ) : (
-        <InspectionGrid rows={visible} canDelete={canDelete} onDelete={setDeleteTarget} />
+        <InspectionGrid
+          rows={visible}
+          canDelete={canDelete}
+          onDelete={setDeleteTarget}
+          onEdit={setEditTarget}
+        />
       )}
+
+      {editTarget ? (
+        <EditInspectionDialog
+          key={editTarget.id}
+          row={editTarget}
+          jobs={jobs}
+          assignees={assignees}
+          onClose={() => setEditTarget(null)}
+          onSaved={(inspection) => {
+            setInspections((prev) =>
+              prev.map((row) =>
+                row.id === inspection.id ? summaryFromDetail(row, inspection) : row,
+              ),
+            );
+            setEditTarget(null);
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
@@ -298,6 +328,25 @@ export function InspectionsListClient({
       />
     </div>
   );
+}
+
+function summaryFromDetail(
+  current: SiteInspectionSummary,
+  next: SiteInspectionDetail,
+): SiteInspectionSummary {
+  return {
+    ...current,
+    projectName: next.projectName,
+    address: next.address,
+    jobId: next.jobId,
+    assignedTo: next.assignedTo,
+    assignedToName: next.assignedToName,
+    coverMediaId: next.coverMediaId,
+    coverSignedUrl: next.coverSignedUrl,
+    coverSource: next.coverSource,
+    streetViewCapturedOn: next.streetViewCapturedOn,
+    updatedAt: next.updatedAt,
+  };
 }
 
 function assignedLabel(row: SiteInspectionSummary) {
@@ -388,6 +437,34 @@ function StatusBadge({ status }: { status: SiteInspectionSummary["status"] }) {
   );
 }
 
+function EditInspectionButton({
+  row,
+  onEdit,
+  className,
+}: {
+  row: SiteInspectionSummary;
+  onEdit: (row: SiteInspectionSummary) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={
+        className ??
+        "rounded-md border border-[var(--acton-border)] bg-white p-2 text-[var(--acton-navy)] shadow-sm hover:bg-[var(--acton-gray-50)]"
+      }
+      aria-label={`Edit inspection ${row.projectName}`}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onEdit(row);
+      }}
+    >
+      <Pencil className="h-4 w-4" />
+    </button>
+  );
+}
+
 function DeleteInspectionButton({
   row,
   onDelete,
@@ -457,10 +534,12 @@ function InspectionGrid({
   rows,
   canDelete,
   onDelete,
+  onEdit,
 }: {
   rows: SiteInspectionSummary[];
   canDelete: (row: SiteInspectionSummary) => boolean;
   onDelete: (row: SiteInspectionSummary) => void;
+  onEdit: (row: SiteInspectionSummary) => void;
 }) {
   return (
     <ul className="grid gap-3 sm:grid-cols-2">
@@ -474,7 +553,7 @@ function InspectionGrid({
               <StatusBadge status={row.status} />
             </span>
             <InspectionCover row={row} />
-            <div className="space-y-1 p-3 pr-20">
+            <div className="space-y-1 p-3 pr-20 pb-14">
               <p className="truncate font-semibold text-[var(--acton-navy)]">{row.projectName}</p>
               <p className="truncate text-sm text-[var(--acton-muted)]">{row.address}</p>
               <p className="text-xs text-[var(--acton-muted)]">{assignedLabel(row)}</p>
@@ -483,13 +562,20 @@ function InspectionGrid({
               <AiProgress row={row} />
             </div>
           </Link>
-          {canDelete(row) ? (
-            <DeleteInspectionButton
+          <div className="absolute right-3 bottom-3 z-10 flex items-center gap-1">
+            <EditInspectionButton
               row={row}
-              onDelete={onDelete}
-              className="absolute right-3 bottom-3 z-10 rounded-md border border-[var(--acton-border)] bg-white p-2 text-red-700 shadow-sm hover:bg-red-50"
+              onEdit={onEdit}
+              className="rounded-md border border-[var(--acton-border)] bg-white p-2 text-[var(--acton-navy)] shadow-sm hover:bg-[var(--acton-gray-50)]"
             />
-          ) : null}
+            {canDelete(row) ? (
+              <DeleteInspectionButton
+                row={row}
+                onDelete={onDelete}
+                className="rounded-md border border-[var(--acton-border)] bg-white p-2 text-red-700 shadow-sm hover:bg-red-50"
+              />
+            ) : null}
+          </div>
         </li>
       ))}
       {rows.length === 0 ? (
@@ -505,10 +591,12 @@ function InspectionListRows({
   rows,
   canDelete,
   onDelete,
+  onEdit,
 }: {
   rows: SiteInspectionSummary[];
   canDelete: (row: SiteInspectionSummary) => boolean;
   onDelete: (row: SiteInspectionSummary) => void;
+  onEdit: (row: SiteInspectionSummary) => void;
 }) {
   if (rows.length === 0) {
     return (
@@ -529,7 +617,7 @@ function InspectionListRows({
             <col />
             <col className="w-28" />
             <col className="w-36" />
-            <col className="w-14" />
+            <col className="w-24" />
           </colgroup>
           <thead className="border-b border-[var(--acton-border)] text-xs text-[var(--acton-muted)]">
             <tr>
@@ -541,8 +629,8 @@ function InspectionListRows({
               <th className="py-2 pr-3 font-medium">Assigned to</th>
               <th className="w-28 py-2 pr-3 font-medium">Status</th>
               <th className="w-36 py-2 pr-3 font-medium">Progress</th>
-              <th className="w-14 py-2 pr-3 font-medium">
-                <span className="sr-only">Delete</span>
+              <th className="w-24 py-2 pr-3 font-medium">
+                <span className="sr-only">Actions</span>
               </th>
             </tr>
           </thead>
@@ -575,8 +663,13 @@ function InspectionListRows({
                   <p className="truncate">{progressLabel(row)}</p>
                   <UploadNotes row={row} />
                 </td>
-                <td className="w-14 overflow-hidden py-2 pr-2 align-middle">
-                  {canDelete(row) ? <DeleteInspectionButton row={row} onDelete={onDelete} /> : null}
+                <td className="w-24 overflow-hidden py-2 pr-2 align-middle">
+                  <div className="flex items-center justify-end gap-1">
+                    <EditInspectionButton row={row} onEdit={onEdit} />
+                    {canDelete(row) ? (
+                      <DeleteInspectionButton row={row} onDelete={onDelete} />
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -609,13 +702,20 @@ function InspectionListRows({
                 <UploadNotes row={row} />
               </div>
             </Link>
-            {canDelete(row) ? (
-              <DeleteInspectionButton
+            <div className="flex shrink-0 items-center gap-1">
+              <EditInspectionButton
                 row={row}
-                onDelete={onDelete}
-                className="shrink-0 rounded-md border border-[var(--acton-border)] bg-white p-2 text-red-700"
+                onEdit={onEdit}
+                className="shrink-0 rounded-md border border-[var(--acton-border)] bg-white p-2 text-[var(--acton-navy)]"
               />
-            ) : null}
+              {canDelete(row) ? (
+                <DeleteInspectionButton
+                  row={row}
+                  onDelete={onDelete}
+                  className="shrink-0 rounded-md border border-[var(--acton-border)] bg-white p-2 text-red-700"
+                />
+              ) : null}
+            </div>
           </li>
         ))}
       </ul>

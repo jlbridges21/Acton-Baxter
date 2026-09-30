@@ -21,6 +21,8 @@ import {
   setSiteInspectionProfileNameForTests,
   softDeleteSiteInspection,
   setSiteInspectionStatus,
+  updateSiteInspectionAddress,
+  updateSiteInspectionDetails,
   updateItem,
   updateSection,
   uploadSiteInspectionPhoto,
@@ -35,6 +37,7 @@ import {
   listPendingResponses,
   queuePendingResponse,
 } from "@/lib/inspections/client-autosave";
+import { updateMediaTranscript, upsertItemSummary } from "@/lib/inspections/ai/store";
 
 beforeEach(() => {
   process.env.ENABLE_MOCK_RESEARCH = "true";
@@ -430,5 +433,139 @@ describe("client autosave queue", () => {
     expect(listPendingResponses("insp-1")).toHaveLength(0);
 
     vi.unstubAllGlobals();
+  });
+});
+
+describe("edit inspection details", () => {
+  it("allows the creator or an admin and rejects everyone else", async () => {
+    const inspection = await tinyInspection();
+    const denied = {
+      inspectionId: inspection.id,
+      projectName: "Renamed",
+      address: inspection.address,
+      assignedTo: null,
+      actorId: "other-user",
+      actorRole: "user",
+    };
+
+    await expect(updateSiteInspectionDetails(denied)).rejects.toBeInstanceOf(AuthorizationError);
+    await expect(
+      updateSiteInspectionAddress({
+        inspectionId: inspection.id,
+        address: "9 Other Rd",
+        actorId: "other-user",
+        actorRole: "user",
+      }),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+
+    const renamed = await updateSiteInspectionDetails({
+      ...denied,
+      actorId: inspection.createdBy,
+      actorRole: "user",
+    });
+    expect(renamed.projectName).toBe("Renamed");
+    expect(renamed.sourceTemplateId).toBe(inspection.sourceTemplateId);
+
+    const byAdmin = await updateSiteInspectionDetails({
+      ...denied,
+      projectName: "Admin rename",
+      actorId: "ops-admin",
+      actorRole: "admin",
+    });
+    expect(byAdmin.projectName).toBe("Admin rename");
+    expect(byAdmin.status).toBe(inspection.status);
+  });
+
+  it("persists assignment, including Unassigned", async () => {
+    setSiteInspectionProfileNameForTests("user-2", "Alex Rivera");
+    const inspection = await tinyInspection();
+    expect(inspection.assignedTo).toBe("user-1");
+
+    const assigned = await updateSiteInspectionDetails({
+      inspectionId: inspection.id,
+      projectName: inspection.projectName,
+      address: inspection.address,
+      assignedTo: "user-2",
+      actorId: inspection.createdBy,
+    });
+    expect(assigned.assignedTo).toBe("user-2");
+    expect(assigned.assignedToName).toMatch(/Alex Rivera/i);
+
+    const cleared = await updateSiteInspectionDetails({
+      inspectionId: inspection.id,
+      projectName: inspection.projectName,
+      address: inspection.address,
+      assignedTo: null,
+      actorId: inspection.createdBy,
+    });
+    expect(cleared.assignedTo).toBeNull();
+    expect(cleared.assignedToName).toBeNull();
+  });
+
+  it("leaves the template snapshot, responses, media, transcripts, and summaries alone", async () => {
+    const inspection = await tinyInspection();
+    const cover = inspection.snapshot.standaloneItems[0]!;
+    const check = inspection.snapshot.sections[0]!.items[0]!;
+    await upsertSiteInspectionResponse({
+      inspectionId: inspection.id,
+      snapshotItemId: check.id,
+      isComplete: true,
+      notes: "Side yard clear",
+      answers: { [check.subQuestions[0]!.id]: { type: "yes_no_na", value: "yes" } },
+      actorId: "user-1",
+    });
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00,
+      0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9,
+    ]);
+    const uploaded = await uploadSiteInspectionPhoto({
+      userId: "user-1",
+      inspectionId: inspection.id,
+      buffer: jpeg,
+      filename: "clip.mp4",
+    });
+    const withMedia = await attachSiteInspectionPhoto({
+      inspectionId: inspection.id,
+      snapshotItemId: cover.id,
+      storagePath: uploaded.storagePath,
+      mimeType: "video/mp4",
+      byteSize: uploaded.sizeBytes,
+      actorId: "user-1",
+    });
+    const mediaId = withMedia.media[0]!.id;
+    await updateMediaTranscript(mediaId, {
+      transcript_status: "complete",
+      transcript_text: "Foundation looks solid",
+    });
+    await upsertItemSummary({
+      inspectionId: inspection.id,
+      snapshotItemId: check.id,
+      summaryText: "Access is clear.",
+      contentFingerprint: "fp-1",
+      status: "complete",
+    });
+
+    const before = await getSiteInspection(inspection.id);
+    const updated = await updateSiteInspectionDetails({
+      inspectionId: inspection.id,
+      projectName: "Second visit",
+      address: inspection.address,
+      assignedTo: inspection.assignedTo,
+      actorId: inspection.createdBy,
+    });
+
+    expect(updated.projectName).toBe("Second visit");
+    expect(updated.sourceTemplateId).toBe(before.sourceTemplateId);
+    expect(updated.status).toBe(before.status);
+    expect(updated.snapshot).toEqual(before.snapshot);
+    expect(updated.responses.map((row) => ({ notes: row.notes, answers: row.answers }))).toEqual(
+      before.responses.map((row) => ({ notes: row.notes, answers: row.answers })),
+    );
+    expect(updated.media.map((row) => row.id)).toEqual(before.media.map((row) => row.id));
+    expect(updated.media[0]?.transcriptText).toBe("Foundation looks solid");
+    expect(updated.itemSummaries.map((row) => row.summaryText)).toEqual(
+      before.itemSummaries.map((row) => row.summaryText),
+    );
+    expect(updated.itemSummaries[0]?.summaryText).toBe("Access is clear.");
   });
 });

@@ -365,7 +365,7 @@ describe("Inspections UI at phone width", () => {
       "Assigned to",
       "Status",
       "Progress",
-      "Delete",
+      "Actions",
     ]);
 
     const bodyRows = screen.getByRole("table").querySelectorAll("tbody tr");
@@ -417,5 +417,239 @@ describe("Inspections UI at phone width", () => {
     expect(screen.getByRole("button", { name: /Download all media/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Complete site inspection/i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /ACCESS/i }));
+  });
+});
+
+describe("edit inspection details", () => {
+  const assigneeId = "00000000-0000-4000-8000-000000000002";
+
+  function listProps(overrides?: { currentUserId?: string; isAdmin?: boolean }) {
+    return {
+      initialInspections: [summary],
+      jobs: [] as [],
+      templates: [],
+      assignees: [{ id: assigneeId, displayName: "Alex Rivera" }],
+      currentUserId: overrides?.currentUserId ?? "u1",
+      isAdmin: overrides?.isAdmin ?? false,
+    };
+  }
+
+  function mockSave(
+    posts: Array<Record<string, unknown>>,
+    options?: { status?: number; message?: string },
+  ) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        const href = String(url);
+        if (href.includes("/api/address/autocomplete")) {
+          return {
+            ok: true,
+            json: async () => ({
+              suggestions: [
+                {
+                  placeId: "place-1",
+                  description: "9 Other Rd, Austin, TX",
+                  mainText: "9 Other Rd",
+                  secondaryText: "Austin, TX",
+                },
+              ],
+            }),
+          };
+        }
+        if (href.includes("/api/address/place/")) {
+          return {
+            ok: true,
+            json: async () => ({
+              address: {
+                placeId: "place-1",
+                formattedAddress: "9 Other Rd, Austin, TX",
+                addressLine1: "9 Other Rd",
+                city: "Austin",
+                state: "TX",
+                zipCode: "78701",
+                county: null,
+                country: "US",
+                latitude: 30.27,
+                longitude: -97.74,
+              },
+            }),
+          };
+        }
+        if (init?.method === "PATCH") {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          posts.push(body);
+          if (options?.status) {
+            return {
+              ok: false,
+              json: async () => ({ error: { message: options.message } }),
+            };
+          }
+          return {
+            ok: true,
+            json: async () => ({
+              inspection: {
+                ...summary,
+                projectName: body.projectName,
+                address: body.address,
+                assignedTo: body.assignedTo ?? null,
+                assignedToName: body.assignedTo ? "Alex Rivera" : null,
+                jobId: body.jobId ?? null,
+                ...(typeof body.latitude === "number"
+                  ? {
+                      coverSignedUrl: "https://cdn.example/street.jpg",
+                      coverSource: "street_view",
+                      streetViewCapturedOn: "2024-06",
+                    }
+                  : {}),
+              },
+            }),
+          };
+        }
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+  }
+
+  it("shows a pencil beside the trash in grid and list, including for non-creators", () => {
+    const { rerender } = render(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient {...listProps()} view="grid" />
+      </div>,
+    );
+    expect(screen.getByRole("button", { name: "Edit inspection Liniger" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete inspection Liniger" })).toBeTruthy();
+
+    rerender(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient {...listProps()} view="list" />
+      </div>,
+    );
+    expect(
+      screen.getAllByRole("button", { name: "Edit inspection Liniger" }).length,
+    ).toBeGreaterThan(0);
+
+    rerender(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient {...listProps({ currentUserId: "someone-else" })} view="grid" />
+      </div>,
+    );
+    expect(screen.getByRole("button", { name: "Edit inspection Liniger" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete inspection Liniger" })).toBeNull();
+  });
+
+  it("opens a pre-filled modal without a template field and renames in both views", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    mockSave(posts);
+    const { rerender } = render(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient {...listProps()} view="grid" />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit inspection Liniger" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit inspection" });
+    expect(dialog.textContent).not.toMatch(/template/i);
+    expect((screen.getByLabelText(/Project name/i) as HTMLInputElement).value).toBe("Liniger");
+    expect((screen.getByLabelText(/^Address/i) as HTMLInputElement).value).toBe("25 N Avalon");
+    expect((screen.getByLabelText(/Assign to/i) as HTMLSelectElement).value).toBe("");
+
+    fireEvent.change(screen.getByLabelText(/Project name/i), {
+      target: { value: "CHECHETENKO visit 2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(posts).toHaveLength(1);
+    });
+    expect(posts[0]).toMatchObject({
+      projectName: "CHECHETENKO visit 2",
+      address: "25 N Avalon",
+      assignedTo: null,
+    });
+    expect(posts[0]).not.toHaveProperty("templateId");
+    expect(posts[0]).not.toHaveProperty("status");
+    expect(screen.getByText("CHECHETENKO visit 2")).toBeTruthy();
+
+    rerender(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient {...listProps()} view="list" />
+      </div>,
+    );
+    expect(screen.getAllByText("CHECHETENKO visit 2").length).toBeGreaterThan(0);
+  });
+
+  it("sends autocomplete coordinates and shows the refreshed Street View cover", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    mockSave(posts);
+    render(<InspectionsListClient {...listProps()} view="grid" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit inspection Liniger" }));
+    fireEvent.change(screen.getByLabelText(/^Address/i), { target: { value: "9 Other Rd" } });
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /9 Other Rd/i })).toBeTruthy();
+    });
+    fireEvent.mouseDown(screen.getByRole("option", { name: /9 Other Rd/i }));
+    await waitFor(() => {
+      expect((screen.getByLabelText(/^Address/i) as HTMLInputElement).value).toBe(
+        "9 Other Rd, Austin, TX",
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(posts).toHaveLength(1);
+    });
+    expect(posts[0]).toMatchObject({
+      address: "9 Other Rd, Austin, TX",
+      latitude: 30.27,
+      longitude: -97.74,
+    });
+    expect(screen.getByText("Street View · 2024")).toBeTruthy();
+  });
+
+  it("persists assignment and can set it back to Unassigned", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    mockSave(posts);
+    render(<InspectionsListClient {...listProps()} view="list" />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit inspection Liniger" })[0]!);
+    fireEvent.change(screen.getByLabelText(/Assign to/i), { target: { value: assigneeId } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]?.assignedTo).toBe(assigneeId);
+    expect(screen.getAllByText("Alex Rivera").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit inspection Liniger" })[0]!);
+    expect((screen.getByLabelText(/Assign to/i) as HTMLSelectElement).value).toBe(assigneeId);
+    fireEvent.change(screen.getByLabelText(/Assign to/i), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1]?.assignedTo).toBeNull();
+    expect(screen.getAllByText("Unassigned").length).toBeGreaterThan(0);
+  });
+
+  it("asks before discarding unsaved edits and shows a server rejection", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    mockSave(posts, {
+      status: 403,
+      message: "Only the creator or an admin can edit this inspection",
+    });
+    render(
+      <div style={{ width: 375 }}>
+        <InspectionsListClient {...listProps({ currentUserId: "someone-else" })} view="grid" />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit inspection Liniger" }));
+    fireEvent.change(screen.getByLabelText(/Project name/i), { target: { value: "Nope" } });
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Liniger")).toBeTruthy();
+    expect(posts).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit inspection Liniger" }));
+    fireEvent.change(screen.getByLabelText(/Project name/i), { target: { value: "Nope" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toMatch(/creator or an admin/i);
+    });
+    expect(screen.getByText("Liniger")).toBeTruthy();
   });
 });
