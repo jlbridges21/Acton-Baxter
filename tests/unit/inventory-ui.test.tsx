@@ -7,6 +7,7 @@ import { InventoryClient } from "@/components/inventory/inventory-client";
 import {
   INVENTORY_COLUMN_WIDTH_KEY,
   resetInventoryColumnWidths,
+  setInventoryColumnWidth,
 } from "@/lib/inventory/column-widths";
 import {
   INVENTORY_COLUMN_ORDER_KEY,
@@ -75,6 +76,22 @@ afterEach(() => {
   localStorage.clear();
   vi.unstubAllGlobals();
 });
+
+function layoutRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    top,
+    left,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect;
+}
 
 describe("inventory table", () => {
   const rows = [item({ id: "a", itemName: "Faucet" }), item({ id: "b", itemName: "Valve" })];
@@ -534,25 +551,90 @@ describe("inventory table", () => {
     expect(sort.getAttribute("href")).toBe("/inventory?dir=desc");
   });
 
-  it("reorders a column when its header is dragged and keeps that order", () => {
-    renderTable();
-    const category = screen.getByRole("link", { name: /^Category/ });
-    expect(category.getAttribute("href")).toContain("sort=category");
-    fireEvent.pointerDown(category, { clientX: 20 });
-    fireEvent.pointerMove(window, { clientX: 24 });
-    fireEvent.pointerUp(window, { clientX: 24 });
-    expect(screen.getAllByRole("columnheader").at(-1)?.textContent).not.toMatch(/Category/);
-    fireEvent.pointerDown(category, { clientX: 20 });
-    fireEvent.pointerMove(window, { clientX: 420 });
-    expect(screen.getByTestId("column-reorder-guide")).toBeTruthy();
-    fireEvent.pointerUp(window, { clientX: 420 });
-    expect(screen.getAllByRole("columnheader").at(-1)?.textContent).toMatch(/Category/);
-    expect(screen.getAllByRole("columnheader")[1]?.textContent).toMatch(/Photo/);
-    expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toMatch(/"category"/);
-    expect(category.getAttribute("href")).toContain("sort=category");
-    cleanup();
-    renderTable();
-    expect(screen.getAllByRole("columnheader").at(-1)?.textContent).toMatch(/Category/);
+  it("reorders a column with a ghost preview, blocks text selection, and resets order with widths", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      const id = this.dataset.columnId;
+      if (id) {
+        const nodes = [...document.querySelectorAll<HTMLElement>("[data-column-id]")];
+        const index = Math.max(0, nodes.indexOf(this));
+        return layoutRect(index * 120, 0, 120, 36);
+      }
+      if (this.getAttribute("data-testid") === "column-drag-preview") {
+        const host = this.parentElement;
+        return layoutRect(
+          parseFloat(host?.style.left || "") || 0,
+          parseFloat(host?.style.top || "") || 0,
+          parseFloat(this.style.width) || 120,
+          parseFloat(host?.style.height || "") || 36,
+        );
+      }
+      return originalRect.call(this);
+    };
+    try {
+      renderTable();
+      expect(screen.getByTestId("inventory-cards").querySelector("[data-column-id]")).toBeNull();
+      const headers = () => screen.getAllByRole("columnheader");
+      const categoryIndex = () =>
+        headers().findIndex((header) => header.textContent?.includes("Category"));
+      const start = categoryIndex();
+      const handle = screen.getByRole("button", { name: "Category" });
+      const pointer = { pointerId: 1, button: 0, isPrimary: true, clientY: 10 };
+      fireEvent.pointerDown(handle, { ...pointer, clientX: start * 120 + 20 });
+      const selectEvent = new Event("selectstart", { cancelable: true, bubbles: true });
+      document.dispatchEvent(selectEvent);
+      expect(selectEvent.defaultPrevented).toBe(true);
+      expect(document.body.style.userSelect).toBe("none");
+      fireEvent.pointerMove(document, { ...pointer, clientX: start * 120 + 24 });
+      fireEvent.pointerUp(document, { ...pointer, clientX: start * 120 + 24 });
+      expect(categoryIndex()).toBe(start);
+      expect(screen.queryByTestId("column-drag-preview")).toBeNull();
+      expect(document.body.style.userSelect).toBe("");
+
+      const originX = start * 120 + 20;
+      fireEvent.pointerDown(handle, { ...pointer, clientX: originX });
+      fireEvent.pointerMove(document, { ...pointer, clientX: originX + 12 });
+      expect(categoryIndex()).toBe(start);
+      fireEvent.pointerMove(document, { ...pointer, clientX: (start + 3) * 120 + 20 });
+      expect(screen.getByTestId("column-drag-preview").textContent).toMatch(/Category/);
+      expect(screen.getByTestId("column-drag-preview").className).toContain("bg-white/75");
+      expect(categoryIndex()).toBeGreaterThan(start);
+      expect(document.body.style.userSelect).toBe("none");
+      fireEvent.keyDown(document, { code: "Escape", key: "Escape" });
+      expect(categoryIndex()).toBe(start);
+      await waitFor(() => expect(screen.queryByTestId("column-drag-preview")).toBeNull());
+      expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toBeNull();
+
+      handle.focus();
+      fireEvent.keyDown(handle, { code: "Space", key: " " });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      fireEvent.keyDown(document, { code: "ArrowRight", key: "ArrowRight" });
+      expect(categoryIndex()).toBeGreaterThan(start);
+      fireEvent.keyDown(document, { code: "Space", key: " " });
+      expect(categoryIndex()).toBeGreaterThan(start);
+      expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toMatch(/"category"/);
+      const sort = screen.getByRole("link", { name: /^Category/ });
+      expect(sort.getAttribute("href")).toContain("sort=category");
+      cleanup();
+      renderTable();
+      expect(
+        screen
+          .getAllByRole("columnheader")
+          .findIndex((header) => header.textContent?.includes("Category")),
+      ).toBeGreaterThan(start);
+      setInventoryColumnWidth("itemName", 280);
+      fireEvent.click(screen.getByRole("button", { name: "Reset columns" }));
+      expect(localStorage.getItem(INVENTORY_COLUMN_ORDER_KEY)).toBeNull();
+      expect(localStorage.getItem(INVENTORY_COLUMN_WIDTH_KEY)).toBeNull();
+      expect(
+        screen
+          .getAllByRole("columnheader")
+          .findIndex((header) => header.textContent?.includes("Category")),
+      ).toBe(start);
+      expect(screen.getAllByRole("columnheader")[1]?.textContent).toMatch(/Photo/);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
   });
 
   it("searches as you type and writes the query into the URL", async () => {

@@ -1,14 +1,25 @@
 "use client";
 
 import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from "react";
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ExternalLink, Image as ImageIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { Button } from "@/components/ui/button";
@@ -24,9 +35,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { applyInventoryBulkPatch, type InventoryBulkPatch } from "@/lib/inventory/bulk";
 import {
+  INVENTORY_COLUMN_REORDER_DISTANCE,
   getInventoryColumnOrder,
   getServerInventoryColumnOrder,
-  moveInventoryColumn,
+  resetInventoryColumnOrder,
   setInventoryColumnOrder,
   subscribeInventoryColumnOrder,
   type InventoryMovableColumnId,
@@ -100,6 +112,12 @@ const SORT_LABELS: Record<InventorySortKey, string> = {
   outDate: "Out Date",
   notes: "Notes",
 };
+
+function columnHeaderLabel(id: InventoryMovableColumnId) {
+  if (id === "photo") return "Photo";
+  if (id === "link") return "Link";
+  return SORT_LABELS[id];
+}
 
 function money(cents: number) {
   return `$${formatCentsAsDecimalDollars(cents)}`;
@@ -294,8 +312,41 @@ export function InventoryClient(props: Props) {
   const tableFrameRef = useRef<HTMLDivElement>(null);
   const [resizingColumn, setResizingColumn] = useState<InventoryColumnId | null>(null);
   const [resizeGuide, setResizeGuide] = useState<number | null>(null);
-  const [draggingColumn, setDraggingColumn] = useState<InventoryMovableColumnId | null>(null);
-  const [reorderGuide, setReorderGuide] = useState<number | null>(null);
+  const [activeColumn, setActiveColumn] = useState<InventoryMovableColumnId | null>(null);
+  const [draftOrder, setDraftOrder] = useState<InventoryMovableColumnId[] | null>(null);
+  const [selectLocked, setSelectLocked] = useState(false);
+  const orderRef = useRef(columnOrder);
+  const originRef = useRef<InventoryMovableColumnId[] | null>(null);
+  const displayOrder = draftOrder ?? columnOrder;
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: INVENTORY_COLUMN_REORDER_DISTANCE },
+    }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  useEffect(() => {
+    if (activeColumn) return;
+    orderRef.current = columnOrder;
+  }, [activeColumn, columnOrder]);
+  useEffect(() => {
+    if (!selectLocked) return;
+    const previous = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    const blockSelect = (event: Event) => event.preventDefault();
+    document.addEventListener("selectstart", blockSelect);
+    return () => {
+      document.body.style.userSelect = previous;
+      document.removeEventListener("selectstart", blockSelect);
+    };
+  }, [selectLocked]);
+  useEffect(() => {
+    if (!selectLocked || activeColumn) return;
+    function release() {
+      setSelectLocked(false);
+    }
+    window.addEventListener("pointerup", release);
+    return () => window.removeEventListener("pointerup", release);
+  }, [selectLocked, activeColumn]);
   const scope = viewScope(props.filters);
   const [searchText, setSearchText] = useState(props.filters.q);
   const [appliedQ, setAppliedQ] = useState(props.filters.q);
@@ -619,18 +670,6 @@ export function InventoryClient(props: Props) {
     return clientX - frame.getBoundingClientRect().left;
   }
 
-  function dropIndexFor(clientX: number) {
-    const frame = tableFrameRef.current;
-    if (!frame) return columnOrder.length;
-    const nodes = [...frame.querySelectorAll<HTMLElement>("[data-column-id]")];
-    for (let index = 0; index < nodes.length; index += 1) {
-      const rect = nodes[index]?.getBoundingClientRect();
-      if (!rect) continue;
-      if (clientX < rect.left + rect.width / 2) return index;
-    }
-    return nodes.length;
-  }
-
   function beginResize(id: InventoryColumnId, startX: number) {
     const startWidth = columnWidths[id];
     const min = inventoryColumnMinWidth(id);
@@ -650,28 +689,43 @@ export function InventoryClient(props: Props) {
     window.addEventListener("pointerup", end);
   }
 
-  function previewReorder(id: InventoryMovableColumnId, clientX: number) {
-    setDraggingColumn(id);
-    const frame = tableFrameRef.current;
-    const nodes = frame ? [...frame.querySelectorAll<HTMLElement>("[data-column-id]")] : [];
-    const index = dropIndexFor(clientX);
-    const edge =
-      index >= nodes.length
-        ? nodes[nodes.length - 1]?.getBoundingClientRect().right
-        : nodes[index]?.getBoundingClientRect().left;
-    setReorderGuide(edge == null ? frameX(clientX) : frameX(edge));
+  function onColumnDragStart(event: DragStartEvent) {
+    const id = String(event.active.id) as InventoryMovableColumnId;
+    originRef.current = [...getInventoryColumnOrder()];
+    orderRef.current = originRef.current;
+    setDraftOrder(originRef.current);
+    setActiveColumn(id);
+    setSelectLocked(true);
   }
 
-  function finishReorder(id: InventoryMovableColumnId, clientX: number) {
-    const next = moveInventoryColumn(getInventoryColumnOrder(), id, dropIndexFor(clientX));
-    setInventoryColumnOrder(next);
-    setDraggingColumn(null);
-    setReorderGuide(null);
+  function onColumnDragOver(event: DragOverEvent) {
+    const overId = event.over ? String(event.over.id) : null;
+    const activeId = String(event.active.id);
+    if (!overId || overId === activeId) return;
+    const current = orderRef.current;
+    const from = current.indexOf(activeId as InventoryMovableColumnId);
+    const to = current.indexOf(overId as InventoryMovableColumnId);
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(current, from, to);
+    orderRef.current = next;
+    setDraftOrder(next);
   }
 
-  function cancelReorder() {
-    setDraggingColumn(null);
-    setReorderGuide(null);
+  function onColumnDragEnd(_event: DragEndEvent) {
+    setInventoryColumnOrder(orderRef.current);
+    originRef.current = null;
+    setDraftOrder(null);
+    setActiveColumn(null);
+    setSelectLocked(false);
+  }
+
+  function onColumnDragCancel() {
+    const origin = originRef.current;
+    if (origin) orderRef.current = origin;
+    originRef.current = null;
+    setDraftOrder(null);
+    setActiveColumn(null);
+    setSelectLocked(false);
   }
 
   const query = buildInventoryQuery(liveFilters);
@@ -797,158 +851,172 @@ export function InventoryClient(props: Props) {
             type="button"
             size="sm"
             variant="ghost"
-            onClick={() => resetInventoryColumnWidths()}
+            onClick={() => {
+              resetInventoryColumnWidths();
+              resetInventoryColumnOrder();
+            }}
           >
             Reset columns
           </Button>
         </div>
       </div>
 
-      <div className="relative hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block">
-        <div ref={tableFrameRef} className="relative">
-          <table
-            className="table-fixed text-left text-xs"
-            style={{
-              width:
-                columnWidths.select + columnOrder.reduce((sum, id) => sum + columnWidths[id], 0),
-            }}
-          >
-            <colgroup>
-              <col style={{ width: columnWidths.select }} />
-              {columnOrder.map((id) => (
-                <col key={id} style={{ width: columnWidths[id] }} />
-              ))}
-            </colgroup>
-            <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
-              <tr>
-                <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
-                  <input
-                    type="checkbox"
-                    aria-label="Select all visible rows"
-                    checked={allVisibleSelected}
-                    ref={(node) => {
-                      if (node) node.indeterminate = someVisibleSelected && !allVisibleSelected;
-                    }}
-                    onChange={toggleVisible}
-                  />
-                </th>
-                {columnOrder.map((id) =>
-                  id === "photo" || id === "link" ? (
-                    <ColumnHeader
-                      key={id}
-                      columnId={id}
-                      label={id === "photo" ? "Photo" : "Link"}
-                      width={columnWidths[id]}
-                      resizing={resizingColumn === id}
-                      dragging={draggingColumn === id}
-                      onResizeStart={(startX) => beginResize(id, startX)}
-                      onReorderMove={(clientX) => previewReorder(id, clientX)}
-                      onReorderEnd={(clientX) => finishReorder(id, clientX)}
-                      onReorderCancel={cancelReorder}
-                    />
-                  ) : (
-                    <ColumnHeader
-                      key={id}
-                      columnId={id}
-                      label={SORT_LABELS[id]}
-                      sortMark={
-                        liveFilters.sort === id ? (liveFilters.dir === "asc" ? " ↑" : " ↓") : ""
-                      }
-                      width={columnWidths[id]}
-                      href={`/inventory${sortHref(liveFilters, id)}`}
-                      resizing={resizingColumn === id}
-                      dragging={draggingColumn === id}
-                      onResizeStart={(startX) => beginResize(id, startX)}
-                      onReorderMove={(clientX) => previewReorder(id, clientX)}
-                      onReorderEnd={(clientX) => finishReorder(id, clientX)}
-                      onReorderCancel={cancelReorder}
-                    />
-                  ),
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.length === 0 ? (
+      <div
+        className={`relative hidden overflow-x-auto rounded-md border border-[var(--acton-border)] bg-white md:block ${selectLocked ? "select-none" : ""}`}
+      >
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={onColumnDragStart}
+          onDragOver={onColumnDragOver}
+          onDragEnd={onColumnDragEnd}
+          onDragCancel={onColumnDragCancel}
+        >
+          <div ref={tableFrameRef} className="relative">
+            <table
+              className={`table-fixed text-left text-xs ${selectLocked ? "select-none" : ""}`}
+              style={{
+                width:
+                  columnWidths.select + displayOrder.reduce((sum, id) => sum + columnWidths[id], 0),
+              }}
+            >
+              <colgroup>
+                <col style={{ width: columnWidths.select }} />
+                {displayOrder.map((id) => (
+                  <col key={id} style={{ width: columnWidths[id] }} />
+                ))}
+              </colgroup>
+              <thead className="border-b border-[var(--acton-border)] bg-[var(--acton-gray-50)] text-[var(--acton-navy)]">
                 <tr>
-                  <td
-                    colSpan={18}
-                    className="px-3 py-8 text-center text-sm text-[var(--acton-muted)]"
-                  >
-                    No items match these filters.
-                  </td>
-                </tr>
-              ) : (
-                table.rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
-                    onClick={() => setEditor(row)}
-                  >
-                    <td className="px-2 py-1" onClick={stopRowClick}>
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${row.itemName}`}
-                        checked={selected.has(row.id)}
-                        onChange={() => toggleRow(row.id)}
+                  <th className="px-2 py-1.5" style={{ width: columnWidths.select }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible rows"
+                      checked={allVisibleSelected}
+                      ref={(node) => {
+                        if (node) node.indeterminate = someVisibleSelected && !allVisibleSelected;
+                      }}
+                      onChange={toggleVisible}
+                    />
+                  </th>
+                  <SortableContext items={displayOrder} strategy={horizontalListSortingStrategy}>
+                    {displayOrder.map((id) => (
+                      <ColumnHeader
+                        key={id}
+                        columnId={id}
+                        label={columnHeaderLabel(id)}
+                        sortMark={
+                          id !== "photo" && id !== "link" && liveFilters.sort === id
+                            ? liveFilters.dir === "asc"
+                              ? " ↑"
+                              : " ↓"
+                            : ""
+                        }
+                        width={columnWidths[id]}
+                        href={
+                          id === "photo" || id === "link"
+                            ? undefined
+                            : `/inventory${sortHref(liveFilters, id)}`
+                        }
+                        resizing={resizingColumn === id}
+                        dragging={activeColumn === id}
+                        onResizeStart={(startX) => beginResize(id, startX)}
+                        onSelectionLock={() => setSelectLocked(true)}
                       />
+                    ))}
+                  </SortableContext>
+                </tr>
+              </thead>
+              <tbody>
+                {table.rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={18}
+                      className="px-3 py-8 text-center text-sm text-[var(--acton-muted)]"
+                    >
+                      No items match these filters.
                     </td>
-                    {columnOrder.map((id) =>
-                      id === "photo" ? (
-                        <td
-                          key={id}
-                          className="w-36 overflow-hidden px-2 py-1 align-middle"
-                          data-testid="inventory-photo"
-                          onClick={stopRowClick}
-                        >
-                          <PhotoThumb
-                            url={row.photoUrl}
-                            name={row.itemName}
-                            size={thumbSize}
-                            onOpen={(url, name) => setPhoto({ url, name })}
-                          />
-                        </td>
-                      ) : id === "link" ? (
-                        <td
-                          key={id}
-                          className="px-2 py-1"
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          {row.productUrl ? (
-                            <a
-                              href={row.productUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-label={`Open link for ${row.itemName}`}
-                              className="text-[var(--acton-navy)]"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
-                          ) : null}
-                        </td>
-                      ) : (
-                        renderDataCell(row, id)
-                      ),
-                    )}
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          {resizeGuide != null ? (
-            <div
-              data-testid="column-resize-guide"
-              className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
-              style={{ left: resizeGuide }}
-            />
-          ) : null}
-          {reorderGuide != null ? (
-            <div
-              data-testid="column-reorder-guide"
-              className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
-              style={{ left: reorderGuide }}
-            />
-          ) : null}
-        </div>
+                ) : (
+                  table.rows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-t border-[var(--acton-border)] hover:bg-[var(--acton-gray-50)]"
+                      onClick={() => setEditor(row)}
+                    >
+                      <td className="px-2 py-1" onClick={stopRowClick}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${row.itemName}`}
+                          checked={selected.has(row.id)}
+                          onChange={() => toggleRow(row.id)}
+                        />
+                      </td>
+                      {displayOrder.map((id) =>
+                        id === "photo" ? (
+                          <td
+                            key={id}
+                            className="w-36 overflow-hidden px-2 py-1 align-middle"
+                            data-testid="inventory-photo"
+                            onClick={stopRowClick}
+                          >
+                            <PhotoThumb
+                              url={row.photoUrl}
+                              name={row.itemName}
+                              size={thumbSize}
+                              onOpen={(url, name) => setPhoto({ url, name })}
+                            />
+                          </td>
+                        ) : id === "link" ? (
+                          <td
+                            key={id}
+                            className="px-2 py-1"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {row.productUrl ? (
+                              <a
+                                href={row.productUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label={`Open link for ${row.itemName}`}
+                                className="text-[var(--acton-navy)]"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            ) : null}
+                          </td>
+                        ) : (
+                          renderDataCell(row, id)
+                        ),
+                      )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+            {resizeGuide != null ? (
+              <div
+                data-testid="column-resize-guide"
+                className="pointer-events-none absolute top-0 bottom-0 z-30 w-0.5 bg-[var(--acton-navy)]"
+                style={{ left: resizeGuide }}
+              />
+            ) : null}
+          </div>
+          <DragOverlay dropAnimation={null}>
+            {activeColumn ? (
+              <div
+                data-testid="column-drag-preview"
+                className="pointer-events-none rounded-md border border-[var(--acton-navy)] bg-white/75 shadow-xl"
+                style={{ width: Math.max(columnWidths[activeColumn], 96) }}
+              >
+                <div className="truncate bg-[var(--acton-gray-50)] px-2 py-1.5 text-xs font-semibold text-[var(--acton-navy)]">
+                  {columnHeaderLabel(activeColumn)}
+                </div>
+                <div className="h-16 bg-[var(--acton-navy)]/10" />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       </div>
 
       <ul className="space-y-2 md:hidden" data-testid="inventory-cards">
@@ -1376,9 +1444,7 @@ function ColumnHeader({
   resizing,
   dragging,
   onResizeStart,
-  onReorderMove,
-  onReorderEnd,
-  onReorderCancel,
+  onSelectionLock,
 }: {
   columnId: InventoryMovableColumnId;
   label: string;
@@ -1388,75 +1454,55 @@ function ColumnHeader({
   resizing: boolean;
   dragging: boolean;
   onResizeStart: (startX: number) => void;
-  onReorderMove: (clientX: number) => void;
-  onReorderEnd: (clientX: number) => void;
-  onReorderCancel: () => void;
+  onSelectionLock: () => void;
 }) {
-  const reorderMoved = useRef(false);
-  function trackReorder(event: ReactPointerEvent) {
-    if ((event.target as HTMLElement).closest("[data-column-resize]")) return;
-    const startX = event.clientX;
-    reorderMoved.current = false;
-    function move(pointer: PointerEvent) {
-      if (!reorderMoved.current && Math.abs(pointer.clientX - startX) < 6) return;
-      reorderMoved.current = true;
-      onReorderMove(pointer.clientX);
-    }
-    function end(pointer: PointerEvent) {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      if (reorderMoved.current) onReorderEnd(pointer.clientX);
-      else onReorderCancel();
-    }
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-  }
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({ id: columnId });
   return (
-    <th
-      data-column-id={columnId}
-      className={`relative px-2 py-1.5 font-semibold ${dragging ? "cursor-grabbing opacity-60" : "cursor-grab"}`}
-      style={{ width }}
-      onPointerDown={trackReorder}
-    >
-      {href ? (
-        <a
-          href={href}
-          className="block truncate hover:underline"
-          onClick={(event) => {
-            if (!reorderMoved.current) return;
-            event.preventDefault();
-            event.stopPropagation();
-            reorderMoved.current = false;
+    <th className="relative px-2 py-1.5 font-semibold" style={{ width }}>
+      <div className="flex items-stretch">
+        <div
+          ref={setNodeRef}
+          data-column-id={columnId}
+          className={`min-w-0 flex-1 cursor-grab ${isDragging || dragging ? "cursor-grabbing opacity-40" : ""}`}
+          {...attributes}
+          {...listeners}
+          onPointerDownCapture={(event) => {
+            if ((event.target as HTMLElement).closest("[data-column-resize]")) return;
+            onSelectionLock();
           }}
         >
-          {label}
-          {sortMark}
-        </a>
-      ) : (
-        <span className="block truncate">{label}</span>
-      )}
-      <span
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={`Resize ${label} column`}
-        data-column-resize=""
-        className="group absolute top-0 right-0 z-20 flex h-full w-4 translate-x-1/2 cursor-col-resize touch-none items-stretch justify-center"
-        onPointerDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onResizeStart(event.clientX);
-        }}
-        onClick={stopRowClick}
-      >
+          {href ? (
+            <a href={href} className="block truncate hover:underline">
+              {label}
+              {sortMark}
+            </a>
+          ) : (
+            <span className="block truncate">{label}</span>
+          )}
+        </div>
         <span
-          aria-hidden
-          className={`h-full ${
-            resizing
-              ? "w-0.5 bg-[var(--acton-navy)]"
-              : "w-px bg-[#4a5c6e] group-hover:w-0.5 group-hover:bg-[#1a2733]"
-          }`}
-        />
-      </span>
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${label} column`}
+          data-column-resize=""
+          className="group absolute top-0 right-0 z-20 flex h-full w-4 translate-x-1/2 cursor-col-resize touch-none items-stretch justify-center"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onResizeStart(event.clientX);
+          }}
+          onClick={stopRowClick}
+        >
+          <span
+            aria-hidden
+            className={`h-full ${
+              resizing
+                ? "w-0.5 bg-[var(--acton-navy)]"
+                : "w-px bg-[#4a5c6e] group-hover:w-0.5 group-hover:bg-[#1a2733]"
+            }`}
+          />
+        </span>
+      </div>
     </th>
   );
 }

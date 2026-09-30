@@ -1,5 +1,8 @@
 import { INVENTORY_COLUMN_IDS, type InventoryColumnId } from "@/lib/inventory/column-widths";
 
+/** Pointer travel before a header press becomes a reorder instead of a sort click. */
+export const INVENTORY_COLUMN_REORDER_DISTANCE = 8;
+
 /** Per-viewer inventory column order, stored in this browser. The checkbox column stays first. */
 export const INVENTORY_COLUMN_ORDER_KEY = "baxter.inventory.column-order";
 
@@ -69,18 +72,4 @@ export function resetInventoryColumnOrder() {
   cachedRaw = "";
   cached = DEFAULT_ORDER;
   for (const listener of listeners) listener();
-}
-
-export function moveInventoryColumn(
-  order: InventoryMovableColumnId[],
-  id: InventoryMovableColumnId,
-  to: number,
-) {
-  const from = order.indexOf(id);
-  if (from < 0) return order;
-  const next = [...order];
-  next.splice(from, 1);
-  const insertAt = Math.max(0, Math.min(to > from ? to - 1 : to, next.length));
-  next.splice(insertAt, 0, id);
-  return next;
 }
