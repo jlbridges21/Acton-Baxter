@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { TourStage } from "@/components/tours/tour-stage";
-import { TOUR_PAGE_REVALIDATE_SECONDS } from "@/lib/tours/constants";
 import { coverThumbUrl } from "@/lib/tours/map-tour";
 import { getPublicTourBySlug } from "@/lib/tours/public-tour";
 import { getPublicAppBaseUrl } from "@/lib/slack/config";
 
-export const revalidate = TOUR_PAGE_REVALIDATE_SECONDS;
+// Next.js reads this export statically and rejects an imported identifier.
+// Keep the number equal to TOUR_PAGE_REVALIDATE_SECONDS (3600).
+export const revalidate = 3600;
 
 const OPEN_CHROME = {
   showTitle: true,

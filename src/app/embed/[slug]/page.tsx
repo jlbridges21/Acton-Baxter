@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { TourStage } from "@/components/tours/tour-stage";
-import { TOUR_PAGE_REVALIDATE_SECONDS } from "@/lib/tours/constants";
 import { embedChrome } from "@/lib/tours/embed-chrome";
 import { getPublicTourBySlug } from "@/lib/tours/public-tour";
 
-export const revalidate = TOUR_PAGE_REVALIDATE_SECONDS;
+// Next.js reads this export statically and rejects an imported identifier.
+// Keep the number equal to TOUR_PAGE_REVALIDATE_SECONDS (3600).
+export const revalidate = 3600;
 
 export async function generateMetadata({
   params,

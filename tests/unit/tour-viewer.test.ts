@@ -57,6 +57,9 @@ describe("tour image proxy", () => {
     expect(TOUR_VIEWER_SIGNED_URL_SECONDS - TOUR_IMAGE_PROXY_MAX_AGE_SECONDS).toBe(39_600);
     expect(tourImageCacheControl(true)).toBe("public, max-age=3600, s-maxage=3600");
     expect(tourImageCacheControl(false)).toBe("private, max-age=3600");
+    for (const file of ["src/app/tour/[slug]/page.tsx", "src/app/embed/[slug]/page.tsx"]) {
+      expect(source(file)).toContain(`export const revalidate = ${TOUR_PAGE_REVALIDATE_SECONDS}`);
+    }
   });
 });
 

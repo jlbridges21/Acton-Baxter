@@ -294,13 +294,18 @@ Slack never uploads PDFs. Property Research posts a login-protected report link 
 
 ## Tests
 
+Required before a change is done:
+
 ```bash
-npm run format
-npm run lint
-npm run typecheck
-npm run test
+npm run format && npm run lint && npm run typecheck && npm run test && npm run build
+```
+
+`npm run build` is part of that sequence. Format, lint, typecheck, and unit tests do not exercise route-segment analysis or the production bundle.
+
+Optional:
+
+```bash
 npm run test:e2e
-npm run build
 ```
 
 Paid live integration (optional):
