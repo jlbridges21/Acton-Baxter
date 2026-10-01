@@ -9,7 +9,11 @@ import {
   tourSceneObjectPaths,
   type PanoramaExtension,
 } from "@/lib/tours/paths";
-import { createTourPanoramaUpload, removeTourPanoramaObjects } from "@/lib/tours/storage";
+import {
+  createTourPanoramaUpload,
+  removeTourPanoramaObjects,
+  type SignedUpload,
+} from "@/lib/tours/storage";
 import {
   deleteSceneRow,
   deleteTourRow,
@@ -18,6 +22,8 @@ import {
   insertScene,
   insertTour,
   listScenePaths,
+  setCoverScene,
+  setScenePositions,
   swapScenePosition,
   tourExists,
   updateSceneName,
@@ -120,9 +126,9 @@ export async function prepareSceneUpload(input: {
   storagePath?: string;
   compatPath?: string | null;
   thumbnailPath?: string;
-  storage?: { path: string; token: string };
-  compat?: { path: string; token: string } | null;
-  thumbnail?: { path: string; token: string };
+  storage?: SignedUpload;
+  compat?: SignedUpload | null;
+  thumbnail?: SignedUpload;
 }> {
   const missing = await requireTour(input.tourId);
   if (missing) return missing;
@@ -225,6 +231,37 @@ export async function renameScene(
   }
   if (!scene) return { error: "That scene was not found." };
   const result = await updateSceneName(tourId, sceneId, name.trim() || "Scene");
+  if (!result.error) await refreshTour(tourId);
+  return result;
+}
+
+export async function setTourCover(
+  tourId: string,
+  sceneId: string,
+): Promise<{ error: string | null }> {
+  const missing = await requireTour(tourId);
+  if (missing) return missing;
+  if (!sceneIdSchema.safeParse(sceneId).success) return { error: "That scene was not found." };
+  let result;
+  try {
+    result = await setCoverScene(tourId, sceneId);
+  } catch (error) {
+    return fail(error, "Could not set the cover scene.");
+  }
+  if (!result.error) await refreshTour(tourId);
+  return result;
+}
+
+export async function reorderScenes(
+  tourId: string,
+  sceneIds: string[],
+): Promise<{ error: string | null }> {
+  const missing = await requireTour(tourId);
+  if (missing) return missing;
+  if (sceneIds.some((id) => !sceneIdSchema.safeParse(id).success)) {
+    return { error: "Could not reorder scenes." };
+  }
+  const result = await setScenePositions(tourId, sceneIds);
   if (!result.error) await refreshTour(tourId);
   return result;
 }

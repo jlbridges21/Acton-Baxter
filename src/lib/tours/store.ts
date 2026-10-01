@@ -309,6 +309,44 @@ export async function updateSceneName(
   return { error: error ? message(error, "Could not rename the scene.") : null };
 }
 
+export async function setCoverScene(
+  tourId: string,
+  sceneId: string,
+): Promise<{ error: string | null }> {
+  const scene = await getScenePath(tourId, sceneId);
+  if (!scene) return { error: "That scene was not found." };
+  const supabase = await db();
+  const { error } = await supabase
+    .from("tours")
+    .update({ cover_scene_id: sceneId })
+    .eq("id", tourId);
+  return { error: error ? message(error, "Could not set the cover scene.") : null };
+}
+
+export async function setScenePositions(
+  tourId: string,
+  sceneIds: string[],
+): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { data, error } = await supabase.from("scenes").select("id").eq("tour_id", tourId);
+  if (error) return { error: message(error, "Could not reorder scenes.") };
+  const existing = new Set((data ?? []).map((row) => row.id as string));
+  if (sceneIds.length !== existing.size || sceneIds.some((id) => !existing.has(id))) {
+    return { error: "Could not reorder scenes." };
+  }
+  for (let index = 0; index < sceneIds.length; index += 1) {
+    const id = sceneIds[index];
+    if (!id) continue;
+    const { error: updateError } = await supabase
+      .from("scenes")
+      .update({ position: index })
+      .eq("id", id)
+      .eq("tour_id", tourId);
+    if (updateError) return { error: message(updateError, "Could not reorder scenes.") };
+  }
+  return { error: null };
+}
+
 export async function swapScenePosition(
   tourId: string,
   sceneId: string,

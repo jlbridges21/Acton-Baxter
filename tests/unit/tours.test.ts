@@ -10,20 +10,10 @@ import {
   needsCompatPanorama,
   tourSceneObjectPaths,
 } from "@/lib/tours/paths";
+import { embedIframeSnippet, publicTourUrl } from "@/lib/tours/embed-snippet";
+import { VIEWER_TOUR_SELECT } from "@/lib/tours/map-tour";
 import { mapWithConcurrency } from "@/lib/tours/pool";
-
-const { uploadToSignedUrl } = vi.hoisted(() => ({
-  uploadToSignedUrl: vi.fn(async () => ({ error: null })),
-}));
-
-vi.mock("@/lib/supabase/client", () => ({
-  createClient: () => ({
-    storage: {
-      from: () => ({ uploadToSignedUrl }),
-    },
-  }),
-}));
-
+import { formatUploadBytes, putSignedObject } from "@/lib/tours/signed-put";
 import { originalPanoramaBody, uploadOriginalPanorama } from "@/lib/tours/upload-original";
 
 function source(relativePath: string): string {
@@ -74,24 +64,52 @@ describe("tour panorama rules", () => {
     expect(sniffPanoramaMime(Uint8Array.from([0x00, 0x00, 0x00, 0x00]))).toBeNull();
   });
 
-  it("uploads the original File object and never asks supabase-js for progress", async () => {
+  it("uploads the original File with XHR byte progress and aborts that request", async () => {
     const file = new File([Uint8Array.from([0xff, 0xd8, 0xff])], "pano.jpg", {
       type: "image/jpeg",
     });
     expect(originalPanoramaBody(file)).toBe(file);
+    const loaded = Math.round(1.4 * 1024 * 1024);
+    const total = Math.round(2.7 * 1024 * 1024);
+    const progress: Array<[number, number]> = [];
+    const xhr = installFakeXhr({
+      onProgress: () => ({ loaded, total }),
+    });
     await uploadOriginalPanorama({
       file,
-      path: "tour/scene.jpg",
-      token: "token",
+      signedUrl: "https://example.test/object/upload/sign/tour/scene.jpg?token=token",
       contentType: "image/jpeg",
+      onProgress: (nextLoaded, nextTotal) => progress.push([nextLoaded, nextTotal]),
     });
-    expect(uploadToSignedUrl).toHaveBeenCalledWith("tour/scene.jpg", "token", file, {
+    expect(xhr.method).toBe("PUT");
+    expect(xhr.sent).toBe(file);
+    expect(xhr.headers["Content-Type"]).toBe("image/jpeg");
+    expect(xhr.headers["x-upsert"]).toBe("true");
+    expect(progress).toEqual([[loaded, total]]);
+    expect(formatUploadBytes(loaded, total)).toBe("1.4 MB / 2.7 MB · 52%");
+
+    const controller = new AbortController();
+    const hanging = installFakeXhr({ hold: true });
+    const pending = putSignedObject({
+      signedUrl: "https://example.test/upload",
+      body: file,
       contentType: "image/jpeg",
+      signal: controller.signal,
     });
+    controller.abort();
+    expect(hanging.aborted).toBe(true);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+
     const uploadSource =
-      source("src/lib/tours/upload-original.ts") + source("src/lib/tours/upload-one.ts");
+      source("src/lib/tours/upload-original.ts") +
+      source("src/lib/tours/upload-one.ts") +
+      source("src/lib/tours/signed-put.ts");
     expect(uploadSource).not.toMatch(/onUploadProgress/);
+    expect(uploadSource).not.toMatch(/uploadToSignedUrl/);
+    expect(source("src/lib/tours/signed-put.ts")).toMatch(/xhr\.upload\.onprogress/);
+    expect(source("src/lib/tours/signed-put.ts")).toMatch(/xhr\.abort\(\)/);
     expect(source("src/lib/tours/upload-one.ts")).toMatch(/file: input\.file/);
+    expect(source("src/lib/tours/upload-one.ts")).toMatch(/discardSceneUpload/);
     expect(source("src/lib/tours/client-panorama.ts")).not.toMatch(/uploadToSignedUrl/);
   });
 
@@ -146,4 +164,111 @@ describe("tour server surface", () => {
     expect(TOUR_PANORAMA_MAX_BYTES).toBe(209715200);
     expect(sql.replaceAll("(select auth.uid())", "")).not.toMatch(/auth\.uid\(\)/);
   });
+
+  it("embeds hotspots through the scene relationship and loads the editor from that query", () => {
+    expect(VIEWER_TOUR_SELECT).toMatch(/scenes!scenes_tour_id_fkey/);
+    expect(VIEWER_TOUR_SELECT).toMatch(/hotspots!hotspots_scene_id_fkey/);
+    expect(VIEWER_TOUR_SELECT).not.toMatch(/hotspots \(\s*id/);
+    const editorPage = source("src/app/tours/[tourId]/page.tsx");
+    expect(editorPage).toMatch(/getViewerTour/);
+    expect(source("src/app/tours/[tourId]/preview/page.tsx")).toMatch(
+      /params: Promise<\{ tourId: string \}>/,
+    );
+    expect(source("src/components/tours/tour-editor.tsx")).toMatch(
+      /\/tours\/\$\{tour\.id\}\/preview/,
+    );
+  });
+
+  it("keeps the editor on the existing viewer and one set of guards", () => {
+    const editor = source("src/components/tours/tour-editor.tsx");
+    const viewer = source("src/components/tours/panorama-viewer.tsx");
+    expect(editor).toMatch(/<TourStage/);
+    expect(editor).toMatch(/layout="frame"/);
+    expect(editor).not.toMatch(/from "@\/components\/tours\/panorama-viewer"/);
+    expect(viewer).toMatch(/bootedRef/);
+    expect(viewer).toMatch(/current === currentSceneId/);
+    expect(viewer).toMatch(/tour\.setNodes\(/);
+    expect(source("src/components/tours/scene-strip.tsx")).toMatch(/sortableKeyboardCoordinates/);
+  });
 });
+
+describe("tour share snippet", () => {
+  it("hides chrome with =0 and leaves the public link off a private tour", () => {
+    const origin = "https://acton.example";
+    expect(publicTourUrl(origin, "oak-lane")).toBe("https://acton.example/tour/oak-lane");
+    const full = embedIframeSnippet({
+      origin,
+      slug: "oak-lane",
+      showTitle: true,
+      showThumbs: true,
+      showShare: true,
+      showFullscreen: true,
+    });
+    expect(full).toContain('src="https://acton.example/embed/oak-lane"');
+    expect(full).toContain('width="800"');
+    expect(full).toContain('height="480"');
+    expect(full).not.toMatch(/[?&](title|thumbs|share|fs)=/);
+    const quiet = embedIframeSnippet({
+      origin,
+      slug: "oak-lane",
+      showTitle: false,
+      showThumbs: false,
+      showShare: false,
+      showFullscreen: false,
+    });
+    expect(quiet).toContain("title=0");
+    expect(quiet).toContain("thumbs=0");
+    expect(quiet).toContain("share=0");
+    expect(quiet).toContain("fs=0");
+    const dialog = source("src/components/tours/share-dialog.tsx");
+    expect(dialog).toMatch(/This tour is private/);
+    expect(dialog).toMatch(/Make public/);
+  });
+});
+
+type FakeXhr = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  sent: unknown;
+  aborted: boolean;
+};
+
+function installFakeXhr(options?: {
+  hold?: boolean;
+  onProgress?: () => { loaded: number; total: number };
+}): FakeXhr {
+  const record: FakeXhr = { method: "", url: "", headers: {}, sent: null, aborted: false };
+  class Xhr {
+    status = 200;
+    responseText = "";
+    upload = {
+      onprogress: null as
+        ((event: { lengthComputable: boolean; loaded: number; total: number }) => void) | null,
+    };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    open(method: string, url: string) {
+      record.method = method;
+      record.url = url;
+    }
+    setRequestHeader(name: string, value: string) {
+      record.headers[name] = value;
+    }
+    send(body: unknown) {
+      record.sent = body;
+      const progress = options?.onProgress?.();
+      if (progress) {
+        this.upload.onprogress?.({ lengthComputable: true, ...progress });
+      }
+      if (!options?.hold) this.onload?.();
+    }
+    abort() {
+      record.aborted = true;
+      this.onabort?.();
+    }
+  }
+  vi.stubGlobal("XMLHttpRequest", Xhr);
+  return record;
+}

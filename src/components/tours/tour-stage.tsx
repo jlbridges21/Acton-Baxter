@@ -11,16 +11,30 @@ export function TourStage({
   tour,
   chrome,
   preview = false,
+  layout = "screen",
+  sceneId: controlledSceneId,
+  onSceneChange,
 }: {
   tour: ViewerTour;
   chrome: EmbedChrome;
   preview?: boolean;
+  /** `frame` fills a sized parent. Public and embed pages use the full viewport. */
+  layout?: "screen" | "frame";
+  sceneId?: string;
+  onSceneChange?: (sceneId: string) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const activeThumbRef = useRef<HTMLButtonElement>(null);
-  const [sceneId, setSceneId] = useState(tour.scenes[0]?.id ?? "");
+  const [uncontrolledSceneId, setUncontrolledSceneId] = useState(tour.scenes[0]?.id ?? "");
+  const sceneId = controlledSceneId ?? uncontrolledSceneId;
   const [shareLabel, setShareLabel] = useState("Share");
-  const showThumbs = chrome.showThumbs && tour.scenes.length > 1;
+  const showThumbs = layout === "screen" && chrome.showThumbs && tour.scenes.length > 1;
+  const framed = layout === "frame";
+
+  function setSceneId(id: string) {
+    onSceneChange?.(id);
+    if (controlledSceneId === undefined) setUncontrolledSceneId(id);
+  }
 
   useEffect(() => {
     activeThumbRef.current?.scrollIntoView({ inline: "center", block: "nearest" });
@@ -61,8 +75,15 @@ export function TourStage({
   }
 
   return (
-    <div ref={rootRef} className="flex h-dvh flex-col bg-[var(--acton-navy)] text-white">
-      {preview ? (
+    <div
+      ref={rootRef}
+      className={
+        framed
+          ? "relative h-full min-h-[320px] overflow-hidden bg-[var(--acton-navy)] text-white"
+          : "flex h-dvh flex-col bg-[var(--acton-navy)] text-white"
+      }
+    >
+      {preview && !framed ? (
         <div className="flex shrink-0 items-center justify-between gap-3 bg-[var(--acton-yellow)] px-4 py-2 text-sm font-semibold text-[var(--acton-navy)]">
           <span>Preview — not public</span>
           <Link href={`/tours/${tour.id}`} className="underline">
@@ -70,7 +91,7 @@ export function TourStage({
           </Link>
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1">
+      <div className={framed ? "absolute inset-0 min-h-[320px]" : "relative min-h-0 flex-1"}>
         {tour.scenes.length === 0 ? (
           <div className="flex h-full min-h-[240px] items-center justify-center px-6 text-center">
             <p className="text-sm font-semibold">This tour has no scenes yet.</p>
@@ -84,7 +105,7 @@ export function TourStage({
           />
         )}
 
-        {chrome.showTitle || chrome.showShare || chrome.showFullscreen ? (
+        {layout === "screen" && (chrome.showTitle || chrome.showShare || chrome.showFullscreen) ? (
           <div className="pointer-events-none absolute inset-x-0 top-0 z-20 bg-gradient-to-b from-[var(--acton-navy)]/80 to-transparent p-4">
             <div className="flex items-start justify-between gap-3">
               {chrome.showTitle ? (

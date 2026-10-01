@@ -42,7 +42,7 @@ export const VIEWER_TOUR_SELECT = `
   scenes!scenes_tour_id_fkey (
     id, name, position, width, height, compat_path, thumbnail_path,
     initial_yaw, initial_pitch, has_initial_view,
-    hotspots (
+    hotspots!hotspots_scene_id_fkey (
       id, type, yaw, pitch, label, content, target_scene_id, style_color, style_size
     )
   )

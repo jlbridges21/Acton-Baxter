@@ -3,7 +3,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { TOUR_PANORAMA_BUCKET, TOUR_VIEWER_SIGNED_URL_SECONDS } from "@/lib/tours/constants";
 
-export type SignedUpload = { path: string; token: string };
+export type SignedUpload = { path: string; token: string; signedUrl: string };
 
 /**
  * The image proxy calls this and redirects. Pages store the proxy path, not this URL.
@@ -27,12 +27,12 @@ export async function createTourPanoramaUpload(path: string): Promise<SignedUplo
   const { data, error } = await supabase.storage
     .from(TOUR_PANORAMA_BUCKET)
     .createSignedUploadUrl(path, { upsert: true });
-  if (error || !data) {
+  if (error || !data?.signedUrl || !data.token) {
     throw new Error(
       "Could not prepare the panorama upload. Confirm the tour-panoramas bucket exists.",
     );
   }
-  return { path: data.path, token: data.token };
+  return { path: data.path, token: data.token, signedUrl: data.signedUrl };
 }
 
 /** Remove objects before the database row that remembers their paths is deleted. */

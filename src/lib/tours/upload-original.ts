@@ -1,7 +1,6 @@
 "use client";
 
-import { createClient } from "@/lib/supabase/client";
-import { TOUR_PANORAMA_BUCKET } from "@/lib/tours/constants";
+import { putSignedObject } from "@/lib/tours/signed-put";
 
 /**
  * Upload the original file object. Do not pass a canvas blob or a re-encoded
@@ -13,33 +12,32 @@ export function originalPanoramaBody(file: File): File {
 }
 
 export async function uploadTourObject(input: {
-  path: string;
-  token: string;
+  signedUrl: string;
   body: Blob;
   contentType: string;
+  signal?: AbortSignal;
 }): Promise<void> {
-  const supabase = createClient();
-  const { error } = await supabase.storage
-    .from(TOUR_PANORAMA_BUCKET)
-    .uploadToSignedUrl(input.path, input.token, input.body, {
-      contentType: input.contentType,
-    });
-  if (error) {
-    throw new Error(error.message || "Upload failed.");
-  }
+  await putSignedObject({
+    signedUrl: input.signedUrl,
+    body: input.body,
+    contentType: input.contentType,
+    signal: input.signal,
+  });
 }
 
 export async function uploadOriginalPanorama(input: {
   file: File;
-  path: string;
-  token: string;
+  signedUrl: string;
   contentType: string;
+  onProgress?: (loaded: number, total: number) => void;
+  signal?: AbortSignal;
 }): Promise<void> {
   const body = originalPanoramaBody(input.file);
-  await uploadTourObject({
-    path: input.path,
-    token: input.token,
+  await putSignedObject({
+    signedUrl: input.signedUrl,
     body,
     contentType: input.contentType,
+    onProgress: input.onProgress,
+    signal: input.signal,
   });
 }

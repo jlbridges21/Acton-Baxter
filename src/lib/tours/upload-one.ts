@@ -4,6 +4,7 @@ import { assertPanoramaFile, derivePanoramaImages } from "@/lib/tours/client-pan
 import { panoramaExtension } from "@/lib/tours/paths";
 import { discardSceneUpload, prepareSceneUpload, saveScene } from "@/lib/tours/actions";
 import type { TourUploadStage } from "@/lib/tours/types";
+import { isUploadAbort } from "@/lib/tours/signed-put";
 import { uploadOriginalPanorama, uploadTourObject } from "@/lib/tours/upload-original";
 
 export function sceneNameFromFile(file: File): string {
@@ -20,16 +21,26 @@ export async function uploadOnePanorama(input: {
   tourId: string;
   sceneId: string;
   onStage: (stage: TourUploadStage) => void;
-}): Promise<{ error: string | null; warning: string | null }> {
+  onProgress?: (loaded: number, total: number) => void;
+  onPreview?: (thumbnail: Blob) => void;
+  signal?: AbortSignal;
+}): Promise<{ error: string | null; warning: string | null; cancelled?: boolean }> {
+  const cancelled = () => {
+    if (!input.signal?.aborted) return false;
+    throw new DOMException("Upload cancelled.", "AbortError");
+  };
   input.onStage("processing");
   let warning: string | null = null;
   let prepared = false;
   let extension: "jpg" | "png" = "jpg";
   try {
+    cancelled();
     const contentType = await assertPanoramaFile(input.file);
     extension = panoramaExtension(contentType);
     const derived = await derivePanoramaImages(input.file);
     warning = derived.warning;
+    input.onPreview?.(derived.thumbnail);
+    cancelled();
     input.onStage("uploading");
     const upload = await prepareSceneUpload({
       tourId: input.tourId,
@@ -44,28 +55,30 @@ export async function uploadOnePanorama(input: {
         warning,
       };
     }
+    cancelled();
     prepared = true;
     await uploadOriginalPanorama({
       file: input.file,
-      path: upload.storage.path,
-      token: upload.storage.token,
+      signedUrl: upload.storage.signedUrl,
       contentType,
+      onProgress: input.onProgress,
+      signal: input.signal,
     });
     await uploadTourObject({
-      path: upload.thumbnail.path,
-      token: upload.thumbnail.token,
+      signedUrl: upload.thumbnail.signedUrl,
       body: derived.thumbnail,
       contentType: "image/jpeg",
+      signal: input.signal,
     });
     if (derived.compat) {
       if (!upload.compat) {
         throw new Error("Could not prepare the compatibility image.");
       }
       await uploadTourObject({
-        path: upload.compat.path,
-        token: upload.compat.token,
+        signedUrl: upload.compat.signedUrl,
         body: derived.compat,
         contentType: "image/jpeg",
+        signal: input.signal,
       });
     }
     input.onStage("saving");
@@ -89,6 +102,7 @@ export async function uploadOnePanorama(input: {
         // The visible failure is the upload error. Cleanup is best-effort.
       }
     }
+    if (isUploadAbort(error)) return { error: null, warning, cancelled: true };
     input.onStage("error");
     const reason = error instanceof Error ? error.message : "Upload failed.";
     const named = reason.startsWith(`${input.file.name}:`)
