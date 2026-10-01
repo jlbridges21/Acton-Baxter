@@ -1,8 +1,7 @@
-import Link from "next/link";
-import { ArrowRight, Construction, ExternalLink } from "lucide-react";
+import { Construction } from "lucide-react";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { DashboardTools } from "@/components/baxter/dashboard-tools";
 import { BaxterChatLauncher } from "@/components/baxter-chat/baxter-chat-launcher";
-import { BAXTER_ADMIN_CARDS, getEnabledBaxterTools, type BaxterTool } from "@/lib/baxter/tools";
 import { CompanyLogo } from "@/components/branding/company-logo";
 
 export function BaxterDashboard({
@@ -19,8 +18,6 @@ export function BaxterDashboard({
   logoAlt?: string;
   chatEnabled?: boolean;
 }) {
-  const tools = getEnabledBaxterTools({ isAdmin });
-
   return (
     <div className="relative space-y-8">
       <div className="space-y-4">
@@ -43,43 +40,7 @@ export function BaxterDashboard({
         </div>
       </div>
 
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--acton-navy)]">Tools</h2>
-          <p className="mt-1 text-sm text-[var(--acton-muted)]">Open a tool to work.</p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          {tools.map((tool) => (
-            <ToolCard key={tool.key} tool={tool} />
-          ))}
-          {isAdmin
-            ? BAXTER_ADMIN_CARDS.map((card) => {
-                const Icon = card.icon;
-                return (
-                  <Card key={card.key} className="flex h-full flex-col justify-between">
-                    <div>
-                      <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--acton-navy)] text-[var(--acton-yellow)]">
-                        <Icon className="h-5 w-5" aria-hidden />
-                      </div>
-                      <CardTitle>{card.name}</CardTitle>
-                      <CardDescription className="mt-2">{card.description}</CardDescription>
-                    </div>
-                    <div className="mt-6">
-                      <Link
-                        href={card.href}
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white hover:bg-[var(--acton-navy-dark)]"
-                      >
-                        {card.ctaLabel}
-                        <ArrowRight className="h-4 w-4" />
-                      </Link>
-                    </div>
-                  </Card>
-                );
-              })
-            : null}
-        </div>
-      </section>
+      <DashboardTools isAdmin={isAdmin} />
 
       <section>
         <Card className="border-dashed bg-[var(--acton-gray-50)]">
@@ -98,52 +59,5 @@ export function BaxterDashboard({
 
       {chatEnabled ? <BaxterChatLauncher /> : null}
     </div>
-  );
-}
-
-const toolCtaClass =
-  "inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white hover:bg-[var(--acton-navy-dark)] sm:w-auto";
-
-function ToolCard({ tool }: { tool: BaxterTool }) {
-  const Icon = tool.icon;
-  const cta = (
-    <>
-      {tool.ctaLabel}
-      {tool.external ? (
-        <ExternalLink className="h-4 w-4" aria-hidden />
-      ) : (
-        <ArrowRight className="h-4 w-4" aria-hidden />
-      )}
-    </>
-  );
-  return (
-    <Card className="flex h-full flex-col justify-between">
-      <div>
-        <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-lg bg-[var(--acton-navy)] text-[var(--acton-yellow)]">
-          <Icon className="h-5 w-5" aria-hidden />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>{tool.name}</CardTitle>
-          {tool.external ? (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--acton-muted)]">
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-              Leaves Baxter
-            </span>
-          ) : null}
-        </div>
-        <CardDescription className="mt-2">{tool.description}</CardDescription>
-      </div>
-      <div className="mt-6">
-        {tool.external ? (
-          <a href={tool.href} target="_blank" rel="noopener noreferrer" className={toolCtaClass}>
-            {cta}
-          </a>
-        ) : (
-          <Link href={tool.href} className={toolCtaClass}>
-            {cta}
-          </Link>
-        )}
-      </div>
-    </Card>
   );
 }
