@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { InspectionMediaGallery } from "@/components/inspections/inspection-media-gallery";
 import { InspectionAiSummaryBlock } from "@/components/inspections/inspection-ai-summary";
 import { InspectionAiPipelineProgress } from "@/components/inspections/inspection-ai-pipeline-progress";
+import { InspectionUploadQueueBar } from "@/components/inspections/inspection-upload-queue-bar";
 import { ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { listPendingResponses, queuePendingResponse } from "@/lib/inspections/client-autosave";
 import { flushPendingResponses, type ResponseSaveResult } from "@/lib/inspections/response-sync";
@@ -30,10 +31,14 @@ import {
   startMediaQueueDrain,
   subscribeMediaQueue,
   VIDEO_WARN_MESSAGE,
+  type MediaQueueItemSnapshot,
   type MediaQueueSnapshot,
 } from "@/lib/inspections/media-queue";
-import { inferInspectionMediaType } from "@/lib/inspections/media-limits";
-import { listSnapshotItems } from "@/lib/inspections/snapshot";
+import {
+  formatInspectionMediaStepLabel,
+  inferInspectionMediaType,
+} from "@/lib/inspections/media-limits";
+import { findSnapshotMediaStep, listSnapshotItems } from "@/lib/inspections/snapshot";
 import { cn } from "@/lib/utils";
 import type {
   SiteInspectionDetail,
@@ -132,6 +137,11 @@ export function InspectionRunnerClient({
   const flushInFlight = useRef(false);
   const flushAgain = useRef(false);
   const responses = useMemo(() => responseMap(inspection.responses), [inspection.responses]);
+  const queueByClientId = useMemo(() => {
+    const map = new Map<string, MediaQueueItemSnapshot>();
+    for (const item of queueSnap.items) map.set(item.clientMediaId, item);
+    return map;
+  }, [queueSnap.items]);
 
   /**
    * Media complete/status acks may update media rows and cover — never rewrite
@@ -480,7 +490,9 @@ export function InspectionRunnerClient({
   async function onSaveQueuedMediaToDevice() {
     setSaveQueuedBusy(true);
     try {
-      const files = await listQueuedMediaForDeviceExport(inspection.id);
+      const files = await listQueuedMediaForDeviceExport(inspection.id, (item) =>
+        findSnapshotMediaStep(inspection.snapshot, item.snapshotItemId),
+      );
       if (!files.length) {
         window.alert("Nothing is sitting in the upload queue to save.");
         return;
@@ -511,13 +523,37 @@ export function InspectionRunnerClient({
     }
   }
 
+  function queueStepLabel(item: MediaQueueItemSnapshot): string {
+    const step = findSnapshotMediaStep(inspection.snapshot, item.snapshotItemId);
+    return formatInspectionMediaStepLabel({
+      stepTitle: step.stepTitle,
+      subQuestionPrompt: step.subQuestionPrompt,
+      mediaType: item.mediaType,
+    });
+  }
+
+  async function cancelQueuedUpload(item: MediaQueueItemSnapshot) {
+    const label = queueStepLabel(item);
+    const ok = window.confirm(
+      `Cancel this ${label} upload and remove it from the queue? Other uploads will keep going. The file will be deleted from this device's upload queue (use Save queued media first if you need a copy).`,
+    );
+    if (!ok) return;
+    await cancelAndDiscardMediaUpload(item.clientMediaId);
+    localMediaRef.current.delete(item.clientMediaId);
+    setInspection((prev) => ({
+      ...prev,
+      media: prev.media.filter((m) => m.clientMediaId !== item.clientMediaId),
+      pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
+    }));
+  }
+
   async function onDiscard(clientMediaId: string) {
     const item = queueSnap.items.find((i) => i.clientMediaId === clientMediaId);
     if (!item || item.status !== "failed") {
       window.alert("Only permanently failed uploads can be discarded.");
       return;
     }
-    const label = item.mediaType === "video" ? "video" : "photo";
+    const label = queueStepLabel(item);
     const ok = window.confirm(
       `Discard this failed ${label}? It will be permanently removed from the upload queue and cannot be recovered from this app.`,
     );
@@ -905,14 +941,6 @@ export function InspectionRunnerClient({
 
   const pendingUploads = queueSnap.pendingCount;
   const failedUploads = queueSnap.failedCount;
-  const stalledUploads = queueSnap.stalledCount;
-  // Snapshot is already scoped to this inspection — filter is belt-and-suspenders.
-  const failedQueueItems = queueSnap.items.filter((i) => i.status === "failed");
-  const activeQueueItems = queueSnap.items.filter(
-    (i) => i.status === "queued" || i.status === "uploading" || i.status === "finalizing",
-  );
-  const showQueuePanel =
-    pendingUploads > 0 || failedUploads > 0 || stalledUploads > 0 || failedQueueItems.length > 0;
   const allItemsChecked =
     inspection.totalItemCount > 0 && inspection.completedItemCount >= inspection.totalItemCount;
   const galleryMedia = gallery
@@ -977,21 +1005,6 @@ export function InspectionRunnerClient({
                     ? "Save error — will retry"
                     : "Pending sync"}
             </p>
-            {pendingUploads > 0 ? (
-              <p className="text-xs font-medium text-amber-800">
-                {pendingUploads} upload{pendingUploads === 1 ? "" : "s"} pending
-              </p>
-            ) : null}
-            {stalledUploads > 0 ? (
-              <p className="text-xs font-semibold text-red-700">
-                {stalledUploads} upload{stalledUploads === 1 ? "" : "s"} stalled — tap Retry all
-              </p>
-            ) : null}
-            {failedUploads > 0 ? (
-              <p className="text-xs font-medium text-red-700">
-                {failedUploads} upload{failedUploads === 1 ? "" : "s"} failed
-              </p>
-            ) : null}
             <span
               className={`mt-1 inline-block rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${
                 inspection.status === "complete"
@@ -1010,113 +1023,19 @@ export function InspectionRunnerClient({
             inspectionId={inspection.id}
           />
         ) : null}
-        {showQueuePanel ? (
-          <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50/90 px-2 py-2 text-left text-xs text-amber-950">
-            {stalledUploads > 0 ? (
-              <p className="font-semibold text-red-800">
-                Uploads look stuck (no progress for several minutes while this page is open). Tap
-                Retry all, or Save queued media to your device so nothing is lost.
-              </p>
-            ) : pendingUploads > 0 ? (
-              <p>
-                Uploads continue in the background — leaving this page will not discard pending
-                photos or videos.
-              </p>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-9 min-h-9 px-3 text-xs"
-                disabled={retryAllBusy || (pendingUploads === 0 && failedUploads === 0)}
-                onClick={() => void onRetryAllUploads()}
-              >
-                {retryAllBusy ? "Restarting…" : "Retry all uploads"}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-9 min-h-9 px-3 text-xs"
-                disabled={saveQueuedBusy || (pendingUploads === 0 && failedUploads === 0)}
-                onClick={() => void onSaveQueuedMediaToDevice()}
-              >
-                {saveQueuedBusy ? "Saving…" : "Save queued media to device"}
-              </Button>
-            </div>
-            {activeQueueItems.length ? (
-              <div className="space-y-1 border-t border-amber-200/80 pt-2">
-                {activeQueueItems.map((item) => (
-                  <div
-                    key={item.clientMediaId}
-                    className={`flex flex-wrap items-start justify-between gap-2 ${
-                      item.isStalled ? "font-medium text-red-800" : ""
-                    }`}
-                  >
-                    <p className="min-w-0 flex-1">
-                      {item.mediaType === "video" ? "Video" : "Photo"}: {item.statusReason}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-8 min-h-8 shrink-0 px-2 text-xs text-red-800"
-                      onClick={() => {
-                        const label = item.mediaType === "video" ? "video" : "photo";
-                        const ok = window.confirm(
-                          `Cancel this ${label} upload and remove it from the queue? Other uploads will keep going. The file will be deleted from this device's upload queue (use Save queued media first if you need a copy).`,
-                        );
-                        if (!ok) return;
-                        void (async () => {
-                          await cancelAndDiscardMediaUpload(item.clientMediaId);
-                          localMediaRef.current.delete(item.clientMediaId);
-                          setInspection((prev) => ({
-                            ...prev,
-                            media: prev.media.filter((m) => m.clientMediaId !== item.clientMediaId),
-                            pendingMediaCount: Math.max(0, prev.pendingMediaCount - 1),
-                          }));
-                        })();
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {failedQueueItems.length ? (
-              <div className="space-y-1 border-t border-red-200 pt-2 text-red-900">
-                {failedQueueItems.map((item) => (
-                  <div
-                    key={item.clientMediaId}
-                    className="flex flex-wrap items-start justify-between gap-2"
-                  >
-                    <p className="min-w-0 flex-1">
-                      {item.mediaType === "video" ? "Video" : "Photo"}:{" "}
-                      {item.statusReason || item.lastError || "Upload failed"}
-                    </p>
-                    <div className="flex shrink-0 gap-1">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="h-8 min-h-8 px-2 text-xs"
-                        onClick={() => void onRetry(item.clientMediaId)}
-                      >
-                        Retry
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="h-8 min-h-8 px-2 text-xs text-red-800"
-                        onClick={() => void onDiscard(item.clientMediaId)}
-                      >
-                        Discard
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        <InspectionUploadQueueBar
+          items={queueSnap.items}
+          labelFor={queueStepLabel}
+          retryAllBusy={retryAllBusy}
+          saveQueuedBusy={saveQueuedBusy}
+          retryAllLabel={retryAllBusy ? "Restarting…" : "Retry all uploads"}
+          saveLabel={saveQueuedBusy ? "Saving…" : "Save queued media to device"}
+          onRetryAll={() => void onRetryAllUploads()}
+          onSaveToDevice={() => void onSaveQueuedMediaToDevice()}
+          onCancel={(item) => void cancelQueuedUpload(item)}
+          onRetry={(clientMediaId) => void onRetry(clientMediaId)}
+          onDiscard={(clientMediaId) => void onDiscard(clientMediaId)}
+        />
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -1212,6 +1131,7 @@ export function InspectionRunnerClient({
           item={item}
           response={responses.get(item.id)}
           media={mediaByItem.get(item.id) ?? []}
+          queueByClientId={queueByClientId}
           itemSummary={inspection.itemSummaries?.find((s) => s.snapshotItemId === item.id)}
           onPatch={(patch) => patchItemLocally(item.id, patch)}
           onMedia={(file) => void onMediaSelected(item.id, file)}
@@ -1268,6 +1188,7 @@ export function InspectionRunnerClient({
                     item={item}
                     response={responses.get(item.id)}
                     media={mediaByItem.get(item.id) ?? []}
+                    queueByClientId={queueByClientId}
                     itemSummary={inspection.itemSummaries?.find(
                       (s) => s.snapshotItemId === item.id,
                     )}
@@ -1388,13 +1309,20 @@ export function InspectionRunnerClient({
   );
 }
 
-function mediaStatusLabel(m: SiteInspectionMedia): string | null {
+function mediaStatusLabel(m: SiteInspectionMedia, queue?: MediaQueueItemSnapshot): string | null {
+  if (queue?.status === "finalizing") {
+    return queue.lastError ? queue.statusReason : "Finalizing on server…";
+  }
   if (m.uploadStatus === "ready") return null;
-  if (m.uploadStatus === "uploading") {
-    const pct = m.uploadProgress != null ? ` ${Math.round(m.uploadProgress * 100)}%` : "";
+  if (queue?.status === "failed" || m.uploadStatus === "failed") {
+    return queue?.statusReason ?? "Failed — tap retry";
+  }
+  if (m.uploadStatus === "uploading" || queue?.status === "uploading") {
+    const progress = queue?.progress ?? m.uploadProgress;
+    const pct = progress != null ? ` ${Math.round(progress * 100)}%` : "";
     return `Uploading${pct}`;
   }
-  if (m.uploadStatus === "failed") return "Failed — tap retry";
+  if (queue?.status === "queued") return queue.statusReason;
   return "Queued";
 }
 
@@ -1464,6 +1392,7 @@ function ItemCard({
   item,
   response,
   media,
+  queueByClientId,
   itemSummary,
   onPatch,
   onMedia,
@@ -1477,6 +1406,7 @@ function ItemCard({
   item: SnapshotItem;
   response?: SiteInspectionResponse;
   media: SiteInspectionMedia[];
+  queueByClientId: Map<string, MediaQueueItemSnapshot>;
   itemSummary?: SiteInspectionItemSummary;
   onPatch: (patch: {
     isComplete?: boolean;
@@ -1587,7 +1517,10 @@ function ItemCard({
                   {media.map((m, mediaIndex) => {
                     const poster = m.localPosterUrl || m.posterSignedUrl;
                     const src = m.localPreviewUrl || m.signedUrl;
-                    const label = mediaStatusLabel(m);
+                    const label = mediaStatusLabel(
+                      m,
+                      m.clientMediaId ? queueByClientId.get(m.clientMediaId) : undefined,
+                    );
                     return (
                       <div key={m.id} className="relative">
                         <button

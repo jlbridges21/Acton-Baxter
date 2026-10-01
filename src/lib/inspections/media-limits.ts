@@ -40,14 +40,12 @@ export const VIDEO_MAX_BYTES = Number.POSITIVE_INFINITY;
 /** @deprecated Duration is no longer enforced client-side. */
 export const VIDEO_MAX_DURATION_SECONDS = Number.POSITIVE_INFINITY;
 
-/** Concurrent background uploads for photos / small media — more saturates weak LTE. */
-export const MEDIA_UPLOAD_CONCURRENCY = 2;
-
 /**
- * Videos at or above this size upload one-at-a-time so two large phone uploads
- * do not contend for bandwidth/memory. Smaller clips still share the photo pool.
+ * One upload at a time. Parallel transfers on a phone share one connection and
+ * were slower in the field, and overlapping progress writes could resurrect a
+ * finished upload at 0%.
  */
-export const LARGE_VIDEO_SERIAL_BYTES = 20 * 1024 * 1024; // 20 MiB
+export const MEDIA_UPLOAD_CONCURRENCY = 1;
 
 /** Supabase TUS requires exactly 6 MiB chunks — any other value fails. */
 export const TUS_CHUNK_SIZE_BYTES = 6 * 1024 * 1024;
@@ -66,6 +64,47 @@ export function sanitizeFilenamePart(value: string): string {
       .replace(/\s+/g, "_")
       .slice(0, 60) || "item"
   );
+}
+
+/** Checklist step plus media type, e.g. "Access — photo". */
+export function formatInspectionMediaStepLabel(input: {
+  stepTitle: string;
+  subQuestionPrompt?: string | null;
+  mediaType: "photo" | "video";
+}): string {
+  const kind = input.mediaType === "video" ? "video" : "photo";
+  const step = input.stepTitle.trim() || "Checklist item";
+  const sub = input.subQuestionPrompt?.trim();
+  if (sub) return `${step} — ${sub} — ${kind}`;
+  return `${step} — ${kind}`;
+}
+
+/** Failure copy that names the checklist step so the inspector knows what to retake. */
+export function formatInspectionMediaFailure(stepLabel: string, reason: string): string {
+  const detail = reason.trim() || "Upload failed";
+  return `${stepLabel} failed — ${detail}`;
+}
+
+/**
+ * Device-export name an inspector can match back to the checklist.
+ * `Access__photo.jpg`, or `Access__photo_02.jpg` when several share a step.
+ */
+export function buildQueuedMediaDeviceFilename(input: {
+  stepTitle: string;
+  subQuestionPrompt?: string | null;
+  mediaType: "photo" | "video";
+  ext: string;
+  /** 1-based index within the same step + type. */
+  index: number;
+  total: number;
+}): string {
+  const step = sanitizeFilenamePart(input.stepTitle);
+  const sub = input.subQuestionPrompt?.trim() ? sanitizeFilenamePart(input.subQuestionPrompt) : "";
+  const kind = input.mediaType === "video" ? "video" : "photo";
+  const base = sub ? `${step}__${sub}__${kind}` : `${step}__${kind}`;
+  const suffix = input.total > 1 ? `_${String(input.index).padStart(2, "0")}` : "";
+  const ext = input.ext.replace(/^\./, "") || "bin";
+  return `${base}${suffix}.${ext}`;
 }
 
 export function buildMediaExportFilename(input: {

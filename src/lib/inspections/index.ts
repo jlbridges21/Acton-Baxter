@@ -113,6 +113,9 @@ export {
   MEDIA_UPLOAD_CONCURRENCY,
   ZIP_FULL_EXPORT_MAX_BYTES,
   buildMediaExportFilename,
+  buildQueuedMediaDeviceFilename,
+  formatInspectionMediaFailure,
+  formatInspectionMediaStepLabel,
   sanitizeFilenamePart,
   inferInspectionMediaType,
 } from "./media-limits";

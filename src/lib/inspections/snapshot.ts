@@ -110,6 +110,30 @@ export function buildInspectionSnapshot(
   };
 }
 
+/**
+ * Resolve a queue entry to its checklist step. Media is stored on the item.
+ * If the id is a sub-question, the label includes that prompt.
+ */
+export function findSnapshotMediaStep(
+  snapshot: InspectionSnapshot,
+  snapshotItemId: string,
+  snapshotSubQuestionId?: string | null,
+): { stepTitle: string; subQuestionPrompt: string | null } {
+  const items = listSnapshotItems(snapshot);
+  const byItem = items.find((item) => item.id === snapshotItemId);
+  if (byItem) {
+    const sub = snapshotSubQuestionId
+      ? byItem.subQuestions.find((sq) => sq.id === snapshotSubQuestionId)
+      : undefined;
+    return { stepTitle: byItem.title, subQuestionPrompt: sub?.prompt ?? null };
+  }
+  for (const item of items) {
+    const sub = item.subQuestions.find((sq) => sq.id === snapshotItemId);
+    if (sub) return { stepTitle: item.title, subQuestionPrompt: sub.prompt };
+  }
+  return { stepTitle: "Checklist item", subQuestionPrompt: null };
+}
+
 export function listSnapshotItems(snapshot: InspectionSnapshot): SnapshotItem[] {
   return [
     ...snapshot.standaloneItems.slice().sort((a, b) => a.sortOrder - b.sortOrder),

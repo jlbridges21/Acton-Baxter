@@ -71,7 +71,7 @@ describe("media limits + export naming", () => {
     expect(VIDEO_MAX_DURATION_SECONDS).toBe(Number.POSITIVE_INFINITY);
     expect(VIDEO_WARN_MESSAGE.toLowerCase()).toContain("cell signal");
     expect(ZIP_FULL_EXPORT_MAX_BYTES).toBe(200 * 1024 * 1024);
-    expect(MEDIA_UPLOAD_CONCURRENCY).toBe(2);
+    expect(MEDIA_UPLOAD_CONCURRENCY).toBe(1);
   });
 
   it("signed-upload queue keeps durable blobs, finalize, and cancel/purge helpers", () => {
@@ -94,7 +94,8 @@ describe("media limits + export naming", () => {
     // Videos use tus-js-client resumable uploads; photos stay on signed URLs.
     expect(source).toContain("tus-js-client");
     expect(source).toContain("uploadTus");
-    expect(source).toContain("LARGE_VIDEO_SERIAL_BYTES");
+    expect(source).toContain("withItemLock");
+    expect(source).toContain("MEDIA_UPLOAD_CONCURRENCY");
     // Auth for signed uploads is in the URL token — no Authorization header construction.
     expect(source).toContain("redactApiKeyForLog");
     expect(source).toContain("redactAuthorizationForLog");
@@ -212,8 +213,10 @@ describe("prepare → complete direct-upload path", () => {
     expect(queueSource).toContain("uploadTus");
     expect(queueSource).toContain("tus-js-client");
     expect(queueSource).toContain("resumeFromPreviousUpload");
-    expect(queueSource).toContain("LARGE_VIDEO_SERIAL_BYTES");
+    expect(queueSource).toContain("withItemLock");
     expect(queueSource).toContain("MEDIA_UPLOAD_CONCURRENCY");
+    expect(queueSource).not.toContain("LARGE_VIDEO_SERIAL_BYTES");
+    expect(queueSource).not.toContain("largeVideoUploading");
     expect(queueSource).toContain("indexedDB");
 
     const storeSource = readFileSync(

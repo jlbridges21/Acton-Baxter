@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LARGE_VIDEO_SERIAL_BYTES, TUS_CHUNK_SIZE_BYTES } from "@/lib/inspections/media-limits";
+import { MEDIA_UPLOAD_CONCURRENCY, TUS_CHUNK_SIZE_BYTES } from "@/lib/inspections/media-limits";
 
 describe("resumable video upload contracts", () => {
   it("uses 6 MiB TUS chunks and resumes from previous uploads", () => {
@@ -17,18 +17,24 @@ describe("resumable video upload contracts", () => {
     expect(queue).toContain("uploadTus");
     expect(queue).toContain("TUS resume from previous upload");
     expect(queue).toContain("tusUploadUrl");
+    expect(queue).toContain(
+      '["tus", input.clientMediaId, file.type, String(file.size), input.path]',
+    );
     // apikey / x-upsert stay in `headers` only. A second setHeader makes browser XHR concatenate.
     expect(queue).not.toMatch(/req\.setHeader\("apikey"/);
     expect(queue).not.toMatch(/req\.setHeader\("x-upsert"/);
     expect(queue).toContain('req.setHeader("Authorization"');
   });
 
-  it("serializes large videos while keeping photo concurrency", () => {
-    expect(LARGE_VIDEO_SERIAL_BYTES).toBe(20 * 1024 * 1024);
+  it("uploads strictly one item at a time, photos and videos alike", () => {
+    expect(MEDIA_UPLOAD_CONCURRENCY).toBe(1);
     const queue = readFileSync(join(process.cwd(), "src/lib/inspections/media-queue.ts"), "utf8");
-    expect(queue).toContain("largeVideoUploading");
-    expect(queue).toContain("isLargeVideoItem");
-    expect(queue).toContain("LARGE_VIDEO_SERIAL_BYTES");
+    const limits = readFileSync(join(process.cwd(), "src/lib/inspections/media-limits.ts"), "utf8");
+    expect(queue).not.toContain("largeVideoUploading");
+    expect(queue).not.toContain("isLargeVideoItem");
+    expect(queue).not.toContain("LARGE_VIDEO_SERIAL_BYTES");
+    expect(limits).not.toContain("LARGE_VIDEO_SERIAL_BYTES");
+    expect(queue).toContain("activeUploads < MEDIA_UPLOAD_CONCURRENCY");
   });
 
   it("refreshes expired signed URLs for photos instead of failing cold", () => {
@@ -46,6 +52,8 @@ describe("resumable video upload contracts", () => {
     expect(runner).toContain("cancelAndDiscardMediaUpload(item.clientMediaId)");
     expect(runner).toContain("Retry all uploads");
     expect(runner).toContain("Save queued media to device");
+    expect(runner).toContain("Finalizing on server…");
+    expect(runner).toContain('queue?.status === "finalizing"');
   });
 
   it("ships storage RLS migration for authenticated TUS", () => {

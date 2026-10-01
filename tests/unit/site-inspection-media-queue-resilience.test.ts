@@ -210,10 +210,12 @@ describe("save queued media to device", () => {
   it("exports all queued blobs as downloadable files", async () => {
     await seedQueued("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "queued");
     await seedQueued("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "failed");
-    const files = await listQueuedMediaForDeviceExport("insp-1");
+    const files = await listQueuedMediaForDeviceExport("insp-1", () => ({
+      stepTitle: "Access",
+    }));
     expect(files).toHaveLength(2);
     expect(files.every((f) => f.blob.size > 0)).toBe(true);
-    expect(files.every((f) => f.filename.includes("inspection-video-"))).toBe(true);
+    expect(files.map((f) => f.filename)).toEqual(["Access__video_01.mp4", "Access__video_02.mp4"]);
   });
 });
 

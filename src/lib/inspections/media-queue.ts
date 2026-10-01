@@ -13,9 +13,9 @@ import { createClient } from "@/lib/supabase/client";
 import { getPublicEnv } from "@/lib/env.public";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import {
-  LARGE_VIDEO_SERIAL_BYTES,
   MEDIA_UPLOAD_CONCURRENCY,
   TUS_CHUNK_SIZE_BYTES,
+  buildQueuedMediaDeviceFilename,
   normalizeAccessToken,
   redactApiKeyForLog,
   redactAuthorizationForLog,
@@ -139,6 +139,14 @@ let backoffWakeTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** In-memory queue for unit tests (IndexedDB unavailable / deterministic). */
 let memoryQueue: Map<string, MediaQueueItem> | null = null;
+/**
+ * Per queue-entry write lock. Progress callbacks snapshot a row and then wait
+ * on IndexedDB; without this lock that stale snapshot is committed after
+ * finalize has deleted the row, which resurrects the upload at 0%.
+ */
+const itemLocks = new Map<string, Promise<void>>();
+/** Test seam: delay the commit, the way an IndexedDB transaction does. */
+let commitLagForTests: ((item: MediaQueueItem) => Promise<void>) | null = null;
 
 export function resetMediaQueueMemoryForTests(): void {
   memoryQueue = new Map();
@@ -151,6 +159,9 @@ export function resetMediaQueueMemoryForTests(): void {
   inFlight.clear();
   cancelledUploads.clear();
   activeAbortByClientId.clear();
+  tusUrlByClientId.clear();
+  itemLocks.clear();
+  commitLagForTests = null;
   inspectionUpdateHandler = undefined;
   onlineBound = false;
   if (drainPollTimer) {
@@ -165,6 +176,30 @@ export function resetMediaQueueMemoryForTests(): void {
 
 export function enableMemoryMediaQueueForTests(): void {
   if (!memoryQueue) memoryQueue = new Map();
+}
+
+/** Models IndexedDB committing a previously snapshotted row after an await. */
+export function setQueueCommitLagForTests(
+  lag: ((item: MediaQueueItem) => Promise<void>) | null,
+): void {
+  commitLagForTests = lag;
+}
+
+async function withItemLock<T>(clientMediaId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = itemLocks.get(clientMediaId) ?? Promise.resolve();
+  let result!: T;
+  const run = prev
+    .catch(() => undefined)
+    .then(async () => {
+      result = await fn();
+    });
+  itemLocks.set(clientMediaId, run);
+  try {
+    await run;
+    return result;
+  } finally {
+    if (itemLocks.get(clientMediaId) === run) itemLocks.delete(clientMediaId);
+  }
 }
 
 function isIdbClosingError(error: unknown): boolean {
@@ -291,6 +326,7 @@ function toPersistable(item: MediaQueueItem): MediaQueueItem {
 
 async function putItem(item: MediaQueueItem): Promise<void> {
   const persistable = toPersistable(item);
+  if (commitLagForTests) await commitLagForTests(persistable);
   if (memoryQueue) {
     memoryQueue.set(persistable.clientMediaId, persistable);
     return;
@@ -424,6 +460,19 @@ function describeQueueItemStatus(
     };
   }
   if (item.status === "finalizing") {
+    if (item.lastError) {
+      if (item.nextAttemptAt === Number.MAX_SAFE_INTEGER) {
+        return { statusReason: item.lastError, isStalled: false };
+      }
+      if (item.nextAttemptAt > now) {
+        const secs = Math.max(1, Math.ceil((item.nextAttemptAt - now) / 1000));
+        return {
+          statusReason: `Finalize failed — retrying in ${secs}s — ${item.lastError}`,
+          isStalled: false,
+        };
+      }
+      return { statusReason: `Finalize failed — ${item.lastError}`, isStalled: false };
+    }
     return {
       statusReason: stalled
         ? "Finalize stalled — server did not confirm the upload"
@@ -535,6 +584,9 @@ export async function listMediaQueueItemsForTests(): Promise<
     status: QueueItemStatus;
     byteSize: number;
     hasBlob: boolean;
+    progress: number;
+    storagePath: string | null;
+    attempts: number;
   }>
 > {
   const items = await listAllItems();
@@ -544,6 +596,9 @@ export async function listMediaQueueItemsForTests(): Promise<
     status: item.status,
     byteSize: item.byteSize,
     hasBlob: item.blob.size > 0 || item.byteSize > 0,
+    progress: item.progress,
+    storagePath: item.storagePath,
+    attempts: item.attempts,
   }));
 }
 
@@ -855,10 +910,6 @@ async function patchServerStatus(
   }
 }
 
-function isLargeVideoItem(item: Pick<MediaQueueItem, "mediaType" | "byteSize">): boolean {
-  return item.mediaType === "video" && item.byteSize >= LARGE_VIDEO_SERIAL_BYTES;
-}
-
 function isSignedUrlExpiredError(message: string): boolean {
   return (
     /expir/i.test(message) ||
@@ -937,6 +988,12 @@ function uploadTus(input: {
             "x-upsert": "true",
           },
           uploadDataDuringCreation: true,
+          // Default tus fingerprint is name+size+mtime. Queue blobs have no name,
+          // so two videos of the same size would resume each other's upload.
+          fingerprint: (file) =>
+            Promise.resolve(
+              ["tus", input.clientMediaId, file.type, String(file.size), input.path].join("-"),
+            ),
           // Keep fingerprint until /media/complete succeeds so retries resume, not restart.
           removeFingerprintOnSuccess: false,
           chunkSize: TUS_CHUNK_SIZE_BYTES,
@@ -969,14 +1026,14 @@ function uploadTus(input: {
             const location = upload?.url;
             if (!location) return;
             tusUrlByClientId.set(input.clientMediaId, location);
-            void (async () => {
+            void withItemLock(input.clientMediaId, async () => {
               const current = await getItem(input.clientMediaId);
               if (!current) return;
               await putItem({
                 ...current,
                 tusUploadUrl: tusUrlByClientId.get(input.clientMediaId) ?? location,
               });
-            })();
+            });
           },
           onShouldRetry: (err, _retryAttempt, _options) => {
             if (cancelledUploads.has(input.clientMediaId)) return false;
@@ -1259,14 +1316,17 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     return null;
   }
 
-  const next: MediaQueueItem = {
-    ...item,
-    status: item.status === "finalizing" ? "finalizing" : "uploading",
-    progress: item.status === "finalizing" ? 1 : item.progress || 0,
-    lastError: null,
-    lastProgressAt: Date.now(),
-  };
-  await putItem(next);
+  await withItemLock(clientMediaId, async () => {
+    const current = await getItem(clientMediaId);
+    if (!current) return;
+    await putItem({
+      ...current,
+      status: current.status === "finalizing" ? "finalizing" : "uploading",
+      progress: current.status === "finalizing" ? 1 : current.progress || 0,
+      lastError: null,
+      lastProgressAt: Date.now(),
+    });
+  });
   await emit();
 
   let bytesLandedPath: string | null =
@@ -1334,17 +1394,19 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
     const reportProgress = (ratio: number) => {
       if (abortController.aborted || cancelledUploads.has(clientMediaId)) return;
       if (generation !== drainGeneration) return;
-      void (async () => {
+      void withItemLock(clientMediaId, async () => {
         const current = await getItem(clientMediaId);
+        // Re-read under the lock. A snapshot taken before finalize must not
+        // write the row back as "uploading" after it was deleted or finalized.
         if (!current || current.status !== "uploading") return;
         await putItem({
           ...current,
           tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? current.tusUploadUrl ?? null,
-          progress: ratio,
+          progress: Math.max(current.progress || 0, ratio),
           lastProgressAt: Date.now(),
         });
         await emit();
-      })();
+      });
     };
 
     if (upload.mode === "tus") {
@@ -1439,20 +1501,30 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
 
     // Persist "bytes landed" before complete so a failed attach retries complete only.
     bytesLandedPath = upload.path;
-    const latest = (await getItem(clientMediaId)) ?? item;
-    await putItem({
-      ...latest,
-      status: "finalizing",
-      storagePath: upload.path,
-      posterStoragePath: null,
-      progress: 1,
-      lastError: null,
-      lastProgressAt: Date.now(),
+    await withItemLock(clientMediaId, async () => {
+      const latest = await getItem(clientMediaId);
+      if (!latest) return;
+      await putItem({
+        ...latest,
+        status: "finalizing",
+        storagePath: upload.path,
+        posterStoragePath: null,
+        progress: 1,
+        lastError: null,
+        tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? latest.tusUploadUrl ?? null,
+        lastProgressAt: Date.now(),
+      });
     });
     await emit();
 
+    if (cancelledUploads.has(clientMediaId) || abortController.aborted) {
+      await deleteItem(clientMediaId).catch(() => undefined);
+      return null;
+    }
+    const landed = await getItem(clientMediaId);
+    if (!landed?.storagePath) return null;
     return await finalizeMediaUpload({
-      ...latest,
+      ...landed,
       status: "finalizing",
       storagePath: upload.path,
       posterStoragePath: null,
@@ -1491,7 +1563,7 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       : exhausted
         ? `${failure.message} (gave up after ${attempts} attempts — tap Retry or Discard)`
         : failure.message;
-    const latest = (await getItem(clientMediaId)) ?? item;
+    const latestForLog = (await getItem(clientMediaId)) ?? item;
     console.error("[site-inspection-media] upload attempt failed", {
       clientMediaId,
       inspectionId: item.inspectionId,
@@ -1500,26 +1572,31 @@ async function processOne(clientMediaId: string): Promise<SiteInspectionDetail |
       exhausted,
       permanent: failure.permanent,
       message,
-      tusUploadUrl: latest.tusUploadUrl ?? null,
-      progress: latest.progress,
+      tusUploadUrl: latestForLog.tusUploadUrl ?? null,
+      progress: latestForLog.progress,
       inFlightSize: inFlight.size,
       activeUploads,
       drainGeneration: generation,
     });
     // Keep finalizing if bytes already landed — retry should not re-upload.
     // Keep the highest progress and the TUS location so the next attempt resumes.
-    const keepFinalizing = Boolean(bytesLandedPath || latest.storagePath);
-    await putItem({
-      ...latest,
-      status: keepFinalizing ? "finalizing" : "failed",
-      storagePath: bytesLandedPath ?? latest.storagePath,
-      tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? latest.tusUploadUrl ?? null,
-      attempts,
-      nextAttemptAt:
-        failure.permanent || exhausted ? Number.MAX_SAFE_INTEGER : Date.now() + backoffMs(attempts),
-      lastError: message,
-      progress: keepFinalizing ? 1 : latest.progress || item.progress || 0,
-      lastProgressAt: Date.now(),
+    await withItemLock(clientMediaId, async () => {
+      const latest = (await getItem(clientMediaId)) ?? item;
+      const keepFinalizing = Boolean(bytesLandedPath || latest.storagePath);
+      await putItem({
+        ...latest,
+        status: keepFinalizing ? "finalizing" : "failed",
+        storagePath: bytesLandedPath ?? latest.storagePath,
+        tusUploadUrl: tusUrlByClientId.get(clientMediaId) ?? latest.tusUploadUrl ?? null,
+        attempts,
+        nextAttemptAt:
+          failure.permanent || exhausted
+            ? Number.MAX_SAFE_INTEGER
+            : Date.now() + backoffMs(attempts),
+        lastError: message,
+        progress: keepFinalizing ? 1 : Math.max(latest.progress || 0, item.progress || 0),
+        lastProgressAt: Date.now(),
+      });
     });
     await emit();
     scheduleBackoffWakeup();
@@ -1559,7 +1636,9 @@ async function finalizeMediaUpload(item: MediaQueueItem): Promise<SiteInspection
     throw uploadAttemptError(message, completeRes.status, JSON.stringify(completeJson));
   }
 
-  await deleteItem(item.clientMediaId);
+  await withItemLock(item.clientMediaId, async () => {
+    await deleteItem(item.clientMediaId);
+  });
   await emit();
   return completeJson.inspection;
 }
@@ -1621,35 +1700,24 @@ export async function drainMediaQueue(): Promise<void> {
       });
       if (!ready.length && activeUploads === 0) break;
 
-      const inFlightItems = items.filter((entry) => inFlight.has(entry.clientMediaId));
-      let largeVideoUploading = inFlightItems.some((entry) => isLargeVideoItem(entry));
+      ready.sort(
+        (a, b) => a.createdAt - b.createdAt || a.clientMediaId.localeCompare(b.clientMediaId),
+      );
 
       while (
         generation === drainGeneration &&
         activeUploads < MEDIA_UPLOAD_CONCURRENCY &&
         ready.length
       ) {
-        // Large videos are serial — skip them while another large video is in flight.
-        let pickIndex = 0;
-        if (largeVideoUploading) {
-          pickIndex = ready.findIndex((entry) => !isLargeVideoItem(entry));
-          if (pickIndex < 0) break;
-        } else {
-          // Prefer starting at most one large video; photos fill remaining slots.
-          pickIndex = 0;
-        }
-        const next = ready.splice(pickIndex, 1)[0]!;
+        const next = ready.shift()!;
         if (inFlight.has(next.clientMediaId)) continue;
-        if (isLargeVideoItem(next) && largeVideoUploading) continue;
         inFlight.add(next.clientMediaId);
         activeUploads += 1;
-        if (isLargeVideoItem(next)) largeVideoUploading = true;
         console.info("[site-inspection-media] drain starting upload", {
           clientMediaId: next.clientMediaId,
           status: next.status,
           mediaType: next.mediaType,
           byteSize: next.byteSize,
-          largeVideoSerial: isLargeVideoItem(next),
           activeUploads,
           inFlight: inFlight.size,
         });
@@ -1721,19 +1789,24 @@ export async function retryAllMediaUploads(inspectionId?: string): Promise<numbe
   for (const item of targets) {
     if (item.status === "uploaded") continue;
     cancelledUploads.delete(item.clientMediaId);
-    const keepFinalizing = Boolean(item.storagePath);
-    await putItem({
-      ...item,
-      status: keepFinalizing ? "finalizing" : "queued",
-      attempts: 0,
-      nextAttemptAt: 0,
-      lastError: null,
-      // Do not zero progress or drop the TUS location — retry must resume.
-      progress: keepFinalizing ? 1 : item.progress,
-      tusUploadUrl: item.tusUploadUrl ?? null,
-      lastProgressAt: now,
+    const wrote = await withItemLock(item.clientMediaId, async () => {
+      const current = await getItem(item.clientMediaId);
+      if (!current || current.status === "uploaded") return false;
+      const keepFinalizing = Boolean(current.storagePath);
+      await putItem({
+        ...current,
+        status: keepFinalizing ? "finalizing" : "queued",
+        attempts: 0,
+        nextAttemptAt: 0,
+        lastError: null,
+        // Do not zero progress or drop the TUS location — retry must resume.
+        progress: keepFinalizing ? 1 : current.progress,
+        tusUploadUrl: current.tusUploadUrl ?? null,
+        lastProgressAt: now,
+      });
+      return true;
     });
-    reset += 1;
+    if (wrote) reset += 1;
   }
   await emit();
   scheduleBackoffWakeup();
@@ -1745,7 +1818,14 @@ export async function retryAllMediaUploads(inspectionId?: string): Promise<numbe
  * Export every still-queued blob for an inspection so the inspector can save
  * copies to the device (and re-attach later if the queue stays wedged).
  */
-export async function listQueuedMediaForDeviceExport(inspectionId: string): Promise<
+export async function listQueuedMediaForDeviceExport(
+  inspectionId: string,
+  stepLabelFor?: (item: {
+    clientMediaId: string;
+    snapshotItemId: string;
+    mediaType: "photo" | "video";
+  }) => { stepTitle: string; subQuestionPrompt?: string | null } | null | undefined,
+): Promise<
   Array<{
     clientMediaId: string;
     mediaType: "photo" | "video";
@@ -1755,17 +1835,17 @@ export async function listQueuedMediaForDeviceExport(inspectionId: string): Prom
     status: QueueItemStatus;
   }>
 > {
-  const items = (await listAllItems()).filter((item) => item.inspectionId === inspectionId);
-  const out: Array<{
-    clientMediaId: string;
-    mediaType: "photo" | "video";
-    mimeType: string;
-    filename: string;
+  const items = (await listAllItems())
+    .filter((item) => item.inspectionId === inspectionId && item.status !== "uploaded")
+    .sort((a, b) => a.createdAt - b.createdAt || a.clientMediaId.localeCompare(b.clientMediaId));
+  const prepared: Array<{
+    item: MediaQueueItem;
     blob: Blob;
-    status: QueueItemStatus;
+    ext: string;
+    stepTitle: string;
+    subQuestionPrompt: string | null;
   }> = [];
   for (const item of items) {
-    if (item.status === "uploaded") continue;
     let blob: Blob;
     try {
       blob = blobForUpload(item);
@@ -1784,17 +1864,45 @@ export async function listQueuedMediaForDeviceExport(inspectionId: string): Prom
         : item.mimeType.includes("png")
           ? "png"
           : "jpg";
-    const short = item.clientMediaId.slice(0, 8);
-    out.push({
+    const step = stepLabelFor?.({
       clientMediaId: item.clientMediaId,
+      snapshotItemId: item.snapshotItemId,
       mediaType: item.mediaType,
-      mimeType: item.mimeType,
-      filename: `inspection-${item.mediaType}-${short}.${ext}`,
+    });
+    prepared.push({
+      item,
       blob,
-      status: item.status,
+      ext,
+      stepTitle: step?.stepTitle?.trim() || "Checklist item",
+      subQuestionPrompt: step?.subQuestionPrompt?.trim() || null,
     });
   }
-  return out;
+  const totals = new Map<string, number>();
+  for (const row of prepared) {
+    const key = `${row.stepTitle}::${row.subQuestionPrompt ?? ""}::${row.item.mediaType}`;
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  return prepared.map((row) => {
+    const key = `${row.stepTitle}::${row.subQuestionPrompt ?? ""}::${row.item.mediaType}`;
+    const index = (seen.get(key) ?? 0) + 1;
+    seen.set(key, index);
+    return {
+      clientMediaId: row.item.clientMediaId,
+      mediaType: row.item.mediaType,
+      mimeType: row.item.mimeType,
+      filename: buildQueuedMediaDeviceFilename({
+        stepTitle: row.stepTitle,
+        subQuestionPrompt: row.subQuestionPrompt,
+        mediaType: row.item.mediaType,
+        ext: row.ext,
+        index,
+        total: totals.get(key) ?? 1,
+      }),
+      blob: row.blob,
+      status: row.item.status,
+    };
+  });
 }
 
 export function startMediaQueueDrain(options?: {
@@ -1867,25 +1975,29 @@ export function startMediaQueueDrain(options?: {
 }
 
 export async function retryMediaUpload(clientMediaId: string): Promise<void> {
-  const item = await getItem(clientMediaId);
-  if (!item) return;
-  // Finalizing rows already have bytes in storage — just clear backoff and drain.
-  if (item.status === "finalizing" && item.storagePath) {
-    await putItem({
-      ...item,
-      attempts: 0,
-      nextAttemptAt: 0,
-      lastError: null,
-    });
-  } else {
-    await putItem({
-      ...item,
-      status: "queued",
-      attempts: 0,
-      nextAttemptAt: 0,
-      lastError: null,
-    });
-  }
+  const wrote = await withItemLock(clientMediaId, async () => {
+    const item = await getItem(clientMediaId);
+    if (!item) return false;
+    // Finalizing rows already have bytes in storage — just clear backoff and drain.
+    if (item.status === "finalizing" && item.storagePath) {
+      await putItem({
+        ...item,
+        attempts: 0,
+        nextAttemptAt: 0,
+        lastError: null,
+      });
+    } else {
+      await putItem({
+        ...item,
+        status: "queued",
+        attempts: 0,
+        nextAttemptAt: 0,
+        lastError: null,
+      });
+    }
+    return true;
+  });
+  if (!wrote) return;
   await emit();
   void drainMediaQueue();
 }
@@ -2030,7 +2142,6 @@ export async function enqueueInspectionMedia(input: {
 export {
   VIDEO_WARN_MESSAGE,
   MEDIA_UPLOAD_CONCURRENCY,
-  LARGE_VIDEO_SERIAL_BYTES,
   TUS_CHUNK_SIZE_BYTES,
   VIDEO_MAX_BYTES,
 } from "./media-limits";
