@@ -1,17 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { HotspotPanel } from "@/components/tours/hotspot-panel";
 import { PanoramaUploader } from "@/components/tours/panorama-uploader";
-import { SceneStrip } from "@/components/tours/scene-strip";
+import { SceneList } from "@/components/tours/scene-list";
 import { ShareDialog } from "@/components/tours/share-dialog";
 import { TourStage } from "@/components/tours/tour-stage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   clearSceneOpeningView,
   createHotspot,
@@ -46,9 +44,10 @@ function applyOrder(scenes: ViewerScene[], order: string[] | null): ViewerScene[
 }
 
 export function TourEditor({ tour }: { tour: ViewerTour }) {
-  const router = useRouter();
   const [title, setTitle] = useState(tour.title);
   const [savedTitle, setSavedTitle] = useState(tour.title);
+  const [isPublic, setIsPublic] = useState(tour.isPublic);
+  const [coverId, setCoverId] = useState(tour.coverSceneId);
   const [names, setNames] = useState<Record<string, string>>(() =>
     Object.fromEntries(tour.scenes.map((scene) => [scene.id, scene.name])),
   );
@@ -72,11 +71,19 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   const [openingOverride, setOpeningOverride] = useState<
     Record<string, { yaw: number; pitch: number } | null>
   >({});
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
   const readView = useRef<(() => { yaw: number; pitch: number } | null) | null>(null);
-  const scenes = useMemo(() => applyOrder(tour.scenes, order), [tour.scenes, order]);
+  const scenes = useMemo(
+    () => applyOrder(tour.scenes, order).filter((scene) => !removedIds.includes(scene.id)),
+    [tour.scenes, order, removedIds],
+  );
   const displayScenes = useMemo(
-    () => scenes.map((scene) => withSceneEdits(scene, draftHotspots, openingOverride)),
-    [scenes, draftHotspots, openingOverride],
+    () =>
+      scenes.map((scene) => ({
+        ...withSceneEdits(scene, draftHotspots, openingOverride),
+        name: names[scene.id] ?? scene.name,
+      })),
+    [scenes, draftHotspots, openingOverride, names],
   );
   const activeId = scenes.some((scene) => scene.id === pickedId)
     ? (pickedId ?? "")
@@ -100,7 +107,6 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
       const result = await work();
       setError(result.error);
       if (result.error) setSaveFailed(true);
-      else router.refresh();
       return result;
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Could not save.";
@@ -120,36 +126,46 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     if (!result.error) setSavedTitle(next);
   }
 
-  async function saveName() {
-    if (!active) return;
-    const next = (names[active.id] ?? active.name).trim() || "Scene";
-    setNames((current) => ({ ...current, [active.id]: next }));
-    if (next === (savedNames[active.id] ?? active.name)) return;
-    const result = await runSave(() => renameScene(tour.id, active.id, next));
-    if (!result.error) setSavedNames((current) => ({ ...current, [active.id]: next }));
+  async function commitSceneName(sceneId: string, raw: string) {
+    const next = raw.trim() || "Scene";
+    setNames((current) => ({ ...current, [sceneId]: next }));
+    const scene = scenes.find((item) => item.id === sceneId);
+    if (next === (savedNames[sceneId] ?? scene?.name)) return;
+    const result = await runSave(() => renameScene(tour.id, sceneId, next));
+    if (!result.error) setSavedNames((current) => ({ ...current, [sceneId]: next }));
   }
 
   async function togglePublic(next: boolean) {
+    const previous = isPublic;
+    setIsPublic(next);
     setBusy(true);
-    await runSave(() => setTourPublic(tour.id, next));
+    const result = await runSave(() => setTourPublic(tour.id, next));
     setBusy(false);
+    if (result.error) setIsPublic(previous);
   }
 
-  async function makeCover() {
-    if (!active || active.id === tour.coverSceneId) return;
+  async function makeCover(sceneId: string) {
+    if (sceneId === coverId) return;
+    const previous = coverId;
+    setCoverId(sceneId);
     setBusy(true);
-    await runSave(() => setTourCover(tour.id, active.id));
+    const result = await runSave(() => setTourCover(tour.id, sceneId));
     setBusy(false);
+    if (result.error) setCoverId(previous);
   }
 
   async function confirmDelete() {
     if (!pendingDelete) return;
     const index = scenes.findIndex((scene) => scene.id === pendingDelete);
     const neighbor = scenes[index + 1]?.id ?? scenes[index - 1]?.id ?? null;
+    setRemovedIds((current) => [...current, pendingDelete]);
     setBusy(true);
     const result = await runSave(() => deleteScene(tour.id, pendingDelete));
     setBusy(false);
-    if (result.error) return;
+    if (result.error) {
+      setRemovedIds((current) => current.filter((id) => id !== pendingDelete));
+      return;
+    }
     if (pickedId === pendingDelete) setPickedId(neighbor);
     setPendingDelete(null);
   }
@@ -184,15 +200,17 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     setPlacing(false);
     const hotspot: ViewerHotspot = {
       id: crypto.randomUUID(),
-      type: "info",
+      type: "link",
       yaw: position.yaw,
       pitch: position.pitch,
-      label: "Info",
+      label: null,
       content: null,
-      targetSceneId: null,
-      styleShape: "circle",
+      targetSceneId: scenes.find((scene) => scene.id !== active.id)?.id ?? null,
+      styleShape: "arrow",
       styleColor: "#FFFFFF",
       styleSize: 48,
+      styleRotation: 0,
+      stylePlacement: "billboard",
     };
     const next = [...hotspotsOf(active.id), hotspot];
     replaceHotspots(active.id, next);
@@ -211,6 +229,8 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
         styleShape: hotspot.styleShape,
         styleColor: hotspot.styleColor,
         styleSize: hotspot.styleSize,
+        styleRotation: hotspot.styleRotation,
+        stylePlacement: hotspot.stylePlacement,
       }),
     );
     if (result.error) {
@@ -250,6 +270,8 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
         styleShape: hotspot.styleShape,
         styleColor: hotspot.styleColor,
         styleSize: hotspot.styleSize,
+        styleRotation: hotspot.styleRotation,
+        stylePlacement: hotspot.stylePlacement,
       }),
     );
     if (!result.error) {
@@ -312,33 +334,88 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     }
   }
 
+  async function flushPending() {
+    if (saveState === "saving" || saveState === "saved") return;
+    await saveTitle();
+    for (const scene of scenes) {
+      const raw = names[scene.id] ?? scene.name;
+      const next = raw.trim() || "Scene";
+      if (next !== (savedNames[scene.id] ?? scene.name)) await commitSceneName(scene.id, raw);
+    }
+    if (selectedHotspot && active) {
+      const saved =
+        savedHotspots[active.id] ??
+        JSON.stringify(tour.scenes.find((scene) => scene.id === active.id)?.hotspots ?? []);
+      if (JSON.stringify(hotspotsOf(active.id)) !== saved) await commitHotspot(selectedHotspot);
+    }
+  }
+
+  const saveButtonLabel =
+    saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save";
+
   return (
-    <div className="flex flex-col gap-3 lg:h-[calc(100dvh-7rem)] lg:min-h-[560px]">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
+    <div className="flex h-full min-h-0 flex-col overflow-x-hidden bg-[var(--acton-gray-50)] lg:overflow-hidden">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--acton-border)] bg-white px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Link
             href="/tours"
-            className="text-sm font-medium text-[var(--acton-muted)] hover:underline"
+            className="shrink-0 text-xs font-semibold text-[var(--acton-muted)] hover:underline"
           >
-            All tours
+            Tours
           </Link>
-          <h1 className="truncate text-lg font-bold text-[var(--acton-navy)]">
-            {title.trim() || "Untitled Tour"}
-          </h1>
+          <input
+            aria-label="Tour name"
+            value={title}
+            className="min-w-0 flex-1 bg-transparent text-lg font-bold text-[var(--acton-navy)] outline-none"
+            onChange={(event) => setTitle(event.target.value)}
+            onBlur={() => void saveTitle()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+          <Badge tone={isPublic ? "green" : "gray"}>{isPublic ? "Public" : "Private"}</Badge>
         </div>
-        <p
-          className={`shrink-0 text-xs ${
-            saveState === "saved"
-              ? "text-emerald-700"
-              : saveState === "error"
-                ? "text-red-700"
-                : "text-amber-800"
-          }`}
-          aria-live="polite"
-        >
-          {tourSaveLabel(saveState)}
-        </p>
-      </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void togglePublic(!isPublic)}
+          >
+            {isPublic ? "Make private" : "Make public"}
+          </Button>
+          <Button type="button" size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
+            Share
+          </Button>
+          <Link
+            href={`/tours/${tour.id}/preview`}
+            className="inline-flex h-8 items-center rounded-md border border-[var(--acton-border)] bg-white px-3 text-xs font-semibold text-[var(--acton-navy)]"
+          >
+            Preview
+          </Link>
+          <p
+            className={`text-xs ${
+              saveState === "saved"
+                ? "text-emerald-700"
+                : saveState === "error"
+                  ? "text-red-700"
+                  : "text-amber-800"
+            }`}
+            aria-live="polite"
+          >
+            {tourSaveLabel(saveState)}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            disabled={saveState === "saving" || saveState === "saved"}
+            onClick={() => void flushPending()}
+          >
+            {saveButtonLabel}
+          </Button>
+        </div>
+      </header>
 
       {error ? (
         <p className="text-sm text-red-700" role="alert">
@@ -346,9 +423,9 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
         </p>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
-        <div className="flex min-h-[420px] min-w-0 flex-1 flex-col gap-3 lg:min-h-0">
-          <div className="relative h-[55dvh] min-h-[320px] overflow-hidden rounded-lg border border-[var(--acton-border)] lg:h-auto lg:flex-1">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <div className="order-1 min-h-[55dvh] min-w-0 flex-1 lg:order-2 lg:min-h-0">
+          <div className="relative h-[55dvh] min-h-[320px] overflow-hidden lg:h-full">
             <TourStage
               tour={viewerTour}
               chrome={FRAME_CHROME}
@@ -374,108 +451,83 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
               }}
             />
           </div>
-          <SceneStrip
-            scenes={scenes.map((scene) => ({
-              ...scene,
-              name: names[scene.id] ?? scene.name,
-            }))}
-            activeId={activeId}
-            onSelect={setPickedId}
-            onReorder={(ids) => void onReorder(ids)}
-          />
         </div>
 
-        <aside className="w-full shrink-0 space-y-6 lg:w-80 lg:overflow-y-auto lg:pr-1">
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
-              Tour
-            </h2>
-            <Input
-              aria-label="Tour title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              onBlur={() => void saveTitle()}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
+        <aside className="order-2 flex w-full shrink-0 flex-col border-[var(--acton-border)] lg:order-1 lg:h-full lg:w-72 lg:border-r">
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            <SceneList
+              scenes={scenes}
+              names={names}
+              activeId={activeId}
+              coverSceneId={coverId}
+              busy={busy}
+              onSelect={(sceneId) => {
+                setPickedId(sceneId);
+                setSelectedHotspotId(null);
+                setPlacing(false);
               }}
+              onReorder={(ids) => void onReorder(ids)}
+              onNameChange={(sceneId, name) =>
+                setNames((current) => ({ ...current, [sceneId]: name }))
+              }
+              onNameCommit={(sceneId, name) => void commitSceneName(sceneId, name)}
+              onCover={(sceneId) => void makeCover(sceneId)}
+              onDelete={(sceneId) => setPendingDelete(sceneId)}
             />
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={tour.isPublic ? "green" : "gray"}>
-                {tour.isPublic ? "Public" : "Private"}
-              </Badge>
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => void togglePublic(!tour.isPublic)}
-              >
-                {tour.isPublic ? "Make private" : "Make public"}
-              </Button>
-              <Button type="button" variant="secondary" onClick={() => setShareOpen(true)}>
-                Share
-              </Button>
-              <Link
-                href={`/tours/${tour.id}/preview`}
-                className="inline-flex h-10 items-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)]"
-              >
-                Preview
-              </Link>
-            </div>
+          </div>
+          <div className="shrink-0 border-t border-[var(--acton-border)] p-2">
+            <PanoramaUploader tourId={tour.id} />
+          </div>
+        </aside>
+
+        <aside className="order-3 w-full min-w-0 shrink-0 space-y-6 overflow-x-hidden border-[var(--acton-border)] p-3 lg:h-full lg:w-80 lg:overflow-y-auto lg:border-l">
+          <section className="space-y-2">
+            <h2 className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+              Tour settings
+            </h2>
+            <p className="text-sm text-[var(--acton-navy)]">
+              {isPublic
+                ? "Anyone with the link can view this tour."
+                : "Only signed-in staff can view this tour."}
+            </p>
+            <p className="truncate text-xs text-[var(--acton-muted)]">
+              {coverId ? "A cover scene is set." : "No cover scene yet."}
+            </p>
           </section>
 
-          <section className="space-y-3">
-            <h2 className="text-sm font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+          <section className="space-y-2 border-t border-[var(--acton-border)] pt-4">
+            <h2 className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
               Scene
             </h2>
             {active ? (
               <>
-                <Input
-                  aria-label="Scene name"
-                  value={names[active.id] ?? active.name}
-                  onChange={(event) =>
-                    setNames((current) => ({ ...current, [active.id]: event.target.value }))
-                  }
-                  onBlur={() => void saveName()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                  }}
-                />
-                <div className="flex flex-wrap gap-2">
+                <p className="truncate text-sm font-medium text-[var(--acton-navy)]">
+                  {names[active.id] ?? active.name}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => void saveOpeningView()}
+                >
+                  Set current view as the opening view
+                </Button>
+                {active.hasInitialView ? (
                   <Button
                     type="button"
-                    variant="secondary"
-                    disabled={busy || active.id === tour.coverSceneId}
-                    onClick={() => void makeCover()}
-                  >
-                    {active.id === tour.coverSceneId ? "Cover scene" : "Set as cover"}
-                  </Button>
-                  <Button
-                    type="button"
+                    size="sm"
                     variant="secondary"
                     disabled={busy}
-                    onClick={() => void saveOpeningView()}
+                    onClick={() => void clearOpeningView()}
                   >
-                    Set current view as the opening view
+                    Clear opening view
                   </Button>
-                  {active.hasInitialView ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => void clearOpeningView()}
-                    >
-                      Clear opening view
-                    </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => setPendingDelete(active.id)}
-                  >
-                    Delete scene
-                  </Button>
-                </div>
+                ) : (
+                  <p className="text-xs text-[var(--acton-muted)]">
+                    This scene opens at the default view.
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-sm text-[var(--acton-muted)]">
@@ -484,24 +536,24 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
             )}
           </section>
 
-          <HotspotPanel
-            scene={active}
-            scenes={displayScenes}
-            selected={selectedHotspot}
-            placing={placing}
-            busy={busy}
-            onStartPlace={() => {
-              setSelectedHotspotId(null);
-              setPlacing(true);
-            }}
-            onCancelPlace={() => setPlacing(false)}
-            onSelect={setSelectedHotspotId}
-            onDraft={draftHotspot}
-            onCommit={(hotspot) => void commitHotspot(hotspot)}
-            onDelete={(hotspotId) => void removeHotspot(hotspotId)}
-          />
-
-          <PanoramaUploader tourId={tour.id} />
+          <div className="border-t border-[var(--acton-border)] pt-4">
+            <HotspotPanel
+              scene={active}
+              scenes={displayScenes}
+              selected={selectedHotspot}
+              placing={placing}
+              busy={busy}
+              onStartPlace={() => {
+                setSelectedHotspotId(null);
+                setPlacing(true);
+              }}
+              onCancelPlace={() => setPlacing(false)}
+              onSelect={setSelectedHotspotId}
+              onDraft={draftHotspot}
+              onCommit={(hotspot) => void commitHotspot(hotspot)}
+              onDelete={(hotspotId) => void removeHotspot(hotspotId)}
+            />
+          </div>
         </aside>
       </div>
 
@@ -509,7 +561,7 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
         open={shareOpen}
         onClose={() => setShareOpen(false)}
         slug={tour.slug}
-        isPublic={tour.isPublic}
+        isPublic={isPublic}
         busy={busy}
         onMakePublic={() => void togglePublic(true)}
       />

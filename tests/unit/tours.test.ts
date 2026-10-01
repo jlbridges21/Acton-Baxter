@@ -188,7 +188,7 @@ describe("tour server surface", () => {
     expect(viewer).toMatch(/bootedRef/);
     expect(viewer).toMatch(/current === currentSceneId/);
     expect(viewer).toMatch(/tour\.setNodes\(/);
-    expect(source("src/components/tours/scene-strip.tsx")).toMatch(/sortableKeyboardCoordinates/);
+    expect(source("src/components/tours/scene-list.tsx")).toMatch(/sortableKeyboardCoordinates/);
   });
 });
 

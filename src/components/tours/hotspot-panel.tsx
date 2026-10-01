@@ -5,6 +5,13 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { isBrokenLink } from "@/lib/tours/hotspot-markers";
+import {
+  HOTSPOT_SHAPES,
+  hotspotPlacement,
+  hotspotShape,
+  shapeUsesRotation,
+  type HotspotShape,
+} from "@/lib/tours/hotspot-shapes";
 import type { ViewerHotspot, ViewerScene } from "@/lib/tours/viewer-model";
 
 const fieldClass =
@@ -110,8 +117,8 @@ export function HotspotPanel({
                 onCommit(next);
               }}
             >
-              <option value="info">Info</option>
               <option value="link">Link</option>
+              <option value="info">Info</option>
             </select>
           </label>
           {selected.type === "link" ? (
@@ -126,14 +133,14 @@ export function HotspotPanel({
                     ? "Broken link — choose a scene"
                     : "Target scene"}
                 </legend>
-                <div className="flex gap-2 overflow-x-auto">
+                <div className="grid grid-cols-2 gap-2">
                   {others.map((target) => {
                     const active = target.id === selected.targetSceneId;
                     return (
                       <button
                         key={target.id}
                         type="button"
-                        className={`w-24 shrink-0 overflow-hidden rounded-md border-2 text-left ${
+                        className={`min-w-0 overflow-hidden rounded-md border-2 text-left ${
                           active ? "border-[var(--acton-navy)]" : "border-[var(--acton-border)]"
                         }`}
                         onClick={() => {
@@ -198,17 +205,59 @@ export function HotspotPanel({
                 onCommit(next);
               }}
             >
-              <option value="arrow">Arrow</option>
-              <option value="circle">Circle</option>
-              <option value="square">Square</option>
+              {HOTSPOT_SHAPES.map((shape) => (
+                <option key={shape} value={shape}>
+                  {shapeLabel(shape)}
+                </option>
+              ))}
             </select>
           </label>
+          <label className="block text-sm">
+            <span className="font-medium text-[var(--acton-navy)]">Placement</span>
+            <select
+              className={fieldClass}
+              aria-label="Hotspot placement"
+              value={selected.stylePlacement}
+              onChange={(event) => {
+                const stylePlacement = hotspotPlacement(event.target.value);
+                const next = { ...selected, stylePlacement };
+                onDraft(next);
+                onCommit(next);
+              }}
+            >
+              <option value="billboard">Billboard — faces the camera</option>
+              <option value="floor">Floor — lies on the ground</option>
+            </select>
+          </label>
+          {shapeUsesRotation(selected.styleShape) ? (
+            <label className="block text-sm">
+              <span className="font-medium text-[var(--acton-navy)]">Rotation</span>
+              <input
+                aria-label="Hotspot rotation"
+                type="range"
+                min={0}
+                max={359}
+                className="mt-2 w-full"
+                value={selected.styleRotation}
+                onChange={(event) =>
+                  onDraft({ ...selected, styleRotation: Number(event.target.value) })
+                }
+                onMouseUp={(event) =>
+                  onCommit({ ...selected, styleRotation: Number(event.currentTarget.value) })
+                }
+                onKeyUp={(event) =>
+                  onCommit({ ...selected, styleRotation: Number(event.currentTarget.value) })
+                }
+              />
+              <span className="text-xs text-[var(--acton-muted)]">{selected.styleRotation}°</span>
+            </label>
+          ) : null}
           <label className="block text-sm">
             <span className="font-medium text-[var(--acton-navy)]">Color</span>
             <input
               aria-label="Hotspot color"
               type="color"
-              className="mt-1 h-10 w-full"
+              className="mt-1 h-10 w-full max-w-full"
               value={
                 /^#[0-9A-Fa-f]{6}$/.test(selected.styleColor) ? selected.styleColor : "#ffffff"
               }
@@ -266,7 +315,19 @@ export function HotspotPanel({
   );
 }
 
-function hotspotShape(value: string): ViewerHotspot["styleShape"] {
-  if (value === "circle" || value === "square") return value;
-  return "arrow";
+function shapeLabel(shape: HotspotShape): string {
+  switch (shape) {
+    case "chevron":
+      return "Chevron";
+    case "circle":
+      return "Circle";
+    case "ring":
+      return "Ring";
+    case "dot":
+      return "Dot";
+    case "pulse":
+      return "Pulse";
+    default:
+      return "Arrow";
+  }
 }

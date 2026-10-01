@@ -13,6 +13,7 @@ import {
   planMarkerSync,
   type HotspotMarkerSpec,
 } from "@/lib/tours/hotspot-markers";
+import { FLOOR_MARKER_PITCH, hotspotRollRadians } from "@/lib/tours/hotspot-shapes";
 import { placeInfoPopover } from "@/lib/tours/info-popover";
 import { readMaxTextureSize } from "@/lib/tours/texture-size";
 import {
@@ -77,7 +78,9 @@ export function PanoramaViewer({
   const onBindViewRef = useRef(onBindView);
   const dragRef = useRef<HotspotDragSession | null>(null);
   const dragElementRef = useRef<HTMLElement | null>(null);
-  const markerSignatures = useRef(new Map<string, string>());
+  const markerSignatures = useRef(
+    new Map<string, { signature: string; placement: HotspotMarkerSpec["placement"] }>(),
+  );
   const syncMarkersRef = useRef<() => void>(() => undefined);
 
   const [retry, setRetry] = useState(0);
@@ -250,15 +253,19 @@ export function PanoramaViewer({
     });
     markers.addEventListener("select-marker", (event) => {
       if (event.rightClick) return;
-      const data = event.marker.data as { kind?: string; hotspotId?: string } | undefined;
+      const data = event.marker.data as
+        { kind?: string; hotspotId?: string; targetSceneId?: string | null } | undefined;
       if (editModeRef.current && data?.hotspotId) {
         onSelectRef.current?.(data.hotspotId);
         const hotspot = findHotspot(scenesRef.current, data.hotspotId);
         setInfoId(hotspot?.type === "info" ? hotspot.id : null);
         return;
       }
-      if (data?.kind !== "info" || !data.hotspotId) return;
-      setInfoId(data.hotspotId);
+      if (data?.kind === "info" && data.hotspotId) {
+        setInfoId(data.hotspotId);
+        return;
+      }
+      if (data?.kind === "link" && data.targetSceneId) onSceneChangeRef.current(data.targetSceneId);
     });
 
     return () => {
@@ -362,7 +369,7 @@ export function PanoramaViewer({
     <div
       className={`relative h-full min-h-[240px] w-full bg-[var(--acton-navy)] ${placing ? "cursor-crosshair" : ""}`}
     >
-      <style>{`.tour-viewer .psv-loader,.tour-viewer .psv-navbar{display:none !important}`}</style>
+      <style>{`.tour-viewer .psv-loader,.tour-viewer .psv-navbar{display:none !important}.tour-hotspot-pulse{transform-origin:50% 50%;animation:tour-hotspot-pulse 1.4s ease-out infinite}@keyframes tour-hotspot-pulse{0%{transform:scale(.7);opacity:.65}100%{transform:scale(1.7);opacity:0}}`}</style>
       {placing ? (
         <p className="pointer-events-none absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-md bg-[var(--acton-yellow)] px-3 py-1 text-xs font-semibold text-[var(--acton-navy)]">
           Click the panorama to place a hotspot. Escape cancels.
@@ -412,13 +419,14 @@ function findHotspot(scenes: ViewerScene[], hotspotId: string): ViewerHotspot | 
 function applyHotspotMarkers(
   markers: MarkersPlugin,
   specs: HotspotMarkerSpec[],
-  signatures: Map<string, string>,
+  signatures: Map<string, { signature: string; placement: HotspotMarkerSpec["placement"] }>,
   managedPrefix: string,
   bind: (element: HTMLElement, hotspotId: string) => void,
 ): void {
   const existing = markers.getMarkers().map((marker) => ({
     id: marker.id,
-    signature: signatures.get(marker.id) ?? "",
+    signature: signatures.get(marker.id)?.signature ?? "",
+    placement: signatures.get(marker.id)?.placement,
   }));
   const plan = planMarkerSync({ existing, desired: specs, managedPrefix });
   for (const id of plan.remove) {
@@ -427,27 +435,49 @@ function applyHotspotMarkers(
   }
   for (const marker of plan.update) {
     markers.updateMarker(markerConfig(marker), true);
-    signatures.set(marker.id, marker.signature);
+    signatures.set(marker.id, { signature: marker.signature, placement: marker.placement });
     const element = markers.getMarker(marker.id).domElement;
     if (element instanceof HTMLElement) bind(element, marker.hotspotId);
   }
   for (const marker of plan.add) {
     markers.addMarker(markerConfig(marker), true);
-    signatures.set(marker.id, marker.signature);
+    signatures.set(marker.id, { signature: marker.signature, placement: marker.placement });
     const element = markers.getMarker(marker.id).domElement;
     if (element instanceof HTMLElement) bind(element, marker.hotspotId);
   }
 }
 
 function markerConfig(marker: HotspotMarkerSpec): MarkerConfig {
+  const data = {
+    kind: marker.markerKind,
+    hotspotId: marker.hotspotId,
+    targetSceneId: marker.targetSceneId,
+    placement: marker.placement,
+  };
+  if (marker.placement === "floor") {
+    const element = document.createElement("div");
+    element.innerHTML = marker.html;
+    element.style.width = `${marker.width}px`;
+    element.style.height = `${marker.height}px`;
+    return {
+      id: marker.id,
+      elementLayer: element,
+      position: { yaw: marker.yaw, pitch: marker.pitch },
+      rotation: { yaw: 0, pitch: FLOOR_MARKER_PITCH, roll: hotspotRollRadians(marker.rotation) },
+      anchor: "center center",
+      hideList: true,
+      data,
+    };
+  }
   return {
     id: marker.id,
     position: { yaw: marker.yaw, pitch: marker.pitch },
     html: marker.html,
     size: { width: marker.width, height: marker.height },
+    rotation: marker.rotation ? `${marker.rotation}deg` : 0,
     anchor: "center center",
     hideList: true,
-    data: { kind: marker.id.startsWith("info:") ? "info" : "hotspot", hotspotId: marker.hotspotId },
+    data,
   };
 }
 

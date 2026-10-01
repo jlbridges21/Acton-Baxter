@@ -1,4 +1,5 @@
 import { tourImageUrl } from "@/lib/tours/image-url";
+import type { HotspotPlacement, HotspotShape } from "@/lib/tours/hotspot-shapes";
 
 export type ViewerHotspot = {
   id: string;
@@ -9,9 +10,12 @@ export type ViewerHotspot = {
   label: string | null;
   content: string | null;
   targetSceneId: string | null;
-  styleShape: "arrow" | "circle" | "square";
+  styleShape: HotspotShape;
   styleColor: string;
   styleSize: number;
+  /** Degrees, 0–359. */
+  styleRotation: number;
+  stylePlacement: HotspotPlacement;
 };
 
 export type ViewerScene = {
@@ -86,6 +90,7 @@ export function buildVirtualTourNodes(input: {
 function playbackLinks(scene: ViewerScene, ids: Set<string>): TourNodeSpec["links"] {
   return scene.hotspots.flatMap((hotspot) => {
     if (hotspot.type !== "link" || !hotspot.targetSceneId) return [];
+    if (hotspot.stylePlacement === "floor") return [];
     if (!ids.has(hotspot.targetSceneId)) return [];
     return [
       {

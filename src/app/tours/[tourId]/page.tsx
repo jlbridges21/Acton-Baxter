@@ -13,7 +13,7 @@ export default async function TourEditorPage({ params }: { params: Promise<{ tou
   if (!tour) notFound();
 
   return (
-    <AppShell user={user}>
+    <AppShell user={user} width="full">
       <TourEditor tour={tour} />
     </AppShell>
   );

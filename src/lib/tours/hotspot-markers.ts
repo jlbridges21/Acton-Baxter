@@ -1,4 +1,9 @@
 import type { ViewerHotspot } from "@/lib/tours/viewer-model";
+import {
+  hotspotShapeSvg,
+  shapeUsesRotation,
+  type HotspotPlacement,
+} from "@/lib/tours/hotspot-shapes";
 
 export type HotspotMarkerSpec = {
   id: string;
@@ -9,6 +14,11 @@ export type HotspotMarkerSpec = {
   width: number;
   height: number;
   signature: string;
+  placement: HotspotPlacement;
+  /** Degrees. Meaningful for arrows and chevrons; stored for every shape. */
+  rotation: number;
+  targetSceneId: string | null;
+  markerKind: "info" | "link";
 };
 
 export type MarkerSyncPlan = {
@@ -33,7 +43,7 @@ export function hotspotMarkerSpecs(input: {
 }): HotspotMarkerSpec[] {
   const visible = input.editMode
     ? input.hotspots
-    : input.hotspots.filter((hotspot) => hotspot.type === "info");
+    : input.hotspots.filter((hotspot) => visibleInPlayback(hotspot, input.sceneIds));
   const prefix = input.editMode ? "hotspot:" : "info:";
   return visible.map((hotspot) => {
     const id = `${prefix}${hotspot.id}`;
@@ -43,6 +53,8 @@ export function hotspotMarkerSpecs(input: {
     });
     const width = hotspot.styleSize;
     const height = hotspot.styleSize;
+    const placement = hotspot.stylePlacement;
+    const rotation = shapeUsesRotation(hotspot.styleShape) ? hotspot.styleRotation : 0;
     return {
       id,
       hotspotId: hotspot.id,
@@ -51,6 +63,10 @@ export function hotspotMarkerSpecs(input: {
       html,
       width,
       height,
+      placement,
+      rotation,
+      targetSceneId: hotspot.type === "link" ? hotspot.targetSceneId : null,
+      markerKind: hotspot.type === "info" ? "info" : "link",
       signature: JSON.stringify({
         id,
         yaw: hotspot.yaw,
@@ -58,21 +74,31 @@ export function hotspotMarkerSpecs(input: {
         html,
         width,
         height,
+        placement,
+        rotation,
       }),
     };
   });
 }
 
+function visibleInPlayback(hotspot: ViewerHotspot, sceneIds: ReadonlySet<string>): boolean {
+  if (hotspot.type === "info") return true;
+  if (hotspot.stylePlacement !== "floor") return false;
+  return Boolean(hotspot.targetSceneId && sceneIds.has(hotspot.targetSceneId));
+}
+
 /**
- * Adds, updates, or removes individual markers. Callers must not clear the set.
+ * Adds, updates, or removes individual markers. A placement change removes and
+ * re-adds that one marker because Photo Sphere Viewer cannot change marker type.
+ * Callers must not clear the set.
  */
 export function planMarkerSync(input: {
-  existing: Array<{ id: string; signature: string }>;
+  existing: Array<{ id: string; signature: string; placement?: HotspotPlacement }>;
   desired: HotspotMarkerSpec[];
   managedPrefix: string;
 }): MarkerSyncPlan {
   const desiredById = new Map(input.desired.map((marker) => [marker.id, marker]));
-  const existingById = new Map(input.existing.map((marker) => [marker.id, marker.signature]));
+  const existingById = new Map(input.existing.map((marker) => [marker.id, marker]));
   const remove = input.existing
     .filter((marker) => marker.id.startsWith(input.managedPrefix) && !desiredById.has(marker.id))
     .map((marker) => marker.id);
@@ -80,8 +106,17 @@ export function planMarkerSync(input: {
   const update: HotspotMarkerSpec[] = [];
   for (const marker of input.desired) {
     const previous = existingById.get(marker.id);
-    if (previous === undefined) add.push(marker);
-    else if (previous !== marker.signature) update.push(marker);
+    if (!previous) {
+      add.push(marker);
+      continue;
+    }
+    const placementChanged = (previous.placement ?? "billboard") !== marker.placement;
+    if (placementChanged) {
+      remove.push(marker.id);
+      add.push(marker);
+    } else if (previous.signature !== marker.signature) {
+      update.push(marker);
+    }
   }
   return { add, update, remove };
 }
@@ -91,13 +126,11 @@ function markerHtml(
   options: { selected: boolean; broken: boolean },
 ): string {
   const color = HEX.test(hotspot.styleColor) ? hotspot.styleColor : "#FFFFFF";
-  const radius =
-    hotspot.styleShape === "circle" ? "999px" : hotspot.styleShape === "arrow" ? "4px" : "0";
   const border = options.selected
     ? "3px solid #f5c518"
     : options.broken
       ? "2px dashed #b91c1c"
       : "2px solid #0b1f3a";
-  const glyph = hotspot.type === "info" ? "i" : options.broken ? "!" : "→";
-  return `<span data-hotspot-id="${hotspot.id}" style="display:grid;place-items:center;width:100%;height:100%;box-sizing:border-box;border-radius:${radius};background:${color};color:#0b1f3a;font-weight:700;border:${border}">${glyph}</span>`;
+  const svg = hotspotShapeSvg(hotspot.styleShape, color);
+  return `<span data-hotspot-id="${hotspot.id}" style="display:grid;place-items:center;width:100%;height:100%;box-sizing:border-box;border-radius:4px;background:rgba(11,31,58,0.35);border:${border}">${svg}</span>`;
 }

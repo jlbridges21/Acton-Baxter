@@ -128,7 +128,7 @@ export function PanoramaUploader({ tourId }: { tourId: string }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="max-w-full min-w-0 space-y-3 overflow-x-hidden">
       <label
         className={`block rounded-lg border border-dashed px-4 py-5 text-center ${
           dragOver

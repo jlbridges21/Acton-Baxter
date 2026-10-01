@@ -2,11 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { tourImageUrl } from "@/lib/tours/image-url";
-import {
-  mapViewerTour,
-  VIEWER_TOUR_SELECT,
-  type TourRow as ViewerTourRow,
-} from "@/lib/tours/map-tour";
+import { readViewerTour } from "@/lib/tours/map-tour";
 import { insertWithUniqueSlug } from "@/lib/tours/slug";
 import type { TourDetail, TourScene, TourSummary } from "@/lib/tours/types";
 import type { ViewerTour } from "@/lib/tours/viewer-model";
@@ -153,13 +149,14 @@ export async function insertTour(
 
 export async function getViewerTour(tourId: string): Promise<ViewerTour | null> {
   const supabase = await db();
-  const { data, error } = await supabase
-    .from("tours")
-    .select(VIEWER_TOUR_SELECT)
-    .eq("id", tourId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return mapViewerTour(data as unknown as ViewerTourRow);
+  return readViewerTour(async (select) => {
+    const { data, error } = await supabase
+      .from("tours")
+      .select(select)
+      .eq("id", tourId)
+      .maybeSingle();
+    return { data, error };
+  });
 }
 
 export async function getTourSlug(tourId: string): Promise<string | null> {
@@ -357,9 +354,11 @@ export async function insertHotspot(input: {
   pitch: number;
   label: string | null;
   content: string | null;
-  styleShape: "arrow" | "circle" | "square";
+  styleShape: "arrow" | "chevron" | "circle" | "ring" | "dot" | "pulse";
   styleColor: string;
   styleSize: number;
+  styleRotation: number;
+  stylePlacement: "billboard" | "floor";
 }): Promise<{ error: string | null }> {
   const supabase = await db();
   const { error } = await supabase.from("hotspots").insert({
@@ -374,6 +373,8 @@ export async function insertHotspot(input: {
     style_shape: input.styleShape,
     style_color: input.styleColor,
     style_size: input.styleSize,
+    style_rotation: input.styleRotation,
+    style_placement: input.stylePlacement,
   });
   return { error: error ? message(error, "Could not create the hotspot.") : null };
 }
@@ -387,9 +388,11 @@ export async function updateHotspot(input: {
   pitch: number;
   label: string | null;
   content: string | null;
-  styleShape: "arrow" | "circle" | "square";
+  styleShape: "arrow" | "chevron" | "circle" | "ring" | "dot" | "pulse";
   styleColor: string;
   styleSize: number;
+  styleRotation: number;
+  stylePlacement: "billboard" | "floor";
 }): Promise<{ error: string | null }> {
   const supabase = await db();
   const { error } = await supabase
@@ -404,6 +407,8 @@ export async function updateHotspot(input: {
       style_shape: input.styleShape,
       style_color: input.styleColor,
       style_size: input.styleSize,
+      style_rotation: input.styleRotation,
+      style_placement: input.stylePlacement,
     })
     .eq("id", input.id)
     .eq("scene_id", input.sceneId);

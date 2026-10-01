@@ -1,4 +1,5 @@
 import { tourImageUrl } from "@/lib/tours/image-url";
+import { hotspotPlacement, hotspotShape } from "@/lib/tours/hotspot-shapes";
 import type { ViewerHotspot, ViewerScene, ViewerTour } from "@/lib/tours/viewer-model";
 
 export type HotspotRow = {
@@ -12,6 +13,8 @@ export type HotspotRow = {
   style_shape: string;
   style_color: string;
   style_size: number;
+  style_rotation?: number | null;
+  style_placement?: string | null;
 };
 
 export type SceneRow = {
@@ -44,10 +47,29 @@ export const VIEWER_TOUR_SELECT = `
     id, name, position, width, height, compat_path, thumbnail_path,
     initial_yaw, initial_pitch, has_initial_view,
     hotspots!hotspots_scene_id_fkey (
-      id, type, yaw, pitch, label, content, target_scene_id, style_shape, style_color, style_size
+      id, type, yaw, pitch, label, content, target_scene_id, style_shape, style_color, style_size,
+      style_rotation, style_placement
     )
   )
 `;
+
+/** Used only when 062 has not been applied yet. Rotation stays 0 and placement stays billboard. */
+export const VIEWER_TOUR_SELECT_LEGACY = VIEWER_TOUR_SELECT.replace(
+  ",\n      style_rotation, style_placement",
+  "",
+);
+
+export async function readViewerTour(
+  load: (select: string) => Promise<{ data: unknown; error: { message?: string } | null }>,
+): Promise<ViewerTour | null> {
+  let result = await load(VIEWER_TOUR_SELECT);
+  const message = result.error?.message ?? "";
+  if (result.error && /style_rotation|style_placement/.test(message)) {
+    result = await load(VIEWER_TOUR_SELECT_LEGACY);
+  }
+  if (result.error || !result.data) return null;
+  return mapViewerTour(result.data as TourRow);
+}
 
 export function mapViewerTour(row: TourRow): ViewerTour {
   const scenes = [...(row.scenes ?? [])].sort((a, b) => a.position - b.position);
@@ -77,6 +99,11 @@ function mapScene(slug: string, scene: SceneRow): ViewerScene {
         styleShape: hotspotShape(hotspot.style_shape),
         styleColor: hotspot.style_color,
         styleSize: hotspot.style_size,
+        styleRotation:
+          typeof hotspot.style_rotation === "number" && Number.isFinite(hotspot.style_rotation)
+            ? hotspot.style_rotation
+            : 0,
+        stylePlacement: hotspotPlacement(hotspot.style_placement ?? "billboard"),
       },
     ];
   });
@@ -98,9 +125,4 @@ export function coverThumbUrl(tour: ViewerTour): string | null {
   if (!tour.coverSceneId) return null;
   const scene = tour.scenes.find((item) => item.id === tour.coverSceneId);
   return scene?.thumbUrl ?? null;
-}
-
-function hotspotShape(value: string): ViewerHotspot["styleShape"] {
-  if (value === "circle" || value === "square" || value === "arrow") return value;
-  return "arrow";
 }

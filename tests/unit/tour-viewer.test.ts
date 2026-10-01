@@ -79,6 +79,8 @@ describe("tour viewer nodes", () => {
           styleShape: "arrow",
           styleColor: "#FFFFFF",
           styleSize: 48,
+          styleRotation: 0,
+          stylePlacement: "billboard",
         },
         {
           id: "dangling",
@@ -91,6 +93,8 @@ describe("tour viewer nodes", () => {
           styleShape: "arrow",
           styleColor: "#FFFFFF",
           styleSize: 48,
+          styleRotation: 0,
+          stylePlacement: "billboard",
         },
       ],
     });

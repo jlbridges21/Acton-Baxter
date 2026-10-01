@@ -4,6 +4,12 @@ import { describe, expect, it } from "vitest";
 import { HotspotDragSession, dragExceededThreshold } from "@/lib/tours/hotspot-drag";
 import { isBrokenLink, planMarkerSync, hotspotMarkerSpecs } from "@/lib/tours/hotspot-markers";
 import { placeInfoPopover } from "@/lib/tours/info-popover";
+import { editorTourPaths, publishedTourPaths } from "@/lib/tours/tour-cache";
+import {
+  readViewerTour,
+  VIEWER_TOUR_SELECT,
+  VIEWER_TOUR_SELECT_LEGACY,
+} from "@/lib/tours/map-tour";
 import type { ViewerHotspot } from "@/lib/tours/viewer-model";
 
 function source(relativePath: string): string {
@@ -21,6 +27,8 @@ function hotspot(partial: Partial<ViewerHotspot> & Pick<ViewerHotspot, "id">): V
     styleShape: "arrow",
     styleColor: "#FFFFFF",
     styleSize: 48,
+    styleRotation: 0,
+    stylePlacement: "billboard",
     ...partial,
   };
 }
@@ -84,6 +92,40 @@ describe("hotspot edit mode", () => {
     expect(next.remove).toEqual([]);
     expect(next.add).toEqual([]);
     expect(next.update).toEqual([moved]);
+  });
+
+  it("replaces one marker when placement changes and draws vector shapes", () => {
+    const billboard = hotspotMarkerSpecs({
+      editMode: true,
+      sceneIds: new Set(["other"]),
+      hotspots: [hotspot({ id: "a", styleShape: "arrow", styleRotation: 90 })],
+    })[0];
+    const floor = hotspotMarkerSpecs({
+      editMode: true,
+      sceneIds: new Set(["other"]),
+      hotspots: [hotspot({ id: "a", stylePlacement: "floor", styleShape: "chevron" })],
+    })[0];
+    if (!billboard || !floor) throw new Error("expected markers");
+    expect(billboard.html).toContain("<polygon");
+    expect(floor.html).toContain("<path");
+    expect(floor.placement).toBe("floor");
+    const plan = planMarkerSync({
+      managedPrefix: "hotspot:",
+      existing: [{ id: billboard.id, signature: billboard.signature, placement: "billboard" }],
+      desired: [floor],
+    });
+    expect(plan.update).toEqual([]);
+    expect(plan.remove).toEqual([billboard.id]);
+    expect(plan.add.map((marker) => marker.id)).toEqual([floor.id]);
+    const playback = hotspotMarkerSpecs({
+      editMode: false,
+      sceneIds: new Set(["other"]),
+      hotspots: [
+        hotspot({ id: "floor-link", stylePlacement: "floor" }),
+        hotspot({ id: "badge", stylePlacement: "billboard" }),
+      ],
+    });
+    expect(playback.map((marker) => marker.hotspotId)).toEqual(["floor-link"]);
   });
 });
 
@@ -186,6 +228,86 @@ describe("hotspot persistence", () => {
     expect(source("supabase/migrations/061_hotspot_target_set_null.sql")).toMatch(
       /on delete set null/i,
     );
+    expect(source("supabase/migrations/062_hotspot_style_rotation_placement.sql")).toMatch(
+      /style_rotation/,
+    );
+    expect(source("supabase/migrations/062_hotspot_style_rotation_placement.sql")).toMatch(
+      /style_placement/,
+    );
+    const create = actions.slice(
+      actions.indexOf("export async function createHotspot"),
+      actions.indexOf("export async function saveHotspot"),
+    );
+    const save = actions.slice(
+      actions.indexOf("export async function saveHotspot"),
+      actions.indexOf("export async function deleteHotspot"),
+    );
+    expect(create).toContain("revalidatePublishedTour");
+    expect(create).not.toContain("refreshTour");
+    expect(save).toContain("revalidatePublishedTour");
+    expect(save).not.toContain("refreshTour");
+    expect(publishedTourPaths("demo")).toEqual(["/tour/demo", "/embed/demo"]);
+    expect(editorTourPaths("tour-id", "demo")).toHaveLength(5);
+    const editor = source("src/components/tours/tour-editor.tsx");
+    expect(editor).toContain('type: "link"');
+    expect(editor).not.toContain("router.refresh");
+    expect(viewer).toContain("elementLayer");
+    expect(viewer).toContain("FLOOR_MARKER_PITCH");
+    expect(viewer).not.toContain("setMarkers(");
+  });
+
+  it("reads tours from before the style columns exist", async () => {
+    expect(VIEWER_TOUR_SELECT).toContain("style_rotation");
+    expect(VIEWER_TOUR_SELECT_LEGACY).not.toContain("style_rotation");
+    const tour = await readViewerTour(async (select) => {
+      if (select.includes("style_rotation")) {
+        return { data: null, error: { message: "column hotspots.style_rotation does not exist" } };
+      }
+      return {
+        data: {
+          id: "tour",
+          title: "Tour",
+          description: null,
+          slug: "demo",
+          is_public: true,
+          cover_scene_id: null,
+          scenes: [
+            {
+              id: "scene",
+              name: "Kitchen",
+              position: 0,
+              width: 100,
+              height: 50,
+              compat_path: null,
+              thumbnail_path: null,
+              initial_yaw: 0,
+              initial_pitch: 0,
+              has_initial_view: false,
+              hotspots: [
+                {
+                  id: "spot",
+                  type: "info",
+                  yaw: 0.2,
+                  pitch: -0.1,
+                  label: "Note",
+                  content: null,
+                  target_scene_id: null,
+                  style_shape: "arrow",
+                  style_color: "#FFFFFF",
+                  style_size: 48,
+                },
+              ],
+            },
+          ],
+        },
+        error: null,
+      };
+    });
+    expect(tour?.scenes[0]?.hotspots[0]).toMatchObject({
+      styleRotation: 0,
+      stylePlacement: "billboard",
+      yaw: 0.2,
+    });
   });
 });
 

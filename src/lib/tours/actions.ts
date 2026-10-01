@@ -1,5 +1,6 @@
 "use server";
 
+import { publishedTourPaths } from "@/lib/tours/tour-cache";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireActiveUser } from "@/lib/auth/session";
@@ -41,14 +42,25 @@ const tourIdSchema = z.string().uuid();
 const sceneIdSchema = z.string().uuid();
 const extensionSchema = z.enum(["jpg", "png"]);
 
+/** Structural changes. Revalidating the open editor refreshes that page. */
 async function refreshTour(tourId: string): Promise<void> {
   revalidatePath("/tours");
   revalidatePath(`/tours/${tourId}`);
   revalidatePath(`/tours/${tourId}/preview`);
+  await revalidatePublishedTour(tourId);
+}
+
+/** Title, visibility, and cover. Refreshes the tour list without reloading the open editor. */
+async function revalidateTourSummary(tourId: string): Promise<void> {
+  revalidatePath("/tours");
+  await revalidatePublishedTour(tourId);
+}
+
+/** Hotspot and scene-field writes. Does not refresh the editor the author is viewing. */
+async function revalidatePublishedTour(tourId: string): Promise<void> {
   const slug = await getTourSlug(tourId);
   if (!slug) return;
-  revalidatePath(`/tour/${slug}`);
-  revalidatePath(`/embed/${slug}`);
+  for (const path of publishedTourPaths(slug)) revalidatePath(path);
 }
 
 function fail(error: unknown, fallback: string): { error: string } {
@@ -79,7 +91,7 @@ export async function renameTour(tourId: string, title: string): Promise<{ error
   if (missing) return missing;
   const next = title.trim() || "Untitled Tour";
   const result = await updateTourTitle(tourId, next);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidateTourSummary(tourId);
   return result;
 }
 
@@ -90,7 +102,7 @@ export async function setTourPublic(
   const missing = await requireTour(tourId);
   if (missing) return missing;
   const result = await updateTourVisibility(tourId, isPublic);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidateTourSummary(tourId);
   return result;
 }
 
@@ -237,7 +249,7 @@ export async function renameScene(
   }
   if (!scene) return { error: "That scene was not found." };
   const result = await updateSceneName(tourId, sceneId, name.trim() || "Scene");
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidatePublishedTour(tourId);
   return result;
 }
 
@@ -254,7 +266,7 @@ export async function setTourCover(
   } catch (error) {
     return fail(error, "Could not set the cover scene.");
   }
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidateTourSummary(tourId);
   return result;
 }
 
@@ -268,7 +280,7 @@ export async function reorderScenes(
     return { error: "Could not reorder scenes." };
   }
   const result = await setScenePositions(tourId, sceneIds);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidatePublishedTour(tourId);
   return result;
 }
 
@@ -281,7 +293,7 @@ export async function moveScene(
   if (missing) return missing;
   if (!sceneIdSchema.safeParse(sceneId).success) return { error: "That scene was not found." };
   const result = await swapScenePosition(tourId, sceneId, direction);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidatePublishedTour(tourId);
   return result;
 }
 
@@ -316,7 +328,8 @@ export async function deleteScene(
 }
 
 const hotspotIdSchema = z.string().uuid();
-const hotspotShapeSchema = z.enum(["arrow", "circle", "square"]);
+const hotspotShapeSchema = z.enum(["arrow", "chevron", "circle", "ring", "dot", "pulse"]);
+const hotspotPlacementSchema = z.enum(["billboard", "floor"]);
 const radiansSchema = z.number().finite();
 
 const hotspotFieldsSchema = z.object({
@@ -329,6 +342,8 @@ const hotspotFieldsSchema = z.object({
   styleShape: hotspotShapeSchema,
   styleColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
   styleSize: z.number().int().min(16).max(128),
+  styleRotation: z.number().int().min(0).max(359),
+  stylePlacement: hotspotPlacementSchema,
 });
 
 async function requireScene(tourId: string, sceneId: string): Promise<{ error: string } | null> {
@@ -370,9 +385,11 @@ export async function createHotspot(input: {
   label: string | null;
   content: string | null;
   targetSceneId: string | null;
-  styleShape: "arrow" | "circle" | "square";
+  styleShape: "arrow" | "chevron" | "circle" | "ring" | "dot" | "pulse";
   styleColor: string;
   styleSize: number;
+  styleRotation: number;
+  stylePlacement: "billboard" | "floor";
 }): Promise<{ error: string | null }> {
   const missing = await requireScene(input.tourId, input.sceneId);
   if (missing) return missing;
@@ -396,8 +413,10 @@ export async function createHotspot(input: {
     styleShape: fields.data.styleShape,
     styleColor: fields.data.styleColor,
     styleSize: fields.data.styleSize,
+    styleRotation: fields.data.styleRotation,
+    stylePlacement: fields.data.stylePlacement,
   });
-  if (!result.error) await refreshTour(input.tourId);
+  if (!result.error) await revalidatePublishedTour(input.tourId);
   return result;
 }
 
@@ -411,9 +430,11 @@ export async function saveHotspot(input: {
   label: string | null;
   content: string | null;
   targetSceneId: string | null;
-  styleShape: "arrow" | "circle" | "square";
+  styleShape: "arrow" | "chevron" | "circle" | "ring" | "dot" | "pulse";
   styleColor: string;
   styleSize: number;
+  styleRotation: number;
+  stylePlacement: "billboard" | "floor";
 }): Promise<{ error: string | null }> {
   const missing = await requireScene(input.tourId, input.sceneId);
   if (missing) return missing;
@@ -442,8 +463,10 @@ export async function saveHotspot(input: {
     styleShape: fields.data.styleShape,
     styleColor: fields.data.styleColor,
     styleSize: fields.data.styleSize,
+    styleRotation: fields.data.styleRotation,
+    stylePlacement: fields.data.stylePlacement,
   });
-  if (!result.error) await refreshTour(input.tourId);
+  if (!result.error) await revalidatePublishedTour(input.tourId);
   return result;
 }
 
@@ -464,7 +487,7 @@ export async function deleteHotspot(
     return fail(error, "Could not load that hotspot.");
   }
   const result = await deleteHotspotRow(sceneId, hotspotId);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidatePublishedTour(tourId);
   return result;
 }
 
@@ -480,7 +503,7 @@ export async function setSceneOpeningView(
     return { error: "Could not save the opening view." };
   }
   const result = await setSceneOpeningViewRow(tourId, sceneId, yaw, pitch);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidatePublishedTour(tourId);
   return result;
 }
 
@@ -491,6 +514,6 @@ export async function clearSceneOpeningView(
   const missing = await requireScene(tourId, sceneId);
   if (missing) return missing;
   const result = await clearSceneOpeningViewRow(tourId, sceneId);
-  if (!result.error) await refreshTour(tourId);
+  if (!result.error) await revalidatePublishedTour(tourId);
   return result;
 }
