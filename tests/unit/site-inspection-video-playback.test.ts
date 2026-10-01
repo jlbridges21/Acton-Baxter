@@ -42,7 +42,8 @@ describe("video remux + poster paths", () => {
 
   it("CSP allows media from supabase + complete remuxes QuickTime", () => {
     const nextConfig = readFileSync(join(process.cwd(), "next.config.ts"), "utf8");
-    expect(nextConfig).toContain("media-src 'self' blob: https://*.supabase.co");
+    const csp = readFileSync(join(process.cwd(), "src/lib/http/security-headers.ts"), "utf8");
+    expect(csp).toContain("media-src 'self' blob: https://*.supabase.co");
     expect(nextConfig).toContain("ffmpeg-static");
 
     const complete = readFileSync(

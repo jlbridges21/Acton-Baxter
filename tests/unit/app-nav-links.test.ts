@@ -18,6 +18,7 @@ const EMPLOYEE_NAV = [
   "Customer Center",
   "Floor Plan Library",
   "QR Code",
+  "Tours",
   "Integrations",
   "Settings",
 ] as const;
@@ -104,6 +105,7 @@ describe("getAdminNavSections", () => {
       "New Project Setup",
       "Floor Plan Library",
       "QR Code",
+      "Tours",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([
       "Connectors",

@@ -234,7 +234,7 @@ describe("Knowledge PDF viewer — same-origin stream", () => {
   });
 
   it("CSP allows same-origin frames and Drive previews", () => {
-    const config = readFileSync(resolve(process.cwd(), "next.config.ts"), "utf8");
+    const config = readFileSync(resolve(process.cwd(), "src/lib/http/security-headers.ts"), "utf8");
     expect(config).toContain("frame-src 'self' https://drive.google.com");
     expect(config).toContain("object-src 'self'");
     expect(config).not.toMatch(/frame-src[^;]*supabase/i);

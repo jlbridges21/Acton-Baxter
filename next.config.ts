@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { securityHeaderRules } from "./src/lib/http/security-headers";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
@@ -14,40 +15,9 @@ const nextConfig: NextConfig = {
     ],
   },
   async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          {
-            key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
-          },
-          { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          {
-            key: "Content-Security-Policy",
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://maps.gstatic.com",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "img-src 'self' data: blob: https://*.supabase.co https://maps.gstatic.com https://maps.googleapis.com https://*.googleusercontent.com",
-              "media-src 'self' blob: https://*.supabase.co",
-              "font-src 'self' https://fonts.gstatic.com data:",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://maps.googleapis.com https://places.googleapis.com",
-              // PDF viewer: same-origin stream for uploads; Drive preview for Google PDFs.
-              "frame-src 'self' https://drive.google.com https://*.google.com",
-              "object-src 'self'",
-              "frame-ancestors 'self'",
-              "base-uri 'self'",
-              "form-action 'self'",
-            ].join("; "),
-          },
-        ],
-      },
-      // Knowledge PDF stream stays frameable by Baxter (global X-Frame-Options: SAMEORIGIN).
-      // Do not attach a second CSP here — browsers AND multiple CSP headers.
-    ];
+    // Embed is a separate rule: no X-Frame-Options, frame-ancestors *.
+    // A second CSP on the same path would be ANDed and block framing.
+    return securityHeaderRules();
   },
 };
 

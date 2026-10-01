@@ -1,0 +1,95 @@
+import { tourImageUrl } from "@/lib/tours/image-url";
+
+export type ViewerHotspot = {
+  id: string;
+  type: "link" | "info";
+  /** Radians. Photo Sphere Viewer and the database both use radians. */
+  yaw: number;
+  pitch: number;
+  label: string | null;
+  content: string | null;
+  targetSceneId: string | null;
+  styleColor: string;
+  styleSize: number;
+};
+
+export type ViewerScene = {
+  id: string;
+  name: string;
+  width: number | null;
+  height: number | null;
+  hasCompat: boolean;
+  hasInitialView: boolean;
+  initialYaw: number;
+  initialPitch: number;
+  thumbUrl: string | null;
+  hotspots: ViewerHotspot[];
+};
+
+export type ViewerTour = {
+  id: string;
+  title: string;
+  description: string | null;
+  slug: string;
+  isPublic: boolean;
+  coverSceneId: string | null;
+  scenes: ViewerScene[];
+};
+
+export type TourNodeSpec = {
+  id: string;
+  name: string;
+  panorama: string;
+  links: Array<{
+    nodeId: string;
+    position: { yaw: number; pitch: number };
+    arrowStyle: { size: { width: number; height: number } };
+    data: { color: string; size: number };
+  }>;
+};
+
+/** Compat only when the original is wider than this GPU and a fallback file exists. */
+export function resolvePanoramaVariant(
+  width: number | null,
+  hasCompat: boolean,
+  maxTextureSize: number,
+): "full" | "compat" {
+  if (width != null && width > maxTextureSize && hasCompat) return "compat";
+  return "full";
+}
+
+/**
+ * Panorama URLs are final here. Call this before setNodes and do not rewrite them after.
+ * Link positions stay in radians.
+ */
+export function buildVirtualTourNodes(input: {
+  slug: string;
+  scenes: ViewerScene[];
+  maxTextureSize: number;
+}): TourNodeSpec[] {
+  const ids = new Set(input.scenes.map((scene) => scene.id));
+  return input.scenes.map((scene) => {
+    const variant = resolvePanoramaVariant(scene.width, scene.hasCompat, input.maxTextureSize);
+    return {
+      id: scene.id,
+      name: scene.name,
+      panorama: tourImageUrl(input.slug, scene.id, variant),
+      links: scene.hotspots.flatMap((hotspot) => {
+        if (hotspot.type !== "link" || !hotspot.targetSceneId) return [];
+        if (!ids.has(hotspot.targetSceneId)) return [];
+        return [
+          {
+            nodeId: hotspot.targetSceneId,
+            position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
+            arrowStyle: { size: { width: hotspot.styleSize, height: hotspot.styleSize } },
+            data: { color: hotspot.styleColor, size: hotspot.styleSize },
+          },
+        ];
+      }),
+    };
+  });
+}
+
+export function viewerNodesKey(nodes: TourNodeSpec[]): string {
+  return JSON.stringify(nodes);
+}

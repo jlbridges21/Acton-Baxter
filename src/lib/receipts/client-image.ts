@@ -182,6 +182,72 @@ async function loadHtmlImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Decode once and return an oriented bitmap. Callers draw thumbnails from this
+ * source; they must not replace the original file with the result.
+ */
+export async function loadOrientedImage(file: File): Promise<{
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  cleanup: () => void;
+}> {
+  const decoded = await decodeImageSource(file);
+  if (!decoded.width || !decoded.height) {
+    decoded.cleanup();
+    throw new ReceiptImageProcessError("Could not read this image.");
+  }
+  if (decoded.appliedExif) {
+    return decoded;
+  }
+
+  const orientation = readJpegExifOrientation(await file.arrayBuffer());
+  const oriented = orientedDimensions(decoded.width, decoded.height, orientation);
+  if (orientation === 1) {
+    return {
+      source: decoded.source,
+      width: oriented.width,
+      height: oriented.height,
+      cleanup: decoded.cleanup,
+    };
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = oriented.width;
+  canvas.height = oriented.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    decoded.cleanup();
+    throw new ReceiptImageProcessError("Could not process this image.");
+  }
+  drawOrientedImage(ctx, decoded.source, decoded.width, decoded.height, orientation);
+  decoded.cleanup();
+  return {
+    source: canvas,
+    width: oriented.width,
+    height: oriented.height,
+    cleanup: () => {},
+  };
+}
+
+/** Scale an already-decoded image into a JPEG. Does not touch the original file. */
+export function renderScaledJpeg(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  quality: number,
+): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return Promise.reject(new ReceiptImageProcessError("Could not process this image."));
+  }
+  ctx.drawImage(source, 0, 0, width, height);
+  return canvasToJpegBlob(canvas, quality);
+}
+
 async function decodeImageSource(file: File): Promise<{
   source: CanvasImageSource;
   width: number;

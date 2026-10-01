@@ -8,6 +8,7 @@ import {
   House,
   LayoutTemplate,
   Package,
+  Orbit,
   QrCode,
   Receipt,
   UsersRound,
@@ -172,6 +173,17 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     icon: QrCode,
     ctaLabel: "Open QR Code Generator",
     aliases: ["qr", "qr code"],
+  },
+  {
+    key: "tours",
+    name: "Tours",
+    description: "Build 360° virtual tours from panorama photos.",
+    href: "/tours",
+    createHref: "/tours",
+    enabled: true,
+    icon: Orbit,
+    ctaLabel: "Open Tours",
+    aliases: ["tour", "360", "panorama", "virtual tour"],
   },
 ];
 

@@ -5,6 +5,7 @@ import {
   FolderKanban,
   LayoutDashboard,
   LayoutTemplate,
+  Orbit,
   Package,
   QrCode,
   Plug,
@@ -100,6 +101,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "QR Code",
       icon: QrCode,
       match: (pathname) => pathname.startsWith("/tools/qr"),
+    },
+    {
+      href: "/tours",
+      label: "Tours",
+      icon: Orbit,
+      match: (pathname) => pathname === "/tours" || pathname.startsWith("/tours/"),
     },
     {
       href: "/settings/integrations",

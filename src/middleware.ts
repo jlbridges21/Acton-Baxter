@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isAppAccessRole, isPendingAccessRole } from "@/lib/auth/roles";
 import { updateSession } from "@/lib/supabase/middleware";
 import { getEnv } from "@/lib/env";
+import { isAnonymousTourPath } from "@/lib/tours/public-paths";
 
 const PUBLIC_PATHS = ["/login"];
 const PENDING_PATHS = ["/pending-access"];
@@ -40,7 +41,7 @@ export async function middleware(request: NextRequest) {
   const isPendingPath = PENDING_PATHS.some((path) => pathname === path);
   const isOptional = AUTH_OPTIONAL_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
-  if (!user && !isPublic && !isOptional) {
+  if (!user && !isPublic && !isOptional && !isAnonymousTourPath(pathname)) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
@@ -56,6 +57,7 @@ export async function middleware(request: NextRequest) {
     const role = (profile?.role as string | undefined) ?? "new_user";
 
     if (isPendingAccessRole(role)) {
+      if (isAnonymousTourPath(pathname)) return supabaseResponse;
       if (isPublic || pathname === "/") {
         return NextResponse.redirect(new URL("/pending-access", request.url));
       }
