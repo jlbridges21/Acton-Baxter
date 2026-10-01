@@ -6,16 +6,23 @@ import {
   ClipboardList,
   FolderKanban,
   House,
+  LayoutTemplate,
   Package,
+  QrCode,
   Receipt,
   UsersRound,
 } from "lucide-react";
+
+/** Acton's floor plan library — a separate app, not a Baxter route. */
+export const FLOOR_PLAN_LIBRARY_URL = "https://acton-adu.vercel.app/";
 
 export type BaxterTool = {
   key: string;
   name: string;
   description: string;
   href: string;
+  /** Opens outside Baxter. Render as a new-tab anchor, not an in-app link. */
+  external?: boolean;
   /** Preferred create/start route when different from href. */
   createHref?: string;
   enabled: boolean;
@@ -141,6 +148,30 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     icon: Package,
     ctaLabel: "Open Inventory",
     aliases: ["inventory", "materials", "build.com", "shop", "storage"],
+  },
+  {
+    key: "floor-plan-library",
+    name: "Floor Plan Library",
+    description:
+      "Houses all Acton floor plans with pricing. The sales team selects plans and generates a shareable PDF for a prospective customer.",
+    href: FLOOR_PLAN_LIBRARY_URL,
+    external: true,
+    enabled: true,
+    icon: LayoutTemplate,
+    ctaLabel: "Open Floor Plan Library",
+    aliases: ["floor plan", "floor plans", "pricing", "shareable pdf"],
+  },
+  {
+    key: "qr-code",
+    name: "QR Code Generator",
+    description:
+      "Turn a link or a short message into a QR code and download it as a PNG or a print-ready SVG.",
+    href: "/tools/qr",
+    createHref: "/tools/qr",
+    enabled: true,
+    icon: QrCode,
+    ctaLabel: "Open QR Code Generator",
+    aliases: ["qr", "qr code"],
   },
 ];
 

@@ -9,7 +9,9 @@ import {
   FolderKanban,
   Landmark,
   LayoutDashboard,
+  LayoutTemplate,
   Package,
+  QrCode,
   MessageSquare,
   MessageCircle,
   Palette,
@@ -22,6 +24,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { PROCESS_MONITORING_UI_ENABLED } from "@/lib/baxter/feature-flags";
+import { FLOOR_PLAN_LIBRARY_URL } from "@/lib/baxter/tools";
 
 export type AdminNavLink = {
   href: string;
@@ -105,6 +108,17 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "New Project Setup",
       icon: FolderKanban,
       match: (pathname) => pathname.startsWith("/projects/setup"),
+    },
+    {
+      href: FLOOR_PLAN_LIBRARY_URL,
+      label: "Floor Plan Library",
+      icon: LayoutTemplate,
+    },
+    {
+      href: "/tools/qr",
+      label: "QR Code",
+      icon: QrCode,
+      match: (pathname) => pathname.startsWith("/tools/qr"),
     },
   ];
 

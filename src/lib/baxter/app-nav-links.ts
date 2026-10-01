@@ -4,7 +4,9 @@ import {
   ClipboardList,
   FolderKanban,
   LayoutDashboard,
+  LayoutTemplate,
   Package,
+  QrCode,
   Plug,
   Receipt,
   Search,
@@ -14,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { isAdminRole, isAppAccessRole } from "@/lib/auth/roles";
+import { FLOOR_PLAN_LIBRARY_URL } from "@/lib/baxter/tools";
 import {
   getAdminNavLinks,
   getAdminNavSections,
@@ -86,6 +89,17 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "Customer Center",
       icon: UsersRound,
       match: (pathname) => pathname.startsWith("/customers"),
+    },
+    {
+      href: FLOOR_PLAN_LIBRARY_URL,
+      label: "Floor Plan Library",
+      icon: LayoutTemplate,
+    },
+    {
+      href: "/tools/qr",
+      label: "QR Code",
+      icon: QrCode,
+      match: (pathname) => pathname.startsWith("/tools/qr"),
     },
     {
       href: "/settings/integrations",

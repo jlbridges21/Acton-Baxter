@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LogOut, Menu, X } from "lucide-react";
+import { ExternalLink, LogOut, Menu, X } from "lucide-react";
 
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -48,21 +48,43 @@ export function AppNav({
 
   function renderLink(link: (typeof links)[number], keyPrefix: string, onNavigate?: () => void) {
     const Icon = link.icon;
-    const active = link.match ? link.match(pathname) : pathname === link.href;
+    const external = link.href.startsWith("http://") || link.href.startsWith("https://");
+    const active = !external && (link.match ? link.match(pathname) : pathname === link.href);
+    const className = cn(
+      "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
+      active
+        ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
+        : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
+    );
+    const content = (
+      <>
+        <Icon className="h-4 w-4 shrink-0" />
+        {link.label}
+        {external ? <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden /> : null}
+      </>
+    );
+    if (external) {
+      return (
+        <a
+          key={`${keyPrefix}-${link.href}-${link.label}`}
+          href={link.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={onNavigate}
+          className={className}
+        >
+          {content}
+        </a>
+      );
+    }
     return (
       <Link
         key={`${keyPrefix}-${link.href}-${link.label}`}
         href={link.href}
         onClick={onNavigate}
-        className={cn(
-          "inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
-          active
-            ? "bg-[var(--acton-gray-100)] text-[var(--acton-navy)]"
-            : "text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)]",
-        )}
+        className={className}
       >
-        <Icon className="h-4 w-4 shrink-0" />
-        {link.label}
+        {content}
       </Link>
     );
   }
