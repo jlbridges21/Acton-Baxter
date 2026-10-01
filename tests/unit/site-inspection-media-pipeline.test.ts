@@ -479,8 +479,10 @@ describe("PWA manifest scoped to /inspections", () => {
     expect(source).toContain('start_url: "/inspections"');
     expect(source).toContain('scope: "/inspections"');
     expect(source).toContain('display: "standalone"');
-    expect(source).toContain("/icons/inspections-192.png");
-    expect(source).toContain("/icons/inspections-512.png");
+    expect(source).toContain("/icons/baxter-192.png");
+    expect(source).toContain("/icons/baxter-512.png");
+    expect(source).toContain("/icons/baxter-maskable-512.png");
+    expect(source).toContain('purpose: "maskable"');
   });
 
   it("layout links manifest and documents iOS standalone cookie jar", () => {

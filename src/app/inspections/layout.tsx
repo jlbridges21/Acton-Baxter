@@ -20,10 +20,11 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
   },
   icons: {
-    apple: [{ url: "/icons/inspections-apple-touch.png", sizes: "180x180" }],
+    apple: [{ url: "/icons/baxter-apple-touch.png", sizes: "180x180" }],
     icon: [
-      { url: "/icons/inspections-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icons/inspections-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/icons/baxter-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/baxter-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/baxter-512.png", sizes: "512x512", type: "image/png" },
     ],
   },
   other: {

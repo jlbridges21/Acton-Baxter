@@ -479,15 +479,17 @@ describe("PWA manifest scoped to /receipts", () => {
     expect(source).toContain('start_url: "/receipts"');
     expect(source).toContain('scope: "/receipts"');
     expect(source).toContain('display: "standalone"');
-    expect(source).toContain("/icons/receipts-192.png");
-    expect(source).toContain("/icons/receipts-512.png");
+    expect(source).toContain("/icons/baxter-192.png");
+    expect(source).toContain("/icons/baxter-512.png");
+    expect(source).toContain("/icons/baxter-maskable-512.png");
+    expect(source).toContain('purpose: "maskable"');
   });
 
   it("receipts layout links scoped manifest and Apple tags", () => {
     const source = readFileSync(join(process.cwd(), "src/app/receipts/layout.tsx"), "utf8");
     expect(source).toContain('manifest: "/receipts/manifest.webmanifest"');
     expect(source).toContain("appleWebApp");
-    expect(source).toContain("receipts-apple-touch.png");
+    expect(source).toContain("baxter-apple-touch.png");
   });
 
   it("does not add a site-wide root manifest that would hijack desktop installs", () => {

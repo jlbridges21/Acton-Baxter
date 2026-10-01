@@ -21,19 +21,19 @@ export function GET() {
     theme_color: "#0b1f3a",
     icons: [
       {
-        src: "/icons/inspections-192.png",
+        src: "/icons/baxter-192.png",
         sizes: "192x192",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: "/icons/inspections-512.png",
+        src: "/icons/baxter-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: "/icons/inspections-512.png",
+        src: "/icons/baxter-maskable-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",
