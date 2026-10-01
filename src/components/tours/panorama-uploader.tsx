@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TOUR_UPLOAD_CONCURRENCY } from "@/lib/tours/constants";
+import { takeInputFiles } from "@/lib/tours/input-files";
 import { mapWithConcurrency } from "@/lib/tours/pool";
 import type { TourUploadStage } from "@/lib/tours/types";
 import { uploadOnePanorama } from "@/lib/tours/upload-one";
@@ -28,14 +29,19 @@ export function PanoramaUploader({ tourId }: { tourId: string }) {
   const router = useRouter();
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [busy, setBusy] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
 
   function patch(id: string, next: Partial<UploadRow>) {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...next } : row)));
   }
 
-  async function onFiles(list: FileList | null) {
-    const files = Array.from(list ?? []);
-    if (!files.length || busy) return;
+  async function onFiles(files: File[]) {
+    if (!files.length) return;
+    if (busy) {
+      setBatchError("Wait for the current upload to finish, then choose the files again.");
+      return;
+    }
+    setBatchError(null);
     const incoming: UploadRow[] = files.map((file) => ({
       id: crypto.randomUUID(),
       name: file.name,
@@ -45,19 +51,46 @@ export function PanoramaUploader({ tourId }: { tourId: string }) {
     }));
     setRows((current) => [...incoming, ...current]);
     setBusy(true);
-    await mapWithConcurrency(incoming, TOUR_UPLOAD_CONCURRENCY, async (row, index) => {
-      const file = files[index];
-      if (!file) return;
-      const result = await uploadOnePanorama({
-        file,
-        tourId,
-        sceneId: row.id,
-        onStage: (stage) => patch(row.id, { stage }),
+    try {
+      const settled = await mapWithConcurrency(
+        incoming,
+        TOUR_UPLOAD_CONCURRENCY,
+        async (row, index) => {
+          const file = files[index];
+          if (!file) {
+            patch(row.id, { stage: "error", error: `${row.name}: The selected file was missing.` });
+            return;
+          }
+          const result = await uploadOnePanorama({
+            file,
+            tourId,
+            sceneId: row.id,
+            onStage: (stage) => patch(row.id, { stage }),
+          });
+          patch(row.id, {
+            warning: result.warning,
+            error: result.error,
+            ...(result.error ? { stage: "error" as const } : {}),
+          });
+        },
+      );
+      settled.forEach((result, index) => {
+        if (result.status !== "rejected") return;
+        const row = incoming[index];
+        if (!row) return;
+        const reason = result.reason instanceof Error ? result.reason.message : "Upload failed.";
+        patch(row.id, { stage: "error", error: `${row.name}: ${reason}` });
       });
-      patch(row.id, { warning: result.warning, error: result.error });
-    });
-    setBusy(false);
-    router.refresh();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Upload failed.";
+      setBatchError(reason);
+      for (const row of incoming) {
+        patch(row.id, { stage: "error", error: `${row.name}: ${reason}` });
+      }
+    } finally {
+      setBusy(false);
+      router.refresh();
+    }
   }
 
   return (
@@ -76,12 +109,17 @@ export function PanoramaUploader({ tourId }: { tourId: string }) {
           disabled={busy}
           className="mt-3 block w-full text-sm text-[var(--acton-navy)] file:mr-3 file:rounded-md file:border-0 file:bg-[var(--acton-navy)] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white"
           onChange={(event) => {
-            const list = event.target.files;
+            const selected = takeInputFiles(event.target.files);
             event.target.value = "";
-            void onFiles(list);
+            void onFiles(selected);
           }}
         />
       </label>
+      {batchError ? (
+        <p className="text-sm text-red-700" role="alert">
+          {batchError}
+        </p>
+      ) : null}
       {rows.length ? (
         <ul className="space-y-2">
           {rows.map((row) => (

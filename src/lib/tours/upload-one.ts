@@ -38,7 +38,11 @@ export async function uploadOnePanorama(input: {
       extension,
     });
     if (upload.error || !upload.storage || !upload.thumbnail) {
-      return { error: upload.error || "Could not prepare the panorama upload.", warning };
+      input.onStage("error");
+      return {
+        error: `${input.file.name}: ${upload.error || "Could not prepare the panorama upload."}`,
+        warning,
+      };
     }
     prepared = true;
     await uploadOriginalPanorama({
@@ -78,11 +82,18 @@ export async function uploadOnePanorama(input: {
     input.onStage("done");
     return { error: null, warning };
   } catch (error) {
-    if (prepared) await discardSceneUpload(input.tourId, input.sceneId, extension);
+    if (prepared) {
+      try {
+        await discardSceneUpload(input.tourId, input.sceneId, extension);
+      } catch {
+        // The visible failure is the upload error. Cleanup is best-effort.
+      }
+    }
     input.onStage("error");
-    return {
-      error: error instanceof Error ? error.message : "Upload failed.",
-      warning,
-    };
+    const reason = error instanceof Error ? error.message : "Upload failed.";
+    const named = reason.startsWith(`${input.file.name}:`)
+      ? reason
+      : `${input.file.name}: ${reason}`;
+    return { error: named, warning };
   }
 }

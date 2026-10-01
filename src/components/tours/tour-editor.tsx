@@ -16,7 +16,28 @@ import {
   renameTour,
   setTourPublic,
 } from "@/lib/tours/actions";
+import { tourSaveLabel, tourSaveState } from "@/lib/tours/save-state";
 import type { TourDetail } from "@/lib/tours/types";
+
+function sceneNames(tour: TourDetail): Record<string, string> {
+  return Object.fromEntries(tour.scenes.map((scene) => [scene.id, scene.name]));
+}
+
+function fieldsDirty(
+  tour: TourDetail,
+  savedTitle: string,
+  savedNames: Record<string, string>,
+  title: string,
+  names: Record<string, string>,
+): boolean {
+  const nextTitle = title.trim() || "Untitled Tour";
+  if (nextTitle !== savedTitle) return true;
+  return tour.scenes.some((scene) => {
+    const next = (names[scene.id] ?? scene.name).trim() || "Scene";
+    const saved = savedNames[scene.id] ?? scene.name;
+    return next !== saved;
+  });
+}
 
 export function TourEditor({ tour }: { tour: TourDetail }) {
   const router = useRouter();
@@ -24,61 +45,76 @@ export function TourEditor({ tour }: { tour: TourDetail }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [names, setNames] = useState<Record<string, string>>(() =>
-    Object.fromEntries(tour.scenes.map((scene) => [scene.id, scene.name])),
-  );
+  const [inFlight, setInFlight] = useState(0);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [names, setNames] = useState<Record<string, string>>(() => sceneNames(tour));
+  const [savedTitle, setSavedTitle] = useState(tour.title);
+  const [savedNames, setSavedNames] = useState<Record<string, string>>(() => sceneNames(tour));
+  const saveState = tourSaveState({
+    inFlight,
+    failed: saveFailed,
+    dirty: fieldsDirty(tour, savedTitle, savedNames, title, names),
+  });
+
+  async function runSave(work: () => Promise<{ error: string | null }>) {
+    setInFlight((count) => count + 1);
+    setSaveFailed(false);
+    try {
+      const result = await work();
+      setError(result.error);
+      if (result.error) setSaveFailed(true);
+      else router.refresh();
+      return result;
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Could not save.";
+      setError(message);
+      setSaveFailed(true);
+      return { error: message };
+    } finally {
+      setInFlight((count) => Math.max(0, count - 1));
+    }
+  }
 
   async function saveTitle() {
     const next = title.trim() || "Untitled Tour";
     setTitle(next);
-    if (next === tour.title) return;
-    const result = await renameTour(tour.id, next);
-    setError(result.error);
-    if (!result.error) router.refresh();
+    if (next === savedTitle) return;
+    const result = await runSave(() => renameTour(tour.id, next));
+    if (!result.error) setSavedTitle(next);
   }
 
   async function togglePublic() {
     setBusy(true);
-    const result = await setTourPublic(tour.id, !tour.isPublic);
+    await runSave(() => setTourPublic(tour.id, !tour.isPublic));
     setBusy(false);
-    setError(result.error);
-    if (!result.error) router.refresh();
   }
 
   async function saveName(sceneId: string) {
     const scene = tour.scenes.find((item) => item.id === sceneId);
     const next = (names[sceneId] ?? "").trim() || "Scene";
     setNames((current) => ({ ...current, [sceneId]: next }));
-    if (!scene || next === scene.name) return;
-    const result = await renameScene(tour.id, sceneId, next);
-    setError(result.error);
-    if (!result.error) router.refresh();
+    if (!scene || next === (savedNames[sceneId] ?? scene.name)) return;
+    const result = await runSave(() => renameScene(tour.id, sceneId, next));
+    if (!result.error) setSavedNames((current) => ({ ...current, [sceneId]: next }));
   }
 
   async function reorder(sceneId: string, direction: "up" | "down") {
     setBusy(true);
-    const result = await moveScene(tour.id, sceneId, direction);
+    await runSave(() => moveScene(tour.id, sceneId, direction));
     setBusy(false);
-    setError(result.error);
-    if (!result.error) router.refresh();
   }
 
   async function confirmDelete() {
     if (!pendingDelete) return;
     setBusy(true);
-    const result = await deleteScene(tour.id, pendingDelete);
+    const result = await runSave(() => deleteScene(tour.id, pendingDelete));
     setBusy(false);
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-    setPendingDelete(null);
-    router.refresh();
+    if (!result.error) setPendingDelete(null);
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-start justify-between gap-3 bg-[var(--acton-gray-50)]/95 px-1 py-2 backdrop-blur">
         <div className="min-w-0 flex-1 space-y-2">
           <Link
             href="/tours"
@@ -95,6 +131,18 @@ export function TourEditor({ tour }: { tour: TourDetail }) {
               if (event.key === "Enter") event.currentTarget.blur();
             }}
           />
+          <p
+            className={`text-xs ${
+              saveState === "saved"
+                ? "text-emerald-700"
+                : saveState === "error"
+                  ? "text-red-700"
+                  : "text-amber-800"
+            }`}
+            aria-live="polite"
+          >
+            {tourSaveLabel(saveState)}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Badge tone={tour.isPublic ? "green" : "gray"}>
