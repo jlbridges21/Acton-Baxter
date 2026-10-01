@@ -347,6 +347,130 @@ export async function setScenePositions(
   return { error: null };
 }
 
+export async function insertHotspot(input: {
+  id: string;
+  tourId: string;
+  sceneId: string;
+  targetSceneId: string | null;
+  type: "link" | "info";
+  yaw: number;
+  pitch: number;
+  label: string | null;
+  content: string | null;
+  styleShape: "arrow" | "circle" | "square";
+  styleColor: string;
+  styleSize: number;
+}): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { error } = await supabase.from("hotspots").insert({
+    id: input.id,
+    scene_id: input.sceneId,
+    target_scene_id: input.targetSceneId,
+    type: input.type,
+    yaw: input.yaw,
+    pitch: input.pitch,
+    label: input.label,
+    content: input.content,
+    style_shape: input.styleShape,
+    style_color: input.styleColor,
+    style_size: input.styleSize,
+  });
+  return { error: error ? message(error, "Could not create the hotspot.") : null };
+}
+
+export async function updateHotspot(input: {
+  id: string;
+  sceneId: string;
+  targetSceneId: string | null;
+  type: "link" | "info";
+  yaw: number;
+  pitch: number;
+  label: string | null;
+  content: string | null;
+  styleShape: "arrow" | "circle" | "square";
+  styleColor: string;
+  styleSize: number;
+}): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { error } = await supabase
+    .from("hotspots")
+    .update({
+      type: input.type,
+      yaw: input.yaw,
+      pitch: input.pitch,
+      label: input.label,
+      content: input.content,
+      target_scene_id: input.targetSceneId,
+      style_shape: input.styleShape,
+      style_color: input.styleColor,
+      style_size: input.styleSize,
+    })
+    .eq("id", input.id)
+    .eq("scene_id", input.sceneId);
+  return { error: error ? message(error, "Could not update the hotspot.") : null };
+}
+
+export async function deleteHotspotRow(
+  sceneId: string,
+  hotspotId: string,
+): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { error } = await supabase
+    .from("hotspots")
+    .delete()
+    .eq("id", hotspotId)
+    .eq("scene_id", sceneId);
+  return { error: error ? message(error, "Could not delete the hotspot.") : null };
+}
+
+export async function hotspotBelongsToScene(sceneId: string, hotspotId: string): Promise<boolean> {
+  const supabase = await db();
+  const { data, error } = await supabase
+    .from("hotspots")
+    .select("id")
+    .eq("id", hotspotId)
+    .eq("scene_id", sceneId)
+    .maybeSingle();
+  if (error) throw new Error(message(error, "Could not load that hotspot."));
+  return Boolean(data?.id);
+}
+
+export async function setSceneOpeningView(
+  tourId: string,
+  sceneId: string,
+  yaw: number,
+  pitch: number,
+): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { error } = await supabase
+    .from("scenes")
+    .update({
+      initial_yaw: yaw,
+      initial_pitch: pitch,
+      has_initial_view: true,
+    })
+    .eq("id", sceneId)
+    .eq("tour_id", tourId);
+  return { error: error ? message(error, "Could not save the opening view.") : null };
+}
+
+export async function clearSceneOpeningView(
+  tourId: string,
+  sceneId: string,
+): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { error } = await supabase
+    .from("scenes")
+    .update({
+      initial_yaw: 0,
+      initial_pitch: 0,
+      has_initial_view: false,
+    })
+    .eq("id", sceneId)
+    .eq("tour_id", tourId);
+  return { error: error ? message(error, "Could not clear the opening view.") : null };
+}
+
 export async function swapScenePosition(
   tourId: string,
   sceneId: string,

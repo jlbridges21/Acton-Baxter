@@ -76,6 +76,7 @@ describe("tour viewer nodes", () => {
           label: null,
           content: null,
           targetSceneId: "next",
+          styleShape: "arrow",
           styleColor: "#FFFFFF",
           styleSize: 48,
         },
@@ -87,6 +88,7 @@ describe("tour viewer nodes", () => {
           label: null,
           content: null,
           targetSceneId: "missing",
+          styleShape: "arrow",
           styleColor: "#FFFFFF",
           styleSize: 48,
         },
@@ -105,6 +107,13 @@ describe("tour viewer nodes", () => {
         position: { yaw: 1.2, pitch: -0.4 },
       }),
     ]);
+    const editing = buildVirtualTourNodes({
+      slug: "abc",
+      scenes: [wide, scene({ id: "next", width: 2000, hasCompat: false })],
+      maxTextureSize: 4096,
+      includeLinks: false,
+    });
+    expect(editing[0]?.links).toEqual([]);
     expect(resolvePanoramaVariant(4096, true, 4096)).toBe("full");
     expect(resolvePanoramaVariant(8000, false, 4096)).toBe("full");
   });

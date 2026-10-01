@@ -9,6 +9,7 @@ export type HotspotRow = {
   label: string | null;
   content: string | null;
   target_scene_id: string | null;
+  style_shape: string;
   style_color: string;
   style_size: number;
 };
@@ -43,7 +44,7 @@ export const VIEWER_TOUR_SELECT = `
     id, name, position, width, height, compat_path, thumbnail_path,
     initial_yaw, initial_pitch, has_initial_view,
     hotspots!hotspots_scene_id_fkey (
-      id, type, yaw, pitch, label, content, target_scene_id, style_color, style_size
+      id, type, yaw, pitch, label, content, target_scene_id, style_shape, style_color, style_size
     )
   )
 `;
@@ -73,6 +74,7 @@ function mapScene(slug: string, scene: SceneRow): ViewerScene {
         label: hotspot.label,
         content: hotspot.content,
         targetSceneId: hotspot.target_scene_id,
+        styleShape: hotspotShape(hotspot.style_shape),
         styleColor: hotspot.style_color,
         styleSize: hotspot.style_size,
       },
@@ -96,4 +98,9 @@ export function coverThumbUrl(tour: ViewerTour): string | null {
   if (!tour.coverSceneId) return null;
   const scene = tour.scenes.find((item) => item.id === tour.coverSceneId);
   return scene?.thumbUrl ?? null;
+}
+
+function hotspotShape(value: string): ViewerHotspot["styleShape"] {
+  if (value === "circle" || value === "square" || value === "arrow") return value;
+  return "arrow";
 }

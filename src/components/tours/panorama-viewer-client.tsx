@@ -21,6 +21,13 @@ export function PanoramaViewerClient(props: {
   scenes: ViewerScene[];
   currentSceneId: string;
   onSceneChange: (sceneId: string) => void;
+  editMode?: boolean;
+  placing?: boolean;
+  selectedHotspotId?: string | null;
+  onPlace?: (position: { yaw: number; pitch: number }) => void;
+  onSelectHotspot?: (hotspotId: string) => void;
+  onMoveHotspot?: (move: { id: string; yaw: number; pitch: number }) => void;
+  onBindView?: (read: () => { yaw: number; pitch: number } | null) => void;
 }) {
   return <PanoramaViewer {...props} />;
 }

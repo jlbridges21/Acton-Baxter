@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { HotspotPanel } from "@/components/tours/hotspot-panel";
 import { PanoramaUploader } from "@/components/tours/panorama-uploader";
 import { SceneStrip } from "@/components/tours/scene-strip";
 import { ShareDialog } from "@/components/tours/share-dialog";
@@ -12,15 +13,20 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
+  clearSceneOpeningView,
+  createHotspot,
+  deleteHotspot,
   deleteScene,
   renameScene,
   renameTour,
   reorderScenes,
+  saveHotspot,
+  setSceneOpeningView,
   setTourCover,
   setTourPublic,
 } from "@/lib/tours/actions";
 import { tourSaveLabel, tourSaveState } from "@/lib/tours/save-state";
-import type { ViewerScene, ViewerTour } from "@/lib/tours/viewer-model";
+import type { ViewerHotspot, ViewerScene, ViewerTour } from "@/lib/tours/viewer-model";
 
 const FRAME_CHROME = {
   showTitle: false,
@@ -57,16 +63,34 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   const [saveFailed, setSaveFailed] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [selectedHotspotId, setSelectedHotspotId] = useState<string | null>(null);
+  const [draftHotspots, setDraftHotspots] = useState<Record<string, ViewerHotspot[]> | null>(null);
+  const [savedHotspots, setSavedHotspots] = useState<Record<string, string>>(() =>
+    hotspotSnapshot(tour.scenes),
+  );
+  const [openingOverride, setOpeningOverride] = useState<
+    Record<string, { yaw: number; pitch: number } | null>
+  >({});
+  const readView = useRef<(() => { yaw: number; pitch: number } | null) | null>(null);
   const scenes = useMemo(() => applyOrder(tour.scenes, order), [tour.scenes, order]);
+  const displayScenes = useMemo(
+    () => scenes.map((scene) => withSceneEdits(scene, draftHotspots, openingOverride)),
+    [scenes, draftHotspots, openingOverride],
+  );
   const activeId = scenes.some((scene) => scene.id === pickedId)
     ? (pickedId ?? "")
     : (scenes[0]?.id ?? "");
-  const active = scenes.find((scene) => scene.id === activeId) ?? null;
-  const viewerTour = useMemo(() => ({ ...tour, scenes }), [tour, scenes]);
+  const active = displayScenes.find((scene) => scene.id === activeId) ?? null;
+  const selectedHotspot =
+    active?.hotspots.find((hotspot) => hotspot.id === selectedHotspotId) ?? null;
+  const viewerTour = useMemo(() => ({ ...tour, scenes: displayScenes }), [tour, displayScenes]);
   const saveState = tourSaveState({
     inFlight,
     failed: saveFailed,
-    dirty: fieldsDirty(tour, savedTitle, savedNames, title, names),
+    dirty:
+      fieldsDirty(tour, savedTitle, savedNames, title, names) ||
+      hotspotListsDirty(scenes, draftHotspots, savedHotspots),
   });
 
   async function runSave(work: () => Promise<{ error: string | null }>) {
@@ -138,6 +162,156 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     if (result.error) setOrder(null);
   }
 
+  useEffect(() => {
+    if (!placing) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPlacing(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [placing]);
+
+  function replaceHotspots(sceneId: string, hotspots: ViewerHotspot[]) {
+    setDraftHotspots((current) => ({ ...(current ?? {}), [sceneId]: hotspots }));
+  }
+
+  function hotspotsOf(sceneId: string): ViewerHotspot[] {
+    return displayScenes.find((scene) => scene.id === sceneId)?.hotspots ?? [];
+  }
+
+  async function placeHotspot(position: { yaw: number; pitch: number }) {
+    if (!active) return;
+    setPlacing(false);
+    const hotspot: ViewerHotspot = {
+      id: crypto.randomUUID(),
+      type: "info",
+      yaw: position.yaw,
+      pitch: position.pitch,
+      label: "Info",
+      content: null,
+      targetSceneId: null,
+      styleShape: "circle",
+      styleColor: "#FFFFFF",
+      styleSize: 48,
+    };
+    const next = [...hotspotsOf(active.id), hotspot];
+    replaceHotspots(active.id, next);
+    setSelectedHotspotId(hotspot.id);
+    const result = await runSave(() =>
+      createHotspot({
+        tourId: tour.id,
+        sceneId: active.id,
+        hotspotId: hotspot.id,
+        type: hotspot.type,
+        yaw: hotspot.yaw,
+        pitch: hotspot.pitch,
+        label: hotspot.label,
+        content: hotspot.content,
+        targetSceneId: hotspot.targetSceneId,
+        styleShape: hotspot.styleShape,
+        styleColor: hotspot.styleColor,
+        styleSize: hotspot.styleSize,
+      }),
+    );
+    if (result.error) {
+      replaceHotspots(
+        active.id,
+        next.filter((item) => item.id !== hotspot.id),
+      );
+      setSelectedHotspotId(null);
+      return;
+    }
+    setSavedHotspots((current) => ({ ...current, [active.id]: JSON.stringify(next) }));
+  }
+
+  function draftHotspot(hotspot: ViewerHotspot) {
+    if (!active) return;
+    replaceHotspots(
+      active.id,
+      hotspotsOf(active.id).map((item) => (item.id === hotspot.id ? hotspot : item)),
+    );
+  }
+
+  async function commitHotspot(hotspot: ViewerHotspot) {
+    if (!active) return;
+    const next = hotspotsOf(active.id).map((item) => (item.id === hotspot.id ? hotspot : item));
+    replaceHotspots(active.id, next);
+    const result = await runSave(() =>
+      saveHotspot({
+        tourId: tour.id,
+        sceneId: active.id,
+        hotspotId: hotspot.id,
+        type: hotspot.type,
+        yaw: hotspot.yaw,
+        pitch: hotspot.pitch,
+        label: hotspot.label,
+        content: hotspot.content,
+        targetSceneId: hotspot.targetSceneId,
+        styleShape: hotspot.styleShape,
+        styleColor: hotspot.styleColor,
+        styleSize: hotspot.styleSize,
+      }),
+    );
+    if (!result.error) {
+      setSavedHotspots((current) => ({ ...current, [active.id]: JSON.stringify(next) }));
+    }
+  }
+
+  async function moveHotspot(move: { id: string; yaw: number; pitch: number }) {
+    if (!active) return;
+    const current = hotspotsOf(active.id).find((item) => item.id === move.id);
+    if (!current || (current.yaw === move.yaw && current.pitch === move.pitch)) return;
+    await commitHotspot({ ...current, yaw: move.yaw, pitch: move.pitch });
+  }
+
+  async function removeHotspot(hotspotId: string) {
+    if (!active) return;
+    const previous = hotspotsOf(active.id);
+    const next = previous.filter((item) => item.id !== hotspotId);
+    replaceHotspots(active.id, next);
+    if (selectedHotspotId === hotspotId) setSelectedHotspotId(null);
+    const result = await runSave(() => deleteHotspot(tour.id, active.id, hotspotId));
+    if (result.error) {
+      replaceHotspots(active.id, previous);
+      return;
+    }
+    setSavedHotspots((current) => ({ ...current, [active.id]: JSON.stringify(next) }));
+  }
+
+  async function saveOpeningView() {
+    if (!active) return;
+    const position = readView.current?.();
+    if (!position) return;
+    setOpeningOverride((current) => ({ ...current, [active.id]: position }));
+    setBusy(true);
+    const result = await runSave(() =>
+      setSceneOpeningView(tour.id, active.id, position.yaw, position.pitch),
+    );
+    setBusy(false);
+    if (result.error) {
+      setOpeningOverride((current) => {
+        const next = { ...current };
+        delete next[active.id];
+        return next;
+      });
+    }
+  }
+
+  async function clearOpeningView() {
+    if (!active) return;
+    setOpeningOverride((current) => ({ ...current, [active.id]: null }));
+    setBusy(true);
+    const result = await runSave(() => clearSceneOpeningView(tour.id, active.id));
+    setBusy(false);
+    if (result.error) {
+      setOpeningOverride((current) => {
+        const next = { ...current };
+        delete next[active.id];
+        return next;
+      });
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3 lg:h-[calc(100dvh-7rem)] lg:min-h-[560px]">
       <div className="flex items-center justify-between gap-3">
@@ -180,7 +354,24 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
               chrome={FRAME_CHROME}
               layout="frame"
               sceneId={activeId}
-              onSceneChange={setPickedId}
+              onSceneChange={(sceneId) => {
+                setPickedId(sceneId);
+                setSelectedHotspotId(null);
+                setPlacing(false);
+              }}
+              editing={{
+                placing,
+                selectedHotspotId,
+                onPlace: (position) => void placeHotspot(position),
+                onSelectHotspot: (hotspotId) => {
+                  setSelectedHotspotId(hotspotId);
+                  setPlacing(false);
+                },
+                onMoveHotspot: (move) => void moveHotspot(move),
+                onBindView: (read) => {
+                  readView.current = read;
+                },
+              }}
             />
           </div>
           <SceneStrip
@@ -262,6 +453,24 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
                     type="button"
                     variant="secondary"
                     disabled={busy}
+                    onClick={() => void saveOpeningView()}
+                  >
+                    Set current view as the opening view
+                  </Button>
+                  {active.hasInitialView ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void clearOpeningView()}
+                    >
+                      Clear opening view
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy}
                     onClick={() => setPendingDelete(active.id)}
                   >
                     Delete scene
@@ -275,14 +484,22 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
             )}
           </section>
 
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
-              Hotspots
-            </h2>
-            <p className="text-sm text-[var(--acton-muted)]">
-              Hotspot tools will sit in this section.
-            </p>
-          </section>
+          <HotspotPanel
+            scene={active}
+            scenes={displayScenes}
+            selected={selectedHotspot}
+            placing={placing}
+            busy={busy}
+            onStartPlace={() => {
+              setSelectedHotspotId(null);
+              setPlacing(true);
+            }}
+            onCancelPlace={() => setPlacing(false)}
+            onSelect={setSelectedHotspotId}
+            onDraft={draftHotspot}
+            onCommit={(hotspot) => void commitHotspot(hotspot)}
+            onDelete={(hotspotId) => void removeHotspot(hotspotId)}
+          />
 
           <PanoramaUploader tourId={tour.id} />
         </aside>
@@ -322,5 +539,43 @@ function fieldsDirty(
     const next = (names[scene.id] ?? scene.name).trim() || "Scene";
     const saved = savedNames[scene.id] ?? scene.name;
     return next !== saved;
+  });
+}
+
+function hotspotSnapshot(scenes: ViewerScene[]): Record<string, string> {
+  return Object.fromEntries(scenes.map((scene) => [scene.id, JSON.stringify(scene.hotspots)]));
+}
+
+function withSceneEdits(
+  scene: ViewerScene,
+  draftHotspots: Record<string, ViewerHotspot[]> | null,
+  openingOverride: Record<string, { yaw: number; pitch: number } | null>,
+): ViewerScene {
+  const hotspots = draftHotspots?.[scene.id] ?? scene.hotspots;
+  if (!(scene.id in openingOverride)) return { ...scene, hotspots };
+  const opening = openingOverride[scene.id];
+  if (!opening) {
+    return { ...scene, hotspots, hasInitialView: false, initialYaw: 0, initialPitch: 0 };
+  }
+  return {
+    ...scene,
+    hotspots,
+    hasInitialView: true,
+    initialYaw: opening.yaw,
+    initialPitch: opening.pitch,
+  };
+}
+
+function hotspotListsDirty(
+  scenes: ViewerScene[],
+  draftHotspots: Record<string, ViewerHotspot[]> | null,
+  savedHotspots: Record<string, string>,
+): boolean {
+  if (!draftHotspots) return false;
+  return scenes.some((scene) => {
+    const draft = draftHotspots[scene.id];
+    if (!draft) return false;
+    const saved = savedHotspots[scene.id] ?? JSON.stringify(scene.hotspots);
+    return JSON.stringify(draft) !== saved;
   });
 }

@@ -9,6 +9,7 @@ export type ViewerHotspot = {
   label: string | null;
   content: string | null;
   targetSceneId: string | null;
+  styleShape: "arrow" | "circle" | "square";
   styleColor: string;
   styleSize: number;
 };
@@ -66,27 +67,34 @@ export function buildVirtualTourNodes(input: {
   slug: string;
   scenes: ViewerScene[];
   maxTextureSize: number;
+  /** Edit mode passes false so a click selects a hotspot instead of changing scenes. */
+  includeLinks?: boolean;
 }): TourNodeSpec[] {
   const ids = new Set(input.scenes.map((scene) => scene.id));
+  const includeLinks = input.includeLinks !== false;
   return input.scenes.map((scene) => {
     const variant = resolvePanoramaVariant(scene.width, scene.hasCompat, input.maxTextureSize);
     return {
       id: scene.id,
       name: scene.name,
       panorama: tourImageUrl(input.slug, scene.id, variant),
-      links: scene.hotspots.flatMap((hotspot) => {
-        if (hotspot.type !== "link" || !hotspot.targetSceneId) return [];
-        if (!ids.has(hotspot.targetSceneId)) return [];
-        return [
-          {
-            nodeId: hotspot.targetSceneId,
-            position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
-            arrowStyle: { size: { width: hotspot.styleSize, height: hotspot.styleSize } },
-            data: { color: hotspot.styleColor, size: hotspot.styleSize },
-          },
-        ];
-      }),
+      links: includeLinks ? playbackLinks(scene, ids) : [],
     };
+  });
+}
+
+function playbackLinks(scene: ViewerScene, ids: Set<string>): TourNodeSpec["links"] {
+  return scene.hotspots.flatMap((hotspot) => {
+    if (hotspot.type !== "link" || !hotspot.targetSceneId) return [];
+    if (!ids.has(hotspot.targetSceneId)) return [];
+    return [
+      {
+        nodeId: hotspot.targetSceneId,
+        position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
+        arrowStyle: { size: { width: hotspot.styleSize, height: hotspot.styleSize } },
+        data: { color: hotspot.styleColor, size: hotspot.styleSize },
+      },
+    ];
   });
 }
 

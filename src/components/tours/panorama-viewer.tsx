@@ -6,6 +6,14 @@ import "@photo-sphere-viewer/core/index.css";
 import "@photo-sphere-viewer/markers-plugin/index.css";
 import "@photo-sphere-viewer/virtual-tour-plugin/index.css";
 import { Button } from "@/components/ui/button";
+import { InfoPopover } from "@/components/tours/info-popover";
+import { HotspotDragSession } from "@/lib/tours/hotspot-drag";
+import {
+  hotspotMarkerSpecs,
+  planMarkerSync,
+  type HotspotMarkerSpec,
+} from "@/lib/tours/hotspot-markers";
+import { placeInfoPopover } from "@/lib/tours/info-popover";
 import { readMaxTextureSize } from "@/lib/tours/texture-size";
 import {
   buildVirtualTourNodes,
@@ -16,14 +24,10 @@ import {
 } from "@/lib/tours/viewer-model";
 
 const LOAD_TIMEOUT_MS = 60_000;
+const INFO_BOX_WIDTH = 240;
+const INFO_BOX_HEIGHT = 120;
 
-type InfoSelection = {
-  id: string;
-  label: string | null;
-  content: string | null;
-  yaw: number;
-  pitch: number;
-};
+type ViewReader = () => { yaw: number; pitch: number } | null;
 
 /**
  * Photo Sphere Viewer and the database both store yaw and pitch in radians.
@@ -34,11 +38,25 @@ export function PanoramaViewer({
   scenes,
   currentSceneId,
   onSceneChange,
+  editMode = false,
+  placing = false,
+  selectedHotspotId = null,
+  onPlace,
+  onSelectHotspot,
+  onMoveHotspot,
+  onBindView,
 }: {
   slug: string;
   scenes: ViewerScene[];
   currentSceneId: string;
   onSceneChange: (sceneId: string) => void;
+  editMode?: boolean;
+  placing?: boolean;
+  selectedHotspotId?: string | null;
+  onPlace?: (position: { yaw: number; pitch: number }) => void;
+  onSelectHotspot?: (hotspotId: string) => void;
+  onMoveHotspot?: (move: { id: string; yaw: number; pitch: number }) => void;
+  onBindView?: (read: ViewReader) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -50,19 +68,97 @@ export function PanoramaViewer({
   const scenesRef = useRef(scenes);
   const sceneIdRef = useRef(currentSceneId);
   const onSceneChangeRef = useRef(onSceneChange);
+  const editModeRef = useRef(editMode);
+  const placingRef = useRef(placing);
+  const selectedIdRef = useRef(selectedHotspotId);
+  const onPlaceRef = useRef(onPlace);
+  const onSelectRef = useRef(onSelectHotspot);
+  const onMoveRef = useRef(onMoveHotspot);
+  const onBindViewRef = useRef(onBindView);
+  const dragRef = useRef<HotspotDragSession | null>(null);
+  const dragElementRef = useRef<HTMLElement | null>(null);
+  const markerSignatures = useRef(new Map<string, string>());
+  const syncMarkersRef = useRef<() => void>(() => undefined);
 
   const [retry, setRetry] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<InfoSelection | null>(null);
+  const [infoId, setInfoId] = useState<string | null>(null);
   const [infoPoint, setInfoPoint] = useState<{ x: number; y: number } | null>(null);
   const sourceKey = JSON.stringify(scenes);
+  const infoHotspot =
+    scenes
+      .flatMap((scene) => scene.hotspots)
+      .find((hotspot) => hotspot.id === infoId && hotspot.type === "info") ?? null;
 
   useEffect(() => {
     scenesRef.current = scenes;
     sceneIdRef.current = currentSceneId;
     onSceneChangeRef.current = onSceneChange;
-  }, [scenes, currentSceneId, onSceneChange]);
+    editModeRef.current = editMode;
+    placingRef.current = placing;
+    selectedIdRef.current = selectedHotspotId;
+    onPlaceRef.current = onPlace;
+    onSelectRef.current = onSelectHotspot;
+    onMoveRef.current = onMoveHotspot;
+    onBindViewRef.current = onBindView;
+    syncMarkersRef.current = () => {
+      const markers = markersRef.current;
+      if (!markers || dragRef.current?.isDragging) return;
+      const scene = scenesRef.current.find((item) => item.id === sceneIdRef.current);
+      if (!scene) return;
+      const specs = hotspotMarkerSpecs({
+        hotspots: scene.hotspots,
+        sceneIds: new Set(scenesRef.current.map((item) => item.id)),
+        editMode: editModeRef.current,
+        selectedId: selectedIdRef.current,
+      });
+      applyHotspotMarkers(
+        markers,
+        specs,
+        markerSignatures.current,
+        editModeRef.current ? "hotspot:" : "info:",
+        (element, hotspotId) => {
+          if (!editModeRef.current || element.dataset.dragBound === "1") return;
+          element.dataset.dragBound = "1";
+          element.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0) return;
+            const session = dragRef.current;
+            if (!session || !editModeRef.current) return;
+            dragElementRef.current = element;
+            session.pointerDown(hotspotId, event);
+            const move = (pointerEvent: PointerEvent) => session.pointerMove(pointerEvent);
+            const up = (pointerEvent: PointerEvent) => {
+              session.pointerUp(pointerEvent);
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", up);
+              window.removeEventListener("pointercancel", cancel);
+            };
+            const cancel = () => {
+              session.cancel();
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", up);
+              window.removeEventListener("pointercancel", cancel);
+            };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up);
+            window.addEventListener("pointercancel", cancel);
+          });
+        },
+      );
+    };
+  }, [
+    scenes,
+    currentSceneId,
+    onSceneChange,
+    editMode,
+    placing,
+    selectedHotspotId,
+    onPlace,
+    onSelectHotspot,
+    onMoveHotspot,
+    onBindView,
+  ]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -72,7 +168,8 @@ export function PanoramaViewer({
     nodesKeyRef.current = null;
     setRevealed(false);
     setError(null);
-    setInfo(null);
+    setInfoId(null);
+    markerSignatures.current.clear();
 
     const viewer = new Viewer({
       container,
@@ -92,6 +189,27 @@ export function PanoramaViewer({
     viewerRef.current = viewer;
     tourRef.current = tour;
     markersRef.current = markers;
+    dragRef.current = new HotspotDragSession({
+      setMousemove: (enabled) => viewer.setOption("mousemove", enabled),
+      capture: (pointerId) => dragElementRef.current?.setPointerCapture(pointerId),
+      releaseCapture: (pointerId) => {
+        const element = dragElementRef.current;
+        if (element?.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+      },
+      viewerPoint: (event) => {
+        const rect = container.getBoundingClientRect();
+        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      },
+      toSpherical: (point) => viewer.dataHelper.viewerCoordsToSphericalCoords(point),
+      updateMarker: (id, yaw, pitch) => {
+        markers.updateMarker({ id: `hotspot:${id}`, position: { yaw, pitch } }, true);
+      },
+      commit: (id, yaw, pitch) => onMoveRef.current?.({ id, yaw, pitch }),
+    });
+    onBindViewRef.current?.(() => {
+      const position = viewer.getPosition();
+      return { yaw: position.yaw, pitch: position.pitch };
+    });
 
     const timer = window.setTimeout(() => {
       loadingRef.current = false;
@@ -122,25 +240,25 @@ export function PanoramaViewer({
     tour.addEventListener("node-changed", (event) => {
       const nodeId = event.node.id;
       onSceneChangeRef.current(nodeId);
-      setInfo(null);
-      window.requestAnimationFrame(() => {
-        const plugin = markersRef.current;
-        const scene = scenesRef.current.find((item) => item.id === nodeId);
-        if (plugin && scene) syncInfoMarkers(plugin, scene);
-      });
+      setInfoId(null);
+      window.requestAnimationFrame(() => syncMarkersRef.current());
+    });
+    viewer.addEventListener("click", (event) => {
+      if (!editModeRef.current || !placingRef.current) return;
+      if (event.data.rightclick || event.data.marker) return;
+      onPlaceRef.current?.({ yaw: event.data.yaw, pitch: event.data.pitch });
     });
     markers.addEventListener("select-marker", (event) => {
-      const data = event.marker.data as { kind?: string } | undefined;
-      if (data?.kind !== "info") return;
-      const hotspot = findInfoHotspot(scenesRef.current, event.marker.id);
-      if (!hotspot) return;
-      setInfo({
-        id: hotspot.id,
-        label: hotspot.label,
-        content: hotspot.content,
-        yaw: hotspot.yaw,
-        pitch: hotspot.pitch,
-      });
+      if (event.rightClick) return;
+      const data = event.marker.data as { kind?: string; hotspotId?: string } | undefined;
+      if (editModeRef.current && data?.hotspotId) {
+        onSelectRef.current?.(data.hotspotId);
+        const hotspot = findHotspot(scenesRef.current, data.hotspotId);
+        setInfoId(hotspot?.type === "info" ? hotspot.id : null);
+        return;
+      }
+      if (data?.kind !== "info" || !data.hotspotId) return;
+      setInfoId(data.hotspotId);
     });
 
     return () => {
@@ -148,6 +266,9 @@ export function PanoramaViewer({
       bootedRef.current = false;
       loadingRef.current = false;
       nodesKeyRef.current = null;
+      dragRef.current?.cancel();
+      dragRef.current = null;
+      onBindViewRef.current?.(() => null);
       viewer.destroy();
       viewerRef.current = null;
       tourRef.current = null;
@@ -158,20 +279,14 @@ export function PanoramaViewer({
   useEffect(() => {
     const tour = tourRef.current;
     if (!tour) return;
-    const nodes = toPluginNodes(
-      buildVirtualTourNodes({
-        slug,
-        scenes: scenesRef.current,
-        maxTextureSize: readMaxTextureSize(),
-      }),
-    );
-    const key = viewerNodesKey(
-      buildVirtualTourNodes({
-        slug,
-        scenes: scenesRef.current,
-        maxTextureSize: readMaxTextureSize(),
-      }),
-    );
+    const built = buildVirtualTourNodes({
+      slug,
+      scenes: scenesRef.current,
+      maxTextureSize: readMaxTextureSize(),
+      includeLinks: !editModeRef.current,
+    });
+    const nodes = toPluginNodes(built);
+    const key = viewerNodesKey(built);
     if (key === nodesKeyRef.current) return;
     const first = nodesKeyRef.current === null;
     nodesKeyRef.current = key;
@@ -195,31 +310,38 @@ export function PanoramaViewer({
   }, [currentSceneId]);
 
   useEffect(() => {
-    if (!info) return;
+    if (!revealed) return;
+    syncMarkersRef.current();
+  }, [sourceKey, currentSceneId, revealed, editMode, selectedHotspotId]);
+
+  useEffect(() => {
+    if (!infoHotspot) return;
     let frame = 0;
     const place = () => {
       frame = 0;
       const viewer = viewerRef.current;
       const container = containerRef.current;
       if (!viewer || !container) return;
-      if (!viewer.dataHelper.isPointVisible({ yaw: info.yaw, pitch: info.pitch })) {
-        setInfoPoint(null);
-        return;
-      }
-      const point = viewer.dataHelper.sphericalCoordsToViewerCoords({
-        yaw: info.yaw,
-        pitch: info.pitch,
+      const visible = viewer.dataHelper.isPointVisible({
+        yaw: infoHotspot.yaw,
+        pitch: infoHotspot.pitch,
       });
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      const boxWidth = 240;
-      const boxHeight = 120;
-      const x = Math.min(Math.max(point.x - boxWidth / 2, 8), Math.max(8, width - boxWidth - 8));
-      const y = Math.min(
-        Math.max(point.y - boxHeight - 12, 8),
-        Math.max(8, height - boxHeight - 8),
+      const raw = visible
+        ? viewer.dataHelper.sphericalCoordsToViewerCoords({
+            yaw: infoHotspot.yaw,
+            pitch: infoHotspot.pitch,
+          })
+        : null;
+      setInfoPoint(
+        placeInfoPopover({
+          visible,
+          point: raw,
+          viewerWidth: container.clientWidth,
+          viewerHeight: container.clientHeight,
+          boxWidth: INFO_BOX_WIDTH,
+          boxHeight: INFO_BOX_HEIGHT,
+        }),
       );
-      setInfoPoint({ x, y });
     };
     const schedule = () => {
       if (frame) return;
@@ -234,11 +356,18 @@ export function PanoramaViewer({
       viewer?.removeEventListener("position-updated", schedule);
       viewer?.removeEventListener("zoom-updated", schedule);
     };
-  }, [info]);
+  }, [infoHotspot]);
 
   return (
-    <div className="relative h-full min-h-[240px] w-full bg-[var(--acton-navy)]">
+    <div
+      className={`relative h-full min-h-[240px] w-full bg-[var(--acton-navy)] ${placing ? "cursor-crosshair" : ""}`}
+    >
       <style>{`.tour-viewer .psv-loader,.tour-viewer .psv-navbar{display:none !important}`}</style>
+      {placing ? (
+        <p className="pointer-events-none absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-md bg-[var(--acton-yellow)] px-3 py-1 text-xs font-semibold text-[var(--acton-navy)]">
+          Click the panorama to place a hotspot. Escape cancels.
+        </p>
+      ) : null}
       {!revealed && !error ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -259,63 +388,66 @@ export function PanoramaViewer({
         ref={containerRef}
         className={`tour-viewer h-full w-full transition-opacity duration-300 ${revealed && !error ? "opacity-100" : "opacity-0"}`}
       />
-      {info && infoPoint ? (
-        <div
-          className="absolute z-20 w-60 rounded-md border border-[var(--acton-border)] bg-white p-3 text-[var(--acton-navy)] shadow-lg"
-          style={{ left: infoPoint.x, top: infoPoint.y }}
-        >
-          {info.label ? <p className="text-sm font-semibold">{info.label}</p> : null}
-          {info.content ? (
-            <p className="mt-1 text-sm text-[var(--acton-muted)]">{info.content}</p>
-          ) : null}
-          <button
-            type="button"
-            className="mt-2 text-xs font-semibold text-[var(--acton-navy)] underline"
-            onClick={() => setInfo(null)}
-          >
-            Close
-          </button>
-        </div>
+      {infoHotspot && infoPoint ? (
+        <InfoPopover
+          label={infoHotspot.label}
+          content={infoHotspot.content}
+          x={infoPoint.x}
+          y={infoPoint.y}
+          onClose={() => setInfoId(null)}
+        />
       ) : null}
     </div>
   );
 }
 
-function findInfoHotspot(scenes: ViewerScene[], markerId: string): ViewerHotspot | null {
-  const id = markerId.replace(/^info:/, "");
+function findHotspot(scenes: ViewerScene[], hotspotId: string): ViewerHotspot | null {
   for (const scene of scenes) {
-    const hotspot = scene.hotspots.find((item) => item.id === id && item.type === "info");
+    const hotspot = scene.hotspots.find((item) => item.id === hotspotId);
     if (hotspot) return hotspot;
   }
   return null;
 }
 
-function syncInfoMarkers(markers: MarkersPlugin, scene: ViewerScene): void {
-  const desired = scene.hotspots.filter((hotspot) => hotspot.type === "info").map(infoMarker);
-  const desiredIds = new Set(desired.map((marker) => marker.id));
-  for (const marker of markers.getMarkers()) {
-    if (marker.id.startsWith("info:") && !desiredIds.has(marker.id)) {
-      markers.removeMarker(marker.id);
-    }
+function applyHotspotMarkers(
+  markers: MarkersPlugin,
+  specs: HotspotMarkerSpec[],
+  signatures: Map<string, string>,
+  managedPrefix: string,
+  bind: (element: HTMLElement, hotspotId: string) => void,
+): void {
+  const existing = markers.getMarkers().map((marker) => ({
+    id: marker.id,
+    signature: signatures.get(marker.id) ?? "",
+  }));
+  const plan = planMarkerSync({ existing, desired: specs, managedPrefix });
+  for (const id of plan.remove) {
+    markers.removeMarker(id);
+    signatures.delete(id);
   }
-  const existing = new Set(markers.getMarkers().map((marker) => marker.id));
-  for (const marker of desired) {
-    if (existing.has(marker.id)) markers.updateMarker(marker);
-    else markers.addMarker(marker);
+  for (const marker of plan.update) {
+    markers.updateMarker(markerConfig(marker), true);
+    signatures.set(marker.id, marker.signature);
+    const element = markers.getMarker(marker.id).domElement;
+    if (element instanceof HTMLElement) bind(element, marker.hotspotId);
+  }
+  for (const marker of plan.add) {
+    markers.addMarker(markerConfig(marker), true);
+    signatures.set(marker.id, marker.signature);
+    const element = markers.getMarker(marker.id).domElement;
+    if (element instanceof HTMLElement) bind(element, marker.hotspotId);
   }
 }
 
-function infoMarker(hotspot: ViewerHotspot): MarkerConfig {
-  const size = hotspot.styleSize;
-  const color = /^#[0-9A-Fa-f]{6}$/.test(hotspot.styleColor) ? hotspot.styleColor : "#FFFFFF";
+function markerConfig(marker: HotspotMarkerSpec): MarkerConfig {
   return {
-    id: `info:${hotspot.id}`,
-    position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
-    html: `<span style="display:grid;place-items:center;width:100%;height:100%;border-radius:999px;background:${color};color:#0b1f3a;font-weight:700;font-size:14px">i</span>`,
-    size: { width: size, height: size },
+    id: marker.id,
+    position: { yaw: marker.yaw, pitch: marker.pitch },
+    html: marker.html,
+    size: { width: marker.width, height: marker.height },
     anchor: "center center",
     hideList: true,
-    data: { kind: "info" },
+    data: { kind: marker.id.startsWith("info:") ? "info" : "hotspot", hotspotId: marker.hotspotId },
   };
 }
 

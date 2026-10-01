@@ -14,6 +14,7 @@ export function TourStage({
   layout = "screen",
   sceneId: controlledSceneId,
   onSceneChange,
+  editing,
 }: {
   tour: ViewerTour;
   chrome: EmbedChrome;
@@ -22,6 +23,14 @@ export function TourStage({
   layout?: "screen" | "frame";
   sceneId?: string;
   onSceneChange?: (sceneId: string) => void;
+  editing?: {
+    placing: boolean;
+    selectedHotspotId: string | null;
+    onPlace: (position: { yaw: number; pitch: number }) => void;
+    onSelectHotspot: (hotspotId: string) => void;
+    onMoveHotspot: (move: { id: string; yaw: number; pitch: number }) => void;
+    onBindView: (read: () => { yaw: number; pitch: number } | null) => void;
+  };
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const activeThumbRef = useRef<HTMLButtonElement>(null);
@@ -102,6 +111,13 @@ export function TourStage({
             scenes={tour.scenes}
             currentSceneId={sceneId}
             onSceneChange={setSceneId}
+            editMode={Boolean(editing)}
+            placing={editing?.placing}
+            selectedHotspotId={editing?.selectedHotspotId}
+            onPlace={editing?.onPlace}
+            onSelectHotspot={editing?.onSelectHotspot}
+            onMoveHotspot={editing?.onMoveHotspot}
+            onBindView={editing?.onBindView}
           />
         )}
 

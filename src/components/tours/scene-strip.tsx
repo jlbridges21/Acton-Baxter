@@ -93,7 +93,7 @@ function SceneThumb({
       <button
         ref={ref}
         type="button"
-        aria-selected={active}
+        aria-current={active ? "true" : undefined}
         aria-label={`${scene.name}. Drag to reorder, or use the arrow keys.`}
         className={`w-full overflow-hidden rounded-md border-2 bg-white text-left ${
           active ? "border-[var(--acton-navy)]" : "border-[var(--acton-border)]"

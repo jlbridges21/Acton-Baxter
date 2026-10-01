@@ -26,9 +26,15 @@ import {
   setScenePositions,
   swapScenePosition,
   tourExists,
+  updateHotspot,
   updateSceneName,
   updateTourTitle,
   updateTourVisibility,
+  clearSceneOpeningView as clearSceneOpeningViewRow,
+  deleteHotspotRow,
+  hotspotBelongsToScene,
+  insertHotspot,
+  setSceneOpeningView as setSceneOpeningViewRow,
 } from "@/lib/tours/store";
 
 const tourIdSchema = z.string().uuid();
@@ -305,6 +311,186 @@ export async function deleteScene(
     return fail(error, "Could not delete the panorama files, so the scene was kept.");
   }
   const result = await deleteSceneRow(tourId, sceneId);
+  if (!result.error) await refreshTour(tourId);
+  return result;
+}
+
+const hotspotIdSchema = z.string().uuid();
+const hotspotShapeSchema = z.enum(["arrow", "circle", "square"]);
+const radiansSchema = z.number().finite();
+
+const hotspotFieldsSchema = z.object({
+  type: z.enum(["link", "info"]),
+  yaw: radiansSchema,
+  pitch: radiansSchema,
+  label: z.string().trim().max(120).nullable(),
+  content: z.string().trim().max(2000).nullable(),
+  targetSceneId: z.string().uuid().nullable(),
+  styleShape: hotspotShapeSchema,
+  styleColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+  styleSize: z.number().int().min(16).max(128),
+});
+
+async function requireScene(tourId: string, sceneId: string): Promise<{ error: string } | null> {
+  const missing = await requireTour(tourId);
+  if (missing) return missing;
+  if (!sceneIdSchema.safeParse(sceneId).success) return { error: "That scene was not found." };
+  try {
+    const scene = await getScenePath(tourId, sceneId);
+    if (!scene) return { error: "That scene was not found." };
+  } catch (error) {
+    return fail(error, "Could not load that scene.");
+  }
+  return null;
+}
+
+async function requireTarget(
+  tourId: string,
+  sceneId: string,
+  targetSceneId: string | null,
+): Promise<{ error: string } | null> {
+  if (!targetSceneId) return null;
+  if (targetSceneId === sceneId) return { error: "A hotspot cannot link to its own scene." };
+  try {
+    const target = await getScenePath(tourId, targetSceneId);
+    if (!target) return { error: "That target scene was not found." };
+  } catch (error) {
+    return fail(error, "Could not load the target scene.");
+  }
+  return null;
+}
+
+export async function createHotspot(input: {
+  tourId: string;
+  sceneId: string;
+  hotspotId: string;
+  type: "link" | "info";
+  yaw: number;
+  pitch: number;
+  label: string | null;
+  content: string | null;
+  targetSceneId: string | null;
+  styleShape: "arrow" | "circle" | "square";
+  styleColor: string;
+  styleSize: number;
+}): Promise<{ error: string | null }> {
+  const missing = await requireScene(input.tourId, input.sceneId);
+  if (missing) return missing;
+  if (!hotspotIdSchema.safeParse(input.hotspotId).success) {
+    return { error: "Could not create the hotspot." };
+  }
+  const fields = hotspotFieldsSchema.safeParse(input);
+  if (!fields.success) return { error: "Could not create the hotspot." };
+  const target = await requireTarget(input.tourId, input.sceneId, fields.data.targetSceneId);
+  if (target) return target;
+  const result = await insertHotspot({
+    id: input.hotspotId,
+    tourId: input.tourId,
+    sceneId: input.sceneId,
+    targetSceneId: fields.data.type === "info" ? null : fields.data.targetSceneId,
+    type: fields.data.type,
+    yaw: fields.data.yaw,
+    pitch: fields.data.pitch,
+    label: fields.data.label,
+    content: fields.data.content,
+    styleShape: fields.data.styleShape,
+    styleColor: fields.data.styleColor,
+    styleSize: fields.data.styleSize,
+  });
+  if (!result.error) await refreshTour(input.tourId);
+  return result;
+}
+
+export async function saveHotspot(input: {
+  tourId: string;
+  sceneId: string;
+  hotspotId: string;
+  type: "link" | "info";
+  yaw: number;
+  pitch: number;
+  label: string | null;
+  content: string | null;
+  targetSceneId: string | null;
+  styleShape: "arrow" | "circle" | "square";
+  styleColor: string;
+  styleSize: number;
+}): Promise<{ error: string | null }> {
+  const missing = await requireScene(input.tourId, input.sceneId);
+  if (missing) return missing;
+  if (!hotspotIdSchema.safeParse(input.hotspotId).success) {
+    return { error: "That hotspot was not found." };
+  }
+  const fields = hotspotFieldsSchema.safeParse(input);
+  if (!fields.success) return { error: "Could not update the hotspot." };
+  const target = await requireTarget(input.tourId, input.sceneId, fields.data.targetSceneId);
+  if (target) return target;
+  try {
+    const owned = await hotspotBelongsToScene(input.sceneId, input.hotspotId);
+    if (!owned) return { error: "That hotspot was not found." };
+  } catch (error) {
+    return fail(error, "Could not load that hotspot.");
+  }
+  const result = await updateHotspot({
+    id: input.hotspotId,
+    sceneId: input.sceneId,
+    targetSceneId: fields.data.type === "info" ? null : fields.data.targetSceneId,
+    type: fields.data.type,
+    yaw: fields.data.yaw,
+    pitch: fields.data.pitch,
+    label: fields.data.label,
+    content: fields.data.content,
+    styleShape: fields.data.styleShape,
+    styleColor: fields.data.styleColor,
+    styleSize: fields.data.styleSize,
+  });
+  if (!result.error) await refreshTour(input.tourId);
+  return result;
+}
+
+export async function deleteHotspot(
+  tourId: string,
+  sceneId: string,
+  hotspotId: string,
+): Promise<{ error: string | null }> {
+  const missing = await requireScene(tourId, sceneId);
+  if (missing) return missing;
+  if (!hotspotIdSchema.safeParse(hotspotId).success) {
+    return { error: "That hotspot was not found." };
+  }
+  try {
+    const owned = await hotspotBelongsToScene(sceneId, hotspotId);
+    if (!owned) return { error: "That hotspot was not found." };
+  } catch (error) {
+    return fail(error, "Could not load that hotspot.");
+  }
+  const result = await deleteHotspotRow(sceneId, hotspotId);
+  if (!result.error) await refreshTour(tourId);
+  return result;
+}
+
+export async function setSceneOpeningView(
+  tourId: string,
+  sceneId: string,
+  yaw: number,
+  pitch: number,
+): Promise<{ error: string | null }> {
+  const missing = await requireScene(tourId, sceneId);
+  if (missing) return missing;
+  if (!radiansSchema.safeParse(yaw).success || !radiansSchema.safeParse(pitch).success) {
+    return { error: "Could not save the opening view." };
+  }
+  const result = await setSceneOpeningViewRow(tourId, sceneId, yaw, pitch);
+  if (!result.error) await refreshTour(tourId);
+  return result;
+}
+
+export async function clearSceneOpeningView(
+  tourId: string,
+  sceneId: string,
+): Promise<{ error: string | null }> {
+  const missing = await requireScene(tourId, sceneId);
+  if (missing) return missing;
+  const result = await clearSceneOpeningViewRow(tourId, sceneId);
   if (!result.error) await refreshTour(tourId);
   return result;
 }
