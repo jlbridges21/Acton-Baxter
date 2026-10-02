@@ -14,9 +14,12 @@ import {
   tourImageDecision,
 } from "@/lib/tours/image-access";
 import {
-  EDITOR_TRANSITION_MS,
-  PUBLISHED_TRANSITION_MS,
+  TRANSITION_SPEED_MS,
   sceneTransitionOptions,
+  tourAutorotate,
+  tourTransitionDirectional,
+  tourTransitionEffect,
+  tourTransitionSpeed,
 } from "@/lib/tours/scene-transition";
 import { securityHeaderRules } from "@/lib/http/security-headers";
 import { mapViewerTour } from "@/lib/tours/map-tour";
@@ -186,40 +189,76 @@ describe("tour viewer nodes", () => {
     expect(source("src/lib/tours/viewer-model.ts")).not.toContain('"edit"');
   });
 
-  it("fades toward a link and keeps an opening view when one is set", () => {
+  it("uses the saved transition and keeps an opening view in every mode", () => {
     const link = sceneTransitionOptions({
       editMode: false,
       fromLink: true,
       zoomLevel: 30,
       openingView: null,
+      effect: "fade",
+      speed: "fast",
+      directional: false,
     });
     expect(link).toMatchObject({
       effect: "fade",
       showLoader: false,
-      rotation: true,
-      speed: PUBLISHED_TRANSITION_MS,
-      zoomTo: 45,
+      rotation: false,
+      speed: TRANSITION_SPEED_MS.fast,
     });
     expect(link.rotateTo).toBeUndefined();
-    const listed = sceneTransitionOptions({
+    expect(link.zoomTo).toBeUndefined();
+    const directed = sceneTransitionOptions({
       editMode: false,
-      fromLink: false,
+      fromLink: true,
       zoomLevel: 30,
       openingView: null,
+      effect: "black",
+      speed: "slow",
+      directional: true,
     });
-    expect(listed.rotation).toBe(false);
-    expect(listed.zoomTo).toBeUndefined();
+    expect(directed).toMatchObject({
+      effect: "black",
+      rotation: true,
+      speed: TRANSITION_SPEED_MS.slow,
+      zoomTo: 45,
+    });
+    const cut = sceneTransitionOptions({
+      editMode: false,
+      fromLink: true,
+      zoomLevel: 30,
+      openingView: null,
+      effect: "none",
+      speed: "normal",
+      directional: false,
+    });
+    expect(cut).toMatchObject({ effect: "none", showLoader: false, rotation: false });
+    expect(cut.zoomTo).toBeUndefined();
     const opening = sceneTransitionOptions({
       editMode: true,
       fromLink: true,
       zoomLevel: 30,
       openingView: { yaw: 0.2, pitch: -0.1 },
+      effect: "none",
+      speed: "slow",
+      directional: true,
     });
-    expect(opening.speed).toBe(EDITOR_TRANSITION_MS);
+    expect(opening.speed).toBe(TRANSITION_SPEED_MS.fast);
+    expect(opening.effect).toBe("none");
     expect(opening.rotation).toBe(false);
     expect(opening.rotateTo).toEqual({ yaw: 0.2, pitch: -0.1 });
     expect(opening.zoomTo).toBeUndefined();
-    expect(PUBLISHED_TRANSITION_MS).toBeGreaterThan(EDITOR_TRANSITION_MS);
+    expect(tourTransitionEffect("spin")).toBe("fade");
+    expect(tourTransitionSpeed(12)).toBe("fast");
+    expect(tourTransitionDirectional("yes")).toBe(false);
+    expect(tourAutorotate(1)).toBe(false);
+    const viewer = source("src/components/tours/panorama-viewer.tsx");
+    expect(viewer).toContain("if (published && playback.autorotate)");
+    expect(viewer).toContain("playbackRef.current");
+    const editor = source("src/components/tours/tour-editor.tsx");
+    expect(editor).toContain("saveTourPlayback");
+    expect(editor).toContain("Move toward the hotspot");
+    expect(editor).not.toContain("router.refresh");
+    expect(TRANSITION_SPEED_MS.fast).toBe(500);
   });
 
   it("does not call setCurrentNode until the first panorama has loaded", () => {
@@ -308,5 +347,11 @@ describe("tour routes", () => {
     });
     expect(tour.scenes[0]?.thumbUrl).toBe("/api/tours/legacy/image/scene?variant=thumb");
     expect(tour.scenes[0]?.hasCompat).toBe(false);
+    expect(tour).toMatchObject({
+      transitionEffect: "fade",
+      transitionSpeed: "fast",
+      transitionDirectional: false,
+      autorotate: false,
+    });
   });
 });

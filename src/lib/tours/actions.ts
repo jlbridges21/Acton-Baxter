@@ -1,5 +1,6 @@
 "use server";
 
+import { TOUR_TRANSITION_EFFECTS, TOUR_TRANSITION_SPEEDS } from "@/lib/tours/scene-transition";
 import { publishedTourPaths } from "@/lib/tours/tour-cache";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -29,6 +30,7 @@ import {
   tourExists,
   updateHotspot,
   updateSceneName,
+  updateTourPlayback,
   updateTourTitle,
   updateTourVisibility,
   clearSceneOpeningView as clearSceneOpeningViewRow,
@@ -102,6 +104,26 @@ export async function setTourPublic(
   const missing = await requireTour(tourId);
   if (missing) return missing;
   const result = await updateTourVisibility(tourId, isPublic);
+  if (!result.error) await revalidateTourSummary(tourId);
+  return result;
+}
+
+const playbackSchema = z.object({
+  transitionEffect: z.enum(TOUR_TRANSITION_EFFECTS),
+  transitionSpeed: z.enum(TOUR_TRANSITION_SPEEDS),
+  transitionDirectional: z.boolean(),
+  autorotate: z.boolean(),
+});
+
+export async function saveTourPlayback(
+  tourId: string,
+  playback: z.infer<typeof playbackSchema>,
+): Promise<{ error: string | null }> {
+  const missing = await requireTour(tourId);
+  if (missing) return missing;
+  const parsed = playbackSchema.safeParse(playback);
+  if (!parsed.success) return { error: "Those tour settings are not valid." };
+  const result = await updateTourPlayback(tourId, parsed.data);
   if (!result.error) await revalidateTourSummary(tourId);
   return result;
 }

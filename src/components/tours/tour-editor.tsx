@@ -20,6 +20,7 @@ import {
   reorderScenes,
   saveHotspot,
   setSceneOpeningView,
+  saveTourPlayback,
   setTourCover,
   setTourPublic,
 } from "@/lib/tours/actions";
@@ -31,6 +32,12 @@ import {
   writeHotspotStyle,
 } from "@/lib/tours/hotspot-style";
 import { tourSaveLabel, tourSaveState } from "@/lib/tours/save-state";
+import {
+  tourTransitionEffect,
+  tourTransitionSpeed,
+  type TourTransitionEffect,
+  type TourTransitionSpeed,
+} from "@/lib/tours/scene-transition";
 import type { ViewerHotspot, ViewerScene, ViewerTour } from "@/lib/tours/viewer-model";
 
 const FRAME_CHROME = {
@@ -55,6 +62,11 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   const [savedTitle, setSavedTitle] = useState(tour.title);
   const [isPublic, setIsPublic] = useState(tour.isPublic);
   const [coverId, setCoverId] = useState(tour.coverSceneId);
+  const [transitionEffect, setTransitionEffect] = useState(tour.transitionEffect);
+  const [transitionSpeed, setTransitionSpeed] = useState(tour.transitionSpeed);
+  const [transitionDirectional, setTransitionDirectional] = useState(tour.transitionDirectional);
+  const [autorotate, setAutorotate] = useState(tour.autorotate);
+  const [savedPlayback, setSavedPlayback] = useState(() => playbackOf(tour));
   const [names, setNames] = useState<Record<string, string>>(() =>
     Object.fromEntries(tour.scenes.map((scene) => [scene.id, scene.name])),
   );
@@ -100,12 +112,29 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   const active = displayScenes.find((scene) => scene.id === activeId) ?? null;
   const selectedHotspot =
     active?.hotspots.find((hotspot) => hotspot.id === selectedHotspotId) ?? null;
-  const viewerTour = useMemo(() => ({ ...tour, scenes: displayScenes }), [tour, displayScenes]);
+  const playback = {
+    transitionEffect,
+    transitionSpeed,
+    transitionDirectional,
+    autorotate,
+  };
+  const viewerTour = useMemo(
+    () => ({
+      ...tour,
+      scenes: displayScenes,
+      transitionEffect,
+      transitionSpeed,
+      transitionDirectional,
+      autorotate,
+    }),
+    [tour, displayScenes, transitionEffect, transitionSpeed, transitionDirectional, autorotate],
+  );
   const saveState = tourSaveState({
     inFlight,
     failed: saveFailed,
     dirty:
       fieldsDirty(tour, savedTitle, savedNames, title, names) ||
+      playbackChanged(playback, savedPlayback) ||
       (hotspotVersion >= 0 && hotspots.isDirty(scenes)),
   });
 
@@ -344,9 +373,22 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     }
   }
 
+  async function savePlayback() {
+    const next = {
+      transitionEffect,
+      transitionSpeed,
+      transitionDirectional,
+      autorotate,
+    };
+    if (!playbackChanged(next, savedPlayback)) return;
+    const result = await runSave(() => saveTourPlayback(tour.id, next));
+    if (!result.error) setSavedPlayback(next);
+  }
+
   async function flushPending() {
     if (saveState === "saving" || saveState === "saved") return;
     await saveTitle();
+    await savePlayback();
     const writes: Promise<void>[] = [];
     for (const scene of scenes) {
       const raw = names[scene.id] ?? scene.name;
@@ -512,6 +554,52 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
             <p className="truncate text-xs text-[var(--acton-muted)]">
               {coverId ? "A cover scene is set." : "No cover scene yet."}
             </p>
+            <label className="block min-w-0 text-xs font-medium text-[var(--acton-navy)]">
+              Transition
+              <select
+                className="mt-1 w-full max-w-full rounded-md border border-[var(--acton-border)] bg-white px-2 py-2 text-sm text-[var(--acton-navy)]"
+                value={transitionEffect}
+                onChange={(event) => setTransitionEffect(tourTransitionEffect(event.target.value))}
+              >
+                <option value="none">None</option>
+                <option value="fade">Fade</option>
+                <option value="black">Black</option>
+                <option value="white">White</option>
+              </select>
+            </label>
+            <label className="block min-w-0 text-xs font-medium text-[var(--acton-navy)]">
+              Speed
+              <select
+                className="mt-1 w-full max-w-full rounded-md border border-[var(--acton-border)] bg-white px-2 py-2 text-sm text-[var(--acton-navy)]"
+                value={transitionSpeed}
+                onChange={(event) => setTransitionSpeed(tourTransitionSpeed(event.target.value))}
+              >
+                <option value="fast">Fast</option>
+                <option value="normal">Normal</option>
+                <option value="slow">Slow</option>
+              </select>
+            </label>
+            <p className="text-xs text-[var(--acton-muted)]">
+              This editor always previews Fast. The published tour uses the speed you save.
+            </p>
+            <label className="flex min-w-0 items-start gap-2 text-sm text-[var(--acton-navy)]">
+              <input
+                type="checkbox"
+                className="mt-0.5 shrink-0"
+                checked={transitionDirectional}
+                onChange={(event) => setTransitionDirectional(event.target.checked)}
+              />
+              <span>Move toward the hotspot</span>
+            </label>
+            <label className="flex min-w-0 items-start gap-2 text-sm text-[var(--acton-navy)]">
+              <input
+                type="checkbox"
+                className="mt-0.5 shrink-0"
+                checked={autorotate}
+                onChange={(event) => setAutorotate(event.target.checked)}
+              />
+              <span>Autorotate on the published tour</span>
+            </label>
           </section>
 
           <section className="space-y-2 border-t border-[var(--acton-border)] pt-4">
@@ -595,6 +683,31 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
         busy={busy}
       />
     </div>
+  );
+}
+
+type Playback = {
+  transitionEffect: TourTransitionEffect;
+  transitionSpeed: TourTransitionSpeed;
+  transitionDirectional: boolean;
+  autorotate: boolean;
+};
+
+function playbackOf(tour: ViewerTour): Playback {
+  return {
+    transitionEffect: tour.transitionEffect,
+    transitionSpeed: tour.transitionSpeed,
+    transitionDirectional: tour.transitionDirectional,
+    autorotate: tour.autorotate,
+  };
+}
+
+function playbackChanged(current: Playback, saved: Playback): boolean {
+  return (
+    current.transitionEffect !== saved.transitionEffect ||
+    current.transitionSpeed !== saved.transitionSpeed ||
+    current.transitionDirectional !== saved.transitionDirectional ||
+    current.autorotate !== saved.autorotate
   );
 }
 

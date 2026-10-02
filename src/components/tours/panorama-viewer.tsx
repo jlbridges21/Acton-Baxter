@@ -21,7 +21,11 @@ import {
 } from "@/lib/tours/hotspot-markers";
 import { FLOOR_MARKER_PITCH, hotspotRollRadians } from "@/lib/tours/hotspot-shapes";
 import { placeInfoPopover } from "@/lib/tours/info-popover";
-import { sceneTransitionOptions } from "@/lib/tours/scene-transition";
+import {
+  sceneTransitionOptions,
+  type TourTransitionEffect,
+  type TourTransitionSpeed,
+} from "@/lib/tours/scene-transition";
 import { readMaxTextureSize } from "@/lib/tours/texture-size";
 import {
   buildVirtualTourNodes,
@@ -57,6 +61,10 @@ export function PanoramaViewer({
   onBindView,
   warmOtherScenes = false,
   pauseWarm = false,
+  transitionEffect = "fade",
+  transitionSpeed = "fast",
+  transitionDirectional = false,
+  autorotate = false,
 }: {
   slug: string;
   scenes: ViewerScene[];
@@ -72,6 +80,10 @@ export function PanoramaViewer({
   /** After the open scene loads, fetch the other scenes one at a time. */
   warmOtherScenes?: boolean;
   pauseWarm?: boolean;
+  transitionEffect?: TourTransitionEffect;
+  transitionSpeed?: TourTransitionSpeed;
+  transitionDirectional?: boolean;
+  autorotate?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -94,6 +106,12 @@ export function PanoramaViewer({
   const dragElementRef = useRef<HTMLElement | null>(null);
   const openHotspotRef = useRef<(hotspotId: string) => void>(() => undefined);
   const autorotateRef = useRef<AutorotatePlugin | null>(null);
+  const playbackRef = useRef({
+    effect: transitionEffect,
+    speed: transitionSpeed,
+    directional: transitionDirectional,
+    autorotate,
+  });
   const gyroscopeRef = useRef<GyroscopePlugin | null>(null);
   const markerSignatures = useRef(
     new Map<string, { signature: string; placement: HotspotMarkerSpec["placement"] }>(),
@@ -129,6 +147,12 @@ export function PanoramaViewer({
     onSelectRef.current = onSelectHotspot;
     onMoveRef.current = onMoveHotspot;
     onBindViewRef.current = onBindView;
+    playbackRef.current = {
+      effect: transitionEffect,
+      speed: transitionSpeed,
+      directional: transitionDirectional,
+      autorotate,
+    };
     openHotspotRef.current = (hotspotId: string) => {
       const hotspot = findHotspot(scenesRef.current, hotspotId);
       if (!hotspot) return;
@@ -229,6 +253,10 @@ export function PanoramaViewer({
     onSelectHotspot,
     onMoveHotspot,
     onBindView,
+    transitionEffect,
+    transitionSpeed,
+    transitionDirectional,
+    autorotate,
   ]);
 
   useEffect(() => {
@@ -249,50 +277,61 @@ export function PanoramaViewer({
     markerSignatures.current.clear();
 
     const published = !editModeRef.current;
+    const playback = playbackRef.current;
+    const plugins = [
+      MarkersPlugin.withConfig({
+        markers: [],
+        defaultHoverScale: { amount: 1.12, duration: 160, easing: "ease-out" },
+      }),
+      VirtualTourPlugin.withConfig({
+        dataMode: "client",
+        positionMode: "manual",
+        renderMode: "3d",
+        transitionOptions: (toNode, _fromNode, fromLink) => {
+          const scene = scenesRef.current.find((item) => item.id === toNode.id);
+          const chosen = playbackRef.current;
+          return sceneTransitionOptions({
+            editMode: editModeRef.current,
+            fromLink: Boolean(fromLink),
+            zoomLevel: viewerRef.current?.getZoomLevel() ?? 50,
+            openingView: scene?.hasInitialView
+              ? { yaw: scene.initialYaw, pitch: scene.initialPitch }
+              : null,
+            effect: chosen.effect,
+            speed: chosen.speed,
+            directional: chosen.directional,
+          });
+        },
+      }),
+    ];
+    if (published && playback.autorotate) {
+      plugins.push(
+        AutorotatePlugin.withConfig({
+          autostartDelay: AUTOROTATE_IDLE_MS,
+          autostartOnIdle: true,
+          autorotateSpeed: "0.8rpm",
+        }),
+      );
+    }
+    if (published) {
+      plugins.push(GyroscopePlugin.withConfig({ moveMode: "smooth" }));
+    }
     const viewer = new Viewer({
       container,
       navbar: false,
       keyboard: "always",
       loadingTxt: "",
-      plugins: [
-        MarkersPlugin.withConfig({
-          markers: [],
-          defaultHoverScale: { amount: 1.12, duration: 160, easing: "ease-out" },
-        }),
-        VirtualTourPlugin.withConfig({
-          dataMode: "client",
-          positionMode: "manual",
-          renderMode: "3d",
-          transitionOptions: (toNode, _fromNode, fromLink) => {
-            const scene = scenesRef.current.find((item) => item.id === toNode.id);
-            return sceneTransitionOptions({
-              editMode: editModeRef.current,
-              fromLink: Boolean(fromLink),
-              zoomLevel: viewerRef.current?.getZoomLevel() ?? 50,
-              openingView: scene?.hasInitialView
-                ? { yaw: scene.initialYaw, pitch: scene.initialPitch }
-                : null,
-            });
-          },
-        }),
-        ...(published
-          ? [
-              AutorotatePlugin.withConfig({
-                autostartDelay: AUTOROTATE_IDLE_MS,
-                autostartOnIdle: true,
-                autorotateSpeed: "0.8rpm",
-              }),
-              GyroscopePlugin.withConfig({ moveMode: "smooth" }),
-            ]
-          : []),
-      ],
+      plugins,
     });
     const tour = viewer.getPlugin<VirtualTourPlugin>(VirtualTourPlugin);
     const markers = viewer.getPlugin<MarkersPlugin>(MarkersPlugin);
     viewerRef.current = viewer;
     tourRef.current = tour;
     markersRef.current = markers;
-    const autorotate = published ? viewer.getPlugin<AutorotatePlugin>(AutorotatePlugin) : null;
+    const autorotate =
+      published && playback.autorotate
+        ? viewer.getPlugin<AutorotatePlugin>(AutorotatePlugin)
+        : null;
     const gyroscope = published ? viewer.getPlugin<GyroscopePlugin>(GyroscopePlugin) : null;
     autorotateRef.current = autorotate;
     gyroscopeRef.current = gyroscope;

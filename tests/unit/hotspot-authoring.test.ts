@@ -8,6 +8,7 @@ import { editorTourPaths, publishedTourPaths } from "@/lib/tours/tour-cache";
 import {
   readViewerTour,
   VIEWER_TOUR_SELECT,
+  VIEWER_TOUR_SELECT_BEFORE_PLAYBACK,
   VIEWER_TOUR_SELECT_LEGACY,
 } from "@/lib/tours/map-tour";
 import type { ViewerHotspot } from "@/lib/tours/viewer-model";
@@ -307,6 +308,36 @@ describe("hotspot persistence", () => {
       styleRotation: 0,
       stylePlacement: "billboard",
       yaw: 0.2,
+    });
+  });
+
+  it("defaults playback when those columns are not in the database yet", async () => {
+    expect(VIEWER_TOUR_SELECT).toContain("transition_effect");
+    expect(VIEWER_TOUR_SELECT_BEFORE_PLAYBACK).not.toContain("transition_effect");
+    expect(VIEWER_TOUR_SELECT_BEFORE_PLAYBACK).toContain("style_rotation");
+    expect(VIEWER_TOUR_SELECT_LEGACY).not.toContain("autorotate");
+    const tour = await readViewerTour(async (select) => {
+      if (select.includes("transition_effect")) {
+        return { data: null, error: { message: "column tours.transition_effect does not exist" } };
+      }
+      return {
+        data: {
+          id: "tour",
+          title: "Tour",
+          description: null,
+          slug: "demo",
+          is_public: true,
+          cover_scene_id: null,
+          scenes: [],
+        },
+        error: null,
+      };
+    });
+    expect(tour).toMatchObject({
+      transitionEffect: "fade",
+      transitionSpeed: "fast",
+      transitionDirectional: false,
+      autorotate: false,
     });
   });
 });

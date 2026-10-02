@@ -1,5 +1,6 @@
 import { tourImageUrl } from "@/lib/tours/image-url";
 import type { HotspotPlacement, HotspotShape } from "@/lib/tours/hotspot-shapes";
+import type { TourTransitionEffect, TourTransitionSpeed } from "@/lib/tours/scene-transition";
 
 export type ViewerHotspot = {
   id: string;
@@ -38,6 +39,10 @@ export type ViewerTour = {
   slug: string;
   isPublic: boolean;
   coverSceneId: string | null;
+  transitionEffect: TourTransitionEffect;
+  transitionSpeed: TourTransitionSpeed;
+  transitionDirectional: boolean;
+  autorotate: boolean;
   scenes: ViewerScene[];
 };
 

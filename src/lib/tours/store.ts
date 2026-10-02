@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { tourImageUrl } from "@/lib/tours/image-url";
 import { readViewerTour } from "@/lib/tours/map-tour";
+import type { TourTransitionEffect, TourTransitionSpeed } from "@/lib/tours/scene-transition";
 import { insertWithUniqueSlug } from "@/lib/tours/slug";
 import type { TourDetail, TourScene, TourSummary } from "@/lib/tours/types";
 import type { ViewerTour } from "@/lib/tours/viewer-model";
@@ -187,6 +188,28 @@ export async function updateTourVisibility(
   const supabase = await db();
   const { error } = await supabase.from("tours").update({ is_public: isPublic }).eq("id", tourId);
   return { error: error ? message(error, "Could not update visibility.") : null };
+}
+
+export async function updateTourPlayback(
+  tourId: string,
+  playback: {
+    transitionEffect: TourTransitionEffect;
+    transitionSpeed: TourTransitionSpeed;
+    transitionDirectional: boolean;
+    autorotate: boolean;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = await db();
+  const { error } = await supabase
+    .from("tours")
+    .update({
+      transition_effect: playback.transitionEffect,
+      transition_speed: playback.transitionSpeed,
+      transition_directional: playback.transitionDirectional,
+      autorotate: playback.autorotate,
+    })
+    .eq("id", tourId);
+  return { error: error ? message(error, "Could not save tour settings.") : null };
 }
 
 type ScenePathRow = {

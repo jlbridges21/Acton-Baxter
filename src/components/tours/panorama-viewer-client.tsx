@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { TourTransitionEffect, TourTransitionSpeed } from "@/lib/tours/scene-transition";
 import type { ViewerScene } from "@/lib/tours/viewer-model";
 
 const PanoramaViewer = dynamic(
@@ -25,6 +26,10 @@ export function PanoramaViewerClient(props: {
   onBindView?: (read: () => { yaw: number; pitch: number } | null) => void;
   warmOtherScenes?: boolean;
   pauseWarm?: boolean;
+  transitionEffect?: TourTransitionEffect;
+  transitionSpeed?: TourTransitionSpeed;
+  transitionDirectional?: boolean;
+  autorotate?: boolean;
 }) {
   return <PanoramaViewer {...props} />;
 }

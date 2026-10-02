@@ -124,6 +124,10 @@ export function TourStage({
             onBindView={editing?.onBindView}
             warmOtherScenes={warmOtherScenes}
             pauseWarm={pauseWarm}
+            transitionEffect={tour.transitionEffect}
+            transitionSpeed={tour.transitionSpeed}
+            transitionDirectional={tour.transitionDirectional}
+            autorotate={tour.autorotate}
           />
         )}
 

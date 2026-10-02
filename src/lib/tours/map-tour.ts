@@ -1,5 +1,11 @@
 import { tourImageUrl } from "@/lib/tours/image-url";
 import { hotspotPlacement, hotspotShape } from "@/lib/tours/hotspot-shapes";
+import {
+  tourAutorotate,
+  tourTransitionDirectional,
+  tourTransitionEffect,
+  tourTransitionSpeed,
+} from "@/lib/tours/scene-transition";
 import type { ViewerHotspot, ViewerScene, ViewerTour } from "@/lib/tours/viewer-model";
 
 export type HotspotRow = {
@@ -38,11 +44,16 @@ export type TourRow = {
   slug: string;
   is_public: boolean;
   cover_scene_id: string | null;
+  transition_effect?: string | null;
+  transition_speed?: string | null;
+  transition_directional?: boolean | null;
+  autorotate?: boolean | null;
   scenes: SceneRow[] | null;
 };
 
 export const VIEWER_TOUR_SELECT = `
   id, title, description, slug, is_public, cover_scene_id,
+  transition_effect, transition_speed, transition_directional, autorotate,
   scenes!scenes_tour_id_fkey (
     id, name, position, width, height, compat_path, thumbnail_path,
     initial_yaw, initial_pitch, has_initial_view,
@@ -53,17 +64,30 @@ export const VIEWER_TOUR_SELECT = `
   )
 `;
 
+/** Before migration 063. Style columns stay so a missing playback column does not drop them. */
+export const VIEWER_TOUR_SELECT_BEFORE_PLAYBACK = VIEWER_TOUR_SELECT.replace(
+  "\n  transition_effect, transition_speed, transition_directional, autorotate,",
+  "",
+);
+
 /** Used only when 062 has not been applied yet. Rotation stays 0 and placement stays billboard. */
-export const VIEWER_TOUR_SELECT_LEGACY = VIEWER_TOUR_SELECT.replace(
+export const VIEWER_TOUR_SELECT_LEGACY = VIEWER_TOUR_SELECT_BEFORE_PLAYBACK.replace(
   ",\n      style_rotation, style_placement",
   "",
 );
+
+const MISSING_PLAYBACK_COLUMN =
+  /transition_effect|transition_speed|transition_directional|autorotate/;
 
 export async function readViewerTour(
   load: (select: string) => Promise<{ data: unknown; error: { message?: string } | null }>,
 ): Promise<ViewerTour | null> {
   let result = await load(VIEWER_TOUR_SELECT);
-  const message = result.error?.message ?? "";
+  let message = result.error?.message ?? "";
+  if (result.error && MISSING_PLAYBACK_COLUMN.test(message)) {
+    result = await load(VIEWER_TOUR_SELECT_BEFORE_PLAYBACK);
+    message = result.error?.message ?? "";
+  }
   if (result.error && /style_rotation|style_placement/.test(message)) {
     result = await load(VIEWER_TOUR_SELECT_LEGACY);
   }
@@ -80,6 +104,10 @@ export function mapViewerTour(row: TourRow): ViewerTour {
     slug: row.slug,
     isPublic: row.is_public,
     coverSceneId: row.cover_scene_id,
+    transitionEffect: tourTransitionEffect(row.transition_effect),
+    transitionSpeed: tourTransitionSpeed(row.transition_speed),
+    transitionDirectional: tourTransitionDirectional(row.transition_directional),
+    autorotate: tourAutorotate(row.autorotate),
     scenes: scenes.map((scene) => mapScene(row.slug, scene)),
   };
 }
