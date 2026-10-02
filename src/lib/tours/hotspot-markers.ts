@@ -37,6 +37,45 @@ export function isBrokenLink(hotspot: ViewerHotspot, sceneIds: ReadonlySet<strin
   );
 }
 
+export type HotspotListRow = {
+  /** What the hotspot points at. The full string, even when the row truncates it. */
+  primary: string;
+  muted: boolean;
+  /** Same condition as the dashed red marker: no target, or a target that is gone. */
+  broken: boolean;
+  kind: "Link" | "Info";
+};
+
+/**
+ * Left side of an editor hotspot row. A null target covers both "not chosen yet"
+ * and a scene deleted after migration 061 (ON DELETE SET NULL). A target id that
+ * is no longer in the tour uses the broken-link wording.
+ */
+export function hotspotListRow(
+  hotspot: ViewerHotspot,
+  scenes: ReadonlyArray<{ id: string; name: string }>,
+): HotspotListRow {
+  if (hotspot.type === "info") {
+    const label = hotspot.label?.trim() ?? "";
+    return {
+      primary: label || "Untitled",
+      muted: !label,
+      broken: false,
+      kind: "Info",
+    };
+  }
+  const target = hotspot.targetSceneId
+    ? scenes.find((scene) => scene.id === hotspot.targetSceneId)
+    : undefined;
+  if (target) {
+    return { primary: target.name, muted: false, broken: false, kind: "Link" };
+  }
+  if (hotspot.targetSceneId) {
+    return { primary: "Broken link", muted: false, broken: true, kind: "Link" };
+  }
+  return { primary: "No target scene", muted: true, broken: true, kind: "Link" };
+}
+
 export function hotspotMarkerSpecs(input: {
   hotspots: ViewerHotspot[];
   sceneIds: ReadonlySet<string>;

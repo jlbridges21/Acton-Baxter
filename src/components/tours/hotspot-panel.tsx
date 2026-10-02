@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { isBrokenLink } from "@/lib/tours/hotspot-markers";
+import { hotspotListRow, isBrokenLink } from "@/lib/tours/hotspot-markers";
 import {
   HOTSPOT_SHAPES,
   hotspotPlacement,
@@ -70,26 +70,41 @@ export function HotspotPanel({
       {hotspots.length ? (
         <ul className="space-y-1">
           {hotspots.map((hotspot) => {
-            const broken = isBrokenLink(hotspot, sceneIds);
+            const row = hotspotListRow(hotspot, scenes);
             const active = hotspot.id === selected?.id;
+            const typeLabel = row.broken ? "Broken link" : row.kind;
             return (
-              <li key={hotspot.id}>
+              <li key={hotspot.id} className="min-w-0">
                 <button
                   type="button"
-                  className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-sm ${
+                  title={row.primary}
+                  aria-label={
+                    row.primary === typeLabel ? row.primary : `${row.primary}, ${typeLabel}`
+                  }
+                  className={`flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border px-2 py-1.5 text-left text-sm ${
                     active
                       ? "border-[var(--acton-navy)] bg-[var(--acton-gray-50)]"
                       : "border-[var(--acton-border)] bg-white"
                   }`}
                   onClick={() => onSelect(hotspot.id)}
                 >
-                  <span className="truncate font-medium text-[var(--acton-navy)]">
-                    {hotspot.label?.trim() || (hotspot.type === "info" ? "Info" : "Link")}
+                  <span
+                    className={`min-w-0 flex-1 truncate font-medium ${
+                      row.broken && !row.muted
+                        ? "text-red-700"
+                        : row.muted
+                          ? "text-[var(--acton-muted)]"
+                          : "text-[var(--acton-navy)]"
+                    }`}
+                  >
+                    {row.primary}
                   </span>
                   <span
-                    className={`text-xs ${broken ? "font-semibold text-red-700" : "text-[var(--acton-muted)]"}`}
+                    className={`shrink-0 text-xs whitespace-nowrap ${
+                      row.broken ? "font-semibold text-red-700" : "text-[var(--acton-muted)]"
+                    }`}
                   >
-                    {broken ? "Broken link" : hotspot.type === "info" ? "Info" : "Link"}
+                    {typeLabel}
                   </span>
                 </button>
               </li>
