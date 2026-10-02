@@ -5,7 +5,7 @@ import {
 import type { TourImageVariant } from "@/lib/tours/image-url";
 
 export function parseTourImageVariant(value: string | null): TourImageVariant | null {
-  if (value === "full" || value === "compat" || value === "thumb" || value === "edit") return value;
+  if (value === "full" || value === "compat" || value === "thumb") return value;
   return null;
 }
 
@@ -39,6 +39,5 @@ export function sceneFileForVariant(
 ): string | null {
   if (variant === "full") return scene.storagePath || null;
   if (variant === "thumb") return scene.thumbnailPath;
-  if (variant === "edit") return scene.compatPath || scene.storagePath || null;
   return scene.compatPath;
 }

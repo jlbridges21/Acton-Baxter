@@ -88,19 +88,11 @@ export function buildVirtualTourNodes(input: {
   maxTextureSize: number;
   /** Edit mode passes false so a click selects a hotspot instead of changing scenes. */
   includeLinks?: boolean;
-  /**
-   * `edit` always requests the reduced editor image. Published and preview
-   * pages omit this and keep the adaptive full-vs-compat choice.
-   */
-  resolution?: "adaptive" | "edit";
 }): TourNodeSpec[] {
   const ids = new Set(input.scenes.map((scene) => scene.id));
   const includeLinks = input.includeLinks !== false;
   return input.scenes.map((scene) => {
-    const variant =
-      input.resolution === "edit"
-        ? "edit"
-        : resolvePanoramaVariant(scene.width, scene.hasCompat, input.maxTextureSize);
+    const variant = resolvePanoramaVariant(scene.width, scene.hasCompat, input.maxTextureSize);
     return {
       id: scene.id,
       name: scene.name,

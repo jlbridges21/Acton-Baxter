@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Viewer } from "@photo-sphere-viewer/core";
+import { AutorotatePlugin } from "@photo-sphere-viewer/autorotate-plugin";
+import { GyroscopePlugin } from "@photo-sphere-viewer/gyroscope-plugin";
 import { MarkersPlugin, type MarkerConfig } from "@photo-sphere-viewer/markers-plugin";
-import { VirtualTourPlugin, type VirtualTourNode } from "@photo-sphere-viewer/virtual-tour-plugin";
+import {
+  VirtualTourPlugin,
+  type VirtualTourLink,
+  type VirtualTourNode,
+} from "@photo-sphere-viewer/virtual-tour-plugin";
 import "@photo-sphere-viewer/core/index.css";
 import "@photo-sphere-viewer/markers-plugin/index.css";
 import "@photo-sphere-viewer/virtual-tour-plugin/index.css";
@@ -15,6 +21,7 @@ import {
 } from "@/lib/tours/hotspot-markers";
 import { FLOOR_MARKER_PITCH, hotspotRollRadians } from "@/lib/tours/hotspot-shapes";
 import { placeInfoPopover } from "@/lib/tours/info-popover";
+import { sceneTransitionOptions } from "@/lib/tours/scene-transition";
 import { readMaxTextureSize } from "@/lib/tours/texture-size";
 import {
   buildVirtualTourNodes,
@@ -27,6 +34,8 @@ import {
 const LOAD_TIMEOUT_MS = 60_000;
 const INFO_BOX_WIDTH = 240;
 const INFO_BOX_HEIGHT = 120;
+const DRAG_HINT_KEY = "baxter.tours.drag-hint";
+const AUTOROTATE_IDLE_MS = 4000;
 
 type ViewReader = () => { yaw: number; pitch: number } | null;
 
@@ -46,7 +55,6 @@ export function PanoramaViewer({
   onSelectHotspot,
   onMoveHotspot,
   onBindView,
-  resolution = "adaptive",
   warmOtherScenes = false,
   pauseWarm = false,
 }: {
@@ -61,9 +69,7 @@ export function PanoramaViewer({
   onSelectHotspot?: (hotspotId: string) => void;
   onMoveHotspot?: (move: { id: string; yaw: number; pitch: number }) => void;
   onBindView?: (read: ViewReader) => void;
-  /** Editor requests the reduced image. Published and preview stay adaptive. */
-  resolution?: "adaptive" | "edit";
-  /** After the open scene loads, fetch the other editor scenes one at a time. */
+  /** After the open scene loads, fetch the other scenes one at a time. */
   warmOtherScenes?: boolean;
   pauseWarm?: boolean;
 }) {
@@ -86,6 +92,9 @@ export function PanoramaViewer({
   const onBindViewRef = useRef(onBindView);
   const dragRef = useRef<HotspotDragSession | null>(null);
   const dragElementRef = useRef<HTMLElement | null>(null);
+  const openHotspotRef = useRef<(hotspotId: string) => void>(() => undefined);
+  const autorotateRef = useRef<AutorotatePlugin | null>(null);
+  const gyroscopeRef = useRef<GyroscopePlugin | null>(null);
   const markerSignatures = useRef(
     new Map<string, { signature: string; placement: HotspotMarkerSpec["placement"] }>(),
   );
@@ -96,7 +105,10 @@ export function PanoramaViewer({
   const [error, setError] = useState<string | null>(null);
   const [infoId, setInfoId] = useState<string | null>(null);
   const [infoPoint, setInfoPoint] = useState<{ x: number; y: number } | null>(null);
-  const [loadProgress, setLoadProgress] = useState<number | null>(null);
+  const [cover, setCover] = useState<{ thumbUrl: string | null; fading: boolean } | null>(null);
+  const [arrival, setArrival] = useState<{ name: string; token: number } | null>(null);
+  const [showHint, setShowHint] = useState(false);
+  const [gyroReady, setGyroReady] = useState(false);
   const [panoramaBusy, setPanoramaBusy] = useState(false);
   const [settledSceneId, setSettledSceneId] = useState<string | null>(null);
   const sourceKey = JSON.stringify(scenes);
@@ -117,6 +129,31 @@ export function PanoramaViewer({
     onSelectRef.current = onSelectHotspot;
     onMoveRef.current = onMoveHotspot;
     onBindViewRef.current = onBindView;
+    openHotspotRef.current = (hotspotId: string) => {
+      const hotspot = findHotspot(scenesRef.current, hotspotId);
+      if (!hotspot) return;
+      if (editModeRef.current) {
+        onSelectRef.current?.(hotspotId);
+        setInfoId(hotspot.type === "info" ? hotspot.id : null);
+        return;
+      }
+      if (hotspot.type === "info") {
+        setInfoId(hotspot.id);
+        return;
+      }
+      if (hotspot.type !== "link" || !hotspot.targetSceneId) return;
+      const tour = tourRef.current;
+      if (!tour || loadingRef.current) return;
+      loadingRef.current = true;
+      void tour
+        .setCurrentNode(hotspot.targetSceneId, undefined, {
+          nodeId: hotspot.targetSceneId,
+          position: { yaw: hotspot.yaw, pitch: hotspot.pitch },
+        })
+        .finally(() => {
+          loadingRef.current = false;
+        });
+    };
     syncMarkersRef.current = () => {
       const markers = markersRef.current;
       if (!markers || dragRef.current?.isDragging) return;
@@ -125,6 +162,7 @@ export function PanoramaViewer({
       const specs = hotspotMarkerSpecs({
         hotspots: scene.hotspots,
         sceneIds: new Set(scenesRef.current.map((item) => item.id)),
+        sceneNames: new Map(scenesRef.current.map((item) => [item.id, item.name])),
         editMode: editModeRef.current,
         selectedId: selectedIdRef.current,
       });
@@ -134,6 +172,24 @@ export function PanoramaViewer({
         markerSignatures.current,
         editModeRef.current ? "hotspot:" : "info:",
         (element, hotspotId) => {
+          if (element.dataset.keyBound !== "1") {
+            element.dataset.keyBound = "1";
+            element.tabIndex = 0;
+            if (!element.getAttribute("role")) element.setAttribute("role", "button");
+            element.addEventListener("keydown", (event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              event.stopPropagation();
+              openHotspotRef.current(hotspotId);
+            });
+          }
+          const hotspot = findHotspot(scenesRef.current, hotspotId);
+          const targetName =
+            hotspot?.type === "link" && hotspot.targetSceneId
+              ? scenesRef.current.find((item) => item.id === hotspot.targetSceneId)?.name
+              : null;
+          if (targetName) element.setAttribute("aria-label", targetName);
+          else element.removeAttribute("aria-label");
           if (!editModeRef.current || element.dataset.dragBound === "1") return;
           element.dataset.dragBound = "1";
           element.addEventListener("pointerdown", (event) => {
@@ -184,22 +240,51 @@ export function PanoramaViewer({
     setRevealed(false);
     setError(null);
     setInfoId(null);
-    setLoadProgress(null);
+    setCover(null);
+    setArrival(null);
+    setShowHint(false);
+    setGyroReady(false);
     setPanoramaBusy(false);
     setSettledSceneId(null);
     markerSignatures.current.clear();
 
+    const published = !editModeRef.current;
     const viewer = new Viewer({
       container,
       navbar: false,
+      keyboard: "always",
       loadingTxt: "",
       plugins: [
-        MarkersPlugin.withConfig({ markers: [] }),
+        MarkersPlugin.withConfig({
+          markers: [],
+          defaultHoverScale: { amount: 1.12, duration: 160, easing: "ease-out" },
+        }),
         VirtualTourPlugin.withConfig({
           dataMode: "client",
           positionMode: "manual",
           renderMode: "3d",
+          transitionOptions: (toNode, _fromNode, fromLink) => {
+            const scene = scenesRef.current.find((item) => item.id === toNode.id);
+            return sceneTransitionOptions({
+              editMode: editModeRef.current,
+              fromLink: Boolean(fromLink),
+              zoomLevel: viewerRef.current?.getZoomLevel() ?? 50,
+              openingView: scene?.hasInitialView
+                ? { yaw: scene.initialYaw, pitch: scene.initialPitch }
+                : null,
+            });
+          },
         }),
+        ...(published
+          ? [
+              AutorotatePlugin.withConfig({
+                autostartDelay: AUTOROTATE_IDLE_MS,
+                autostartOnIdle: true,
+                autorotateSpeed: "0.8rpm",
+              }),
+              GyroscopePlugin.withConfig({ moveMode: "smooth" }),
+            ]
+          : []),
       ],
     });
     const tour = viewer.getPlugin<VirtualTourPlugin>(VirtualTourPlugin);
@@ -207,6 +292,10 @@ export function PanoramaViewer({
     viewerRef.current = viewer;
     tourRef.current = tour;
     markersRef.current = markers;
+    const autorotate = published ? viewer.getPlugin<AutorotatePlugin>(AutorotatePlugin) : null;
+    const gyroscope = published ? viewer.getPlugin<GyroscopePlugin>(GyroscopePlugin) : null;
+    autorotateRef.current = autorotate;
+    gyroscopeRef.current = gyroscope;
     dragRef.current = new HotspotDragSession({
       setMousemove: (enabled) => viewer.setOption("mousemove", enabled),
       capture: (pointerId) => dragElementRef.current?.setPointerCapture(pointerId),
@@ -229,9 +318,15 @@ export function PanoramaViewer({
       return { yaw: position.yaw, pitch: position.pitch };
     });
 
+    let captionTimer = 0;
+    let hintTimer = 0;
+    let coverTimer = 0;
+    let coverToken = 0;
+    let alive = true;
+
     const timer = window.setTimeout(() => {
       loadingRef.current = false;
-      setLoadProgress(null);
+      setCover(null);
       setPanoramaBusy(false);
       setRevealed(false);
       setError("This panorama took too long to load.");
@@ -240,32 +335,43 @@ export function PanoramaViewer({
     const reveal = () => {
       const sceneId = tour.getCurrentNode()?.id;
       const scene = scenesRef.current.find((item) => item.id === sceneId);
-      if (scene?.hasInitialView) {
+      const firstReveal = !bootedRef.current;
+      if (firstReveal && scene?.hasInitialView) {
         viewer.rotate({ yaw: scene.initialYaw, pitch: scene.initialPitch });
       }
       loadingRef.current = false;
       bootedRef.current = true;
       window.clearTimeout(timer);
       setError(null);
-      setLoadProgress(null);
       setPanoramaBusy(false);
       setSettledSceneId(tour.getCurrentNode()?.id ?? null);
       setRevealed(true);
+      const token = ++coverToken;
+      setCover((current) => (current ? { ...current, fading: true } : null));
+      window.clearTimeout(coverTimer);
+      coverTimer = window.setTimeout(() => {
+        if (token === coverToken) setCover(null);
+      }, 700);
+      if (firstReveal && !editModeRef.current && !dragHintSeen()) {
+        markDragHintSeen();
+        setShowHint(true);
+        hintTimer = window.setTimeout(() => setShowHint(false), 3200);
+      }
     };
 
-    viewer.addEventListener("panorama-load", () => {
+    viewer.addEventListener("panorama-load", (event) => {
+      const scene = sceneForPanorama(scenesRef.current, event.panorama);
+      coverToken += 1;
+      window.clearTimeout(coverTimer);
+      setCover({ thumbUrl: scene?.thumbUrl ?? null, fading: false });
       setPanoramaBusy(true);
       setSettledSceneId(null);
-      setLoadProgress(0);
-    });
-    viewer.addEventListener("load-progress", (event) => {
-      setLoadProgress(event.progress);
     });
     viewer.addEventListener("panorama-loaded", reveal);
     viewer.addEventListener("panorama-error", () => {
       window.clearTimeout(timer);
       loadingRef.current = false;
-      setLoadProgress(null);
+      setCover(null);
       setPanoramaBusy(false);
       setRevealed(false);
       setError("This panorama could not be loaded.");
@@ -274,13 +380,41 @@ export function PanoramaViewer({
       const nodeId = event.node.id;
       onSceneChangeRef.current(nodeId);
       setInfoId(null);
+      if (!editModeRef.current && event.node.name) {
+        setArrival({ name: event.node.name, token: Date.now() });
+        window.clearTimeout(captionTimer);
+        captionTimer = window.setTimeout(() => setArrival(null), 2400);
+      }
       window.requestAnimationFrame(() => syncMarkersRef.current());
     });
+    const pauseDrift = () => {
+      autorotate?.stop();
+      markViewerActive(viewer);
+    };
     viewer.addEventListener("click", (event) => {
+      pauseDrift();
       if (!editModeRef.current || !placingRef.current) return;
       if (event.data.rightclick || event.data.marker) return;
       onPlaceRef.current?.({ yaw: event.data.yaw, pitch: event.data.pitch });
     });
+    viewer.addEventListener("zoom-updated", pauseDrift);
+    viewer.addEventListener("key-press", (event) => {
+      const active = document.activeElement;
+      if (tourKeysShouldYield(active, container)) event.preventDefault();
+    });
+    container.addEventListener("pointerdown", pauseDrift);
+    container.addEventListener("wheel", pauseDrift, { passive: true });
+    const onEnterLink = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || editModeRef.current) return;
+      const link = linkFromArrow(event.target);
+      if (!link || loadingRef.current) return;
+      event.preventDefault();
+      loadingRef.current = true;
+      void tour.setCurrentNode(link.nodeId, undefined, link).finally(() => {
+        loadingRef.current = false;
+      });
+    };
+    container.addEventListener("keydown", onEnterLink);
     markers.addEventListener("select-marker", (event) => {
       if (event.rightClick) return;
       const data = event.marker.data as
@@ -295,16 +429,39 @@ export function PanoramaViewer({
         setInfoId(data.hotspotId);
         return;
       }
-      if (data?.kind === "link" && data.targetSceneId) onSceneChangeRef.current(data.targetSceneId);
+      if (data?.kind === "link" && data.hotspotId) openHotspotRef.current(data.hotspotId);
     });
+    gyroscope?.addEventListener("gyroscope-updated", (event) => {
+      if (!autorotate) return;
+      if (event.gyroscopeEnabled) {
+        autorotate.stop();
+        autorotate.setOption("autostartOnIdle", false);
+        return;
+      }
+      autorotate.setOption("autostartOnIdle", true);
+    });
+    if (gyroscope) {
+      void gyroscope.isSupported().then((supported) => {
+        if (alive && supported) setGyroReady(true);
+      });
+    }
 
     return () => {
+      alive = false;
       window.clearTimeout(timer);
+      window.clearTimeout(captionTimer);
+      window.clearTimeout(hintTimer);
+      window.clearTimeout(coverTimer);
+      container.removeEventListener("pointerdown", pauseDrift);
+      container.removeEventListener("wheel", pauseDrift);
+      container.removeEventListener("keydown", onEnterLink);
       bootedRef.current = false;
       loadingRef.current = false;
       nodesKeyRef.current = null;
       dragRef.current?.cancel();
       dragRef.current = null;
+      autorotateRef.current = null;
+      gyroscopeRef.current = null;
       onBindViewRef.current?.(() => null);
       viewer.destroy();
       viewerRef.current = null;
@@ -321,7 +478,6 @@ export function PanoramaViewer({
       scenes: scenesRef.current,
       maxTextureSize: readMaxTextureSize(),
       includeLinks: !editModeRef.current,
-      resolution,
     });
     const nodes = toPluginNodes(built);
     const key = viewerNodesKey(built);
@@ -334,7 +490,7 @@ export function PanoramaViewer({
     if (!startId) return;
     loadingRef.current = true;
     tour.setNodes(nodes, first ? startId : (tour.getCurrentNode()?.id ?? startId));
-  }, [sourceKey, slug, retry, resolution]);
+  }, [sourceKey, slug, retry]);
 
   useEffect(() => {
     if (!warmOtherScenes || pauseWarm || !revealed || panoramaBusy) return;
@@ -347,7 +503,6 @@ export function PanoramaViewer({
       scenes: scenesRef.current,
       maxTextureSize: readMaxTextureSize(),
       includeLinks: false,
-      resolution: "edit",
     })
       .filter((node) => node.id !== currentSceneId)
       .map((node) => node.panorama);
@@ -442,21 +597,51 @@ export function PanoramaViewer({
     <div
       className={`relative h-full min-h-[240px] w-full bg-[var(--acton-navy)] ${placing ? "cursor-crosshair" : ""}`}
     >
-      <style>{`.tour-viewer .psv-loader,.tour-viewer .psv-navbar{display:none !important}.tour-hotspot-pulse{transform-origin:50% 50%;animation:tour-hotspot-pulse 1.4s ease-out infinite}@keyframes tour-hotspot-pulse{0%{transform:scale(.7);opacity:.65}100%{transform:scale(1.7);opacity:0}}`}</style>
+      <style>{VIEWER_STYLE}</style>
       {placing ? (
         <p className="pointer-events-none absolute top-3 left-1/2 z-20 -translate-x-1/2 rounded-md bg-[var(--acton-yellow)] px-3 py-1 text-xs font-semibold text-[var(--acton-navy)]">
           Click the panorama to place a hotspot. Escape cancels.
         </p>
       ) : null}
-      {(loadProgress !== null || (!revealed && !error)) && !error ? (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <div className="rounded-md bg-black/45 px-4 py-3 text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            <p className="mt-2 text-xs font-semibold text-white">
-              {loadProgress === null ? "Loading panorama" : `Loading panorama ${loadProgress}%`}
-            </p>
-          </div>
-        </div>
+      {arrival && !editMode ? (
+        <p
+          key={arrival.token}
+          className="tour-arrival-name pointer-events-none absolute top-4 left-1/2 z-20 -translate-x-1/2 rounded-md bg-black/45 px-4 py-2 text-sm font-semibold text-white"
+          aria-live="polite"
+        >
+          {arrival.name}
+        </p>
+      ) : null}
+      {showHint && !editMode ? (
+        <p className="tour-drag-hint pointer-events-none absolute bottom-6 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold text-white">
+          Drag to look around
+        </p>
+      ) : null}
+      {gyroReady && !editMode ? (
+        <button
+          type="button"
+          className="absolute top-3 right-3 z-20 hidden h-10 w-10 items-center justify-center rounded-full bg-[var(--acton-navy)]/70 text-white [@media(pointer:coarse)]:inline-flex"
+          aria-label="Look around with device motion"
+          onClick={() => gyroscopeRef.current?.toggle()}
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M12 3.5 14 8.5 12 7.2 10 8.5Z" fill="currentColor" />
+          </svg>
+        </button>
+      ) : null}
+      {cover && !error ? (
+        cover.thumbUrl ? (
+          <div
+            aria-hidden
+            className={`pointer-events-none absolute inset-0 z-[6] scale-110 bg-cover bg-center blur-2xl transition-opacity duration-700 ${cover.fading ? "opacity-0" : "opacity-100"}`}
+            style={{ backgroundImage: `url("${cover.thumbUrl}")` }}
+          />
+        ) : (
+          <div
+            className={`pointer-events-none absolute inset-0 z-[6] bg-[var(--acton-navy)] transition-opacity duration-700 ${cover.fading ? "opacity-0" : "opacity-100"}`}
+          />
+        )
       ) : null}
       {error ? (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 px-6 text-center">
@@ -470,7 +655,7 @@ export function PanoramaViewer({
       ) : null}
       <div
         ref={containerRef}
-        className={`tour-viewer h-full w-full transition-opacity duration-300 ${revealed && !error ? "opacity-100" : "opacity-0"}`}
+        className={`tour-viewer h-full w-full transition-opacity duration-700 ${revealed && !error ? "opacity-100" : "opacity-0"}`}
       />
       {infoHotspot && infoPoint ? (
         <InfoPopover
@@ -483,6 +668,60 @@ export function PanoramaViewer({
       ) : null}
     </div>
   );
+}
+
+const VIEWER_STYLE = `.tour-viewer .psv-loader,.tour-viewer .psv-navbar{display:none !important}.psv-marker{cursor:pointer}.psv-marker:hover{filter:brightness(1.25)}.psv-virtual-tour-link{cursor:pointer;transition:scale 160ms ease-out,filter 160ms ease-out}.psv-virtual-tour-link:hover,.psv-virtual-tour-link:focus-visible{scale:1.12;filter:brightness(1.25)}.psv-marker:focus-visible,.psv-virtual-tour-link:focus-visible{outline:2px solid #f5c518;outline-offset:3px}.tour-hotspot-pulse{transform-origin:50% 50%;animation:tour-hotspot-pulse 1.4s ease-out infinite}@keyframes tour-hotspot-pulse{0%{transform:scale(.7);opacity:.65}100%{transform:scale(1.7);opacity:0}}@keyframes tour-caption-in-out{0%{opacity:0}15%{opacity:1}72%{opacity:1}100%{opacity:0}}.tour-arrival-name,.tour-drag-hint{animation:tour-caption-in-out 2.6s ease forwards}`;
+
+function sceneForPanorama(scenes: ViewerScene[], panorama: unknown): ViewerScene | undefined {
+  const url = typeof panorama === "string" ? panorama : "";
+  return scenes.find((scene) => url.includes(`/image/${encodeURIComponent(scene.id)}`));
+}
+
+function tourKeysShouldYield(active: Element | null, viewer: HTMLElement): boolean {
+  if (!active || active === document.body || active === document.documentElement) return false;
+  if (
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLTextAreaElement ||
+    active instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  if (active instanceof HTMLElement && active.isContentEditable) return true;
+  return !viewer.contains(active);
+}
+
+function linkFromArrow(target: EventTarget | null): VirtualTourLink | null {
+  if (!(target instanceof Element)) return null;
+  const host = target.closest(".psv-virtual-tour-link");
+  if (!host) return null;
+  for (const key of Object.getOwnPropertySymbols(host)) {
+    const value = (host as unknown as Record<symbol, unknown>)[key];
+    if (!value || typeof value !== "object" || !("nodeId" in value)) continue;
+    const nodeId = (value as { nodeId?: unknown }).nodeId;
+    if (typeof nodeId === "string") return value as VirtualTourLink;
+  }
+  return null;
+}
+
+function markViewerActive(viewer: Viewer): void {
+  const withIdle = viewer as Viewer & { resetIdleTimer?: () => void };
+  withIdle.resetIdleTimer?.();
+}
+
+function dragHintSeen(): boolean {
+  try {
+    return window.sessionStorage.getItem(DRAG_HINT_KEY) === "1";
+  } catch {
+    return true;
+  }
+}
+
+function markDragHintSeen(): void {
+  try {
+    window.sessionStorage.setItem(DRAG_HINT_KEY, "1");
+  } catch {
+    // Private mode can reject storage. The hint still dismisses itself.
+  }
 }
 
 function waitToWarm(): Promise<void> {
@@ -541,6 +780,7 @@ function markerConfig(marker: HotspotMarkerSpec): MarkerConfig {
     targetSceneId: marker.targetSceneId,
     placement: marker.placement,
   };
+  const tooltip = marker.tooltip ? { tooltip: marker.tooltip } : {};
   if (marker.placement === "floor") {
     const element = document.createElement("div");
     element.innerHTML = marker.html;
@@ -554,6 +794,7 @@ function markerConfig(marker: HotspotMarkerSpec): MarkerConfig {
       anchor: "center center",
       hideList: true,
       data,
+      ...tooltip,
     };
   }
   return {
@@ -565,6 +806,7 @@ function markerConfig(marker: HotspotMarkerSpec): MarkerConfig {
     anchor: "center center",
     hideList: true,
     data,
+    ...tooltip,
   };
 }
 

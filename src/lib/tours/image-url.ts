@@ -1,4 +1,4 @@
-export type TourImageVariant = "full" | "compat" | "thumb" | "edit";
+export type TourImageVariant = "full" | "compat" | "thumb";
 
 /** Stable same-origin URL. The proxy mints the signed URL. */
 export function tourImageUrl(slug: string, sceneId: string, variant: TourImageVariant): string {

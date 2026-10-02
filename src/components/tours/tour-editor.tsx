@@ -447,7 +447,6 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
               tour={viewerTour}
               chrome={FRAME_CHROME}
               layout="frame"
-              resolution="edit"
               warmOtherScenes
               pauseWarm={uploading}
               sceneId={activeId}
@@ -470,9 +469,6 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
                 },
               }}
             />
-            <p className="pointer-events-none absolute bottom-2 left-3 z-20 text-[11px] text-white/80">
-              Authoring view is a reduced preview. The published tour is full resolution.
-            </p>
           </div>
         </div>
 

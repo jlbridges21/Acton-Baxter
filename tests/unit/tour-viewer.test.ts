@@ -8,10 +8,16 @@ import {
   TOUR_VIEWER_SIGNED_URL_SECONDS,
 } from "@/lib/tours/constants";
 import {
+  parseTourImageVariant,
   sceneFileForVariant,
   tourImageCacheControl,
   tourImageDecision,
 } from "@/lib/tours/image-access";
+import {
+  EDITOR_TRANSITION_MS,
+  PUBLISHED_TRANSITION_MS,
+  sceneTransitionOptions,
+} from "@/lib/tours/scene-transition";
 import { securityHeaderRules } from "@/lib/http/security-headers";
 import { mapViewerTour } from "@/lib/tours/map-tour";
 import { panoramaExtension } from "@/lib/tours/paths";
@@ -134,9 +140,8 @@ describe("tour viewer nodes", () => {
       scenes: [wide],
       maxTextureSize: 16384,
       includeLinks: false,
-      resolution: "edit",
     });
-    expect(authoring[0]?.panorama).toBe("/api/tours/abc/image/wide?variant=edit");
+    expect(authoring[0]?.panorama).toBe("/api/tours/abc/image/wide?variant=full");
     expect(authoring[0]?.links).toEqual([]);
     const published = buildVirtualTourNodes({
       slug: "abc",
@@ -146,20 +151,14 @@ describe("tour viewer nodes", () => {
     expect(published[0]?.panorama).toBe("/api/tours/abc/image/wide?variant=full");
     expect(published[1]?.panorama).toBe("/api/tours/abc/image/next?variant=full");
     expect(published[0]?.links[0]?.position).toEqual({ yaw: 1.2, pitch: -0.4 });
+    expect(parseTourImageVariant("edit")).toBeNull();
     expect(
-      sceneFileForVariant("edit", {
+      sceneFileForVariant("thumb", {
         storagePath: "tour/scene.jpg",
         compatPath: "tour/scene-compat.jpg",
         thumbnailPath: "tour/scene-thumb.jpg",
       }),
-    ).toBe("tour/scene-compat.jpg");
-    expect(
-      sceneFileForVariant("edit", {
-        storagePath: "tour/scene.jpg",
-        compatPath: null,
-        thumbnailPath: "tour/scene-thumb.jpg",
-      }),
-    ).toBe("tour/scene.jpg");
+    ).toBe("tour/scene-thumb.jpg");
     expect(
       sceneFileForVariant("full", {
         storagePath: "tour/scene.jpg",
@@ -178,10 +177,49 @@ describe("tour viewer nodes", () => {
     const viewer = source("src/components/tours/panorama-viewer.tsx");
     expect(viewer).toContain("yaw: event.data.yaw");
     expect(viewer).toContain("pitch: event.data.pitch");
-    expect(source("src/components/tours/tour-editor.tsx")).toContain('resolution="edit"');
-    expect(source("src/app/tours/[tourId]/preview/page.tsx")).not.toContain('resolution="edit"');
-    expect(source("src/app/tour/[slug]/page.tsx")).not.toContain('resolution="edit"');
-    expect(source("src/app/embed/[slug]/page.tsx")).not.toContain('resolution="edit"');
+    expect(viewer).toContain("preloadPanorama");
+    expect(viewer).not.toContain("Loading panorama");
+    expect(viewer).not.toContain('resolution: "edit"');
+    expect(source("src/components/tours/tour-editor.tsx")).not.toContain('resolution="edit"');
+    expect(source("src/components/tours/tour-editor.tsx")).not.toContain("reduced preview");
+    expect(source("src/lib/tours/image-url.ts")).not.toContain('"edit"');
+    expect(source("src/lib/tours/viewer-model.ts")).not.toContain('"edit"');
+  });
+
+  it("fades toward a link and keeps an opening view when one is set", () => {
+    const link = sceneTransitionOptions({
+      editMode: false,
+      fromLink: true,
+      zoomLevel: 30,
+      openingView: null,
+    });
+    expect(link).toMatchObject({
+      effect: "fade",
+      showLoader: false,
+      rotation: true,
+      speed: PUBLISHED_TRANSITION_MS,
+      zoomTo: 45,
+    });
+    expect(link.rotateTo).toBeUndefined();
+    const listed = sceneTransitionOptions({
+      editMode: false,
+      fromLink: false,
+      zoomLevel: 30,
+      openingView: null,
+    });
+    expect(listed.rotation).toBe(false);
+    expect(listed.zoomTo).toBeUndefined();
+    const opening = sceneTransitionOptions({
+      editMode: true,
+      fromLink: true,
+      zoomLevel: 30,
+      openingView: { yaw: 0.2, pitch: -0.1 },
+    });
+    expect(opening.speed).toBe(EDITOR_TRANSITION_MS);
+    expect(opening.rotation).toBe(false);
+    expect(opening.rotateTo).toEqual({ yaw: 0.2, pitch: -0.1 });
+    expect(opening.zoomTo).toBeUndefined();
+    expect(PUBLISHED_TRANSITION_MS).toBeGreaterThan(EDITOR_TRANSITION_MS);
   });
 
   it("does not call setCurrentNode until the first panorama has loaded", () => {

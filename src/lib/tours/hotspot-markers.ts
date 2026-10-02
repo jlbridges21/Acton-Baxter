@@ -19,6 +19,8 @@ export type HotspotMarkerSpec = {
   rotation: number;
   targetSceneId: string | null;
   markerKind: "info" | "link";
+  /** Target scene name for a link. Info hotspots keep their own popover. */
+  tooltip: string | null;
 };
 
 export type MarkerSyncPlan = {
@@ -40,6 +42,7 @@ export function hotspotMarkerSpecs(input: {
   sceneIds: ReadonlySet<string>;
   editMode: boolean;
   selectedId?: string | null;
+  sceneNames?: ReadonlyMap<string, string>;
 }): HotspotMarkerSpec[] {
   const visible = input.editMode
     ? input.hotspots
@@ -55,6 +58,10 @@ export function hotspotMarkerSpecs(input: {
     const height = hotspot.styleSize;
     const placement = hotspot.stylePlacement;
     const rotation = shapeUsesRotation(hotspot.styleShape) ? hotspot.styleRotation : 0;
+    const tooltip =
+      hotspot.type === "link" && hotspot.targetSceneId
+        ? (input.sceneNames?.get(hotspot.targetSceneId) ?? null)
+        : null;
     return {
       id,
       hotspotId: hotspot.id,
@@ -67,6 +74,7 @@ export function hotspotMarkerSpecs(input: {
       rotation,
       targetSceneId: hotspot.type === "link" ? hotspot.targetSceneId : null,
       markerKind: hotspot.type === "info" ? "info" : "link",
+      tooltip,
       signature: JSON.stringify({
         id,
         yaw: hotspot.yaw,
@@ -76,6 +84,7 @@ export function hotspotMarkerSpecs(input: {
         height,
         placement,
         rotation,
+        tooltip,
       }),
     };
   });
