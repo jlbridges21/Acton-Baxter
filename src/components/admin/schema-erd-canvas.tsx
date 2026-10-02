@@ -17,9 +17,19 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { SchemaTableNode, type TableFlowNode } from "@/components/admin/schema-table-node";
-import { buildSchemaGraph, deriveSchemaGroups } from "@/lib/schema-erd/graph";
+import {
+  buildSchemaGraph,
+  countVisibleRelationships,
+  deriveSchemaGroups,
+} from "@/lib/schema-erd/graph";
 import { layoutSchema } from "@/lib/schema-erd/layout";
-import { placedPositions, readErdView, writeErdView } from "@/lib/schema-erd/persist";
+import {
+  SCHEMA_ERD_UNASSIGNED,
+  placedPositions,
+  readErdView,
+  writeErdView,
+} from "@/lib/schema-erd/persist";
+import { expandToolTables, schemaToolButtons, unassignedTables } from "@/lib/schema-erd/tools";
 import type { SchemaEdgeSpec, SchemaErd, SchemaNodeSpec } from "@/lib/schema-erd/types";
 
 const nodeTypes = { table: SchemaTableNode };
@@ -40,6 +50,7 @@ function toFlowNodes(nodes: SchemaNodeSpec[]): TableFlowNode[] {
       focused: node.focused,
       dimmed: node.dimmed,
       hiddenColumnCount: node.hiddenColumnCount,
+      linked: node.linked,
     },
   }));
 }
@@ -100,6 +111,7 @@ function initialPositions(schema: SchemaErd, userId: string) {
     userId,
     new Set(schema.tables.map((table) => table.name)),
     new Set(groups.map((group) => group.id)),
+    new Set(schemaToolButtons().map((tool) => tool.key)),
   );
   return {
     positions: placedPositions(automatic.positions, saved?.positions ?? null),
@@ -108,6 +120,7 @@ function initialPositions(schema: SchemaErd, userId: string) {
     hiddenGroups: saved?.hiddenGroups ?? [],
     search: saved?.search ?? "",
     focus: saved?.focus ?? null,
+    tool: saved?.tool ?? null,
   };
 }
 
@@ -118,11 +131,22 @@ export function SchemaErdCanvas({ schema, userId }: { schema: SchemaErd; userId:
   const [hiddenGroups, setHiddenGroups] = useState(starting.hiddenGroups);
   const [search, setSearch] = useState(starting.search);
   const [focus, setFocus] = useState<string | null>(starting.focus);
+  const [tool, setTool] = useState<string | null>(starting.tool);
   const [layoutNotice, setLayoutNotice] = useState<string | null>(starting.layoutNotice);
-  const groups = useMemo(
-    () => deriveSchemaGroups(schema.tables.map((table) => table.name)),
-    [schema],
-  );
+  const toolButtons = useMemo(() => schemaToolButtons(), []);
+  const toolSelection = useMemo(() => {
+    if (!tool) return { universe: null, seeds: null as Set<string> | null };
+    if (tool === SCHEMA_ERD_UNASSIGNED) {
+      return { universe: new Set(unassignedTables(schema)), seeds: null };
+    }
+    const button = toolButtons.find((item) => item.key === tool);
+    const expandedTables = expandToolTables(schema, button?.seeds ?? []);
+    return {
+      universe: new Set(expandedTables.tables),
+      seeds: new Set(expandedTables.seeds),
+    };
+  }, [schema, tool, toolButtons]);
+  const unassigned = useMemo(() => unassignedTables(schema), [schema]);
   const graph = useMemo(
     () =>
       buildSchemaGraph(schema, {
@@ -131,8 +155,10 @@ export function SchemaErdCanvas({ schema, userId }: { schema: SchemaErd; userId:
         hiddenGroups: new Set(hiddenGroups),
         search,
         focus,
+        universe: toolSelection.universe,
+        seedTables: toolSelection.seeds,
       }),
-    [schema, positions, expanded, hiddenGroups, search, focus],
+    [schema, positions, expanded, hiddenGroups, search, focus, toolSelection],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(toFlowNodes(graph.nodes));
   const [edges, setEdges, onEdgesChange] = useEdgesState(toFlowEdges(graph.edges));
@@ -166,60 +192,141 @@ export function SchemaErdCanvas({ schema, userId }: { schema: SchemaErd; userId:
       hiddenGroups,
       search,
       focus,
+      tool,
     });
-  }, [expanded, focus, hiddenGroups, positions, search, userId]);
+  }, [expanded, focus, hiddenGroups, positions, search, tool, userId]);
 
   useEffect(() => {
     persist();
   }, [persist]);
 
   const visibleCount = graph.nodes.filter((node) => !node.hidden).length;
+  const visibleNames = new Set(graph.nodes.filter((node) => !node.hidden).map((node) => node.id));
+  const visibleRelationships = countVisibleRelationships(schema, visibleNames);
+  const toolButtonClass = (selected: boolean) =>
+    `inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-semibold ${
+      selected
+        ? "border-[var(--acton-navy)] bg-[var(--acton-navy)] text-white"
+        : "border-[var(--acton-border)] bg-white text-[var(--acton-navy)]"
+    }`;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--acton-border)] bg-white px-3 py-2">
-        <label className="min-w-0 flex-1 basis-48 text-xs font-medium text-[var(--acton-navy)]">
-          <span className="sr-only">Search tables</span>
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search tables"
-            className="w-full max-w-sm rounded-md border border-[var(--acton-border)] px-2 py-1.5 text-sm"
-          />
-        </label>
-        <p className="text-xs text-[var(--acton-muted)]">
-          {schema.tables.length} tables · {schema.foreignKeys.length} relationships
-          {visibleCount !== schema.tables.length ? ` · showing ${visibleCount}` : ""}
-        </p>
-        {layoutNotice ? (
-          <p className="basis-full text-xs text-[var(--acton-muted)]" role="status">
-            Automatic layout was unavailable ({layoutNotice}). Cards are on a name grid and can
-            still be moved.
+      <div className="flex shrink-0 flex-col gap-2 border-b border-[var(--acton-border)] bg-white px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="min-w-0 flex-1 basis-48 text-xs font-medium text-[var(--acton-navy)]">
+            <span className="sr-only">Search tables</span>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search tables"
+              className="w-full max-w-sm rounded-md border border-[var(--acton-border)] px-2 py-1.5 text-sm"
+            />
+          </label>
+          <p className="text-xs text-[var(--acton-muted)]">
+            {visibleCount} of {schema.tables.length} tables · {visibleRelationships} of{" "}
+            {schema.foreignKeys.length} relationships
           </p>
-        ) : null}
-        <button
-          type="button"
-          className="rounded-md border border-[var(--acton-border)] px-2 py-1 text-xs font-semibold text-[var(--acton-navy)]"
-          onClick={() => {
-            const next = layoutSchema(schema);
-            fitAfterLayout.current = true;
-            setLayoutNotice(next.fallback);
-            setPositions(next.positions);
-          }}
-        >
-          Reset layout
-        </button>
-        {focus ? (
+          {layoutNotice ? (
+            <p className="basis-full text-xs text-[var(--acton-muted)]" role="status">
+              Automatic layout was unavailable ({layoutNotice}). Cards are on a name grid and can
+              still be moved.
+            </p>
+          ) : null}
           <button
             type="button"
             className="rounded-md border border-[var(--acton-border)] px-2 py-1 text-xs font-semibold text-[var(--acton-navy)]"
-            onClick={() => setFocus(null)}
+            onClick={() => {
+              const next = layoutSchema(schema);
+              fitAfterLayout.current = true;
+              setLayoutNotice(next.fallback);
+              setPositions(next.positions);
+            }}
           >
-            Clear focus
+            Reset layout
           </button>
-        ) : null}
-        <div className="flex min-w-0 basis-full flex-wrap gap-1.5">
-          {groups.map((group) => {
+          {focus ? (
+            <button
+              type="button"
+              className="rounded-md border border-[var(--acton-border)] px-2 py-1 text-xs font-semibold text-[var(--acton-navy)]"
+              onClick={() => setFocus(null)}
+            >
+              Clear focus
+            </button>
+          ) : null}
+        </div>
+        <div className="flex min-w-0 flex-wrap gap-1.5" role="group" aria-label="Tools">
+          <button
+            type="button"
+            aria-pressed={tool === null}
+            className={toolButtonClass(tool === null)}
+            onClick={() => {
+              setTool(null);
+              setHiddenGroups([]);
+              setFocus(null);
+            }}
+          >
+            All tables
+          </button>
+          {toolButtons.map((button) => {
+            const Icon = button.icon;
+            const selected = tool === button.key;
+            const count = expandToolTables(schema, button.seeds).tables.length;
+            return (
+              <button
+                key={button.key}
+                type="button"
+                aria-pressed={selected}
+                className={toolButtonClass(selected)}
+                onClick={() => {
+                  setTool(button.key);
+                  setHiddenGroups([]);
+                  setFocus(null);
+                }}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{button.name}</span>
+                <span className={selected ? "text-white/75" : "text-[var(--acton-muted)]"}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            aria-pressed={tool === SCHEMA_ERD_UNASSIGNED}
+            aria-describedby="schema-unassigned-tables"
+            className={`${toolButtonClass(tool === SCHEMA_ERD_UNASSIGNED)} ${
+              tool === SCHEMA_ERD_UNASSIGNED ? "" : "border-dashed"
+            }`}
+            onClick={() => {
+              setTool(SCHEMA_ERD_UNASSIGNED);
+              setHiddenGroups([]);
+              setFocus(null);
+            }}
+          >
+            Unassigned
+            <span
+              className={
+                tool === SCHEMA_ERD_UNASSIGNED ? "text-white/75" : "text-[var(--acton-muted)]"
+              }
+            >
+              {unassigned.length}
+            </span>
+          </button>
+          <details className="min-w-0 basis-full text-xs text-[var(--acton-muted)]">
+            <summary className="cursor-pointer">
+              {unassigned.length === 0
+                ? "Every table belongs to a tool"
+                : `${unassigned.length} tables are not in any tool`}
+            </summary>
+            <p id="schema-unassigned-tables" className="mt-1 leading-5">
+              {unassigned.length === 0 ? "No tables are unassigned." : unassigned.join(", ")}
+            </p>
+          </details>
+        </div>
+        <div className="flex min-w-0 flex-wrap gap-1.5">
+          {graph.groups.map((group) => {
             const hidden = hiddenGroups.includes(group.id);
             return (
               <button

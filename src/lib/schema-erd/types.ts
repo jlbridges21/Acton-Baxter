@@ -44,6 +44,8 @@ export type SchemaNodeSpec = {
   columns: SchemaColumn[];
   hiddenColumnCount: number;
   foreignKeyColumns: string[];
+  /** One-hop neighbor of the selected tool, not one of its seed tables. */
+  linked: boolean;
 };
 
 export type SchemaEdgeSpec = {

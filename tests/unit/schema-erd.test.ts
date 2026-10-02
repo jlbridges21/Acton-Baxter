@@ -1,10 +1,24 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { Graph, layout } from "@dagrejs/dagre";
+import { getEnabledBaxterTools } from "@/lib/baxter/tools";
 import { buildSchemaGraph, deriveSchemaGroups, visibleColumns } from "@/lib/schema-erd/graph";
 import { gridLayout, layoutSchema } from "@/lib/schema-erd/layout";
-import { parseErdPersisted, placedPositions, readErdView } from "@/lib/schema-erd/persist";
+import {
+  SCHEMA_ERD_UNASSIGNED,
+  parseErdPersisted,
+  placedPositions,
+  readErdView,
+} from "@/lib/schema-erd/persist";
+import {
+  expandToolTables,
+  missingSeedTables,
+  schemaToolButtons,
+  toolMappingKeysUnknown,
+  toolsMissingSeedEntry,
+  unassignedTables,
+} from "@/lib/schema-erd/tools";
 import type { SchemaErd, SchemaForeignKey, SchemaTable } from "@/lib/schema-erd/types";
 
 function table(name: string, columns: SchemaTable["columns"]): SchemaTable {
@@ -334,5 +348,135 @@ describe("schema layout on the live relationship shape", () => {
     expect(result.positions.knowledge_entries).not.toEqual(result.positions.profiles);
     expect(spy).toHaveBeenCalledWith("[schema-erd] automatic layout failed", expect.any(Error));
     spy.mockRestore();
+  });
+});
+
+describe("schema tool filters", () => {
+  it("takes button names from BAXTER_TOOLS and keeps every key in the seed map", () => {
+    const enabled = getEnabledBaxterTools({ isAdmin: true });
+    expect(schemaToolButtons().map((button) => button.key)).toEqual(
+      enabled.map((tool) => tool.key),
+    );
+    expect(schemaToolButtons().map((button) => button.name)).toEqual(
+      enabled.map((tool) => tool.name),
+    );
+    expect(toolsMissingSeedEntry()).toEqual([]);
+    expect(toolMappingKeysUnknown()).toEqual([]);
+  });
+
+  it("fails when a seed table is not in the migration schema", () => {
+    const directory = path.join(process.cwd(), "supabase/migrations");
+    const names = new Set<string>();
+    for (const file of readdirSync(directory)) {
+      if (!file.endsWith(".sql")) continue;
+      const sql = readFileSync(path.join(directory, file), "utf8");
+      for (const match of sql.matchAll(
+        /create table(?: if not exists)?\s+public\.([a-z0-9_]+)/gi,
+      )) {
+        const name = match[1];
+        if (name) names.add(name);
+      }
+    }
+    expect(missingSeedTables(names)).toEqual([]);
+    expect(missingSeedTables(new Set(["receipts"]))).toContain("tours");
+  });
+
+  it("expands one foreign-key hop and stops before a hub pulls in the rest", () => {
+    const hop: SchemaErd = {
+      tables: ["receipts", "expense_jobs", "profiles", "pem_neats"].map((name) =>
+        table(name, [column("id", { primaryKey: true, nullable: false })]),
+      ),
+      foreignKeys: [
+        foreignKey("receipts_job_fkey", "receipts", "job_id", "expense_jobs"),
+        foreignKey("receipts_created_by_fkey", "receipts", "created_by", "profiles"),
+        foreignKey("pem_neats_salesperson_fkey", "pem_neats", "salesperson_id", "profiles"),
+      ],
+    };
+    const expanded = expandToolTables(hop, ["receipts"]);
+    expect(expanded.seeds).toEqual(["receipts"]);
+    expect(expanded.neighbors).toEqual(["expense_jobs", "profiles"]);
+    expect(expanded.tables).not.toContain("pem_neats");
+    const view = {
+      positions: {},
+      expanded: new Set<string>(),
+      hiddenGroups: new Set<string>(),
+      focus: null,
+      universe: new Set(expanded.tables),
+      seedTables: new Set(expanded.seeds),
+    };
+    const searched = buildSchemaGraph(hop, { ...view, search: "pem" });
+    expect(searched.nodes.filter((node) => !node.hidden)).toEqual([]);
+    const graph = buildSchemaGraph(hop, { ...view, search: "" });
+    expect(graph.nodes.find((node) => node.id === "profiles")).toMatchObject({
+      hidden: false,
+      linked: true,
+    });
+    expect(graph.nodes.find((node) => node.id === "receipts")).toMatchObject({
+      hidden: false,
+      linked: false,
+    });
+    expect(graph.nodes.find((node) => node.id === "pem_neats")?.hidden).toBe(true);
+    expect(graph.groups.flatMap((group) => group.tables)).not.toContain("pem_neats");
+  });
+
+  it("lists tables no tool claims and keeps an unknown saved tool on all tables", () => {
+    const claimed = unassignedTables({
+      tables: [
+        table("receipts", [column("id", { primaryKey: true, nullable: false })]),
+        table("profiles", [column("id", { primaryKey: true, nullable: false })]),
+        table("lonely_notes", [column("id", { primaryKey: true, nullable: false })]),
+      ],
+      foreignKeys: [foreignKey("receipts_created_by_fkey", "receipts", "created_by", "profiles")],
+    });
+    expect(claimed).toEqual(["lonely_notes"]);
+    const tables = new Set(["tours", "scenes"]);
+    const groups = new Set(["other"]);
+    const knownTools = new Set(["tours"]);
+    const saved = parseErdPersisted(
+      {
+        positions: { tours: { x: 4, y: 8 } },
+        expanded: ["tours"],
+        hiddenGroups: [],
+        search: "tour",
+        focus: "scenes",
+        tool: "retired-tool",
+      },
+      tables,
+      groups,
+      knownTools,
+    );
+    expect(saved?.tool).toBeNull();
+    expect(saved?.positions.tours).toEqual({ x: 4, y: 8 });
+    expect(saved?.search).toBe("tour");
+    expect(
+      parseErdPersisted(
+        {
+          positions: { tours: { x: 1, y: 2 } },
+          expanded: [],
+          hiddenGroups: [],
+          search: "",
+          focus: null,
+          tool: "tours",
+        },
+        tables,
+        groups,
+        knownTools,
+      )?.tool,
+    ).toBe("tours");
+    expect(
+      parseErdPersisted(
+        {
+          positions: { tours: { x: 1, y: 2 } },
+          expanded: [],
+          hiddenGroups: [],
+          search: "",
+          focus: null,
+          tool: SCHEMA_ERD_UNASSIGNED,
+        },
+        tables,
+        groups,
+        knownTools,
+      )?.tool,
+    ).toBe(SCHEMA_ERD_UNASSIGNED);
   });
 });

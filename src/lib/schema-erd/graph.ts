@@ -108,6 +108,15 @@ export function relationshipLabel(key: SchemaForeignKey): string {
     .join(", ");
 }
 
+export function countVisibleRelationships(schema: SchemaErd, visible: ReadonlySet<string>): number {
+  const publicNames = new Set(schema.tables.map((table) => table.name));
+  return schema.foreignKeys.filter((key) => {
+    if (!visible.has(key.sourceTable)) return false;
+    if (!publicNames.has(key.targetTable)) return true;
+    return visible.has(key.targetTable);
+  }).length;
+}
+
 export function buildSchemaGraph(
   schema: SchemaErd,
   view: {
@@ -116,9 +125,16 @@ export function buildSchemaGraph(
     hiddenGroups: ReadonlySet<string>;
     search: string;
     focus: string | null;
+    /** Tables the selected tool (or the unassigned set) may show. Null shows every table. */
+    universe?: ReadonlySet<string> | null;
+    /** Seed tables for the selected tool. Neighbors inside the universe are marked linked. */
+    seedTables?: ReadonlySet<string> | null;
   },
 ): { groups: SchemaGroup[]; nodes: SchemaNodeSpec[]; edges: SchemaEdgeSpec[] } {
-  const groups = deriveSchemaGroups(schema.tables.map((table) => table.name));
+  const names = schema.tables
+    .map((table) => table.name)
+    .filter((name) => !view.universe || view.universe.has(name));
+  const groups = deriveSchemaGroups(names);
   const visible = visibleTableNames({
     groups,
     hiddenGroups: view.hiddenGroups,
@@ -142,6 +158,9 @@ export function buildSchemaGraph(
       columns,
       hiddenColumnCount: table.columns.filter((column) => !shown.has(column.name)).length,
       foreignKeyColumns: keys,
+      linked: Boolean(
+        view.seedTables && visible.has(table.name) && !view.seedTables.has(table.name),
+      ),
     };
   });
   const edges = schema.foreignKeys.flatMap((key) => {

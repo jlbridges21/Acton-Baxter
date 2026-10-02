@@ -11,6 +11,7 @@ export type TableNodeData = {
   focused: boolean;
   dimmed: boolean;
   hiddenColumnCount: number;
+  linked: boolean;
 };
 
 export type TableFlowNode = Node<TableNodeData, "table">;
@@ -22,11 +23,13 @@ export function SchemaTableNode({ data }: NodeProps<TableFlowNode>) {
   return (
     <div
       role="group"
-      aria-label={data.name}
+      aria-label={data.linked ? `${data.name}, linked table` : data.name}
       className={`w-[240px] overflow-hidden rounded-md border bg-white text-left shadow-sm ${
         data.focused
           ? "border-[var(--acton-navy)] ring-2 ring-[var(--acton-navy)]"
-          : "border-[var(--acton-border)]"
+          : data.linked
+            ? "border-dashed border-[var(--acton-border)]"
+            : "border-[var(--acton-border)]"
       } ${data.dimmed ? "opacity-20" : ""}`}
     >
       <Handle id="in" type="target" position={Position.Left} className={handleClass} />
@@ -45,11 +48,20 @@ export function SchemaTableNode({ data }: NodeProps<TableFlowNode>) {
         className={handleClass}
         style={{ left: "auto", right: 18 }}
       />
-      <div className="flex min-w-0 items-center justify-between gap-2 bg-[var(--acton-navy)] px-2 py-1.5 text-white">
+      <div
+        className={`flex min-w-0 items-center justify-between gap-2 px-2 py-1.5 ${
+          data.linked
+            ? "bg-[var(--acton-gray-50)] text-[var(--acton-navy)]"
+            : "bg-[var(--acton-navy)] text-white"
+        }`}
+      >
         <span className="truncate text-xs font-semibold" title={data.name}>
           {data.name}
         </span>
-        <span className="shrink-0 text-[10px] font-medium text-white/80">
+        <span
+          className={`shrink-0 text-[10px] font-medium ${data.linked ? "text-[var(--acton-muted)]" : "text-white/80"}`}
+        >
+          {data.linked ? "Linked · " : ""}
           {data.expanded
             ? "All columns"
             : data.hiddenColumnCount > 0
