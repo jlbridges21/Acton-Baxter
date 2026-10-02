@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Cloud,
+  Database,
   FolderKanban,
   Landmark,
   LayoutDashboard,
@@ -195,6 +196,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Users",
       icon: Users,
       match: (pathname) => pathname.startsWith("/admin/users"),
+    },
+    {
+      href: "/admin/schema",
+      label: "Schema",
+      icon: Database,
+      match: (pathname) => pathname.startsWith("/admin/schema"),
     },
     {
       href: "/admin/branding",
