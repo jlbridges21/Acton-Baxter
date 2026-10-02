@@ -23,6 +23,13 @@ import {
   setTourCover,
   setTourPublic,
 } from "@/lib/tours/actions";
+import { HotspotDraftController, createHotspotWriteQueue } from "@/lib/tours/hotspot-draft";
+import {
+  browserHotspotStorage,
+  readHotspotStyle,
+  styleFieldsChanged,
+  writeHotspotStyle,
+} from "@/lib/tours/hotspot-style";
 import { tourSaveLabel, tourSaveState } from "@/lib/tours/save-state";
 import type { ViewerHotspot, ViewerScene, ViewerTour } from "@/lib/tours/viewer-model";
 
@@ -63,11 +70,12 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [selectedHotspotId, setSelectedHotspotId] = useState<string | null>(null);
   const [draftHotspots, setDraftHotspots] = useState<Record<string, ViewerHotspot[]> | null>(null);
-  const [savedHotspots, setSavedHotspots] = useState<Record<string, string>>(() =>
-    hotspotSnapshot(tour.scenes),
-  );
+  const [hotspotVersion, setHotspotVersion] = useState(0);
+  const [hotspots] = useState(() => new HotspotDraftController());
+  const [hotspotQueue] = useState(() => createHotspotWriteQueue());
   const [openingOverride, setOpeningOverride] = useState<
     Record<string, { yaw: number; pitch: number } | null>
   >({});
@@ -77,6 +85,7 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     () => applyOrder(tour.scenes, order).filter((scene) => !removedIds.includes(scene.id)),
     [tour.scenes, order, removedIds],
   );
+  hotspots.syncServer(tour.scenes);
   const displayScenes = useMemo(
     () =>
       scenes.map((scene) => ({
@@ -97,7 +106,7 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     failed: saveFailed,
     dirty:
       fieldsDirty(tour, savedTitle, savedNames, title, names) ||
-      hotspotListsDirty(scenes, draftHotspots, savedHotspots),
+      (hotspotVersion >= 0 && hotspots.isDirty(scenes)),
   });
 
   async function runSave(work: () => Promise<{ error: string | null }>) {
@@ -187,17 +196,68 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [placing]);
 
-  function replaceHotspots(sceneId: string, hotspots: ViewerHotspot[]) {
-    setDraftHotspots((current) => ({ ...(current ?? {}), [sceneId]: hotspots }));
+  function publishHotspots() {
+    setDraftHotspots(hotspots.drafts);
+    setHotspotVersion((version) => version + 1);
   }
 
-  function hotspotsOf(sceneId: string): ViewerHotspot[] {
-    return displayScenes.find((scene) => scene.id === sceneId)?.hotspots ?? [];
+  function rememberStyle(previous: ViewerHotspot | null, next: ViewerHotspot) {
+    if (!previous || !styleFieldsChanged(previous, next)) return;
+    writeHotspotStyle(browserHotspotStorage(), {
+      styleShape: next.styleShape,
+      stylePlacement: next.stylePlacement,
+      styleColor: next.styleColor,
+      styleSize: next.styleSize,
+    });
   }
 
-  async function placeHotspot(position: { yaw: number; pitch: number }) {
+  function scheduleHotspot(sceneId: string, hotspotId: string) {
+    void hotspotQueue.enqueue(hotspotId, () => writeHotspot(sceneId, hotspotId));
+  }
+
+  async function writeHotspot(sceneId: string, hotspotId: string) {
+    const revision = hotspots.revision(hotspotId);
+    const latest = hotspots.find(sceneId, hotspotId);
+    if (!latest) {
+      if (!(hotspotId in hotspots.saved)) return;
+      const result = await runSave(() => deleteHotspot(tour.id, sceneId, hotspotId));
+      hotspots.complete({
+        sceneId,
+        hotspotId,
+        revision,
+        error: Boolean(result.error),
+        kind: "delete",
+        sent: null,
+      });
+      publishHotspots();
+      return;
+    }
+    const kind = hotspotId in hotspots.saved ? "update" : "insert";
+    const result = await runSave(() =>
+      kind === "insert"
+        ? createHotspot(hotspotBody(tour.id, sceneId, latest))
+        : saveHotspot(hotspotBody(tour.id, sceneId, latest)),
+    );
+    const outcome = hotspots.complete({
+      sceneId,
+      hotspotId,
+      revision,
+      error: Boolean(result.error),
+      kind,
+      sent: latest,
+    });
+    publishHotspots();
+    if (!hotspots.find(sceneId, hotspotId)) {
+      setSelectedHotspotId((current) => (current === hotspotId ? null : current));
+    }
+    if (outcome.resave) scheduleHotspot(sceneId, hotspotId);
+  }
+
+  function placeHotspot(position: { yaw: number; pitch: number }) {
     if (!active) return;
+    const sceneId = active.id;
     setPlacing(false);
+    const style = readHotspotStyle(browserHotspotStorage());
     const hotspot: ViewerHotspot = {
       id: crypto.randomUUID(),
       type: "link",
@@ -205,99 +265,49 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
       pitch: position.pitch,
       label: null,
       content: null,
-      targetSceneId: scenes.find((scene) => scene.id !== active.id)?.id ?? null,
-      styleShape: "arrow",
-      styleColor: "#FFFFFF",
-      styleSize: 48,
+      targetSceneId: scenes.find((scene) => scene.id !== sceneId)?.id ?? null,
+      styleShape: style.styleShape,
+      styleColor: style.styleColor,
+      styleSize: style.styleSize,
       styleRotation: 0,
-      stylePlacement: "billboard",
+      stylePlacement: style.stylePlacement,
     };
-    const next = [...hotspotsOf(active.id), hotspot];
-    replaceHotspots(active.id, next);
+    hotspots.place(sceneId, hotspot);
+    publishHotspots();
     setSelectedHotspotId(hotspot.id);
-    const result = await runSave(() =>
-      createHotspot({
-        tourId: tour.id,
-        sceneId: active.id,
-        hotspotId: hotspot.id,
-        type: hotspot.type,
-        yaw: hotspot.yaw,
-        pitch: hotspot.pitch,
-        label: hotspot.label,
-        content: hotspot.content,
-        targetSceneId: hotspot.targetSceneId,
-        styleShape: hotspot.styleShape,
-        styleColor: hotspot.styleColor,
-        styleSize: hotspot.styleSize,
-        styleRotation: hotspot.styleRotation,
-        stylePlacement: hotspot.stylePlacement,
-      }),
-    );
-    if (result.error) {
-      replaceHotspots(
-        active.id,
-        next.filter((item) => item.id !== hotspot.id),
-      );
-      setSelectedHotspotId(null);
-      return;
-    }
-    setSavedHotspots((current) => ({ ...current, [active.id]: JSON.stringify(next) }));
+    scheduleHotspot(sceneId, hotspot.id);
   }
 
   function draftHotspot(hotspot: ViewerHotspot) {
     if (!active) return;
-    replaceHotspots(
-      active.id,
-      hotspotsOf(active.id).map((item) => (item.id === hotspot.id ? hotspot : item)),
-    );
+    rememberStyle(hotspots.find(active.id, hotspot.id), hotspot);
+    hotspots.patch(active.id, hotspot);
+    publishHotspots();
   }
 
-  async function commitHotspot(hotspot: ViewerHotspot) {
+  function commitHotspot(hotspot: ViewerHotspot) {
     if (!active) return;
-    const next = hotspotsOf(active.id).map((item) => (item.id === hotspot.id ? hotspot : item));
-    replaceHotspots(active.id, next);
-    const result = await runSave(() =>
-      saveHotspot({
-        tourId: tour.id,
-        sceneId: active.id,
-        hotspotId: hotspot.id,
-        type: hotspot.type,
-        yaw: hotspot.yaw,
-        pitch: hotspot.pitch,
-        label: hotspot.label,
-        content: hotspot.content,
-        targetSceneId: hotspot.targetSceneId,
-        styleShape: hotspot.styleShape,
-        styleColor: hotspot.styleColor,
-        styleSize: hotspot.styleSize,
-        styleRotation: hotspot.styleRotation,
-        stylePlacement: hotspot.stylePlacement,
-      }),
-    );
-    if (!result.error) {
-      setSavedHotspots((current) => ({ ...current, [active.id]: JSON.stringify(next) }));
-    }
+    rememberStyle(hotspots.find(active.id, hotspot.id), hotspot);
+    hotspots.patch(active.id, hotspot);
+    publishHotspots();
+    scheduleHotspot(active.id, hotspot.id);
   }
 
-  async function moveHotspot(move: { id: string; yaw: number; pitch: number }) {
+  function moveHotspot(move: { id: string; yaw: number; pitch: number }) {
     if (!active) return;
-    const current = hotspotsOf(active.id).find((item) => item.id === move.id);
+    const current = hotspots.find(active.id, move.id);
     if (!current || (current.yaw === move.yaw && current.pitch === move.pitch)) return;
-    await commitHotspot({ ...current, yaw: move.yaw, pitch: move.pitch });
+    hotspots.patch(active.id, { ...current, yaw: move.yaw, pitch: move.pitch });
+    publishHotspots();
+    scheduleHotspot(active.id, move.id);
   }
 
-  async function removeHotspot(hotspotId: string) {
+  function removeHotspot(hotspotId: string) {
     if (!active) return;
-    const previous = hotspotsOf(active.id);
-    const next = previous.filter((item) => item.id !== hotspotId);
-    replaceHotspots(active.id, next);
+    hotspots.remove(active.id, hotspotId);
+    publishHotspots();
     if (selectedHotspotId === hotspotId) setSelectedHotspotId(null);
-    const result = await runSave(() => deleteHotspot(tour.id, active.id, hotspotId));
-    if (result.error) {
-      replaceHotspots(active.id, previous);
-      return;
-    }
-    setSavedHotspots((current) => ({ ...current, [active.id]: JSON.stringify(next) }));
+    scheduleHotspot(active.id, hotspotId);
   }
 
   async function saveOpeningView() {
@@ -337,17 +347,24 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   async function flushPending() {
     if (saveState === "saving" || saveState === "saved") return;
     await saveTitle();
+    const writes: Promise<void>[] = [];
     for (const scene of scenes) {
       const raw = names[scene.id] ?? scene.name;
       const next = raw.trim() || "Scene";
       if (next !== (savedNames[scene.id] ?? scene.name)) await commitSceneName(scene.id, raw);
+      const live = new Set(hotspots.list(scene.id).map((hotspot) => hotspot.id));
+      for (const hotspot of hotspots.list(scene.id)) {
+        if (hotspots.saved[hotspot.id] !== JSON.stringify(hotspot)) {
+          writes.push(hotspotQueue.enqueue(hotspot.id, () => writeHotspot(scene.id, hotspot.id)));
+        }
+      }
+      for (const hotspot of scene.hotspots) {
+        if (!live.has(hotspot.id)) {
+          writes.push(hotspotQueue.enqueue(hotspot.id, () => writeHotspot(scene.id, hotspot.id)));
+        }
+      }
     }
-    if (selectedHotspot && active) {
-      const saved =
-        savedHotspots[active.id] ??
-        JSON.stringify(tour.scenes.find((scene) => scene.id === active.id)?.hotspots ?? []);
-      if (JSON.stringify(hotspotsOf(active.id)) !== saved) await commitHotspot(selectedHotspot);
-    }
+    await Promise.all(writes);
   }
 
   const saveButtonLabel =
@@ -430,6 +447,9 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
               tour={viewerTour}
               chrome={FRAME_CHROME}
               layout="frame"
+              resolution="edit"
+              warmOtherScenes
+              pauseWarm={uploading}
               sceneId={activeId}
               onSceneChange={(sceneId) => {
                 setPickedId(sceneId);
@@ -450,6 +470,9 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
                 },
               }}
             />
+            <p className="pointer-events-none absolute bottom-2 left-3 z-20 text-[11px] text-white/80">
+              Authoring view is a reduced preview. The published tour is full resolution.
+            </p>
           </div>
         </div>
 
@@ -476,7 +499,7 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
             />
           </div>
           <div className="shrink-0 border-t border-[var(--acton-border)] p-2">
-            <PanoramaUploader tourId={tour.id} />
+            <PanoramaUploader tourId={tour.id} onBusyChange={setUploading} />
           </div>
         </aside>
 
@@ -594,10 +617,6 @@ function fieldsDirty(
   });
 }
 
-function hotspotSnapshot(scenes: ViewerScene[]): Record<string, string> {
-  return Object.fromEntries(scenes.map((scene) => [scene.id, JSON.stringify(scene.hotspots)]));
-}
-
 function withSceneEdits(
   scene: ViewerScene,
   draftHotspots: Record<string, ViewerHotspot[]> | null,
@@ -618,16 +637,21 @@ function withSceneEdits(
   };
 }
 
-function hotspotListsDirty(
-  scenes: ViewerScene[],
-  draftHotspots: Record<string, ViewerHotspot[]> | null,
-  savedHotspots: Record<string, string>,
-): boolean {
-  if (!draftHotspots) return false;
-  return scenes.some((scene) => {
-    const draft = draftHotspots[scene.id];
-    if (!draft) return false;
-    const saved = savedHotspots[scene.id] ?? JSON.stringify(scene.hotspots);
-    return JSON.stringify(draft) !== saved;
-  });
+function hotspotBody(tourId: string, sceneId: string, hotspot: ViewerHotspot) {
+  return {
+    tourId,
+    sceneId,
+    hotspotId: hotspot.id,
+    type: hotspot.type,
+    yaw: hotspot.yaw,
+    pitch: hotspot.pitch,
+    label: hotspot.label,
+    content: hotspot.content,
+    targetSceneId: hotspot.targetSceneId,
+    styleShape: hotspot.styleShape,
+    styleColor: hotspot.styleColor,
+    styleSize: hotspot.styleSize,
+    styleRotation: hotspot.styleRotation,
+    stylePlacement: hotspot.stylePlacement,
+  };
 }

@@ -46,6 +46,9 @@ export function PanoramaViewer({
   onSelectHotspot,
   onMoveHotspot,
   onBindView,
+  resolution = "adaptive",
+  warmOtherScenes = false,
+  pauseWarm = false,
 }: {
   slug: string;
   scenes: ViewerScene[];
@@ -58,6 +61,11 @@ export function PanoramaViewer({
   onSelectHotspot?: (hotspotId: string) => void;
   onMoveHotspot?: (move: { id: string; yaw: number; pitch: number }) => void;
   onBindView?: (read: ViewReader) => void;
+  /** Editor requests the reduced image. Published and preview stay adaptive. */
+  resolution?: "adaptive" | "edit";
+  /** After the open scene loads, fetch the other editor scenes one at a time. */
+  warmOtherScenes?: boolean;
+  pauseWarm?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -88,7 +96,11 @@ export function PanoramaViewer({
   const [error, setError] = useState<string | null>(null);
   const [infoId, setInfoId] = useState<string | null>(null);
   const [infoPoint, setInfoPoint] = useState<{ x: number; y: number } | null>(null);
+  const [loadProgress, setLoadProgress] = useState<number | null>(null);
+  const [panoramaBusy, setPanoramaBusy] = useState(false);
+  const [settledSceneId, setSettledSceneId] = useState<string | null>(null);
   const sourceKey = JSON.stringify(scenes);
+  const sceneWarmKey = scenes.map((scene) => scene.id).join("\n");
   const infoHotspot =
     scenes
       .flatMap((scene) => scene.hotspots)
@@ -172,6 +184,9 @@ export function PanoramaViewer({
     setRevealed(false);
     setError(null);
     setInfoId(null);
+    setLoadProgress(null);
+    setPanoramaBusy(false);
+    setSettledSceneId(null);
     markerSignatures.current.clear();
 
     const viewer = new Viewer({
@@ -216,6 +231,8 @@ export function PanoramaViewer({
 
     const timer = window.setTimeout(() => {
       loadingRef.current = false;
+      setLoadProgress(null);
+      setPanoramaBusy(false);
       setRevealed(false);
       setError("This panorama took too long to load.");
     }, LOAD_TIMEOUT_MS);
@@ -230,13 +247,26 @@ export function PanoramaViewer({
       bootedRef.current = true;
       window.clearTimeout(timer);
       setError(null);
+      setLoadProgress(null);
+      setPanoramaBusy(false);
+      setSettledSceneId(tour.getCurrentNode()?.id ?? null);
       setRevealed(true);
     };
 
+    viewer.addEventListener("panorama-load", () => {
+      setPanoramaBusy(true);
+      setSettledSceneId(null);
+      setLoadProgress(0);
+    });
+    viewer.addEventListener("load-progress", (event) => {
+      setLoadProgress(event.progress);
+    });
     viewer.addEventListener("panorama-loaded", reveal);
     viewer.addEventListener("panorama-error", () => {
       window.clearTimeout(timer);
       loadingRef.current = false;
+      setLoadProgress(null);
+      setPanoramaBusy(false);
       setRevealed(false);
       setError("This panorama could not be loaded.");
     });
@@ -291,6 +321,7 @@ export function PanoramaViewer({
       scenes: scenesRef.current,
       maxTextureSize: readMaxTextureSize(),
       includeLinks: !editModeRef.current,
+      resolution,
     });
     const nodes = toPluginNodes(built);
     const key = viewerNodesKey(built);
@@ -303,7 +334,49 @@ export function PanoramaViewer({
     if (!startId) return;
     loadingRef.current = true;
     tour.setNodes(nodes, first ? startId : (tour.getCurrentNode()?.id ?? startId));
-  }, [sourceKey, slug, retry]);
+  }, [sourceKey, slug, retry, resolution]);
+
+  useEffect(() => {
+    if (!warmOtherScenes || pauseWarm || !revealed || panoramaBusy) return;
+    if (settledSceneId !== currentSceneId) return;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    let cancelled = false;
+    const urls = buildVirtualTourNodes({
+      slug,
+      scenes: scenesRef.current,
+      maxTextureSize: readMaxTextureSize(),
+      includeLinks: false,
+      resolution: "edit",
+    })
+      .filter((node) => node.id !== currentSceneId)
+      .map((node) => node.panorama);
+    void (async () => {
+      for (const url of urls) {
+        if (cancelled) return;
+        await waitToWarm();
+        if (cancelled) return;
+        try {
+          await viewer.textureLoader.preloadPanorama(url);
+        } catch {
+          // This scene still loads when the author opens it.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    warmOtherScenes,
+    pauseWarm,
+    revealed,
+    panoramaBusy,
+    settledSceneId,
+    currentSceneId,
+    sceneWarmKey,
+    slug,
+    retry,
+  ]);
 
   useEffect(() => {
     const tour = tourRef.current;
@@ -375,10 +448,14 @@ export function PanoramaViewer({
           Click the panorama to place a hotspot. Escape cancels.
         </p>
       ) : null}
-      {!revealed && !error ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-          <span className="sr-only">Loading panorama</span>
+      {(loadProgress !== null || (!revealed && !error)) && !error ? (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <div className="rounded-md bg-black/45 px-4 py-3 text-center">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            <p className="mt-2 text-xs font-semibold text-white">
+              {loadProgress === null ? "Loading panorama" : `Loading panorama ${loadProgress}%`}
+            </p>
+          </div>
         </div>
       ) : null}
       {error ? (
@@ -406,6 +483,16 @@ export function PanoramaViewer({
       ) : null}
     </div>
   );
+}
+
+function waitToWarm(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(() => resolve(), { timeout: 1500 });
+      return;
+    }
+    window.setTimeout(resolve, 300);
+  });
 }
 
 function findHotspot(scenes: ViewerScene[], hotspotId: string): ViewerHotspot | null {

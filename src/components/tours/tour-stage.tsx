@@ -14,6 +14,9 @@ export function TourStage({
   layout = "screen",
   sceneId: controlledSceneId,
   onSceneChange,
+  resolution = "adaptive",
+  warmOtherScenes = false,
+  pauseWarm = false,
   editing,
 }: {
   tour: ViewerTour;
@@ -23,6 +26,9 @@ export function TourStage({
   layout?: "screen" | "frame";
   sceneId?: string;
   onSceneChange?: (sceneId: string) => void;
+  resolution?: "adaptive" | "edit";
+  warmOtherScenes?: boolean;
+  pauseWarm?: boolean;
   editing?: {
     placing: boolean;
     selectedHotspotId: string | null;
@@ -118,6 +124,9 @@ export function TourStage({
             onSelectHotspot={editing?.onSelectHotspot}
             onMoveHotspot={editing?.onMoveHotspot}
             onBindView={editing?.onBindView}
+            resolution={resolution}
+            warmOtherScenes={warmOtherScenes}
+            pauseWarm={pauseWarm}
           />
         )}
 

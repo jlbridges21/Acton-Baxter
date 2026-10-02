@@ -28,6 +28,9 @@ export function PanoramaViewerClient(props: {
   onSelectHotspot?: (hotspotId: string) => void;
   onMoveHotspot?: (move: { id: string; yaw: number; pitch: number }) => void;
   onBindView?: (read: () => { yaw: number; pitch: number } | null) => void;
+  resolution?: "adaptive" | "edit";
+  warmOtherScenes?: boolean;
+  pauseWarm?: boolean;
 }) {
   return <PanoramaViewer {...props} />;
 }

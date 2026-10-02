@@ -64,6 +64,21 @@ export function resolvePanoramaVariant(
 }
 
 /**
+ * A click is a direction on the sphere. The panorama's pixel size is not part
+ * of the stored yaw and pitch, so the reduced editor image and the full
+ * published image place the same hotspot.
+ */
+export function placedHotspotAngles(
+  click: { yaw: number; pitch: number },
+  panorama: { width: number; height: number },
+): { yaw: number; pitch: number } {
+  if (!Number.isFinite(panorama.width) || !Number.isFinite(panorama.height)) {
+    throw new Error("Panorama dimensions must be finite.");
+  }
+  return { yaw: click.yaw, pitch: click.pitch };
+}
+
+/**
  * Panorama URLs are final here. Call this before setNodes and do not rewrite them after.
  * Link positions stay in radians.
  */
@@ -73,11 +88,19 @@ export function buildVirtualTourNodes(input: {
   maxTextureSize: number;
   /** Edit mode passes false so a click selects a hotspot instead of changing scenes. */
   includeLinks?: boolean;
+  /**
+   * `edit` always requests the reduced editor image. Published and preview
+   * pages omit this and keep the adaptive full-vs-compat choice.
+   */
+  resolution?: "adaptive" | "edit";
 }): TourNodeSpec[] {
   const ids = new Set(input.scenes.map((scene) => scene.id));
   const includeLinks = input.includeLinks !== false;
   return input.scenes.map((scene) => {
-    const variant = resolvePanoramaVariant(scene.width, scene.hasCompat, input.maxTextureSize);
+    const variant =
+      input.resolution === "edit"
+        ? "edit"
+        : resolvePanoramaVariant(scene.width, scene.hasCompat, input.maxTextureSize);
     return {
       id: scene.id,
       name: scene.name,

@@ -7,13 +7,21 @@ import {
   TOUR_PAGE_REVALIDATE_SECONDS,
   TOUR_VIEWER_SIGNED_URL_SECONDS,
 } from "@/lib/tours/constants";
-import { tourImageCacheControl, tourImageDecision } from "@/lib/tours/image-access";
+import {
+  sceneFileForVariant,
+  tourImageCacheControl,
+  tourImageDecision,
+} from "@/lib/tours/image-access";
 import { securityHeaderRules } from "@/lib/http/security-headers";
 import { mapViewerTour } from "@/lib/tours/map-tour";
 import { panoramaExtension } from "@/lib/tours/paths";
 import { isAnonymousTourPath } from "@/lib/tours/public-paths";
 import { insertWithUniqueSlug } from "@/lib/tours/slug";
-import { buildVirtualTourNodes, resolvePanoramaVariant } from "@/lib/tours/viewer-model";
+import {
+  buildVirtualTourNodes,
+  placedHotspotAngles,
+  resolvePanoramaVariant,
+} from "@/lib/tours/viewer-model";
 import type { ViewerScene } from "@/lib/tours/viewer-model";
 
 function source(relativePath: string): string {
@@ -120,6 +128,60 @@ describe("tour viewer nodes", () => {
     expect(editing[0]?.links).toEqual([]);
     expect(resolvePanoramaVariant(4096, true, 4096)).toBe("full");
     expect(resolvePanoramaVariant(8000, false, 4096)).toBe("full");
+    expect(resolvePanoramaVariant(8192, true, 16384)).toBe("full");
+    const authoring = buildVirtualTourNodes({
+      slug: "abc",
+      scenes: [wide],
+      maxTextureSize: 16384,
+      includeLinks: false,
+      resolution: "edit",
+    });
+    expect(authoring[0]?.panorama).toBe("/api/tours/abc/image/wide?variant=edit");
+    expect(authoring[0]?.links).toEqual([]);
+    const published = buildVirtualTourNodes({
+      slug: "abc",
+      scenes: [wide, scene({ id: "next", width: 2000, hasCompat: false })],
+      maxTextureSize: 16384,
+    });
+    expect(published[0]?.panorama).toBe("/api/tours/abc/image/wide?variant=full");
+    expect(published[1]?.panorama).toBe("/api/tours/abc/image/next?variant=full");
+    expect(published[0]?.links[0]?.position).toEqual({ yaw: 1.2, pitch: -0.4 });
+    expect(
+      sceneFileForVariant("edit", {
+        storagePath: "tour/scene.jpg",
+        compatPath: "tour/scene-compat.jpg",
+        thumbnailPath: "tour/scene-thumb.jpg",
+      }),
+    ).toBe("tour/scene-compat.jpg");
+    expect(
+      sceneFileForVariant("edit", {
+        storagePath: "tour/scene.jpg",
+        compatPath: null,
+        thumbnailPath: "tour/scene-thumb.jpg",
+      }),
+    ).toBe("tour/scene.jpg");
+    expect(
+      sceneFileForVariant("full", {
+        storagePath: "tour/scene.jpg",
+        compatPath: "tour/scene-compat.jpg",
+        thumbnailPath: null,
+      }),
+    ).toBe("tour/scene.jpg");
+  });
+
+  it("stores the same yaw and pitch for a reduced panorama and a full one", () => {
+    const click = { yaw: 1.25, pitch: -0.4 };
+    expect(placedHotspotAngles(click, { width: 8192, height: 4096 })).toEqual(
+      placedHotspotAngles(click, { width: 4096, height: 2048 }),
+    );
+    expect(placedHotspotAngles(click, { width: 5824, height: 2880 })).toEqual(click);
+    const viewer = source("src/components/tours/panorama-viewer.tsx");
+    expect(viewer).toContain("yaw: event.data.yaw");
+    expect(viewer).toContain("pitch: event.data.pitch");
+    expect(source("src/components/tours/tour-editor.tsx")).toContain('resolution="edit"');
+    expect(source("src/app/tours/[tourId]/preview/page.tsx")).not.toContain('resolution="edit"');
+    expect(source("src/app/tour/[slug]/page.tsx")).not.toContain('resolution="edit"');
+    expect(source("src/app/embed/[slug]/page.tsx")).not.toContain('resolution="edit"');
   });
 
   it("does not call setCurrentNode until the first panorama has loaded", () => {

@@ -29,7 +29,13 @@ const STAGE_LABEL: Record<TourUploadStage, string> = {
   error: "Failed",
 };
 
-export function PanoramaUploader({ tourId }: { tourId: string }) {
+export function PanoramaUploader({
+  tourId,
+  onBusyChange,
+}: {
+  tourId: string;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const router = useRouter();
   const [rows, setRows] = useState<UploadRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -44,6 +50,10 @@ export function PanoramaUploader({ tourId }: { tourId: string }) {
       for (const url of urls) URL.revokeObjectURL(url);
     };
   }, []);
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
 
   function patch(id: string, next: Partial<UploadRow>) {
     setRows((current) => current.map((row) => (row.id === id ? { ...row, ...next } : row)));
