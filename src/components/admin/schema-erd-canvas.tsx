@@ -102,7 +102,8 @@ function initialPositions(schema: SchemaErd, userId: string) {
     new Set(groups.map((group) => group.id)),
   );
   return {
-    positions: placedPositions(automatic, saved?.positions ?? null),
+    positions: placedPositions(automatic.positions, saved?.positions ?? null),
+    layoutNotice: automatic.fallback,
     expanded: saved?.expanded ?? [],
     hiddenGroups: saved?.hiddenGroups ?? [],
     search: saved?.search ?? "",
@@ -117,6 +118,7 @@ export function SchemaErdCanvas({ schema, userId }: { schema: SchemaErd; userId:
   const [hiddenGroups, setHiddenGroups] = useState(starting.hiddenGroups);
   const [search, setSearch] = useState(starting.search);
   const [focus, setFocus] = useState<string | null>(starting.focus);
+  const [layoutNotice, setLayoutNotice] = useState<string | null>(starting.layoutNotice);
   const groups = useMemo(
     () => deriveSchemaGroups(schema.tables.map((table) => table.name)),
     [schema],
@@ -189,12 +191,20 @@ export function SchemaErdCanvas({ schema, userId }: { schema: SchemaErd; userId:
           {schema.tables.length} tables · {schema.foreignKeys.length} relationships
           {visibleCount !== schema.tables.length ? ` · showing ${visibleCount}` : ""}
         </p>
+        {layoutNotice ? (
+          <p className="basis-full text-xs text-[var(--acton-muted)]" role="status">
+            Automatic layout was unavailable ({layoutNotice}). Cards are on a name grid and can
+            still be moved.
+          </p>
+        ) : null}
         <button
           type="button"
           className="rounded-md border border-[var(--acton-border)] px-2 py-1 text-xs font-semibold text-[var(--acton-navy)]"
           onClick={() => {
+            const next = layoutSchema(schema);
             fitAfterLayout.current = true;
-            setPositions(layoutSchema(schema));
+            setLayoutNotice(next.fallback);
+            setPositions(next.positions);
           }}
         >
           Reset layout

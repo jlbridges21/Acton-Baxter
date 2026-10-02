@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Graph, layout } from "@dagrejs/dagre";
 import { buildSchemaGraph, deriveSchemaGroups, visibleColumns } from "@/lib/schema-erd/graph";
-import { layoutSchema } from "@/lib/schema-erd/layout";
+import { gridLayout, layoutSchema } from "@/lib/schema-erd/layout";
 import { parseErdPersisted, placedPositions, readErdView } from "@/lib/schema-erd/persist";
-import type { SchemaErd, SchemaTable } from "@/lib/schema-erd/types";
+import type { SchemaErd, SchemaForeignKey, SchemaTable } from "@/lib/schema-erd/types";
 
 function table(name: string, columns: SchemaTable["columns"]): SchemaTable {
   return { name, columns };
@@ -184,7 +185,7 @@ describe("schema diagram", () => {
   });
 
   it("lays out distinct cards and skips a self-reference in the ranker", () => {
-    const positions = layoutSchema(schema);
+    const positions = layoutSchema(schema).positions;
     const tours = positions.tours;
     const scenes = positions.scenes;
     expect(tours).toBeTruthy();
@@ -217,5 +218,121 @@ describe("schema diagram", () => {
     const people = readFileSync(path.join(process.cwd(), "src/lib/baxter/admin-nav.ts"), "utf8");
     expect(people).toContain('href: "/admin/schema"');
     expect(people).toContain('label: "Schema"');
+  });
+});
+
+function foreignKey(
+  constraintName: string,
+  sourceTable: string,
+  sourceColumn: string,
+  targetTable: string,
+): SchemaForeignKey {
+  return {
+    constraintName,
+    sourceTable,
+    sourceColumns: [sourceColumn],
+    targetTable,
+    targetColumns: ["id"],
+  };
+}
+
+/** The live shape that makes undeduplicated dagre throw. */
+const parallelSchema: SchemaErd = {
+  tables: [
+    table("knowledge_entries", [
+      column("id", { primaryKey: true, nullable: false }),
+      column("approved_by"),
+      column("created_by"),
+      column("updated_by"),
+    ]),
+    table("process_role_assignments", [
+      column("id", { primaryKey: true, nullable: false }),
+      column("profile_id"),
+    ]),
+    table("profiles", [column("id", { primaryKey: true, nullable: false })]),
+    table("scenes", [column("id", { primaryKey: true, nullable: false }), column("parent_id")]),
+  ],
+  foreignKeys: [
+    foreignKey(
+      "knowledge_entries_approved_by_fkey",
+      "knowledge_entries",
+      "approved_by",
+      "profiles",
+    ),
+    foreignKey("knowledge_entries_created_by_fkey", "knowledge_entries", "created_by", "profiles"),
+    foreignKey("knowledge_entries_updated_by_fkey", "knowledge_entries", "updated_by", "profiles"),
+    foreignKey(
+      "process_role_assignments_profile_fkey",
+      "process_role_assignments",
+      "profile_id",
+      "profiles",
+    ),
+    foreignKey("scenes_parent_fkey", "scenes", "parent_id", "scenes"),
+    foreignKey("profiles_user_fkey", "profiles", "id", "auth.users"),
+  ],
+};
+
+function renderedEdges(input: SchemaErd) {
+  return buildSchemaGraph(input, {
+    positions: {},
+    expanded: new Set(),
+    hiddenGroups: new Set(),
+    search: "",
+    focus: null,
+  }).edges;
+}
+
+describe("schema layout on the live relationship shape", () => {
+  it("throws in dagre when three parallel edges share a target that has another source", () => {
+    const graph = new Graph({ multigraph: true });
+    graph.setDefaultEdgeLabel(() => ({}));
+    graph.setGraph({ rankdir: "LR" });
+    for (const name of ["knowledge_entries", "process_role_assignments", "profiles"]) {
+      graph.setNode(name, { width: 240, height: 80 });
+    }
+    graph.setEdge("knowledge_entries", "profiles", {}, "approved_by");
+    graph.setEdge("knowledge_entries", "profiles", {}, "created_by");
+    graph.setEdge("knowledge_entries", "profiles", {}, "updated_by");
+    graph.setEdge("process_role_assignments", "profiles", {}, "profile_id");
+    expect(() => layout(graph)).toThrow(/intersection inside of the rectangle/);
+  });
+
+  it("lays out three parallel foreign keys and a self-reference without throwing", () => {
+    const result = layoutSchema(parallelSchema);
+    expect(result.fallback).toBeNull();
+    for (const item of parallelSchema.tables) {
+      expect(Number.isFinite(result.positions[item.name]?.x)).toBe(true);
+      expect(Number.isFinite(result.positions[item.name]?.y)).toBe(true);
+    }
+    const self = renderedEdges(parallelSchema).find((edge) => edge.id === "scenes_parent_fkey");
+    expect(self).toMatchObject({ self: true, source: "scenes", target: "scenes" });
+  });
+
+  it("drops a foreign key whose target is outside public and still draws every public one", () => {
+    const edges = renderedEdges(parallelSchema);
+    const names = new Set(parallelSchema.tables.map((item) => item.name));
+    const inside = parallelSchema.foreignKeys.filter(
+      (key) => names.has(key.sourceTable) && names.has(key.targetTable),
+    );
+    expect(edges.find((edge) => edge.id === "profiles_user_fkey")).toBeUndefined();
+    expect(edges.map((edge) => edge.id).sort()).toEqual(
+      inside.map((key) => key.constraintName).sort(),
+    );
+    const result = layoutSchema(parallelSchema);
+    expect(result.layoutEdgeCount).toBeLessThan(edges.length);
+    expect(result.layoutEdgeCount).toBe(2);
+    expect(edges).toHaveLength(5);
+  });
+
+  it("uses the name grid when the layout engine throws", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = layoutSchema(parallelSchema, () => {
+      throw new Error("Not possible to find intersection inside of the rectangle");
+    });
+    expect(result.fallback).toBe("Not possible to find intersection inside of the rectangle");
+    expect(result.positions).toEqual(gridLayout(parallelSchema));
+    expect(result.positions.knowledge_entries).not.toEqual(result.positions.profiles);
+    expect(spy).toHaveBeenCalledWith("[schema-erd] automatic layout failed", expect.any(Error));
+    spy.mockRestore();
   });
 });
