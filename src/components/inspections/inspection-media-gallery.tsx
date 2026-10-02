@@ -6,10 +6,12 @@
  * with seekable timestamps and active-segment highlight during playback.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, Play, RotateCcw, Trash2, X } from "lucide-react";
 import { Dialog, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { PhotoZoomStage, type PhotoZoomHandle } from "@/components/inspections/photo-zoom-stage";
+import { PHOTO_ZOOM_STEP } from "@/lib/inspections/photo-zoom";
 import type {
   SiteInspectionDetail,
   SiteInspectionMedia,
@@ -65,6 +67,8 @@ export function InspectionMediaGallery({
   const seekApplied = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const activeSegRef = useRef<HTMLLIElement | null>(null);
+  const photoZoomRef = useRef<PhotoZoomHandle | null>(null);
+  const navRef = useRef({ length: 0, photo: false });
 
   const viewable = media.filter((m) => m.localPreviewUrl || m.signedUrl || m.storagePath);
   const safeIndex = Math.min(Math.max(0, index), Math.max(0, viewable.length - 1));
@@ -116,9 +120,34 @@ export function InspectionMediaGallery({
     return () => window.clearTimeout(timer);
   }, [expiresAtMs, open, refreshUrls]);
 
-  useEffect(() => {
+  // Register before Dialog's effect. Dialog also listens on capture and closes
+  // on Escape; this has to run first so a zoomed photo resets instead.
+  useLayoutEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
+      const zoom = photoZoomRef.current;
+      const photo = navRef.current.photo;
+      if (e.key === "Escape" && photo && zoom?.isZoomed()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        zoom.reset();
+        return;
+      }
+      if (photo && zoom && (e.key === "+" || e.key === "=" || e.key === "Add")) {
+        e.preventDefault();
+        zoom.zoomBy(PHOTO_ZOOM_STEP);
+        return;
+      }
+      if (photo && zoom && (e.key === "-" || e.key === "_" || e.key === "Subtract")) {
+        e.preventDefault();
+        zoom.zoomBy(-PHOTO_ZOOM_STEP);
+        return;
+      }
+      if (photo && zoom && e.key === "0") {
+        e.preventDefault();
+        zoom.reset();
+        return;
+      }
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         setMediaLoading(true);
@@ -126,12 +155,12 @@ export function InspectionMediaGallery({
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         setMediaLoading(true);
-        setIndex((i) => Math.min(viewable.length - 1, i + 1));
+        setIndex((i) => Math.min(navRef.current.length - 1, i + 1));
       }
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [open, viewable.length]);
+  }, [open]);
 
   const segments: TranscriptSegment[] =
     current?.mediaType === "video" ? (current.transcriptSegments ?? []) : [];
@@ -158,6 +187,12 @@ export function InspectionMediaGallery({
 
   const src = current ? srcFor(current) : null;
   const showTranscriptPanel = current?.mediaType === "video";
+  const viewableLength = viewable.length;
+  const currentIsPhoto = current?.mediaType === "photo";
+
+  useEffect(() => {
+    navRef.current = { length: viewableLength, photo: currentIsPhoto };
+  }, [currentIsPhoto, viewableLength]);
 
   function go(delta: number) {
     setMediaLoading(true);
@@ -191,10 +226,13 @@ export function InspectionMediaGallery({
       if (!res.ok || !json.inspection) {
         throw new Error(json.error?.message ?? "Could not rotate photo");
       }
+      photoZoomRef.current?.rotateQuarterTurn();
       onInspectionUpdate?.(json.inspection);
       setMediaLoading(true);
       await refreshUrls();
+      photoZoomRef.current?.finishRotate();
     } catch (e) {
+      photoZoomRef.current?.cancelRotate();
       setRotateError(e instanceof Error ? e.message : "Could not rotate photo");
     } finally {
       setRotateBusy(false);
@@ -275,9 +313,11 @@ export function InspectionMediaGallery({
           showTranscriptPanel ? "sm:flex-row" : ""
         }`}
         onTouchStart={(e) => {
+          if (current?.mediaType === "photo") return;
           touchStartX.current = e.changedTouches[0]?.clientX ?? null;
         }}
         onTouchEnd={(e) => {
+          if (current?.mediaType === "photo") return;
           const start = touchStartX.current;
           touchStartX.current = null;
           if (start == null) return;
@@ -366,27 +406,18 @@ export function InspectionMediaGallery({
                 </video>
               </>
             ) : (
-              <>
-                {mediaLoading ? (
-                  <p className="absolute text-sm text-white/70" aria-live="polite">
-                    Loading…
-                  </p>
-                ) : null}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  key={`${current.id}-${src}`}
-                  src={src}
-                  alt=""
-                  className={`max-h-full max-w-full object-contain transition-opacity ${
-                    mediaLoading ? "opacity-0" : "opacity-100"
-                  }`}
-                  onLoad={() => setMediaLoading(false)}
-                  onError={() => {
-                    setMediaLoading(false);
-                    void refreshUrls();
-                  }}
-                />
-              </>
+              <PhotoZoomStage
+                ref={photoZoomRef}
+                mediaId={current.id}
+                src={src}
+                loading={mediaLoading}
+                onLoad={() => setMediaLoading(false)}
+                onError={() => {
+                  setMediaLoading(false);
+                  void refreshUrls();
+                }}
+                onSwipe={(delta) => go(delta)}
+              />
             )}
           </div>
         </div>
