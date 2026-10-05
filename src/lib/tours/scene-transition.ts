@@ -1,3 +1,5 @@
+import type { ArrivalHeading } from "@/lib/tours/arrival-heading";
+
 export const TOUR_TRANSITION_EFFECTS = ["none", "fade", "black", "white"] as const;
 export type TourTransitionEffect = (typeof TOUR_TRANSITION_EFFECTS)[number];
 
@@ -14,7 +16,8 @@ export const TRANSITION_SPEED_MS: Record<TourTransitionSpeed, number> = {
   slow: 1500,
 };
 
-const LINK_ZOOM_STEP = 15;
+/** Zoom level 0 is Photo Sphere Viewer's widest field of view. */
+export const WIDEST_ZOOM_LEVEL = 0;
 
 export const DEFAULT_TOUR_PLAYBACK = {
   transitionEffect: "fade" as const,
@@ -58,16 +61,16 @@ export type SceneTransitionChoice = {
 
 /**
  * Photo Sphere Viewer 5.15.1 crossfades when effect is fade, black, or white.
- * `none` cuts immediately. `rotation: true` turns toward the clicked link during
- * that change; the plugin supplies that link's yaw and pitch as the arrival.
- * An explicit opening view replaces that heading in every mode.
+ * `none` cuts immediately. `rotation: true` still turns during that change.
+ * An opening view, or a return hotspot turned 180°, is passed as `rotateTo`.
+ * With neither, a directional link leaves `rotateTo` unset so the plugin keeps
+ * the clicked link's heading. Every load starts at the widest zoom.
  * The editor always uses Fast so authoring stays snappy.
  */
 export function sceneTransitionOptions(input: {
   editMode: boolean;
   fromLink: boolean;
-  zoomLevel: number;
-  openingView: { yaw: number; pitch: number } | null;
+  arrival: ArrivalHeading;
   effect: TourTransitionEffect;
   speed: TourTransitionSpeed;
   directional: boolean;
@@ -78,17 +81,20 @@ export function sceneTransitionOptions(input: {
     effect: tourTransitionEffect(input.effect),
     speed: TRANSITION_SPEED_MS[speedName],
     rotation: false,
+    zoomTo: WIDEST_ZOOM_LEVEL,
   };
-  if (input.openingView) {
-    return { ...base, rotateTo: input.openingView };
+  if (input.arrival.kind === "opening") {
+    return { ...base, rotateTo: { yaw: input.arrival.yaw, pitch: input.arrival.pitch } };
   }
-  if (input.directional && input.fromLink) {
-    const zoomLevel = Number.isFinite(input.zoomLevel) ? input.zoomLevel : 50;
+  if (input.arrival.kind === "return") {
     return {
       ...base,
-      rotation: true,
-      zoomTo: Math.min(100, Math.max(0, zoomLevel + LINK_ZOOM_STEP)),
+      rotation: Boolean(input.directional && input.fromLink),
+      rotateTo: { yaw: input.arrival.yaw, pitch: 0 },
     };
+  }
+  if (input.directional && input.fromLink) {
+    return { ...base, rotation: true };
   }
   return { ...base, rotateTo: undefined };
 }

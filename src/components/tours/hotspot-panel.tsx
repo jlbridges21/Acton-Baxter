@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { arrivalHeadingNote } from "@/lib/tours/arrival-heading";
 import { hotspotListRow, isBrokenLink } from "@/lib/tours/hotspot-markers";
 import {
   HOTSPOT_SHAPES,
@@ -46,6 +47,13 @@ export function HotspotPanel({
   const sceneIds = new Set(scenes.map((item) => item.id));
   const others = scenes.filter((item) => item.id !== scene?.id);
   const hotspots = scene?.hotspots ?? [];
+  const arrivalNote =
+    scene && selected?.type === "link" && selected.targetSceneId
+      ? arrivalHeadingNote({
+          sourceSceneId: scene.id,
+          target: scenes.find((item) => item.id === selected.targetSceneId) ?? null,
+        })
+      : null;
 
   return (
     <section className="space-y-3">
@@ -179,6 +187,9 @@ export function HotspotPanel({
                     );
                   })}
                 </div>
+                {arrivalNote ? (
+                  <p className="text-sm text-[var(--acton-navy)]">{arrivalNote}</p>
+                ) : null}
               </fieldset>
             )
           ) : (

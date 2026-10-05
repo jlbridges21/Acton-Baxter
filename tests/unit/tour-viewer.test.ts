@@ -16,6 +16,7 @@ import {
 import {
   TRANSITION_SPEED_MS,
   sceneTransitionOptions,
+  WIDEST_ZOOM_LEVEL,
   tourAutorotate,
   tourTransitionDirectional,
   tourTransitionEffect,
@@ -193,8 +194,7 @@ describe("tour viewer nodes", () => {
     const link = sceneTransitionOptions({
       editMode: false,
       fromLink: true,
-      zoomLevel: 30,
-      openingView: null,
+      arrival: { kind: "carry" },
       effect: "fade",
       speed: "fast",
       directional: false,
@@ -204,14 +204,13 @@ describe("tour viewer nodes", () => {
       showLoader: false,
       rotation: false,
       speed: TRANSITION_SPEED_MS.fast,
+      zoomTo: WIDEST_ZOOM_LEVEL,
     });
     expect(link.rotateTo).toBeUndefined();
-    expect(link.zoomTo).toBeUndefined();
     const directed = sceneTransitionOptions({
       editMode: false,
       fromLink: true,
-      zoomLevel: 30,
-      openingView: null,
+      arrival: { kind: "carry" },
       effect: "black",
       speed: "slow",
       directional: true,
@@ -220,24 +219,27 @@ describe("tour viewer nodes", () => {
       effect: "black",
       rotation: true,
       speed: TRANSITION_SPEED_MS.slow,
-      zoomTo: 45,
+      zoomTo: WIDEST_ZOOM_LEVEL,
     });
+    expect(directed.rotateTo).toBeUndefined();
     const cut = sceneTransitionOptions({
       editMode: false,
       fromLink: true,
-      zoomLevel: 30,
-      openingView: null,
+      arrival: { kind: "carry" },
       effect: "none",
       speed: "normal",
       directional: false,
     });
-    expect(cut).toMatchObject({ effect: "none", showLoader: false, rotation: false });
-    expect(cut.zoomTo).toBeUndefined();
+    expect(cut).toMatchObject({
+      effect: "none",
+      showLoader: false,
+      rotation: false,
+      zoomTo: WIDEST_ZOOM_LEVEL,
+    });
     const opening = sceneTransitionOptions({
       editMode: true,
       fromLink: true,
-      zoomLevel: 30,
-      openingView: { yaw: 0.2, pitch: -0.1 },
+      arrival: { kind: "opening", yaw: 0.2, pitch: -0.1 },
       effect: "none",
       speed: "slow",
       directional: true,
@@ -246,12 +248,25 @@ describe("tour viewer nodes", () => {
     expect(opening.effect).toBe("none");
     expect(opening.rotation).toBe(false);
     expect(opening.rotateTo).toEqual({ yaw: 0.2, pitch: -0.1 });
-    expect(opening.zoomTo).toBeUndefined();
+    expect(opening.zoomTo).toBe(WIDEST_ZOOM_LEVEL);
+    const returned = sceneTransitionOptions({
+      editMode: false,
+      fromLink: true,
+      arrival: { kind: "return", yaw: Math.PI, pitch: 0 },
+      effect: "fade",
+      speed: "fast",
+      directional: true,
+    });
+    expect(returned.rotateTo).toEqual({ yaw: Math.PI, pitch: 0 });
+    expect(returned.rotation).toBe(true);
+    expect(returned.zoomTo).toBe(WIDEST_ZOOM_LEVEL);
     expect(tourTransitionEffect("spin")).toBe("fade");
     expect(tourTransitionSpeed(12)).toBe("fast");
     expect(tourTransitionDirectional("yes")).toBe(false);
     expect(tourAutorotate(1)).toBe(false);
     const viewer = source("src/components/tours/panorama-viewer.tsx");
+    expect(viewer).not.toContain("getZoomLevel()");
+    expect(viewer).toContain("arrivalHeading");
     expect(viewer).toContain("if (published && playback.autorotate)");
     expect(viewer).toContain("playbackRef.current");
     const editor = source("src/components/tours/tour-editor.tsx");

@@ -52,6 +52,9 @@ describe("hotspot edit mode", () => {
       "hotspot:broken",
     ]);
     expect(specs.every((marker) => !("content" in marker))).toBe(true);
+    expect(specs[0]?.html).toContain("background:rgba(11,31,58,0.35)");
+    expect(specs[0]?.html).toContain("border-radius:4px");
+    expect(specs[0]?.signature).toContain('"chrome":"box"');
     expect(specs[2]?.html).toMatch(/dashed #b91c1c/);
     const playback = hotspotMarkerSpecs({
       editMode: false,
@@ -59,6 +62,15 @@ describe("hotspot edit mode", () => {
       hotspots: [hotspot({ id: "link" }), hotspot({ id: "info", type: "info" })],
     });
     expect(playback.map((marker) => marker.id)).toEqual(["info:info"]);
+    expect(playback[0]?.html).not.toMatch(/background:|border:|border-radius:|outline:/);
+    expect(playback[0]?.signature).toContain('"chrome":"shape"');
+    expect(playback[0]?.signature).not.toBe(
+      hotspotMarkerSpecs({
+        editMode: true,
+        sceneIds: new Set(["here"]),
+        hotspots: [hotspot({ id: "info", type: "info" })],
+      })[0]?.signature,
+    );
     expect(isBrokenLink(hotspot({ id: "broken", targetSceneId: "gone" }), new Set(["here"]))).toBe(
       true,
     );
@@ -127,6 +139,8 @@ describe("hotspot edit mode", () => {
       ],
     });
     expect(playback.map((marker) => marker.hotspotId)).toEqual(["floor-link"]);
+    expect(playback[0]?.html).not.toMatch(/background:|border:|border-radius:/);
+    expect(playback[0]?.html).toContain("<polygon");
   });
 });
 

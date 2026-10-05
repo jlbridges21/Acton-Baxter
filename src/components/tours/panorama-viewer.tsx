@@ -13,6 +13,7 @@ import "@photo-sphere-viewer/markers-plugin/index.css";
 import "@photo-sphere-viewer/virtual-tour-plugin/index.css";
 import { Button } from "@/components/ui/button";
 import { InfoPopover } from "@/components/tours/info-popover";
+import { arrivalHeading } from "@/lib/tours/arrival-heading";
 import { HotspotDragSession } from "@/lib/tours/hotspot-drag";
 import {
   hotspotMarkerSpecs,
@@ -287,16 +288,19 @@ export function PanoramaViewer({
         dataMode: "client",
         positionMode: "manual",
         renderMode: "3d",
-        transitionOptions: (toNode, _fromNode, fromLink) => {
+        transitionOptions: (toNode, fromNode, fromLink) => {
           const scene = scenesRef.current.find((item) => item.id === toNode.id);
           const chosen = playbackRef.current;
           return sceneTransitionOptions({
             editMode: editModeRef.current,
             fromLink: Boolean(fromLink),
-            zoomLevel: viewerRef.current?.getZoomLevel() ?? 50,
-            openingView: scene?.hasInitialView
-              ? { yaw: scene.initialYaw, pitch: scene.initialPitch }
-              : null,
+            arrival: arrivalHeading({
+              openingView: scene?.hasInitialView
+                ? { yaw: scene.initialYaw, pitch: scene.initialPitch }
+                : null,
+              sourceSceneId: fromNode?.id ?? null,
+              targetHotspots: scene?.hotspots ?? [],
+            }),
             effect: chosen.effect,
             speed: chosen.speed,
             directional: chosen.directional,

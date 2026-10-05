@@ -90,6 +90,7 @@ export function hotspotMarkerSpecs(input: {
   return visible.map((hotspot) => {
     const id = `${prefix}${hotspot.id}`;
     const html = markerHtml(hotspot, {
+      editMode: input.editMode,
       selected: input.selectedId === hotspot.id,
       broken: isBrokenLink(hotspot, input.sceneIds),
     });
@@ -119,6 +120,7 @@ export function hotspotMarkerSpecs(input: {
         yaw: hotspot.yaw,
         pitch: hotspot.pitch,
         html,
+        chrome: input.editMode ? "box" : "shape",
         width,
         height,
         placement,
@@ -171,14 +173,18 @@ export function planMarkerSync(input: {
 
 function markerHtml(
   hotspot: ViewerHotspot,
-  options: { selected: boolean; broken: boolean },
+  options: { editMode: boolean; selected: boolean; broken: boolean },
 ): string {
   const color = HEX.test(hotspot.styleColor) ? hotspot.styleColor : "#FFFFFF";
-  const border = options.selected
-    ? "3px solid #f5c518"
-    : options.broken
-      ? "2px dashed #b91c1c"
-      : "2px solid #0b1f3a";
   const svg = hotspotShapeSvg(hotspot.styleShape, color);
-  return `<span data-hotspot-id="${hotspot.id}" style="display:grid;place-items:center;width:100%;height:100%;box-sizing:border-box;border-radius:4px;background:rgba(11,31,58,0.35);border:${border}">${svg}</span>`;
+  const frame = options.editMode
+    ? `border-radius:4px;background:rgba(11,31,58,0.35);border:${
+        options.selected
+          ? "3px solid #f5c518"
+          : options.broken
+            ? "2px dashed #b91c1c"
+            : "2px solid #0b1f3a"
+      }`
+    : "";
+  return `<span data-hotspot-id="${hotspot.id}" style="display:grid;place-items:center;width:100%;height:100%;box-sizing:border-box;${frame}">${svg}</span>`;
 }
