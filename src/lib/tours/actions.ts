@@ -28,7 +28,6 @@ import {
   setScenePositions,
   swapScenePosition,
   tourExists,
-  updateHotspot,
   updateSceneName,
   updateTourPlayback,
   updateTourTitle,
@@ -36,7 +35,7 @@ import {
   clearSceneOpeningView as clearSceneOpeningViewRow,
   deleteHotspotRow,
   hotspotBelongsToScene,
-  insertHotspot,
+  writeHotspotRow,
   setSceneOpeningView as setSceneOpeningViewRow,
 } from "@/lib/tours/store";
 
@@ -397,51 +396,6 @@ async function requireTarget(
   return null;
 }
 
-export async function createHotspot(input: {
-  tourId: string;
-  sceneId: string;
-  hotspotId: string;
-  type: "link" | "info";
-  yaw: number;
-  pitch: number;
-  label: string | null;
-  content: string | null;
-  targetSceneId: string | null;
-  styleShape: "arrow" | "chevron" | "circle" | "ring" | "dot" | "pulse";
-  styleColor: string;
-  styleSize: number;
-  styleRotation: number;
-  stylePlacement: "billboard" | "floor";
-}): Promise<{ error: string | null }> {
-  const missing = await requireScene(input.tourId, input.sceneId);
-  if (missing) return missing;
-  if (!hotspotIdSchema.safeParse(input.hotspotId).success) {
-    return { error: "Could not create the hotspot." };
-  }
-  const fields = hotspotFieldsSchema.safeParse(input);
-  if (!fields.success) return { error: "Could not create the hotspot." };
-  const target = await requireTarget(input.tourId, input.sceneId, fields.data.targetSceneId);
-  if (target) return target;
-  const result = await insertHotspot({
-    id: input.hotspotId,
-    tourId: input.tourId,
-    sceneId: input.sceneId,
-    targetSceneId: fields.data.type === "info" ? null : fields.data.targetSceneId,
-    type: fields.data.type,
-    yaw: fields.data.yaw,
-    pitch: fields.data.pitch,
-    label: fields.data.label,
-    content: fields.data.content,
-    styleShape: fields.data.styleShape,
-    styleColor: fields.data.styleColor,
-    styleSize: fields.data.styleSize,
-    styleRotation: fields.data.styleRotation,
-    stylePlacement: fields.data.stylePlacement,
-  });
-  if (!result.error) await revalidatePublishedTour(input.tourId);
-  return result;
-}
-
 export async function saveHotspot(input: {
   tourId: string;
   sceneId: string;
@@ -461,19 +415,13 @@ export async function saveHotspot(input: {
   const missing = await requireScene(input.tourId, input.sceneId);
   if (missing) return missing;
   if (!hotspotIdSchema.safeParse(input.hotspotId).success) {
-    return { error: "That hotspot was not found." };
+    return { error: "Could not save the hotspot." };
   }
   const fields = hotspotFieldsSchema.safeParse(input);
-  if (!fields.success) return { error: "Could not update the hotspot." };
+  if (!fields.success) return { error: "Could not save the hotspot." };
   const target = await requireTarget(input.tourId, input.sceneId, fields.data.targetSceneId);
   if (target) return target;
-  try {
-    const owned = await hotspotBelongsToScene(input.sceneId, input.hotspotId);
-    if (!owned) return { error: "That hotspot was not found." };
-  } catch (error) {
-    return fail(error, "Could not load that hotspot.");
-  }
-  const result = await updateHotspot({
+  const result = await writeHotspotRow({
     id: input.hotspotId,
     sceneId: input.sceneId,
     targetSceneId: fields.data.type === "info" ? null : fields.data.targetSceneId,

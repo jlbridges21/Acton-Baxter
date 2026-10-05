@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import {
   clearSceneOpeningView,
-  createHotspot,
   deleteHotspot,
   deleteScene,
   renameScene,
@@ -24,7 +23,11 @@ import {
   setTourCover,
   setTourPublic,
 } from "@/lib/tours/actions";
-import { HotspotDraftController, createHotspotWriteQueue } from "@/lib/tours/hotspot-draft";
+import {
+  HotspotDraftController,
+  commitHotspotWrite,
+  createHotspotWriteQueue,
+} from "@/lib/tours/hotspot-draft";
 import {
   browserHotspotStorage,
   readHotspotStyle,
@@ -245,36 +248,14 @@ export function TourEditor({ tour }: { tour: ViewerTour }) {
   }
 
   async function writeHotspot(sceneId: string, hotspotId: string) {
-    const revision = hotspots.revision(hotspotId);
-    const latest = hotspots.find(sceneId, hotspotId);
-    if (!latest) {
-      if (!(hotspotId in hotspots.saved)) return;
-      const result = await runSave(() => deleteHotspot(tour.id, sceneId, hotspotId));
-      hotspots.complete({
-        sceneId,
-        hotspotId,
-        revision,
-        error: Boolean(result.error),
-        kind: "delete",
-        sent: null,
-      });
-      publishHotspots();
-      return;
-    }
-    const kind = hotspotId in hotspots.saved ? "update" : "insert";
-    const result = await runSave(() =>
-      kind === "insert"
-        ? createHotspot(hotspotBody(tour.id, sceneId, latest))
-        : saveHotspot(hotspotBody(tour.id, sceneId, latest)),
-    );
-    const outcome = hotspots.complete({
+    const outcome = await commitHotspotWrite({
+      controller: hotspots,
       sceneId,
       hotspotId,
-      revision,
-      error: Boolean(result.error),
-      kind,
-      sent: latest,
+      save: (latest) => runSave(() => saveHotspot(hotspotBody(tour.id, sceneId, latest))),
+      remove: () => runSave(() => deleteHotspot(tour.id, sceneId, hotspotId)),
     });
+    if (outcome.skipped) return;
     publishHotspots();
     if (!hotspots.find(sceneId, hotspotId)) {
       setSelectedHotspotId((current) => (current === hotspotId ? null : current));

@@ -147,7 +147,13 @@ describe("tour server surface", () => {
     const store = source("src/lib/tours/store.ts");
     expect(actions).toMatch(/requireActiveUser/);
     expect(store).toMatch(/\.update\(\{/);
-    expect(`${actions}\n${store}`).not.toMatch(/\.upsert\(/);
+    const hotspotWrite = store.slice(
+      store.indexOf("export async function writeHotspotRow"),
+      store.indexOf("export async function deleteHotspotRow"),
+    );
+    const withoutHotspotWrite = store.replace(hotspotWrite, "");
+    expect(hotspotWrite).toMatch(/\.upsert\(next,\s*\{\s*onConflict:\s*"id"\s*\}\)/);
+    expect(`${actions}\n${withoutHotspotWrite}`).not.toMatch(/\.upsert\(/);
     for (const name of ["deleteTour", "deleteScene"]) {
       const body = actions.slice(actions.indexOf(`export async function ${name}`));
       const storageAt = body.indexOf("removeTourPanoramaObjects");

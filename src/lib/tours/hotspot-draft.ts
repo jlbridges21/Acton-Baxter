@@ -41,18 +41,26 @@ export function createHotspotWriteQueue() {
  */
 export class HotspotDraftController {
   drafts: HotspotDrafts | null = null;
+  /** Last revision whose JSON was confirmed on the server. Drives dirty state. */
   saved: SavedHotspotJson = {};
+  /** Ids that have a row, including a write that finished against a stale revision. */
+  private serverRows = new Set<string>();
   private revisions: Record<string, number> = {};
   private server = new Map<string, ViewerHotspot[]>();
 
   syncServer(scenes: ServerScene[]) {
     this.server = new Map(scenes.map((scene) => [scene.id, scene.hotspots]));
     for (const scene of scenes) {
+      for (const hotspot of scene.hotspots) this.serverRows.add(hotspot.id);
       if (this.drafts?.[scene.id]) continue;
       for (const hotspot of scene.hotspots) {
         this.saved[hotspot.id] = JSON.stringify(hotspot);
       }
     }
+  }
+
+  rowExists(id: string): boolean {
+    return this.serverRows.has(id);
   }
 
   revision(id: string): number {
@@ -106,6 +114,10 @@ export class HotspotDraftController {
     kind: "insert" | "update" | "delete";
     sent: ViewerHotspot | null;
   }): { resave: boolean } {
+    if (!input.error) {
+      if (input.kind === "delete") this.serverRows.delete(input.hotspotId);
+      else this.serverRows.add(input.hotspotId);
+    }
     const latest = this.find(input.sceneId, input.hotspotId);
     if (this.revision(input.hotspotId) !== input.revision) {
       const sentJson = input.sent ? JSON.stringify(input.sent) : null;
@@ -152,7 +164,7 @@ export class HotspotDraftController {
     return next;
   }
 
-  /** Put one hotspot back to its last saved fields, or drop an insert that never landed. */
+  /** Put one hotspot back to its last saved fields, or drop a write that never landed. */
   private restoreOne(sceneId: string, hotspotId: string) {
     const saved = this.saved[hotspotId];
     this.drafts = applySceneHotspots(this.drafts, sceneId, this.serverOf(sceneId), (list) => {
@@ -162,4 +174,44 @@ export class HotspotDraftController {
       return list.map((item) => (item.id === hotspotId ? previous : item));
     });
   }
+}
+
+/**
+ * Persist one hotspot with a single write. Delete is a no-op until some write
+ * for that id has succeeded, including a write that lost the revision race.
+ */
+export async function commitHotspotWrite(input: {
+  controller: HotspotDraftController;
+  sceneId: string;
+  hotspotId: string;
+  save: (hotspot: ViewerHotspot) => Promise<{ error: string | null }>;
+  remove: () => Promise<{ error: string | null }>;
+}): Promise<{ resave: boolean; error: string | null; skipped: boolean }> {
+  const revision = input.controller.revision(input.hotspotId);
+  const latest = input.controller.find(input.sceneId, input.hotspotId);
+  if (!latest) {
+    if (!input.controller.rowExists(input.hotspotId)) {
+      return { resave: false, error: null, skipped: true };
+    }
+    const result = await input.remove();
+    input.controller.complete({
+      sceneId: input.sceneId,
+      hotspotId: input.hotspotId,
+      revision,
+      error: Boolean(result.error),
+      kind: "delete",
+      sent: null,
+    });
+    return { resave: false, error: result.error, skipped: false };
+  }
+  const result = await input.save(latest);
+  const outcome = input.controller.complete({
+    sceneId: input.sceneId,
+    hotspotId: input.hotspotId,
+    revision,
+    error: Boolean(result.error),
+    kind: "update",
+    sent: latest,
+  });
+  return { resave: outcome.resave, error: result.error, skipped: false };
 }

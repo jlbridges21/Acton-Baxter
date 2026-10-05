@@ -219,14 +219,33 @@ describe("info popover placement", () => {
 });
 
 describe("hotspot persistence", () => {
-  it("updates named columns, stores radians unchanged, and never upserts", () => {
+  it("updates named columns, stores radians unchanged, and upserts the full hotspot row", () => {
     const actions = source("src/lib/tours/actions.ts");
     const store = source("src/lib/tours/store.ts");
     const viewer = source("src/components/tours/panorama-viewer.tsx");
     expect(store).toMatch(/initial_yaw: yaw/);
     expect(store).toMatch(/has_initial_view: true/);
     expect(store).toMatch(/has_initial_view: false/);
-    expect(`${actions}\n${store}`).not.toMatch(/\.upsert\(/);
+    const hotspotWrite = source("src/lib/tours/hotspot-write.ts");
+    expect(store).toMatch(/from\("hotspots"\)\s*\.upsert\(next,\s*\{\s*onConflict:\s*"id"\s*\}\)/);
+    expect(store).not.toMatch(/from\("hotspots"\)\s*\.insert\(/);
+    for (const column of [
+      "id",
+      "scene_id",
+      "target_scene_id",
+      "type",
+      "yaw",
+      "pitch",
+      "label",
+      "content",
+      "style_shape",
+      "style_color",
+      "style_size",
+      "style_rotation",
+      "style_placement",
+    ]) {
+      expect(hotspotWrite).toContain(`${column}:`);
+    }
     expect(actions).toMatch(/yaw: fields\.data\.yaw/);
     expect(actions).toMatch(/pitch: fields\.data\.pitch/);
     expect(actions).not.toMatch(/Math\.PI/);
@@ -249,16 +268,13 @@ describe("hotspot persistence", () => {
     expect(source("supabase/migrations/062_hotspot_style_rotation_placement.sql")).toMatch(
       /style_placement/,
     );
-    const create = actions.slice(
-      actions.indexOf("export async function createHotspot"),
-      actions.indexOf("export async function saveHotspot"),
-    );
     const save = actions.slice(
       actions.indexOf("export async function saveHotspot"),
       actions.indexOf("export async function deleteHotspot"),
     );
-    expect(create).toContain("revalidatePublishedTour");
-    expect(create).not.toContain("refreshTour");
+    expect(actions).not.toContain("export async function createHotspot");
+    expect(save).toContain("requireScene");
+    expect(save).toContain("writeHotspotRow");
     expect(save).toContain("revalidatePublishedTour");
     expect(save).not.toContain("refreshTour");
     expect(publishedTourPaths("demo")).toEqual(["/tour/demo", "/embed/demo"]);

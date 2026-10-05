@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { tourImageUrl } from "@/lib/tours/image-url";
 import { readViewerTour } from "@/lib/tours/map-tour";
 import type { TourTransitionEffect, TourTransitionSpeed } from "@/lib/tours/scene-transition";
+import { hotspotWriteRow, writeHotspotIdempotently } from "@/lib/tours/hotspot-write";
 import { insertWithUniqueSlug } from "@/lib/tours/slug";
 import type { TourDetail, TourScene, TourSummary } from "@/lib/tours/types";
 import type { ViewerTour } from "@/lib/tours/viewer-model";
@@ -367,42 +368,7 @@ export async function setScenePositions(
   return { error: null };
 }
 
-export async function insertHotspot(input: {
-  id: string;
-  tourId: string;
-  sceneId: string;
-  targetSceneId: string | null;
-  type: "link" | "info";
-  yaw: number;
-  pitch: number;
-  label: string | null;
-  content: string | null;
-  styleShape: "arrow" | "chevron" | "circle" | "ring" | "dot" | "pulse";
-  styleColor: string;
-  styleSize: number;
-  styleRotation: number;
-  stylePlacement: "billboard" | "floor";
-}): Promise<{ error: string | null }> {
-  const supabase = await db();
-  const { error } = await supabase.from("hotspots").insert({
-    id: input.id,
-    scene_id: input.sceneId,
-    target_scene_id: input.targetSceneId,
-    type: input.type,
-    yaw: input.yaw,
-    pitch: input.pitch,
-    label: input.label,
-    content: input.content,
-    style_shape: input.styleShape,
-    style_color: input.styleColor,
-    style_size: input.styleSize,
-    style_rotation: input.styleRotation,
-    style_placement: input.stylePlacement,
-  });
-  return { error: error ? message(error, "Could not create the hotspot.") : null };
-}
-
-export async function updateHotspot(input: {
+export async function writeHotspotRow(input: {
   id: string;
   sceneId: string;
   targetSceneId: string | null;
@@ -418,24 +384,28 @@ export async function updateHotspot(input: {
   stylePlacement: "billboard" | "floor";
 }): Promise<{ error: string | null }> {
   const supabase = await db();
-  const { error } = await supabase
-    .from("hotspots")
-    .update({
-      type: input.type,
-      yaw: input.yaw,
-      pitch: input.pitch,
-      label: input.label,
-      content: input.content,
-      target_scene_id: input.targetSceneId,
-      style_shape: input.styleShape,
-      style_color: input.styleColor,
-      style_size: input.styleSize,
-      style_rotation: input.styleRotation,
-      style_placement: input.stylePlacement,
-    })
-    .eq("id", input.id)
-    .eq("scene_id", input.sceneId);
-  return { error: error ? message(error, "Could not update the hotspot.") : null };
+  const row = hotspotWriteRow(input);
+  return writeHotspotIdempotently(
+    {
+      async findSceneId(id) {
+        const { data, error } = await supabase
+          .from("hotspots")
+          .select("scene_id")
+          .eq("id", id)
+          .maybeSingle();
+        if (error) throw new Error(message(error, "Could not save the hotspot."));
+        return (data?.scene_id as string | undefined) ?? null;
+      },
+      async write(next) {
+        const { error } = await supabase.from("hotspots").upsert(next, { onConflict: "id" });
+        if (!error) return;
+        const conflict = new Error(message(error, "Could not save the hotspot."));
+        (conflict as { code?: string }).code = error.code;
+        throw conflict;
+      },
+    },
+    row,
+  );
 }
 
 export async function deleteHotspotRow(
