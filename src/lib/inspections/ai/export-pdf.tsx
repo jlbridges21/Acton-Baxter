@@ -290,7 +290,7 @@ async function resizeToJpegDataUri(bytes: Buffer): Promise<string | null> {
   }
 }
 
-async function loadLogoDataUri(): Promise<string | null> {
+export async function loadLogoDataUri(): Promise<string | null> {
   try {
     const branding = await getBrandingWithLogo();
     if (branding.logoStoragePath) {

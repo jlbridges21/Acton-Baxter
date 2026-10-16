@@ -1,12 +1,14 @@
 import { requireAdmin } from "@/lib/auth/session";
 import { isSuperAdminRole } from "@/lib/auth/roles";
 import { jsonError, jsonOk } from "@/lib/api";
+import { AppError, logServerError } from "@/lib/errors";
 import { z } from "zod";
 import {
   activateGovernanceVersion,
   approveDraftSection,
   assignDomainOwner,
   diffGovernanceSections,
+  formatGovernanceApprovalForbidden,
   getActivationGate,
   getActiveGovernanceVersion,
   getGovernanceVersionSections,
@@ -41,9 +43,15 @@ function parseSurface(raw: string | null | undefined): GovernanceSurface {
   return parsed.success ? parsed.data : "baxter_runtime";
 }
 
+function viewerPayload(user: { id: string; profile: { role: string } }) {
+  const isSuperAdmin = isSuperAdminRole(user.profile.role);
+  return { profileId: user.id, isSuperAdmin };
+}
+
 export async function GET(request: Request) {
   try {
-    await requireAdmin();
+    const user = await requireAdmin();
+    const viewer = viewerPayload(user);
     const { searchParams } = new URL(request.url);
     const view = searchParams.get("view") ?? "overview";
     const surface = parseSurface(searchParams.get("surface"));
@@ -76,11 +84,21 @@ export async function GET(request: Request) {
           changedSections: diffGovernanceSections(olderSecs, newerSecs, surface),
         });
       }
-      return jsonOk({ history, versions, surface });
+      return jsonOk({ history, versions, surface, viewer });
     }
+
+    const canApprove = Object.fromEntries(
+      GOVERNANCE_DOMAINS.map((domain) => [
+        domain,
+        viewer.isSuperAdmin ||
+          owners.some((owner) => owner.domain === domain && owner.profile_id === user.id),
+      ]),
+    );
 
     return jsonOk({
       surface,
+      viewer,
+      canApprove,
       active,
       activeSections,
       draft,
@@ -149,7 +167,58 @@ export async function POST(request: Request) {
         approvedBy: user.id,
         role: user.profile.role,
       });
-      if (!result.ok) return jsonError(new Error(result.error), "approve_section");
+      if (!result.ok) {
+        if (result.reason === "forbidden") {
+          let ownerName: string | null = null;
+          if (result.ownerProfileId) {
+            try {
+              const candidates = await listGovernanceOwnerCandidates();
+              ownerName =
+                candidates.find((candidate) => candidate.id === result.ownerProfileId)
+                  ?.displayName ?? null;
+            } catch (lookupError) {
+              logServerError(
+                `approve_section owner lookup versionId=${versionId} sectionKey=${sectionKey}`,
+                lookupError,
+              );
+            }
+          }
+          return jsonError(
+            new AppError(
+              formatGovernanceApprovalForbidden({
+                sectionLabel: result.sectionLabel,
+                domainLabel: result.domainLabel,
+                ownerAssigned: Boolean(result.ownerProfileId),
+                ownerName,
+              }),
+              { code: "GOVERNANCE_APPROVAL_FORBIDDEN", statusCode: 403, expose: true },
+            ),
+            "approve_section",
+          );
+        }
+        if (result.reason === "not_draft") {
+          return jsonError(
+            new AppError("Only draft versions can be approved", {
+              code: "GOVERNANCE_NOT_DRAFT",
+              statusCode: 409,
+              expose: true,
+            }),
+            "approve_section",
+          );
+        }
+        logServerError(
+          `approve_section versionId=${versionId} sectionKey=${sectionKey}`,
+          new Error(result.message),
+        );
+        return jsonError(
+          new AppError("An unexpected error occurred", {
+            code: "INTERNAL_ERROR",
+            statusCode: 500,
+            expose: false,
+          }),
+          "approve_section",
+        );
+      }
       return jsonOk({ approved: true });
     }
 
@@ -168,7 +237,14 @@ export async function POST(request: Request) {
 
     if (action === "assign_domain_owner") {
       if (!isSuperAdminRole(user.profile.role)) {
-        return jsonError(new Error("Only super_admin can assign domain owners"), "assign");
+        return jsonError(
+          new AppError("Only a super-admin can assign domain owners.", {
+            code: "GOVERNANCE_ASSIGN_FORBIDDEN",
+            statusCode: 403,
+            expose: true,
+          }),
+          "assign",
+        );
       }
       const domain = domainSchema.parse(body.domain) as GovernanceDomain;
       const profileId =
@@ -179,7 +255,14 @@ export async function POST(request: Request) {
       return jsonOk({ owner });
     }
 
-    return jsonError(new Error(`Unknown action: ${action}`), "POST governance");
+    return jsonError(
+      new AppError(`Unknown action: ${action}`, {
+        code: "GOVERNANCE_UNKNOWN_ACTION",
+        statusCode: 400,
+        expose: true,
+      }),
+      "POST governance",
+    );
   } catch (error) {
     return jsonError(error, "POST /api/admin/baxter/governance");
   }

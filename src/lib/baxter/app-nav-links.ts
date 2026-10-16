@@ -109,6 +109,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       match: (pathname) => pathname === "/tours" || pathname.startsWith("/tours/"),
     },
     {
+      href: "/surveys",
+      label: "Surveys",
+      icon: ClipboardList,
+      match: (pathname) => pathname === "/surveys" || pathname.startsWith("/surveys/"),
+    },
+    {
       href: "/settings/integrations",
       label: "Integrations",
       icon: Plug,

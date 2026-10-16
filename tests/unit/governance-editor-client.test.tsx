@@ -117,6 +117,112 @@ describe("GovernanceEditorClient UX", () => {
     expect(screen.getByRole("button", { name: /Go to Domain owners/i })).toBeTruthy();
   });
 
+  it("hides Approve from a non-owner admin and shows who must approve", async () => {
+    const ownerId = "00000000-0000-4000-8000-0000000000cc";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          mockPayload({
+            viewer: { profileId: "00000000-0000-4000-8000-0000000000bb", isSuperAdmin: false },
+            owners: [{ domain: "process_content", profile_id: ownerId }],
+            ownerCandidates: [
+              {
+                id: ownerId,
+                displayName: "Pat Process",
+                email: "pat@actonadu.com",
+                role: "admin",
+              },
+            ],
+            canApprove: { process_content: false },
+          }),
+      })),
+    );
+    render(<GovernanceEditorClient isSuperAdmin={false} />);
+    await screen.findByText("Currently live: v1");
+    fireEvent.click(screen.getByTestId("governance-open-draft"));
+    expect(
+      (await screen.findByTestId("governance-approval-needed-pem_role")).textContent,
+    ).toContain("Needs approval from Pat Process (Process content owner)");
+    fireEvent.click(screen.getByTestId("governance-section-pem_role"));
+    expect(screen.queryByTestId("governance-approve-pem_role")).toBeNull();
+    expect((screen.getByTestId("governance-activate") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows Approve for a super_admin", async () => {
+    render(<GovernanceEditorClient isSuperAdmin />);
+    await screen.findByText("Currently live: v1");
+    fireEvent.click(screen.getByTestId("governance-open-draft"));
+    fireEvent.click(screen.getByTestId("governance-section-pem_role"));
+    expect(screen.getByTestId("governance-approve-pem_role")).toBeTruthy();
+    expect(screen.queryByTestId("governance-approval-needed-pem_role")).toBeNull();
+  });
+
+  it("shows Approve for the domain owner", async () => {
+    const ownerId = "00000000-0000-4000-8000-0000000000cc";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          mockPayload({
+            viewer: { profileId: ownerId, isSuperAdmin: false },
+            owners: [{ domain: "process_content", profile_id: ownerId }],
+            ownerCandidates: [
+              {
+                id: ownerId,
+                displayName: "Pat Process",
+                email: "pat@actonadu.com",
+                role: "admin",
+              },
+            ],
+            canApprove: { process_content: true },
+          }),
+      })),
+    );
+    render(<GovernanceEditorClient isSuperAdmin={false} />);
+    await screen.findByText("Currently live: v1");
+    fireEvent.click(screen.getByTestId("governance-open-draft"));
+    fireEvent.click(screen.getByTestId("governance-section-pem_role"));
+    expect(screen.getByTestId("governance-approve-pem_role")).toBeTruthy();
+    expect(screen.queryByTestId("governance-approval-needed-pem_role")).toBeNull();
+  });
+
+  it("shows the exposed approval error in the banner", async () => {
+    const message =
+      'Only the Process content owner or a super-admin can approve "Role & standard version". No Process content owner is assigned yet; ask a super-admin to assign one under Domain owners.';
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({ error: { code: "GOVERNANCE_APPROVAL_FORBIDDEN", message } }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            mockPayload({
+              viewer: { profileId: "00000000-0000-4000-8000-0000000000aa", isSuperAdmin: true },
+              canApprove: { process_content: true },
+            }),
+        };
+      }),
+    );
+    render(<GovernanceEditorClient isSuperAdmin />);
+    await screen.findByText("Currently live: v1");
+    fireEvent.click(screen.getByTestId("governance-open-draft"));
+    fireEvent.click(screen.getByTestId("governance-section-pem_role"));
+    fireEvent.click(screen.getByTestId("governance-approve-pem_role"));
+    expect((await screen.findByRole("alert")).textContent).toContain(message);
+  });
+
   it("domain owner assignment uses person picker, not UUID input", async () => {
     render(<GovernanceEditorClient isSuperAdmin />);
     await screen.findByText("Currently live: v1");

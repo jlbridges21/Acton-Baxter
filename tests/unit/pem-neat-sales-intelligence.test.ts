@@ -34,7 +34,7 @@ describe("Sales Intelligence stage contract", () => {
     const zodKeys = Object.keys(salesIntelligenceStageSchema.shape).sort();
     const jsonKeys = Object.keys(SALES_INTELLIGENCE_JSON_SCHEMA.properties).sort();
     expect(jsonKeys).toEqual(zodKeys);
-    expect(PEM_NEAT_GENERATION_SCHEMA_VERSION).toBe(2);
+    expect(PEM_NEAT_GENERATION_SCHEMA_VERSION).toBe(3);
   });
 
   it("representative stage output passes Zod and maps into canonical NEAT", () => {

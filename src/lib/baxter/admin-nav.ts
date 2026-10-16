@@ -128,6 +128,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       icon: Orbit,
       match: (pathname) => pathname === "/tours" || pathname.startsWith("/tours/"),
     },
+    {
+      href: "/surveys",
+      label: "Surveys",
+      icon: ClipboardList,
+      match: (pathname) => pathname === "/surveys" || pathname.startsWith("/surveys/"),
+    },
   ];
 
   const connectors: AdminNavLink[] = [

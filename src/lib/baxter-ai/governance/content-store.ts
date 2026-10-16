@@ -549,28 +549,75 @@ export async function listSectionApprovals(
   return (data as GovernanceSectionApproval[]) ?? [];
 }
 
+export type ApproveDraftSectionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: "forbidden";
+      sectionKey: GovernanceSectionKey;
+      sectionLabel: string;
+      domain: GovernanceDomain;
+      domainLabel: string;
+      ownerProfileId: string | null;
+    }
+  | { ok: false; reason: "not_draft" }
+  | { ok: false; reason: "db_error"; message: string };
+
+function forbiddenApproval(
+  sectionKey: GovernanceSectionKey,
+  ownerProfileId: string | null,
+): ApproveDraftSectionResult {
+  const domain = SECTION_DOMAIN[sectionKey];
+  return {
+    ok: false,
+    reason: "forbidden",
+    sectionKey,
+    sectionLabel: SECTION_LABELS[sectionKey],
+    domain,
+    domainLabel: GOVERNANCE_DOMAIN_LABELS[domain],
+    ownerProfileId,
+  };
+}
+
+/**
+ * Plain-language copy for an approval the caller is not allowed to make.
+ * Names the assigned owner when there is one.
+ */
+export function formatGovernanceApprovalForbidden(input: {
+  sectionLabel: string;
+  domainLabel: string;
+  ownerAssigned: boolean;
+  ownerName: string | null;
+}): string {
+  const lead = `Only the ${input.domainLabel} owner or a super-admin can approve "${input.sectionLabel}".`;
+  if (!input.ownerAssigned) {
+    return `${lead} No ${input.domainLabel} owner is assigned yet; ask a super-admin to assign one under Domain owners.`;
+  }
+  if (input.ownerName) {
+    return `${lead} The ${input.domainLabel} owner is ${input.ownerName}.`;
+  }
+  return `${lead} A ${input.domainLabel} owner is assigned.`;
+}
+
 export async function approveDraftSection(input: {
   versionId: string;
   sectionKey: GovernanceSectionKey;
   approvedBy: string;
   role: string;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<ApproveDraftSectionResult> {
   const owners = await listDomainOwners();
   const domain = SECTION_DOMAIN[input.sectionKey];
   const owner = owners.find((o) => o.domain === domain);
   const isOwner = owner?.profile_id === input.approvedBy;
   const isSuper = isSuperAdminRole(input.role);
   if (!isOwner && !isSuper) {
-    return {
-      ok: false,
-      error: `Section "${input.sectionKey}" requires approval from the ${domain} domain owner or a super_admin`,
-    };
+    return forbiddenApproval(input.sectionKey, owner?.profile_id ?? null);
   }
 
   if (usesMemoryStore()) {
     const version = getMemory().versions.get(input.versionId);
     if (!version || version.status !== "draft") {
-      return { ok: false, error: "Only draft versions can be approved" };
+      return { ok: false, reason: "not_draft" };
     }
     getMemory().approvals.set(`${input.versionId}:${input.sectionKey}`, {
       version_id: input.versionId,
@@ -588,7 +635,7 @@ export async function approveDraftSection(input: {
     .eq("id", input.versionId)
     .single();
   if (!version || version.status !== "draft") {
-    return { ok: false, error: "Only draft versions can be approved" };
+    return { ok: false, reason: "not_draft" };
   }
 
   const { error } = await supabase.from("governance_section_approvals").upsert(
@@ -600,7 +647,7 @@ export async function approveDraftSection(input: {
     },
     { onConflict: "version_id,section_key" },
   );
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, reason: "db_error", message: error.message };
   return { ok: true };
 }
 

@@ -75,6 +75,8 @@ export const TOOL_SEED_TABLES: Record<string, readonly string[]> = {
   "qr-code": [],
   // Virtual tours (060): the tour, its scenes, and the hotspots on those scenes.
   tours: ["tours", "scenes", "hotspots"],
+  // Surveys (065): the survey, its questions, and the responses and answers collected by link.
+  surveys: ["surveys", "survey_questions", "survey_responses", "survey_answers"],
 };
 
 export type ExpandedToolTables = {

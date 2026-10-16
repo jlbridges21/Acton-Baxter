@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ActionMenu } from "@/components/ui/action-menu";
 import { ConfirmDialog } from "@/components/pem-neat/confirm-dialog";
+import { formatMeetingOutcomeLabel } from "@/components/pem-neat/pem-neat-formatters";
 import { cn } from "@/lib/utils";
 import { PEM_NEAT_STATUS_LABELS, type PemNeatStatus } from "@/lib/pem-neat/constants";
 import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
@@ -15,7 +16,7 @@ import type { PemNeatListItem } from "@/lib/pem-neat/types";
 
 function formatOutcome(outcome: string | null) {
   if (!outcome) return "—";
-  return outcome.replaceAll("_", " ");
+  return formatMeetingOutcomeLabel(outcome);
 }
 
 function formatDate(value: string | null) {

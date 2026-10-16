@@ -93,6 +93,28 @@ UNKNOWN topics → omit or leave empty arrays. Do NOT invent.
 Do NOT return final NEAT assessment/email/BuilderTrend scaffolding.`;
 }
 
+/**
+ * Code-owned meeting-outcome rules appended to every stage that classifies the outcome.
+ * Lives outside the governance sections so it applies even when an older DB version is active.
+ */
+export const PEM_MEETING_OUTCOME_RULES = `MEETING OUTCOME RULES (code-owned; overrides any looser outcome wording above):
+A PEM has three successful outcomes. Signing or paying for the Feasibility Package is ONE of them — it is NOT the bar for a good outcome.
+- YES: the prospect committed to the next Acton step during the meeting (e.g. signed/paid for the Feasibility Package, agreed to schedule the site inspection).
+- NO: the prospect and/or Acton agreed it is not the right fit (leaving as friends or with another recommendation is a clean NO).
+- DECISION_DATE: the prospect agreed to a specific follow-up meeting/call or decision date/window to decide on the Feasibility Package or next step. This IS a commitment and a successful outcome.
+- DECISION_DATE_NOT_SECURED: none of the above — the meeting ended with "we'll think about it / let us know" and no defined date or window.
+
+Explanation rules:
+- State what WAS agreed, in positive terms: who, what will be decided, and when (e.g. "The homeowners committed to reconvene with Acton on Friday, Oct 16 at noon to decide on the Feasibility Package after their Thursday diligence meeting.").
+- For DECISION_DATE, do NOT describe the result as a failure, a lack of commitment, or "no signed/paid feasibility commitment." Do not lead with what did not happen.
+- The classification and explanation must agree: if a dated follow-up/decision meeting exists, the classification is DECISION_DATE (or YES), never DECISION_DATE_NOT_SECURED.
+- Only for DECISION_DATE_NOT_SECURED explain that the advisor left without a firm decision timeline.
+
+decisionDate:
+- DECISION_DATE: set it to the agreed decision meeting/date in short display form — weekday, month, day, and time when stated ("Fri, Oct 16, 12:00 PM"); a window is fine ("Week of Oct 19"). Do not invent a year, time, or day that was not stated or clearly implied by the meeting date.
+- YES: set it only if a dated next step (e.g. site inspection) was scheduled; otherwise null.
+- NO and DECISION_DATE_NOT_SECURED: null.`;
+
 export function buildSalesIntelligenceStagePrompt(ctx?: PemNeatPromptContext): string {
   return `${buildPemNeatSystemPrompt(ctx)}
 
@@ -135,13 +157,16 @@ Fields:
 - meetingOutcome: {
     classification: YES|NO|DECISION_DATE|DECISION_DATE_NOT_SECURED,
     explanation,
+    decisionDate (string|null) — agreed decision meeting/date, short display form ("Fri, Oct 16, 12:00 PM", "Week of Oct 19"); null unless a specific date/window was agreed,
     transcriptIncomplete (boolean) — true if meeting ending is missing/truncated
   }
 - qualification: { classification, explanation, risks[] }
 
 Numbers must be plain numbers (500000) not "$500k".
 Do NOT invent amounts. Do NOT reverse-engineer Type 2 from Acton pitch.
-If the transcript ends mid-meeting, set transcriptIncomplete=true and do not invent the close.`;
+If the transcript ends mid-meeting, set transcriptIncomplete=true and do not invent the close.
+
+${PEM_MEETING_OUTCOME_RULES}`;
 }
 
 export function buildAssessmentStagePrompt(ctx?: PemNeatPromptContext): string {
@@ -172,7 +197,7 @@ Each category:
 
 Also return palo { purpose, agenda, logistics, outcome } with the same score/status/explanation/evidence shape.
 Also return topStrengths (≤3), topImprovements (≤3), oneThing (highest-leverage coaching).
-Optionally meetingOutcome + qualification if clearer after assessment.
+Optionally meetingOutcome (classification, explanation, decisionDate, transcriptIncomplete) + qualification if clearer after assessment.
 
 SCORING RULES:
 - score must be a NUMBER (8) never "8/10" or "Strong".
@@ -180,7 +205,10 @@ SCORING RULES:
 - NOT_DETERMINABLE does NOT mean poor performance. Poor/shallow/skipped execution with enough context = LOW SCORE (MISSED/PARTIAL).
 - Incomplete/truncated meeting ending: outcome_close and post_sell may be NOT_DETERMINABLE; earlier categories should still be scored from evidence.
 - Evaluate advisor questions, follow-ups, summaries, positioning, and close behavior — not just that customer facts exist.
-- topStrengths / topImprovements / oneThing must be specific and behavioral.`;
+- topStrengths / topImprovements / oneThing must be specific and behavioral.
+- outcome_close: a defined decision date/follow-up meeting is a legitimate close; grade the clarity of the next step, not whether the Feasibility Package was signed on the spot.
+
+${PEM_MEETING_OUTCOME_RULES}`;
 }
 
 export function buildAssessmentCorrectionPrompt(ctx?: PemNeatPromptContext): string {
@@ -294,7 +322,7 @@ export function buildPemNeatSchemaHint(): string {
     "competitionAlternatives": [],
     "actonRecommendation": { "fit?", "reasoning?" },
     "nextSteps": { "prospect": [], "acton": [] },
-    "meetingOutcome": { "classification": "YES|NO|DECISION_DATE|DECISION_DATE_NOT_SECURED", "explanation" },
+    "meetingOutcome": { "classification": "YES|NO|DECISION_DATE|DECISION_DATE_NOT_SECURED", "explanation", "decisionDate": "Fri, Oct 16, 12:00 PM or null" },
     "qualification": { "classification": "...", "reasoning", "risks": [] }
   }
 }`;

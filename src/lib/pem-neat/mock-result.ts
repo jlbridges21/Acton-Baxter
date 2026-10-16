@@ -188,7 +188,8 @@ export function buildMockPemNeatResult(input: {
       meetingOutcome: {
         classification: "DECISION_DATE",
         explanation:
-          "Prospect agreed to reconnect within two weeks after speaking with spouse; not a hard YES to proceed.",
+          "Prospect agreed to reconnect within two weeks after speaking with spouse to decide on the next step.",
+        decisionDate: "Within two weeks",
       },
       qualification: {
         classification: "QUALIFIED_WITH_RISKS",

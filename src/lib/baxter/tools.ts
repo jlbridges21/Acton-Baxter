@@ -185,6 +185,17 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     ctaLabel: "Open Tours",
     aliases: ["tour", "360", "panorama", "virtual tour"],
   },
+  {
+    key: "surveys",
+    name: "Surveys",
+    description: "Create surveys, share a link, and see results.",
+    href: "/surveys",
+    createHref: "/surveys",
+    enabled: true,
+    icon: ClipboardList,
+    ctaLabel: "Open Surveys",
+    aliases: ["survey", "questionnaire", "feedback", "poll", "form"],
+  },
 ];
 
 /** Admin-only platform cards (not employee tools). */

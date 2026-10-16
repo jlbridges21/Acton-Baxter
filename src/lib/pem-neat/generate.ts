@@ -97,6 +97,7 @@ import {
   succeedTrace,
   type PemGenerationTrace,
 } from "./trace";
+import { outcomeDecisionDate } from "./meeting-outcome";
 import { runDeterministicNeatChecks } from "./validate";
 import {
   formatProspectDisplayName,
@@ -384,7 +385,15 @@ function applyAssessmentFromStage(shell: PemNeatStructuredResult, stage: Assessm
   const mapped = mapAssessmentStageToCanonical(stage);
   shell.assessment = mapped.assessment;
   if (mapped.meetingOutcome) {
-    shell.salesIntelligence.meetingOutcome = mapped.meetingOutcome;
+    // Stage C may restate the outcome without the date Stage B already extracted.
+    const priorDate = shell.salesIntelligence.meetingOutcome.decisionDate;
+    shell.salesIntelligence.meetingOutcome = {
+      ...mapped.meetingOutcome,
+      decisionDate: outcomeDecisionDate(
+        mapped.meetingOutcome.classification,
+        mapped.meetingOutcome.decisionDate ?? priorDate,
+      ),
+    };
   }
   if (mapped.qualification) {
     shell.salesIntelligence.qualification = mapped.qualification;

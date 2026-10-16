@@ -338,6 +338,9 @@ export function NeatSalesIntelligencePanel({
         <SectionHeading>8. Meeting Outcome</SectionHeading>
         <p className="mt-3 text-lg font-bold text-[var(--acton-navy)]">
           {formatMeetingOutcomeLabel(sales.meetingOutcome.classification)}
+          {sales.meetingOutcome.decisionDate ? (
+            <span className="font-semibold"> — {sales.meetingOutcome.decisionDate}</span>
+          ) : null}
         </p>
         <p className="mt-3 text-sm leading-relaxed text-[var(--acton-navy)]">
           {sales.meetingOutcome.explanation}

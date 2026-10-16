@@ -36,11 +36,18 @@ export async function startPemNeatGeneration(pemNeatId: string): Promise<{
     });
   }
 
+  // Stage outputs only resume a failed run. A regenerate of a completed/stale NEAT starts
+  // fresh so current prompts and any edited transcript are actually used.
+  const resumeOutputs =
+    existing.status === "failed"
+      ? ((existing as { stage_outputs_json?: PemStageOutputs }).stage_outputs_json ?? {})
+      : {};
+
   await store.markGenerating(pemNeatId);
   await store.updateGenerationProgress(pemNeatId, {
     stage: "queued",
     trace: null,
-    stageOutputs: (existing as { stage_outputs_json?: PemStageOutputs }).stage_outputs_json ?? {},
+    stageOutputs: resumeOutputs,
   });
 
   const job = await enqueueJob({

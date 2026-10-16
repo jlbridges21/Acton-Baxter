@@ -15,6 +15,7 @@ import {
   type MeetingOutcome,
   type QualificationLevel,
 } from "./constants";
+import { nullableDecisionDate, outcomeDecisionDate } from "./meeting-outcome";
 import type { PemNeatStructuredResult } from "./schemas";
 
 export const PEM_NEAT_ASSESSMENT_SCHEMA_VERSION = 1;
@@ -162,6 +163,7 @@ export const assessmentStageSchema = z.object({
     .object({
       classification: outcomeSchema,
       explanation: z.string().min(1),
+      decisionDate: nullableDecisionDate,
       transcriptIncomplete: z.boolean().optional().default(false),
     })
     .optional(),
@@ -479,6 +481,10 @@ export function mapAssessmentStageToCanonical(stage: AssessmentStageOutput): {
           explanation: stage.meetingOutcome.transcriptIncomplete
             ? `${stage.meetingOutcome.explanation} (Transcript appears incomplete — ending not fully observed.)`
             : stage.meetingOutcome.explanation,
+          decisionDate: outcomeDecisionDate(
+            stage.meetingOutcome.classification,
+            stage.meetingOutcome.decisionDate,
+          ),
         }
       : undefined,
     qualification: stage.qualification

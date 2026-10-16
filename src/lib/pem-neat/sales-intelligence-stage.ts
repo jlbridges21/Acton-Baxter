@@ -10,10 +10,11 @@ import {
   type MeetingOutcome,
   type QualificationLevel,
 } from "./constants";
+import { nullableDecisionDate, outcomeDecisionDate } from "./meeting-outcome";
 import type { PemNeatStructuredResult } from "./schemas";
 
 /** Generation contract version (SI synthesis shape, structured outputs). */
-export const PEM_NEAT_GENERATION_SCHEMA_VERSION = 2;
+export const PEM_NEAT_GENERATION_SCHEMA_VERSION = 3;
 /** Fact Ledger evidence shape version — bump only when FL contract breaks resume. */
 export const PEM_NEAT_FACT_LEDGER_SCHEMA_VERSION = 1;
 
@@ -143,6 +144,7 @@ export const salesIntelligenceStageSchema = z.object({
   meetingOutcome: z.object({
     classification: outcomeSchema,
     explanation: z.string().min(1),
+    decisionDate: nullableDecisionDate,
     transcriptIncomplete: z.boolean().optional().default(false),
   }),
   qualification: z.object({
@@ -278,13 +280,22 @@ export const SALES_INTELLIGENCE_JSON_SCHEMA = {
     meetingOutcome: {
       type: "object",
       additionalProperties: false,
-      required: ["classification", "explanation", "transcriptIncomplete"],
+      required: ["classification", "explanation", "decisionDate", "transcriptIncomplete"],
       properties: {
         classification: {
           type: "string",
           enum: [...MEETING_OUTCOMES],
         },
-        explanation: { type: "string" },
+        explanation: {
+          type: "string",
+          description:
+            "What was agreed, stated positively. A dated follow-up meeting to decide on the Feasibility Package is DECISION_DATE and a successful outcome — never describe it as a lack of commitment.",
+        },
+        decisionDate: {
+          type: ["string", "null"],
+          description:
+            'Agreed decision meeting/date as a short display string, e.g. "Fri, Oct 16, 12:00 PM" or "Week of Oct 19". Null unless a specific date or window was agreed.',
+        },
         transcriptIncomplete: { type: "boolean" },
       },
     },
@@ -504,6 +515,10 @@ export function mapSalesIntelligenceStageToCanonical(
       explanation: stage.meetingOutcome.transcriptIncomplete
         ? `${stage.meetingOutcome.explanation} (Transcript appears incomplete — ending not fully observed.)`
         : stage.meetingOutcome.explanation,
+      decisionDate: outcomeDecisionDate(
+        stage.meetingOutcome.classification,
+        stage.meetingOutcome.decisionDate,
+      ),
     },
     qualification: {
       classification: stage.qualification.classification as QualificationLevel,

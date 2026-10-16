@@ -211,11 +211,13 @@ The prospect explicitly agreed to move forward with the defined next Acton step.
 
 The prospect or Acton decided not to pursue the opportunity.
 
-### DECISION DATE
+### DECISION DATE (displayed as "Decision meeting scheduled")
 
-The prospect has not committed but a defined decision/follow-up date or window exists.
+The prospect agreed to a defined follow-up meeting or decision date/window to decide on the Feasibility Package (or other next step). This is a commitment and a successful outcome — signing the Feasibility Package on the spot is not required. Describe what was agreed (who, what will be decided, when); do not frame it as "no signed or paid commitment."
 
-If none is established, use **DECISION DATE — NOT SECURED** and explain that the rep left without a firm decision timeline.
+### DECISION DATE — NOT SECURED (displayed as "No decision date set")
+
+No YES, NO, or defined date/window was established ("we'll think about it and let you know"). Explain that the rep left without a firm decision timeline.
 
 Do not call general interest a YES.
 

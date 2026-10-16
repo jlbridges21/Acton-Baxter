@@ -214,6 +214,7 @@ export function PemNeatResultClient({
           salespersonDisplayName={item.salesperson_display_name}
           meetingDate={item.meeting_date}
           meetingOutcome={item.meeting_outcome}
+          decisionDate={result?.salesIntelligence.meetingOutcome.decisionDate ?? null}
           qualification={item.qualification}
           generatedAt={item.generated_at}
           logoUrl={logoUrl}

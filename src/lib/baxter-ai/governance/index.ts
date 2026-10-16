@@ -60,6 +60,7 @@ export {
   activateGovernanceVersion,
   getActivationGate,
   formatActivationBlockedMessage,
+  formatGovernanceApprovalForbidden,
   listGovernanceVersions,
   getGovernanceVersionSections,
   listDomainOwners,

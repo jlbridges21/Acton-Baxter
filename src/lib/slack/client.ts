@@ -429,3 +429,51 @@ export async function authTestSlack(): Promise<{
 
   return { ok: true, team: data.team, user: data.user };
 }
+
+export type SlackPostableChannel = { id: string; name: string; isPrivate: boolean };
+
+/**
+ * Channels the bot is a member of (so chat.postMessage will succeed), sorted by name.
+ * Returns `configured: false` without calling Slack when no bot token is set.
+ */
+export async function listSlackPostableChannels(): Promise<
+  { configured: false } | { configured: true; channels: SlackPostableChannel[] }
+> {
+  const token = (getEnv().SLACK_BOT_TOKEN ?? "").trim();
+  if (!token) return { configured: false };
+
+  const channels: SlackPostableChannel[] = [];
+  let cursor: string | undefined;
+  let pages = 0;
+  do {
+    const url = new URL("https://slack.com/api/conversations.list");
+    url.searchParams.set("limit", "200");
+    url.searchParams.set("types", "public_channel,private_channel");
+    url.searchParams.set("exclude_archived", "true");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const data = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      error?: string;
+      channels?: Array<{ id?: string; name?: string; is_member?: boolean; is_private?: boolean }>;
+      response_metadata?: { next_cursor?: string };
+    } | null;
+    if (!data?.ok) {
+      throw new SlackClientError(`Slack API error: ${data?.error ?? "conversations_list_failed"}`, {
+        statusCode: response.status === 429 ? 429 : 502,
+        slackError: data?.error ?? null,
+        baxterCode: mapSlackApiErrorToCode(data?.error ?? null),
+      });
+    }
+    for (const c of data.channels ?? []) {
+      if (c.id && c.name && c.is_member) {
+        channels.push({ id: c.id, name: c.name, isPrivate: Boolean(c.is_private) });
+      }
+    }
+    cursor = data.response_metadata?.next_cursor || undefined;
+    pages += 1;
+  } while (cursor && pages < 12);
+
+  channels.sort((a, b) => a.name.localeCompare(b.name));
+  return { configured: true, channels };
+}

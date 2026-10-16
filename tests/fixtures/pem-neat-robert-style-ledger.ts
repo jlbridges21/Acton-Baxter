@@ -285,6 +285,7 @@ export const ROBERT_STYLE_SI_STAGE: SalesIntelligenceStageOutput = {
     classification: "DECISION_DATE_NOT_SECURED",
     explanation:
       "Meeting still in discovery; no firm decision date secured. If transcript ends abruptly, treat ending as incomplete.",
+    decisionDate: null,
     transcriptIncomplete: true,
   },
   qualification: {

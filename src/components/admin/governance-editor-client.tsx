@@ -25,8 +25,15 @@ type GatePayload = {
   changedSections?: GovernanceSectionKey[];
 };
 
+type GovernanceViewer = {
+  profileId: string;
+  isSuperAdmin: boolean;
+};
+
 type Payload = {
   surface: GovernanceSurface;
+  viewer?: GovernanceViewer;
+  canApprove?: Partial<Record<GovernanceDomain, boolean>>;
   active: { id: string; version_number: number; status: string } | null;
   activeSections: Array<{ section_key: GovernanceSectionKey; content: string; domain: string }>;
   draft: { id: string; version_number: number; status: string; rationale: string | null } | null;
@@ -50,6 +57,46 @@ type Payload = {
 
 type MainTab = "content" | "owners";
 type ContentMode = "live" | "draft";
+
+function responseErrorMessage(body: unknown, fallback: string): string {
+  if (!body || typeof body !== "object") return fallback;
+  const error = (body as { error?: unknown }).error;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
+}
+
+function viewerCanApprove(input: {
+  domain: GovernanceDomain;
+  isSuperAdmin: boolean;
+  viewer?: GovernanceViewer;
+  owners: Payload["owners"];
+  canApprove?: Partial<Record<GovernanceDomain, boolean>>;
+}): boolean {
+  if (input.canApprove && input.domain in input.canApprove) {
+    return Boolean(input.canApprove[input.domain]);
+  }
+  if (input.viewer?.isSuperAdmin || input.isSuperAdmin) return true;
+  const ownerId = input.owners.find((owner) => owner.domain === input.domain)?.profile_id;
+  return Boolean(ownerId && input.viewer?.profileId === ownerId);
+}
+
+function approvalNeedText(input: {
+  domainLabel: string;
+  ownerAssigned: boolean;
+  ownerName: string | null;
+}): string {
+  if (input.ownerName) {
+    return `Needs approval from ${input.ownerName} (${input.domainLabel} owner)`;
+  }
+  if (input.ownerAssigned) {
+    return `Needs approval from the ${input.domainLabel} owner`;
+  }
+  return `Needs approval: no ${input.domainLabel} owner assigned; a super-admin must assign one or approve.`;
+}
 
 const DOMAIN_EXPLAINER =
   "Domains group related sections so the right person reviews the right kind of change — grading-criteria changes need Process Content approval; tone and wording changes need a different reviewer.";
@@ -173,10 +220,11 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
       });
       const body = await res.json();
       if (!res.ok && res.status !== 409) {
-        throw new Error(body.error?.message ?? body.error ?? "Request failed");
+        throw new Error(responseErrorMessage(body, "Request failed"));
       }
-      if (res.status === 409 && body.error) {
-        setError(typeof body.error === "string" ? body.error : body.error.message);
+      if (res.status === 409) {
+        const message = responseErrorMessage(body, "");
+        if (message) setError(message);
       }
       await load();
       return body;
@@ -270,7 +318,10 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
       </div>
 
       {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm whitespace-pre-wrap text-red-800">
+        <p
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm whitespace-pre-wrap text-red-800"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
@@ -388,15 +439,25 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
                   {data.draft ? "Open existing draft" : "Propose draft from live"}
                 </Button>
                 {data.draft ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="accent"
-                    disabled={busy}
-                    onClick={() => void post("activate", { versionId: data.draft!.id })}
+                  <span
+                    title={
+                      data.gate && !data.gate.ok
+                        ? (data.gate.error ?? "This draft still needs approval.")
+                        : undefined
+                    }
+                    className="inline-flex"
                   >
-                    Activate draft
-                  </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="accent"
+                      disabled={busy || Boolean(data.gate && !data.gate.ok)}
+                      data-testid="governance-activate"
+                      onClick={() => void post("activate", { versionId: data.draft!.id })}
+                    >
+                      Activate draft
+                    </Button>
+                  </span>
                 ) : null}
               </div>
             </div>
@@ -456,6 +517,19 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
                 showingDraft &&
                 data.activeSections.find((s) => s.section_key === key)?.content !==
                   data.draftSections.find((s) => s.section_key === key)?.content;
+              const canApprove = viewerCanApprove({
+                domain,
+                isSuperAdmin,
+                viewer: data.viewer,
+                owners: data.owners,
+                canApprove: data.canApprove,
+              });
+              const ownerId = data.owners.find((owner) => owner.domain === domain)?.profile_id;
+              const ownerName =
+                data.ownerCandidates.find((candidate) => candidate.id === ownerId)?.displayName ??
+                null;
+              const needsApprovalNote =
+                showingDraft && isChanged && !approved.has(key) && !canApprove;
 
               return (
                 <Card key={key} className="overflow-hidden p-0">
@@ -484,6 +558,18 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
                       {isOpen ? "Hide" : "Show"}
                     </span>
                   </button>
+                  {needsApprovalNote ? (
+                    <p
+                      className="px-4 pb-3 text-xs text-amber-900"
+                      data-testid={`governance-approval-needed-${key}`}
+                    >
+                      {approvalNeedText({
+                        domainLabel: data.meta.domainLabels[domain],
+                        ownerAssigned: Boolean(ownerId),
+                        ownerName,
+                      })}
+                    </p>
+                  ) : null}
 
                   {isOpen ? (
                     <div className="border-t border-[var(--acton-border)] px-4 py-3">
@@ -502,11 +588,12 @@ export function GovernanceEditorClient({ isSuperAdmin }: { isSuperAdmin: boolean
                           >
                             Edit
                           </Button>
-                          {isChanged && !approved.has(key) ? (
+                          {isChanged && !approved.has(key) && canApprove ? (
                             <Button
                               type="button"
                               size="sm"
                               disabled={busy || !data.draft}
+                              data-testid={`governance-approve-${key}`}
                               onClick={() =>
                                 void post("approve_section", {
                                   versionId: data.draft!.id,

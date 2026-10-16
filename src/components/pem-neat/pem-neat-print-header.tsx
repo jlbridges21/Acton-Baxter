@@ -2,7 +2,7 @@ import Image from "next/image";
 import {
   formatGeneratedAt,
   formatMeetingDate,
-  formatMeetingOutcomeLabel,
+  formatMeetingOutcomeWithDate,
   formatEnumLabel,
 } from "@/components/pem-neat/pem-neat-formatters";
 import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
@@ -18,6 +18,7 @@ export function PemNeatPrintHeader({
   salespersonDisplayName,
   meetingDate,
   meetingOutcome,
+  decisionDate = null,
   qualification,
   generatedAt,
   logoUrl = null,
@@ -29,6 +30,7 @@ export function PemNeatPrintHeader({
   salespersonDisplayName: string | null;
   meetingDate: string | null;
   meetingOutcome: string | null;
+  decisionDate?: string | null;
   qualification: string | null;
   generatedAt: string | null;
   logoUrl?: string | null;
@@ -94,7 +96,7 @@ export function PemNeatPrintHeader({
         <div>
           <dt className="text-xs tracking-wide text-[var(--acton-muted)] uppercase">Outcome</dt>
           <dd className="text-sm font-semibold text-[var(--acton-navy)]">
-            {meetingOutcome ? formatMeetingOutcomeLabel(meetingOutcome) : "—"}
+            {meetingOutcome ? formatMeetingOutcomeWithDate(meetingOutcome, decisionDate) : "—"}
           </dd>
         </div>
         <div>

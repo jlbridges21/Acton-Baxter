@@ -365,6 +365,8 @@ export const salesIntelligenceSchema = z.object({
   meetingOutcome: z.object({
     classification: outcomeClassificationSchema,
     explanation: nonEmptyOrPlaceholder("Outcome not established from transcript evidence."),
+    /** Short display string for the agreed decision meeting/date (e.g. "Fri, Oct 16, 12:00 PM"). */
+    decisionDate: z.string().trim().min(1).nullable().catch(null).default(null),
   }),
   qualification: z.object({
     classification: qualificationClassificationSchema,

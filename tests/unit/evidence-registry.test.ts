@@ -141,6 +141,7 @@ describe("GHL↔PEM opportunity collision (registry)", () => {
     mock.salesIntelligence.meetingOutcome = {
       classification: "YES",
       explanation: "Scheduled follow-up to review plans.",
+      decisionDate: null,
     };
     await store.saveGenerationSuccess(record.id, {
       structuredResult: mock,

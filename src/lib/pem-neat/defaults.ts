@@ -115,6 +115,7 @@ export function emptyPemNeatShell(input: {
       meetingOutcome: {
         classification: "DECISION_DATE_NOT_SECURED",
         explanation: "Outcome not yet established from transcript evidence.",
+        decisionDate: null,
       },
       qualification: {
         classification: "EARLY_EXPLORATORY",

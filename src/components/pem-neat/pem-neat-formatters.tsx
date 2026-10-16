@@ -6,6 +6,7 @@ export function formatEnumLabel(value: string | null | undefined): string {
   return value.replaceAll("_", " ");
 }
 
+/** Display labels only — stored enum values are unchanged. */
 export function formatMeetingOutcomeLabel(outcome: MeetingOutcome | string): string {
   switch (outcome) {
     case "YES":
@@ -13,12 +14,22 @@ export function formatMeetingOutcomeLabel(outcome: MeetingOutcome | string): str
     case "NO":
       return "NO";
     case "DECISION_DATE":
-      return "DECISION DATE";
+      return "DECISION MEETING SCHEDULED";
     case "DECISION_DATE_NOT_SECURED":
-      return "DECISION DATE — NOT SECURED";
+      return "NO DECISION DATE SET";
     default:
       return formatEnumLabel(outcome);
   }
+}
+
+/** Outcome label with the agreed decision date appended when present. */
+export function formatMeetingOutcomeWithDate(
+  outcome: MeetingOutcome | string,
+  decisionDate: string | null | undefined,
+): string {
+  const label = formatMeetingOutcomeLabel(outcome);
+  const date = decisionDate?.trim();
+  return date ? `${label} — ${date}` : label;
 }
 
 export function meetingOutcomeTone(
