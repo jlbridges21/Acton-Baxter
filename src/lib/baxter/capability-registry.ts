@@ -309,7 +309,7 @@ export function buildBaxterCapabilityCatalog(
       shortDescription:
         "Run confirmed new-project setup end to end (Master Log row, project folder, charter, charter list, Slack channel + kickoff) after human confirmation, from the web app or /new-project in Slack",
       detailedDescription:
-        "Search GoHighLevel for a customer, confirm project details, and run project setup from the web app or /new-project in Slack. When Google write scopes are connected, Baxter appends the Master Project Log row (marked Open in column J, so the project shows up in Receipts, Site Inspections, and Inventory pickers) and the Project Charter List row, and creates the Drive folder + charter. Only Open projects appear in those pickers. When Slack provisioning is enabled, Baxter creates a public channel, invites members (respecting test mode), and posts the kickoff message.",
+        "Search GoHighLevel for a customer, confirm project details, and run project setup from the web app or /new-project in Slack. When Google write scopes are connected, Baxter appends the Master Project Log row (marked Open in column J, so the project shows up in Receipts, Site Inspections, and Inventory pickers) and the Project Charter List row, and creates the Drive folder + charter. Site Inspections offer only Open projects; Receipts and Inventory show Open by default and can switch to Closed or All. When Slack provisioning is enabled, Baxter creates a public channel, invites members (respecting test mode), and posts the kickoff message.",
       category: "process",
       audience: ["employee", "admin"],
       rolesAllowed: ["user", "admin", "super_admin", "*"],

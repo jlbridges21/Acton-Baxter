@@ -9,9 +9,10 @@ import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
 import { ValidationError } from "@/lib/errors";
 import {
-  isPickableExpenseJob,
+  isSelectableExpenseJob,
   type ExpenseJob,
   type ExpenseJobCreateCustomInput,
+  type ExpenseJobSelectionOptions,
   type ExpenseJobProjectStatus,
   type ExpenseJobUpdateInput,
   type Receipt,
@@ -140,22 +141,29 @@ export type ListExpenseJobsOptions = {
   /** Admin views and label lookups: every row, any status. */
   includeInactive?: boolean;
   /**
-   * Hide Closed/unknown project rows (custom rows always pass).
-   * Defaults to true whenever includeInactive is false, so pickers get Open projects only.
+   * Picker lists (includeInactive false) hold active custom rows plus Open projects;
+   * set this to also include Closed projects (Receipts, Inventory). Unknown never passes.
    */
-  openProjectsOnly?: boolean;
+  allowClosed?: boolean;
 };
 
 export async function listExpenseJobsRaw(
   options?: ListExpenseJobsOptions,
 ): Promise<ExpenseJobRow[]> {
   const includeInactive = Boolean(options?.includeInactive);
-  const openProjectsOnly = options?.openProjectsOnly ?? !includeInactive;
+  const allowClosed = Boolean(options?.allowClosed);
   if (shouldUseMemory()) {
-    const rows = Array.from(getMemory().jobs.values()).filter(
-      (j) =>
-        (includeInactive || j.is_active) &&
-        (!openProjectsOnly || j.source === "custom" || j.project_status === "open"),
+    const rows = Array.from(getMemory().jobs.values()).filter((j) =>
+      includeInactive
+        ? true
+        : isSelectableExpenseJob(
+            {
+              isActive: j.is_active,
+              source: j.source,
+              projectStatus: j.project_status ?? "unknown",
+            },
+            { allowClosed },
+          ),
     );
     return rows.sort((a, b) =>
       compareExpenseJobsForList(
@@ -178,10 +186,13 @@ export async function listExpenseJobsRaw(
   const supabase = createServiceClient();
   let query = supabase.from("expense_jobs").select("*");
   if (!includeInactive) {
-    query = query.eq("is_active", true);
-  }
-  if (openProjectsOnly) {
-    query = query.or("source.eq.custom,project_status.eq.open");
+    query = query
+      .eq("is_active", true)
+      .or(
+        allowClosed
+          ? "source.eq.custom,project_status.in.(open,closed)"
+          : "source.eq.custom,project_status.eq.open",
+      );
   }
   // Fetch then sort in app — project-number desc + custom grouping need richer compare than SQL alone.
   const { data, error } = await query;
@@ -232,21 +243,26 @@ export async function getExpenseJob(id: string): Promise<ExpenseJob | null> {
 }
 
 /**
- * Rejects a job that pickers no longer offer (hidden, Closed, or unknown status).
- * `currentJobId` lets an existing record keep its link to a now-Closed project.
+ * Rejects a job the tool's picker would not offer (hidden, unknown status, or Closed
+ * when `allowClosed` is false). `currentJobId` lets an existing record keep its link.
  */
 export function assertPickableExpenseJob<
   T extends Pick<ExpenseJob, "id" | "isActive" | "source" | "projectStatus">,
->(job: T | null, options?: { currentJobId?: string | null }): asserts job is T {
+>(
+  job: T | null,
+  options: ExpenseJobSelectionOptions & { currentJobId?: string | null },
+): asserts job is T {
   if (!job) throw new ValidationError("That project is not on the shared project list");
-  if (options?.currentJobId && options.currentJobId === job.id) return;
-  if (isPickableExpenseJob(job)) return;
+  if (options.currentJobId && options.currentJobId === job.id) return;
+  if (isSelectableExpenseJob(job, options)) return;
   if (!job.isActive) throw new ValidationError("That job is hidden. Choose another one.");
   if (job.projectStatus === "closed") {
-    throw new ValidationError("That project is Closed. Choose an Open project.");
+    throw new ValidationError(
+      "That project is Closed. Site inspections can only use Open projects.",
+    );
   }
   throw new ValidationError(
-    "That project isn't marked Open on the Master Project Log. Choose an Open project.",
+    "That project isn't marked Open or Closed on the Master Project Log. Choose another project.",
   );
 }
 
@@ -529,7 +545,7 @@ export async function createReceipt(input: ReceiptCreateInput): Promise<Receipt>
   if (jobId) {
     const job = await getExpenseJob(jobId);
     if (!job) throw new ValidationError("Select an active job");
-    assertPickableExpenseJob(job);
+    assertPickableExpenseJob(job, { allowClosed: true });
   }
 
   const items = input.items?.trim() || null;

@@ -16,8 +16,21 @@ import type { ImportDraft, ImportDraftLine } from "@/lib/inventory/import-types"
 import type { InventoryItem, InventoryVocabValue } from "@/lib/inventory/types";
 import { normalizeCustomJobLabel, shouldOfferCreateCustomJob } from "@/lib/receipts/job-select";
 import { formatCentsAsDecimalDollars } from "@/lib/receipts/amount";
+import {
+  countHiddenProjectMatches,
+  countProjectStatusViews,
+  filterByProjectStatusView,
+  isClosedProjectOption,
+} from "@/lib/receipts/project-status-view";
+import type { ExpenseJobProjectStatus } from "@/lib/receipts/types";
+import {
+  ClosedProjectBadge,
+  ProjectStatusFilter,
+  ProjectStatusNoMatchHint,
+  useProjectStatusView,
+} from "@/components/shared/project-status-filter";
 
-type Job = { id: string; label: string };
+type Job = { id: string; label: string; projectStatus?: ExpenseJobProjectStatus | null };
 
 type EditableLine = ImportDraftLine & { key: string };
 
@@ -147,11 +160,16 @@ export function InventoryImportDialog({
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"upload" | "review">("upload");
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return jobs;
-    return jobs.filter((job) => job.label.toLowerCase().includes(needle));
-  }, [jobs, query]);
+  const [statusView, setStatusView] = useProjectStatusView("inventory");
+  const statusCounts = useMemo(() => countProjectStatusViews(jobs), [jobs]);
+  const needle = query.trim().toLowerCase();
+  const matchesQuery = (job: Job) => !needle || job.label.toLowerCase().includes(needle);
+  const filtered = filterByProjectStatusView(jobs.filter(matchesQuery), statusView, {
+    getId: (job) => job.id,
+    pinnedIds: [jobId],
+  });
+  const hiddenMatches =
+    filtered.length === 0 ? countHiddenProjectMatches(jobs, statusView, matchesQuery) : 0;
   const canCreate = shouldOfferCreateCustomJob(
     query,
     jobs.map((job) => job.label),
@@ -384,8 +402,15 @@ export function InventoryImportDialog({
                 </p>
               ) : null}
             </div>
-            <label className="block text-xs font-semibold">
-              Project
+            <div className="block text-xs font-semibold">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Project</span>
+                <ProjectStatusFilter
+                  value={statusView}
+                  onChange={setStatusView}
+                  counts={statusCounts}
+                />
+              </div>
               <Input
                 aria-label="Import project"
                 className="mt-1"
@@ -399,7 +424,7 @@ export function InventoryImportDialog({
                 }}
                 onFocus={() => setPickerOpen(true)}
               />
-            </label>
+            </div>
             {pickerOpen ? (
               <ul className="max-h-40 overflow-auto rounded-md border border-[var(--acton-border)] bg-white text-sm">
                 {filtered.map((job) => (
@@ -415,9 +440,20 @@ export function InventoryImportDialog({
                       }}
                     >
                       {job.label}
+                      {isClosedProjectOption(job) ? <ClosedProjectBadge /> : null}
                     </button>
                   </li>
                 ))}
+                {hiddenMatches > 0 ? (
+                  <li>
+                    <ProjectStatusNoMatchHint
+                      view={statusView}
+                      query={query}
+                      hiddenCount={hiddenMatches}
+                      onShowAll={() => setStatusView("all")}
+                    />
+                  </li>
+                ) : null}
                 {canCreate ? (
                   <li>
                     <button

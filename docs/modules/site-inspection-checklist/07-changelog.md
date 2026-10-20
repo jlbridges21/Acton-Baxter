@@ -16,7 +16,7 @@ For this module, the version numbers mean:
 
 ### Changed
 
-- **Project picker shows Open projects only.** Starting or editing an inspection offers projects marked Open in column J of the Master Project Log, plus active custom jobs. Creating or re-linking an inspection to a Closed or Unknown project is rejected on the server. Inspections already linked to a project that later Closes keep their project name and address, and the edit dialog shows the link as "Current: … (Closed)". Needs migration `066_expense_jobs_project_status.sql`.
+- **Project picker shows Open projects only.** Starting or editing an inspection offers projects marked Open in column J of the Master Project Log, plus active custom jobs. Creating or re-linking an inspection to a Closed or Unknown project is rejected on the server. Inspections already linked to a project that later Closes keep their project name and address, and the edit dialog shows the link as "Current: … (Closed)". Needs migration `066_expense_jobs_project_status.sql`. The picker now says "Only Open projects from the Master Project Log are shown." Receipts and Inventory can show Closed projects; inspections cannot.
 
 ### To do
 

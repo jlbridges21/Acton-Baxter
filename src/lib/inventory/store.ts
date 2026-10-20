@@ -167,8 +167,8 @@ function clean(value: string | null | undefined): string | null {
 }
 
 /**
- * New links must be an Open project (or active custom job). `currentJobId` is the
- * item's existing link, which may stay on a project that has since Closed.
+ * New links must be an Open or Closed project (or active custom job), never an
+ * unknown-status or hidden one. `currentJobId` is the item's existing link, which may stay put.
  */
 async function resolveProject(
   input: {
@@ -184,7 +184,7 @@ async function resolveProject(
   if (!jobId && !custom) throw new ValidationError("Project is required");
   if (custom) return { jobId: null, customProjectLabel: custom, projectLabel: custom };
   const job = await lookupJob(jobId!);
-  assertPickableExpenseJob(job, { currentJobId });
+  assertPickableExpenseJob(job, { allowClosed: true, currentJobId });
   return { jobId, customProjectLabel: null, projectLabel: job.label };
 }
 

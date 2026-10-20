@@ -3,13 +3,13 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { listExpenseJobs } from "@/lib/receipts";
 
 /**
- * Employee dropdown: Open projects plus active custom jobs. Reads expense_jobs
+ * Employee dropdown: Open and Closed projects plus active custom jobs. Reads expense_jobs
  * only (no Google).
  */
 export async function GET() {
   try {
     await requireActiveUser();
-    const jobs = await listExpenseJobs({ includeInactive: false });
+    const jobs = await listExpenseJobs({ includeInactive: false, allowClosed: true });
     return jsonOk({ jobs });
   } catch (error) {
     return jsonError(error, "GET /api/receipts/jobs");

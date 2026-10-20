@@ -57,10 +57,11 @@ The Master Project Log has a logo banner in rows 1–5, headers in row 6, and da
 
 - Baxter reads `A:J` and finds the header row by scanning the first rows, so the banner is skipped.
 - `Open` and `Closed` are read case-insensitively. Anything else, including a blank cell, is **Unknown**.
-- **Only Open projects appear in tool pickers** (Receipts, Site Inspections, Inventory). Closed and Unknown are hidden. Records already linked to a project that later Closes keep showing its label.
+- **Site Inspections offer Open projects only.** Receipts and Inventory (logging, the Receipt Log job filter, item form, Project filter, and PDF import) offer Open and Closed projects behind an **Open · Closed · All** toggle that defaults to Open and is remembered per tool in the browser (`baxter.projectStatusFilter.receipts` / `.inventory`). Unknown-status and hidden projects are never offered. Records already linked to a project that later Closes keep showing its label.
+- The server enforces the same rule: inspections reject a new link to a Closed project ("Site inspections can only use Open projects"); receipts, inventory items, and inventory imports accept Closed; every tool rejects Unknown and hidden projects.
 - Project Setup writes `Open` in column J for every new project, and the post-setup sync makes it pickable straight away.
 - `expense_jobs.project_status` (migration **066**) holds the synced status. A refresh upserts every sheet row with its status and marks project rows that are no longer on the sheet as `closed`.
-- Admins can see every project, filter by status, and refresh at **AI Governance → Master Project Log** (`/admin/baxter/projects`). The same refresh is on `/admin/expense-jobs`.
+- Admins can see every project, filter by status, and refresh at **AI Governance → Master Project Log** (`/admin/baxter/projects`). The same refresh is on `/admin/expense-jobs`. Both pages show "Last refreshed from sheet" (the latest `updated_at` among project rows, so an admin edit to a project row also moves it) with Open / Closed / Unknown counts, and a banner when no project row has a status yet.
 - Baxter AI lists and counts cover Open projects unless the question asks about closed or all projects. Lookups by project number or name find any status and label Closed projects.
 
 ## Manual setup (Prompt 3)

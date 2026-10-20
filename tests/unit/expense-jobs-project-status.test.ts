@@ -1,6 +1,6 @@
 /**
- * Open/Closed project status on expense_jobs — sync, picker filtering, and the
- * "existing links keep working" rule for receipts and inventory.
+ * Open/Closed project status on expense_jobs — sync, the per-tool selection rule
+ * (inspections Open-only; receipts and inventory Open or Closed), and existing links.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetEnvCacheForTests } from "@/lib/env";
@@ -25,7 +25,13 @@ import {
   updateExpenseJob,
 } from "@/lib/receipts/store";
 import { syncExpenseJobsFromMasterProjectLog } from "@/lib/receipts/sync-jobs";
-import { splitPickerJobs, type ExpenseJob } from "@/lib/receipts/types";
+import { isSelectableExpenseJob, splitPickerJobs, type ExpenseJob } from "@/lib/receipts/types";
+import {
+  createSiteInspection,
+  listTemplates,
+  resetSiteInspectionMemoryForTests,
+  updateSiteInspectionDetails,
+} from "@/lib/inspections";
 import {
   assertInventoryProjectAssignable,
   createInventoryItem,
@@ -61,6 +67,12 @@ const SHEET: ProjectLogRow[] = [
 
 function byNumber<T extends { project_number: string | null }>(jobs: T[], number: string) {
   return jobs.find((j) => j.project_number === number);
+}
+
+function byNumberJob(jobs: ExpenseJob[], number: string): ExpenseJob {
+  const job = jobs.find((j) => j.projectNumber === number);
+  if (!job) throw new Error(`missing ${number}`);
+  return job;
 }
 
 beforeEach(() => {
@@ -171,7 +183,20 @@ describe("listExpenseJobs picker filtering", () => {
     ]);
   });
 
-  it("receipts can't be logged against a Closed or Unknown project", async () => {
+  it("allowClosed adds Closed projects but never Unknown or hidden ones", async () => {
+    await syncExpenseJobsFromMasterProjectLog();
+    await createCustomExpenseJob({ label: "Shop", createdBy: ACTOR });
+    const before = await listExpenseJobs({ includeInactive: true });
+    await updateExpenseJob({
+      id: byNumberJob(before, "L01-26001").id,
+      isActive: false,
+      updatedBy: ACTOR,
+    });
+    const picker = await listExpenseJobs({ includeInactive: false, allowClosed: true });
+    expect(picker.map((j) => j.projectNumber ?? j.label).sort()).toEqual(["L01-26002", "Shop"]);
+  });
+
+  it("receipts accept Open and Closed projects but not Unknown or hidden ones", async () => {
     await syncExpenseJobsFromMasterProjectLog();
     const all = await listExpenseJobs({ includeInactive: true });
     const base = {
@@ -183,11 +208,17 @@ describe("listExpenseJobs picker filtering", () => {
     const closed = all.find((j) => j.projectNumber === "L01-26002")!;
     const unknown = all.find((j) => j.projectNumber === "L01-26003")!;
     const open = all.find((j) => j.projectNumber === "L01-26001")!;
-    await expect(createReceipt({ ...base, jobId: closed.id })).rejects.toThrow(/Closed/);
-    await expect(createReceipt({ ...base, jobId: unknown.id })).rejects.toThrow(/marked Open/);
+    await expect(createReceipt({ ...base, jobId: closed.id })).resolves.toMatchObject({
+      jobId: closed.id,
+    });
+    await expect(createReceipt({ ...base, jobId: unknown.id })).rejects.toThrow(
+      "That project isn't marked Open or Closed on the Master Project Log. Choose another project.",
+    );
     await expect(createReceipt({ ...base, jobId: open.id })).resolves.toMatchObject({
       jobId: open.id,
     });
+    await updateExpenseJob({ id: closed.id, isActive: false, updatedBy: ACTOR });
+    await expect(createReceipt({ ...base, jobId: closed.id })).rejects.toThrow(/hidden/);
   });
 });
 
@@ -209,15 +240,139 @@ describe("splitPickerJobs", () => {
     };
   }
 
-  it("offers pickable jobs and labels Closed links that records still use", () => {
+  it("Open-only (inspections) offers Open jobs and labels Closed links records still use", () => {
     const jobs = [
       job("1", {}),
       job("2", { projectStatus: "closed" }),
       job("3", { projectStatus: "unknown" }),
     ];
-    const { pickable, linkedLabels } = splitPickerJobs(jobs, ["1", "2", "3", null]);
+    const { pickable, linkedLabels } = splitPickerJobs(jobs, ["1", "2", "3", null], {
+      allowClosed: false,
+    });
     expect(pickable.map((j) => j.id)).toEqual(["1"]);
     expect(linkedLabels).toEqual({ "2": "Job 2 (Closed)", "3": "Job 3" });
+  });
+
+  it("allowClosed (receipts, inventory) offers Open and Closed jobs", () => {
+    const jobs = [
+      job("1", {}),
+      job("2", { projectStatus: "closed" }),
+      job("3", { projectStatus: "unknown" }),
+      job("4", { projectStatus: "closed", isActive: false }),
+    ];
+    const { pickable, linkedLabels } = splitPickerJobs(jobs, ["2", "3", "4"], {
+      allowClosed: true,
+    });
+    expect(pickable.map((j) => j.id)).toEqual(["1", "2"]);
+    expect(linkedLabels).toEqual({ "3": "Job 3", "4": "Job 4 (Closed)" });
+  });
+});
+
+describe("isSelectableExpenseJob", () => {
+  const base = { isActive: true, source: "project" as const };
+  const cases = [
+    {
+      name: "Open project",
+      job: { ...base, projectStatus: "open" as const },
+      open: true,
+      any: true,
+    },
+    {
+      name: "Closed project",
+      job: { ...base, projectStatus: "closed" as const },
+      open: false,
+      any: true,
+    },
+    {
+      name: "Unknown project",
+      job: { ...base, projectStatus: "unknown" as const },
+      open: false,
+      any: false,
+    },
+    {
+      name: "hidden Open project",
+      job: { ...base, projectStatus: "open" as const, isActive: false },
+      open: false,
+      any: false,
+    },
+    {
+      name: "active custom job",
+      job: { isActive: true, source: "custom" as const, projectStatus: "unknown" as const },
+      open: true,
+      any: true,
+    },
+    {
+      name: "hidden custom job",
+      job: { isActive: false, source: "custom" as const, projectStatus: "unknown" as const },
+      open: false,
+      any: false,
+    },
+  ];
+  it.each(cases)("$name", ({ job, open, any }) => {
+    expect(isSelectableExpenseJob(job, { allowClosed: false })).toBe(open);
+    expect(isSelectableExpenseJob(job, { allowClosed: true })).toBe(any);
+  });
+});
+
+describe("site inspection project links", () => {
+  beforeEach(() => {
+    resetSiteInspectionMemoryForTests();
+  });
+
+  async function setup() {
+    await syncExpenseJobsFromMasterProjectLog();
+    const all = await listExpenseJobs({ includeInactive: true });
+    const [template] = await listTemplates();
+    return {
+      templateId: template!.id,
+      open: byNumberJob(all, "L01-26001"),
+      closed: byNumberJob(all, "L01-26002"),
+      unknown: byNumberJob(all, "L01-26003"),
+    };
+  }
+
+  it("rejects Closed and Unknown projects for new inspections", async () => {
+    const { templateId, closed, unknown } = await setup();
+    const base = { projectName: "Test", address: "1 Main St", templateId, createdBy: ACTOR };
+    await expect(createSiteInspection({ ...base, jobId: closed.id })).rejects.toThrow(
+      "That project is Closed. Site inspections can only use Open projects.",
+    );
+    await expect(createSiteInspection({ ...base, jobId: unknown.id })).rejects.toThrow(
+      /isn't marked Open or Closed on the Master Project Log/,
+    );
+  });
+
+  it("keeps an existing link to a project that has since Closed", async () => {
+    const { templateId, open, closed } = await setup();
+    const inspection = await createSiteInspection({
+      projectName: "Test",
+      address: "1 Main St",
+      templateId,
+      createdBy: ACTOR,
+      jobId: open.id,
+    });
+    setProjectRegistryLoadDepsForTests({
+      rowsOverride: [{ ...SHEET[0]!, status: "closed" }, SHEET[1]!, SHEET[2]!],
+    });
+    clearProjectLogCacheForTests();
+    await syncExpenseJobsFromMasterProjectLog();
+    const kept = await updateSiteInspectionDetails({
+      inspectionId: inspection.id,
+      projectName: "Test renamed",
+      address: "1 Main St",
+      jobId: open.id,
+      actorId: ACTOR,
+    });
+    expect(kept.jobId).toBe(open.id);
+    await expect(
+      updateSiteInspectionDetails({
+        inspectionId: inspection.id,
+        projectName: "Test renamed",
+        address: "1 Main St",
+        jobId: closed.id,
+        actorId: ACTOR,
+      }),
+    ).rejects.toThrow(/Site inspections can only use Open projects/);
   });
 });
 
@@ -240,10 +395,20 @@ describe("inventory project assignment", () => {
     resetInventoryMemoryForTests();
   });
 
-  it("rejects a new assignment to a Closed project", async () => {
+  it("creates an item on a Closed project", async () => {
     rememberInventoryJobLabelForTests(JOB_ID, "Closed ADU", { projectStatus: "closed" });
-    await expect(createInventoryItem(input())).rejects.toThrow(/Closed/);
-    await expect(assertInventoryProjectAssignable({ jobId: JOB_ID })).rejects.toThrow(/Closed/);
+    await expect(assertInventoryProjectAssignable({ jobId: JOB_ID })).resolves.toBeUndefined();
+    await expect(createInventoryItem(input())).resolves.toMatchObject({
+      jobId: JOB_ID,
+      projectLabel: "Closed ADU",
+    });
+  });
+
+  it("rejects Unknown-status and hidden projects", async () => {
+    rememberInventoryJobLabelForTests(JOB_ID, "Mystery ADU", { projectStatus: "unknown" });
+    await expect(createInventoryItem(input())).rejects.toThrow(/marked Open or Closed/);
+    rememberInventoryJobLabelForTests(JOB_ID, "Hidden ADU", { isActive: false });
+    await expect(assertInventoryProjectAssignable({ jobId: JOB_ID })).rejects.toThrow(/hidden/);
   });
 
   it("re-saving an item already linked to a now-Closed project still works", async () => {
@@ -258,12 +423,15 @@ describe("inventory project assignment", () => {
     });
   });
 
-  it("moving an existing item onto a different Closed project is rejected", async () => {
+  it("moving an existing item onto a different Closed project works", async () => {
     const OTHER = "33333333-3333-4333-8333-333333333333";
     rememberInventoryJobLabelForTests(JOB_ID, "Open ADU");
     rememberInventoryJobLabelForTests(OTHER, "Closed ADU", { projectStatus: "closed" });
     const item = await createInventoryItem(input());
-    await expect(updateInventoryItem(item.id, input({ jobId: OTHER }))).rejects.toThrow(/Closed/);
+    await expect(updateInventoryItem(item.id, input({ jobId: OTHER }))).resolves.toMatchObject({
+      jobId: OTHER,
+      projectLabel: "Closed ADU",
+    });
   });
 });
 

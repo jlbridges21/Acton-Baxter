@@ -5,6 +5,19 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import {
+  ClosedProjectBadge,
+  ProjectStatusFilter,
+  ProjectStatusNoMatchHint,
+  useProjectStatusView,
+} from "@/components/shared/project-status-filter";
+import {
+  countHiddenProjectMatches,
+  countProjectStatusViews,
+  filterByProjectStatusView,
+  isClosedProjectOption,
+} from "@/lib/receipts/project-status-view";
+import type { ExpenseJobProjectStatus } from "@/lib/receipts/types";
+import {
   FEEDBACK_RANGE_PRESET_LINKS,
   RECEIPT_LOG_PATH,
   buildReceiptLogHref,
@@ -22,7 +35,7 @@ export function ReceiptLogFiltersPanel({
 }: {
   initial: ReceiptLogFiltersState;
   userOptions: Array<{ id: string; label: string }>;
-  jobOptions: Array<{ id: string; label: string }>;
+  jobOptions: Array<{ id: string; label: string; projectStatus?: ExpenseJobProjectStatus | null }>;
   vendorOptions: string[];
   /** Form action + reset/link base (admin `/receipts/log` or mine `/receipts/mine`). */
   basePath?: string;
@@ -44,9 +57,23 @@ export function ReceiptLogFiltersPanel({
   const filteredUsers = userOptions.filter((u) =>
     u.label.toLowerCase().includes(userQuery.trim().toLowerCase()),
   );
-  const filteredJobs = jobOptions.filter((j) =>
-    j.label.toLowerCase().includes(jobQuery.trim().toLowerCase()),
+  const [jobStatusView, setJobStatusView] = useProjectStatusView("receipts");
+  const jobStatusCounts = useMemo(() => countProjectStatusViews(jobOptions), [jobOptions]);
+  const jobMatchesQuery = (j: { label: string }) =>
+    j.label.toLowerCase().includes(jobQuery.trim().toLowerCase());
+  // Only the options are narrowed; checked jobs stay listed so the form still submits them.
+  const filteredJobs = filterByProjectStatusView(
+    jobOptions.filter(jobMatchesQuery),
+    jobStatusView,
+    {
+      getId: (j) => j.id,
+      pinnedIds: selectedJobs,
+    },
   );
+  const hiddenJobMatches =
+    filteredJobs.length === 0
+      ? countHiddenProjectMatches(jobOptions, jobStatusView, jobMatchesQuery)
+      : 0;
   const filteredVendors = vendorOptions.filter((v) =>
     v.toLowerCase().includes(vendorQuery.trim().toLowerCase()),
   );
@@ -254,6 +281,12 @@ export function ReceiptLogFiltersPanel({
 
               <fieldset>
                 <legend className="mb-1 text-sm font-medium text-[var(--acton-navy)]">Job</legend>
+                <ProjectStatusFilter
+                  value={jobStatusView}
+                  onChange={setJobStatusView}
+                  counts={jobStatusCounts}
+                  className="mb-2"
+                />
                 <input
                   type="search"
                   value={jobQuery}
@@ -262,7 +295,14 @@ export function ReceiptLogFiltersPanel({
                   className="mb-2 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
                 />
                 <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[var(--acton-border)] p-2">
-                  {filteredJobs.length === 0 ? (
+                  {filteredJobs.length === 0 && hiddenJobMatches > 0 ? (
+                    <ProjectStatusNoMatchHint
+                      view={jobStatusView}
+                      query={jobQuery}
+                      hiddenCount={hiddenJobMatches}
+                      onShowAll={() => setJobStatusView("all")}
+                    />
+                  ) : filteredJobs.length === 0 ? (
                     <p className="text-xs text-[var(--acton-muted)]">No jobs</p>
                   ) : (
                     filteredJobs.map((j) => (
@@ -275,6 +315,7 @@ export function ReceiptLogFiltersPanel({
                           onChange={() => toggle(selectedJobs, j.id, setSelectedJobs)}
                         />
                         <span className="truncate">{j.label}</span>
+                        {isClosedProjectOption(j) ? <ClosedProjectBadge className="ml-0" /> : null}
                       </label>
                     ))
                   )}

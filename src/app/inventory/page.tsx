@@ -1,5 +1,8 @@
 import { AppShell } from "@/components/layout/app-shell";
-import { InventoryClient } from "@/components/inventory/inventory-client";
+import {
+  InventoryClient,
+  type InventoryProjectOption,
+} from "@/components/inventory/inventory-client";
 import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { parseInventoryFilters } from "@/lib/inventory/filters";
@@ -20,10 +23,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
     listInventoryVocab("storage"),
     listExpenseJobs({ includeInactive: true }),
   ]);
-  // New assignments offer Open projects only; items on a Closed project keep their label.
+  // Open and Closed projects are offered (the client filters by status); items on a
+  // hidden or unknown-status project keep their label.
   const { pickable: jobs, linkedLabels } = splitPickerJobs(
     allJobs,
     rawItems.map((item) => item.jobId),
+    { allowClosed: true },
+  );
+  const jobStatusById = new Map(
+    allJobs.map((job) => [job.id, job.source === "project" ? job.projectStatus : null]),
   );
   // Full list stays on the client so sort, filter, and search do not reload the page.
   // Revisit around 2,000 rows, when shipping every signed photo URL on first load
@@ -36,12 +44,25 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
     const photoUrl = signedPhotos.get(item.photoStoragePath);
     return photoUrl ? { ...item, photoUrl } : item;
   });
-  const projectOptions = new Map<string, string>();
-  for (const job of jobs) projectOptions.set(job.id, job.label);
+  const projectOptions = new Map<string, InventoryProjectOption>();
+  for (const job of jobs) {
+    projectOptions.set(job.id, {
+      value: job.id,
+      label: job.label,
+      projectStatus: jobStatusById.get(job.id) ?? null,
+    });
+  }
   for (const item of rawItems) {
-    if (item.jobId) projectOptions.set(item.jobId, item.projectLabel);
+    if (item.jobId) {
+      projectOptions.set(item.jobId, {
+        value: item.jobId,
+        label: item.projectLabel,
+        projectStatus: jobStatusById.get(item.jobId) ?? null,
+      });
+    }
     if (item.customProjectLabel) {
-      projectOptions.set(`custom:${item.customProjectLabel}`, item.customProjectLabel);
+      const value = `custom:${item.customProjectLabel}`;
+      projectOptions.set(value, { value, label: item.customProjectLabel, projectStatus: null });
     }
   }
   const vendors = [
@@ -62,9 +83,13 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
         filters={filters}
         statuses={statuses}
         storageStates={storageStates}
-        jobs={jobs.map((job) => ({ id: job.id, label: job.label }))}
+        jobs={jobs.map((job) => ({
+          id: job.id,
+          label: job.label,
+          projectStatus: jobStatusById.get(job.id) ?? null,
+        }))}
         linkedJobLabels={linkedLabels}
-        projectOptions={[...projectOptions.entries()].map(([value, label]) => ({ value, label }))}
+        projectOptions={[...projectOptions.values()]}
         vendors={vendors}
         orderNumbers={orderNumbers}
         isAdmin={isAdminRole(user.profile.role)}

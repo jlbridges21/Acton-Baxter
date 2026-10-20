@@ -1,6 +1,7 @@
 export type {
   ExpenseJob,
   ExpenseJobProjectStatus,
+  ExpenseJobSelectionOptions,
   ExpenseJobSource,
   Receipt,
   ReceiptCreateInput,
@@ -11,7 +12,7 @@ export {
   RECEIPT_PHOTOS_BUCKET,
   EXPENSE_JOB_SOURCES,
   EXPENSE_JOB_PROJECT_STATUSES,
-  isPickableExpenseJob,
+  isSelectableExpenseJob,
   expenseJobDisplayLabel,
   splitPickerJobs,
 } from "./types";

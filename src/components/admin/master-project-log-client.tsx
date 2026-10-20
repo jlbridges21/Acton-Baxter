@@ -7,7 +7,8 @@ import { ExternalLink, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BAXTER_REPORTING_TIMEZONE } from "@/lib/baxter-ai/feedback-date-ranges";
+import { formatAdminSyncTime, ProjectSyncStatus } from "@/components/admin/project-sync-status";
+import type { ProjectJobSyncSummary } from "@/lib/receipts/project-sync-summary";
 import {
   applyProjectLogView,
   buildProjectLogViewQuery,
@@ -44,19 +45,6 @@ type SyncSummary = {
   statusCounts: { open: number; closed: number; unknown: number };
 };
 
-function formatFetchedAt(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: BAXTER_REPORTING_TIMEZONE,
-    timeZoneName: "short",
-  }).format(date);
-}
-
 function formatSyncSummary(sync: SyncSummary): string {
   const { open, closed, unknown } = sync.statusCounts;
   const parts = [
@@ -83,6 +71,7 @@ export function MasterProjectLogClient({
   fromCache,
   loadError,
   initialView,
+  syncSummary,
 }: {
   rows: ProjectLogRow[];
   spreadsheetId: string;
@@ -91,6 +80,8 @@ export function MasterProjectLogClient({
   fromCache: boolean;
   loadError: string | null;
   initialView: ProjectLogViewState;
+  /** From the project rows the tools read (expense_jobs), not the sheet. */
+  syncSummary?: ProjectJobSyncSummary;
 }) {
   const router = useRouter();
   const [view, setView] = useState(initialView);
@@ -156,7 +147,7 @@ export function MasterProjectLogClient({
         <p className="text-sm text-[var(--acton-muted)]" data-testid="project-log-fetched">
           {fetchedAt ? (
             <>
-              Last fetched {formatFetchedAt(fetchedAt)}
+              Last fetched {formatAdminSyncTime(fetchedAt)}
               {fromCache ? " (cached copy, refreshes every 90 seconds)" : " (live from the sheet)"}
             </>
           ) : (
@@ -204,6 +195,7 @@ export function MasterProjectLogClient({
           {error}
         </p>
       ) : null}
+      {syncSummary ? <ProjectSyncStatus summary={syncSummary} /> : null}
       {message ? (
         <p
           role="status"

@@ -5,7 +5,9 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { isPickableExpenseJob, type ExpenseJob } from "@/lib/receipts/types";
+import { ProjectSyncStatus } from "@/components/admin/project-sync-status";
+import { summarizeProjectJobSync } from "@/lib/receipts/project-sync-summary";
+import { isSelectableExpenseJob, type ExpenseJob } from "@/lib/receipts/types";
 
 type Props = {
   initialJobs: ExpenseJob[];
@@ -60,6 +62,7 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
     () => sorted.filter((job) => matchesFilter(job, filter)),
     [sorted, filter],
   );
+  const syncSummary = useMemo(() => summarizeProjectJobSync(jobs), [jobs]);
   const filterCounts = useMemo(() => {
     const counts: Record<JobFilter, number> = { all: 0, open: 0, closed: 0, unknown: 0, custom: 0 };
     for (const job of jobs) {
@@ -215,6 +218,8 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
         </Button>
       </div>
 
+      <ProjectSyncStatus summary={syncSummary} />
+
       {error ? (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
@@ -301,7 +306,11 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
                     {job.source === "project" ? `Project ${job.projectNumber ?? ""}` : "Custom"} ·
                     sort {job.sortOrder}
                     {!job.isActive ? " · hidden" : ""}
-                    {isPickableExpenseJob(job) ? "" : " · not offered in pickers"}
+                    {!isSelectableExpenseJob(job, { allowClosed: true })
+                      ? " · not offered in pickers"
+                      : !isSelectableExpenseJob(job, { allowClosed: false })
+                        ? " · Receipts and Inventory only"
+                        : ""}
                   </p>
                 </>
               )}
@@ -384,7 +393,8 @@ export function ExpenseJobsAdminClient({ initialJobs }: Props) {
       </ul>
 
       <p className="text-sm text-[var(--acton-muted)]">
-        Employees pick from active custom jobs and Open projects on{" "}
+        Employees pick from active custom jobs and Open projects (Receipts and Inventory can also
+        show Closed ones) on{" "}
         <Link href="/receipts" className="underline">
           /receipts
         </Link>

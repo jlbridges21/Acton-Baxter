@@ -7,13 +7,14 @@ import { listExpenseJobs } from "@/lib/receipts";
 export const dynamic = "force-dynamic";
 
 /**
- * Fast path: auth + Postgres expense_jobs only (Open projects + active custom jobs).
+ * Fast path: auth + Postgres expense_jobs only (Open and Closed projects + active custom
+ * jobs; the client filters by status).
  * Master Project Log sync is manual (/admin/expense-jobs) or after Project Setup —
  * never on this render path.
  */
 export default async function ReceiptsPage() {
   const user = await requireActiveUser();
-  const jobs = await listExpenseJobs({ includeInactive: false });
+  const jobs = await listExpenseJobs({ includeInactive: false, allowClosed: true });
 
   return (
     <AppShell user={user}>

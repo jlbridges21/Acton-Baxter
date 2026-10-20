@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Input } from "@/components/ui/input";
-import type { ExpenseJob } from "@/lib/receipts/types";
+import { isSelectableExpenseJob, type ExpenseJob } from "@/lib/receipts/types";
 import { normalizeCustomJobLabel, shouldOfferCreateCustomJob } from "@/lib/receipts/job-select";
 import { splitProjectLabel } from "@/lib/inspections/project-label";
 
@@ -25,13 +25,19 @@ export function InspectionProjectPicker({
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
 
+  // Site inspections only link Open projects, even if a caller passes Closed ones.
+  const openJobs = useMemo(
+    () => jobs.filter((job) => isSelectableExpenseJob(job, { allowClosed: false })),
+    [jobs],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return jobs;
-    return jobs.filter(
+    if (!q) return openJobs;
+    return openJobs.filter(
       (j) => j.label.toLowerCase().includes(q) || (j.projectNumber ?? "").toLowerCase().includes(q),
     );
-  }, [jobs, query]);
+  }, [openJobs, query]);
 
   const canCreate = shouldOfferCreateCustomJob(
     query,
@@ -168,6 +174,9 @@ export function InspectionProjectPicker({
           ) : null}
         </div>
       ) : null}
+      <p className="mt-1 text-xs text-[var(--acton-muted)]">
+        Only Open projects from the Master Project Log are shown.
+      </p>
     </div>
   );
 }

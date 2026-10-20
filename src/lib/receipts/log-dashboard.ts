@@ -21,11 +21,11 @@ async function enrichReceiptsToLogRows(
   options?: { skipSignedUrls?: boolean; skipSubmitterLookup?: boolean },
 ): Promise<ReceiptLogRow[]> {
   const jobs = await listExpenseJobs({ includeInactive: true });
-  const jobLabelById = new Map(jobs.map((j) => [j.id, j.label]));
+  const jobById = new Map(jobs.map((j) => [j.id, j]));
   for (const receipt of receipts) {
-    if (receipt.jobId && !jobLabelById.has(receipt.jobId)) {
+    if (receipt.jobId && !jobById.has(receipt.jobId)) {
       const job = await getExpenseJob(receipt.jobId);
-      if (job) jobLabelById.set(job.id, job.label);
+      if (job) jobById.set(job.id, job);
     }
   }
 
@@ -41,7 +41,8 @@ async function enrichReceiptsToLogRows(
     const isCustomJob = Boolean(r.customJobLabel && !r.jobId);
     const jobLabel = isCustomJob
       ? (r.customJobLabel ?? "Custom")
-      : (jobLabelById.get(r.jobId ?? "") ?? "Unknown job");
+      : (jobById.get(r.jobId ?? "")?.label ?? "Unknown job");
+    const job = isCustomJob ? null : jobById.get(r.jobId ?? "");
     const display = displays.get(r.submittedBy);
     return {
       id: r.id,
@@ -52,6 +53,7 @@ async function enrichReceiptsToLogRows(
       jobId: r.jobId,
       customJobLabel: r.customJobLabel,
       jobLabel,
+      jobProjectStatus: job && job.source === "project" ? job.projectStatus : null,
       isCustomJob,
       amountCents: r.amountCents,
       vendor: r.vendor,

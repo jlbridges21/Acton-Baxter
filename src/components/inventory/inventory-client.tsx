@@ -21,6 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -97,8 +98,32 @@ import {
 } from "@/lib/inventory/types";
 import { formatCentsAsDecimalDollars } from "@/lib/receipts/amount";
 import { normalizeCustomJobLabel, shouldOfferCreateCustomJob } from "@/lib/receipts/job-select";
+import {
+  countHiddenProjectMatches,
+  countProjectStatusViews,
+  filterByProjectStatusView,
+  isClosedProjectOption,
+} from "@/lib/receipts/project-status-view";
+import type { ExpenseJobProjectStatus } from "@/lib/receipts/types";
+import {
+  ClosedProjectBadge,
+  ProjectStatusFilter,
+  ProjectStatusNoMatchHint,
+  useProjectStatusView,
+} from "@/components/shared/project-status-filter";
 
-export type InventoryJobOption = { id: string; label: string };
+/** `projectStatus` is null for custom jobs, which show under every status view. */
+export type InventoryJobOption = {
+  id: string;
+  label: string;
+  projectStatus?: ExpenseJobProjectStatus | null;
+};
+
+export type InventoryProjectOption = {
+  value: string;
+  label: string;
+  projectStatus?: ExpenseJobProjectStatus | null;
+};
 
 type Props = {
   /** Every inventory row. Sorting, filtering, and search run in the browser. */
@@ -109,7 +134,7 @@ type Props = {
   jobs: InventoryJobOption[];
   /** Labels for linked jobs no longer offered as options, e.g. "… (Closed)". */
   linkedJobLabels?: Record<string, string>;
-  projectOptions: { value: string; label: string }[];
+  projectOptions: InventoryProjectOption[];
   vendors: string[];
   orderNumbers: string[];
   isAdmin: boolean;
@@ -1227,7 +1252,7 @@ function InventoryToolbar(props: {
   filters: InventoryFilterState;
   statuses: InventoryVocabValue[];
   storageStates: InventoryVocabValue[];
-  projectOptions: { value: string; label: string }[];
+  projectOptions: InventoryProjectOption[];
   vendors: string[];
   orderNumbers: string[];
   thumbSize: InventoryThumbSize;
@@ -1235,6 +1260,17 @@ function InventoryToolbar(props: {
 }) {
   const filterCount = countActiveInventoryFilters(props.filters);
   const sortCount = countActiveInventorySorts(props.filters);
+  const projectSelectId = useId();
+  const [projectStatusView, setProjectStatusView] = useProjectStatusView("inventory");
+  const projectStatusCounts = useMemo(
+    () => countProjectStatusViews(props.projectOptions),
+    [props.projectOptions],
+  );
+  // The applied project filter stays selectable in every view.
+  const visibleProjectOptions = filterByProjectStatusView(props.projectOptions, projectStatusView, {
+    getId: (option) => option.value,
+    pinnedIds: [props.filters.project],
+  });
   const [filtersOpen, setFiltersOpen] = useState(filterCount > 0);
   const [sortOpen, setSortOpen] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
@@ -1315,21 +1351,29 @@ function InventoryToolbar(props: {
           onSubmit={applyFilters}
           className="grid gap-2 rounded-md border border-[var(--acton-border)] bg-white px-3 py-3 sm:grid-cols-2 lg:grid-cols-3"
         >
-          <label className="text-xs font-semibold text-[var(--acton-navy)]">
-            Project
+          <div className="text-xs font-semibold text-[var(--acton-navy)]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor={projectSelectId}>Project</label>
+              <ProjectStatusFilter
+                value={projectStatusView}
+                onChange={setProjectStatusView}
+                counts={projectStatusCounts}
+              />
+            </div>
             <select
+              id={projectSelectId}
               name="project"
               defaultValue={props.filters.project}
               className="mt-1 h-9 w-full rounded-md border border-[var(--acton-border)] bg-white px-2 text-sm"
             >
               <option value="">All projects</option>
-              {props.projectOptions.map((option) => (
+              {visibleProjectOptions.map((option) => (
                 <option key={option.value} value={option.value}>
-                  {option.label}
+                  {isClosedProjectOption(option) ? `${option.label} (Closed)` : option.label}
                 </option>
               ))}
             </select>
-          </label>
+          </div>
           <label className="text-xs font-semibold text-[var(--acton-navy)]">
             Vendor
             <select
@@ -1731,12 +1775,14 @@ function InlineVocabSelect({
 }
 
 function ProjectField({
+  label,
   jobs,
   currentJob,
   jobId,
   customProjectLabel,
   onChange,
 }: {
+  label: ReactNode;
   jobs: InventoryJobOption[];
   /** Kept as the selection but not offered again once cleared. */
   currentJob: InventoryJobOption | null;
@@ -1751,11 +1797,18 @@ function ProjectField({
       "",
   );
   const [open, setOpen] = useState(false);
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return jobs;
-    return jobs.filter((job) => job.label.toLowerCase().includes(needle));
-  }, [jobs, query]);
+  const [statusView, setStatusView] = useProjectStatusView("inventory");
+  const statusCounts = useMemo(() => countProjectStatusViews(jobs), [jobs]);
+  const needle = query.trim().toLowerCase();
+  const matchesQuery = (job: InventoryJobOption) =>
+    !needle || job.label.toLowerCase().includes(needle);
+  const filtered = filterByProjectStatusView(jobs.filter(matchesQuery), statusView, {
+    getId: (job) => job.id,
+    pinnedIds: [jobId],
+  });
+  const hiddenMatches =
+    filtered.length === 0 ? countHiddenProjectMatches(jobs, statusView, matchesQuery) : 0;
+  const selectedJob = jobs.find((job) => job.id === jobId) ?? null;
   const canCreate = shouldOfferCreateCustomJob(
     query,
     jobs.map((job) => job.label),
@@ -1763,9 +1816,14 @@ function ProjectField({
 
   return (
     <div className="relative">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>{label}</span>
+        <ProjectStatusFilter value={statusView} onChange={setStatusView} counts={statusCounts} />
+      </div>
       <Input
         aria-label="Project"
         required
+        className="mt-1"
         value={query}
         placeholder="Search the shared project list"
         onChange={(event) => {
@@ -1789,9 +1847,20 @@ function ProjectField({
                 }}
               >
                 {job.label}
+                {isClosedProjectOption(job) ? <ClosedProjectBadge /> : null}
               </button>
             </li>
           ))}
+          {hiddenMatches > 0 ? (
+            <li>
+              <ProjectStatusNoMatchHint
+                view={statusView}
+                query={query}
+                hiddenCount={hiddenMatches}
+                onShowAll={() => setStatusView("all")}
+              />
+            </li>
+          ) : null}
           {canCreate ? (
             <li>
               <button
@@ -1809,6 +1878,11 @@ function ProjectField({
             </li>
           ) : null}
         </ul>
+      ) : null}
+      {!open && selectedJob && isClosedProjectOption(selectedJob) ? (
+        <p className="mt-1 text-xs font-normal text-[var(--acton-muted)]">
+          <ClosedProjectBadge className="ml-0" /> This project is Closed on the Master Project Log.
+        </p>
       ) : null}
     </div>
   );
@@ -2089,20 +2163,22 @@ function ItemDialogForm({
           />
         </label>
         <p className="self-end text-sm text-[var(--acton-navy)]">Total {preview ?? "—"}</p>
-        <label className="text-xs font-semibold sm:col-span-2">
-          Project <RequiredMark />
-          <div className="mt-1">
-            <ProjectField
-              jobs={jobs}
-              currentJob={
-                item?.jobId && currentJobLabel ? { id: item.jobId, label: currentJobLabel } : null
-              }
-              jobId={draft.jobId}
-              customProjectLabel={draft.customProjectLabel}
-              onChange={(next) => patch(next)}
-            />
-          </div>
-        </label>
+        <div className="text-xs font-semibold sm:col-span-2">
+          <ProjectField
+            label={
+              <>
+                Project <RequiredMark />
+              </>
+            }
+            jobs={jobs}
+            currentJob={
+              item?.jobId && currentJobLabel ? { id: item.jobId, label: currentJobLabel } : null
+            }
+            jobId={draft.jobId}
+            customProjectLabel={draft.customProjectLabel}
+            onChange={(next) => patch(next)}
+          />
+        </div>
         <label className="text-xs font-semibold">
           Status <RequiredMark />
           <select

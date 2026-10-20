@@ -861,7 +861,7 @@ async function assertInspectionJobAssignable(
   currentJobId: string | null,
 ): Promise<void> {
   if (!jobId || jobId === currentJobId) return;
-  assertPickableExpenseJob(await getExpenseJob(jobId));
+  assertPickableExpenseJob(await getExpenseJob(jobId), { allowClosed: false });
 }
 
 export async function createSiteInspection(

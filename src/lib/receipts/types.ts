@@ -25,11 +25,23 @@ export type ExpenseJob = {
   updatedAt: string;
 };
 
-/** Pickers offer a job only when it is active and is either custom or an Open project. */
-export function isPickableExpenseJob(
+export type ExpenseJobSelectionOptions = {
+  /**
+   * Receipts and Inventory may use Closed projects; Site Inspections may not.
+   * Unknown-status projects and hidden jobs are never selectable.
+   */
+  allowClosed: boolean;
+};
+
+/** Whether a picker may offer this job: active, and custom, Open, or (when allowed) Closed. */
+export function isSelectableExpenseJob(
   job: Pick<ExpenseJob, "isActive" | "source" | "projectStatus">,
+  options: ExpenseJobSelectionOptions,
 ): boolean {
-  return job.isActive && (job.source === "custom" || job.projectStatus === "open");
+  if (!job.isActive) return false;
+  if (job.source === "custom") return true;
+  if (job.projectStatus === "open") return true;
+  return options.allowClosed && job.projectStatus === "closed";
 }
 
 /** Label for a linked job that is no longer offered in pickers. */
@@ -48,8 +60,9 @@ export function expenseJobDisplayLabel(
 export function splitPickerJobs(
   allJobs: ExpenseJob[],
   linkedJobIds: Iterable<string | null | undefined>,
+  options: ExpenseJobSelectionOptions,
 ): { pickable: ExpenseJob[]; linkedLabels: Record<string, string> } {
-  const pickable = allJobs.filter(isPickableExpenseJob);
+  const pickable = allJobs.filter((job) => isSelectableExpenseJob(job, options));
   const pickableIds = new Set(pickable.map((job) => job.id));
   const byId = new Map(allJobs.map((job) => [job.id, job]));
   const linkedLabels: Record<string, string> = {};

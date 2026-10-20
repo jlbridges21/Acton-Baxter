@@ -20,6 +20,7 @@ export default async function InspectionsPage() {
   const { pickable: jobs, linkedLabels } = splitPickerJobs(
     allJobs,
     inspections.map((inspection) => inspection.jobId),
+    { allowClosed: false },
   );
 
   return (

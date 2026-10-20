@@ -7,7 +7,19 @@ import { formatCentsAsUsd } from "@/lib/receipts/amount";
 import { processReceiptImage, ReceiptImageProcessError } from "@/lib/receipts/client-image";
 import { isLowConfidence, type ReceiptExtraction } from "@/lib/receipts/extraction-schema";
 import { shouldOfferCreateCustomJob, normalizeCustomJobLabel } from "@/lib/receipts/job-select";
+import {
+  countHiddenProjectMatches,
+  countProjectStatusViews,
+  filterByProjectStatusView,
+  isClosedProjectOption,
+} from "@/lib/receipts/project-status-view";
 import type { ExpenseJob } from "@/lib/receipts/types";
+import {
+  ClosedProjectBadge,
+  ProjectStatusFilter,
+  ProjectStatusNoMatchHint,
+  useProjectStatusView,
+} from "@/components/shared/project-status-filter";
 
 export type ReceiptFormValues = {
   jobId: string;
@@ -114,13 +126,30 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
 
   const selectedJobDisplay = selectedJob?.label || values.customJobLabel || null;
 
-  const filteredJobs = useMemo(() => {
-    const q = jobQuery.trim().toLowerCase();
-    if (!q) return jobs;
-    return jobs.filter(
-      (j) => j.label.toLowerCase().includes(q) || (j.projectNumber ?? "").toLowerCase().includes(q),
-    );
-  }, [jobs, jobQuery]);
+  const [statusView, setStatusView] = useProjectStatusView("receipts");
+  const statusCounts = useMemo(() => countProjectStatusViews(jobs), [jobs]);
+
+  const jobMatchesQuery = useCallback(
+    (j: ExpenseJob) => {
+      const q = jobQuery.trim().toLowerCase();
+      if (!q) return true;
+      return j.label.toLowerCase().includes(q) || (j.projectNumber ?? "").toLowerCase().includes(q);
+    },
+    [jobQuery],
+  );
+
+  // The selected job stays listed in every view, so a receipt on a Closed project keeps it.
+  const filteredJobs = useMemo(
+    () =>
+      filterByProjectStatusView(jobs.filter(jobMatchesQuery), statusView, {
+        getId: (j) => j.id,
+        pinnedIds: [values.jobId],
+      }),
+    [jobs, jobMatchesQuery, statusView, values.jobId],
+  );
+
+  const hiddenJobMatches =
+    filteredJobs.length === 0 ? countHiddenProjectMatches(jobs, statusView, jobMatchesQuery) : 0;
 
   const canCreateCustomJob = shouldOfferCreateCustomJob(
     jobQuery,
@@ -752,16 +781,29 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
         noValidate
       >
         <div className="relative">
-          <label
-            htmlFor={jobListId}
-            className="mb-1 block text-sm font-medium text-[var(--acton-navy)]"
-          >
-            Job <span className="text-red-600">*</span>
-          </label>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <label
+              htmlFor={jobListId}
+              className="block text-sm font-medium text-[var(--acton-navy)]"
+            >
+              Job <span className="text-red-600">*</span>
+            </label>
+            <ProjectStatusFilter
+              value={statusView}
+              onChange={(view) => {
+                setStatusView(view);
+                setJobHighlight(-1);
+              }}
+              counts={statusCounts}
+            />
+          </div>
           {selectedJobDisplay ? (
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--acton-navy)] bg-[var(--acton-gray-50)] px-3 py-2 text-sm font-medium text-[var(--acton-navy)]">
                 <span className="truncate">{selectedJobDisplay}</span>
+                {selectedJob && isClosedProjectOption(selectedJob) ? (
+                  <ClosedProjectBadge className="ml-0" />
+                ) : null}
                 {values.customJobLabel ? (
                   <span className="text-[10px] font-semibold tracking-wide text-amber-800 uppercase">
                     Custom
@@ -840,10 +882,21 @@ export function ReceiptLogClient({ initialJobs, initialValues, isAdmin = false }
                       onClick={() => selectJob(job)}
                     >
                       {job.label}
+                      {isClosedProjectOption(job) ? <ClosedProjectBadge /> : null}
                     </button>
                   </li>
                 ))}
-                {filteredJobs.length === 0 && !canCreateCustomJob ? (
+                {hiddenJobMatches > 0 ? (
+                  <li>
+                    <ProjectStatusNoMatchHint
+                      view={statusView}
+                      query={jobQuery}
+                      hiddenCount={hiddenJobMatches}
+                      onShowAll={() => setStatusView("all")}
+                    />
+                  </li>
+                ) : null}
+                {filteredJobs.length === 0 && hiddenJobMatches === 0 && !canCreateCustomJob ? (
                   <li className="px-3 py-3 text-sm text-[var(--acton-muted)]">
                     Type a name to create a one-off job label
                   </li>

@@ -2,7 +2,8 @@
  * Sync project-sourced expense_jobs from the Master Project Log.
  *
  * Every sheet row is upserted with its column J status (open / closed / unknown);
- * pickers only offer open ones. Project rows no longer on the sheet become closed.
+ * Site Inspections offer open ones; Receipts and Inventory offer open and closed.
+ * Unknown is never offered. Project rows no longer on the sheet become closed.
  *
  * Triggers only:
  * 1. Admin "Refresh" on /admin/expense-jobs or /admin/baxter/projects

@@ -16,6 +16,7 @@ import type {
   ReceiptLogSortDir,
   ReceiptLogSortField,
 } from "./log-filter-url";
+import type { ExpenseJobProjectStatus } from "./types";
 
 export type ReceiptLogRow = {
   id: string;
@@ -30,6 +31,8 @@ export type ReceiptLogRow = {
   customJobLabel: string | null;
   /** Display label — expense job label or custom one-off text. */
   jobLabel: string;
+  /** Master Project Log status of the linked project; null for custom jobs and one-off labels. */
+  jobProjectStatus?: ExpenseJobProjectStatus | null;
   /** True when this receipt used a free-text custom_job_label. */
   isCustomJob: boolean;
   amountCents: number;
@@ -72,9 +75,15 @@ export type ReceiptLogQueryResult = {
   /** Facets for filter UI (derived from non-deleted corpus before multi-selects). */
   facets: {
     users: Array<{ id: string; label: string }>;
-    jobs: Array<{ id: string; label: string }>;
+    jobs: ReceiptLogJobFacet[];
     vendors: string[];
   };
+};
+
+export type ReceiptLogJobFacet = {
+  id: string;
+  label: string;
+  projectStatus: ExpenseJobProjectStatus | null;
 };
 
 function purchasedInRange(purchasedOn: string, range: DateRangeBounds): boolean {
@@ -210,14 +219,19 @@ export function queryReceiptLogRows(
   });
 
   const userMap = new Map<string, string>();
-  const jobMap = new Map<string, string>();
+  const jobMap = new Map<string, ReceiptLogJobFacet>();
   const vendorSet = new Set<string>();
   for (const row of facetBase) {
     userMap.set(row.submittedBy, row.submitterLabel || row.submitterName);
     if (row.isCustomJob && row.customJobLabel) {
-      jobMap.set(customJobFilterId(row.customJobLabel), `${row.customJobLabel} (custom)`);
+      const id = customJobFilterId(row.customJobLabel);
+      jobMap.set(id, { id, label: `${row.customJobLabel} (custom)`, projectStatus: null });
     } else if (row.jobId) {
-      jobMap.set(row.jobId, row.jobLabel);
+      jobMap.set(row.jobId, {
+        id: row.jobId,
+        label: row.jobLabel,
+        projectStatus: row.jobProjectStatus ?? null,
+      });
     }
     if (row.vendor.trim()) vendorSet.add(row.vendor.trim());
   }
@@ -239,9 +253,7 @@ export function queryReceiptLogRows(
       users: Array.from(userMap.entries())
         .map(([id, label]) => ({ id, label }))
         .sort((a, b) => a.label.localeCompare(b.label)),
-      jobs: Array.from(jobMap.entries())
-        .map(([id, label]) => ({ id, label }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
+      jobs: Array.from(jobMap.values()).sort((a, b) => a.label.localeCompare(b.label)),
       vendors: Array.from(vendorSet).sort((a, b) => a.localeCompare(b)),
     },
   };

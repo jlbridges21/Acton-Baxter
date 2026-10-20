@@ -25,8 +25,10 @@ export default async function AdminExpenseJobsPage() {
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
           Jobs employees can pick when logging a receipt, inspection, or inventory item. Project
           rows sync from the Master Project Log when you refresh below or after a Project Setup run
-          completes; only projects marked Open in column J are offered. Custom rows are
-          admin-managed. Hide and reorder are preserved across syncs.
+          completes. Site Inspections offer only projects marked Open in column J; Receipts and
+          Inventory also offer Closed projects behind an Open / Closed / All filter. Unknown-status
+          and hidden rows are never offered. Custom rows are admin-managed. Hide and reorder are
+          preserved across syncs.
         </p>
       </div>
       <ExpenseJobsAdminClient initialJobs={jobs} />

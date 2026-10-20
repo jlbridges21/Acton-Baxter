@@ -8,6 +8,8 @@ import {
   type ProjectRegistryLoadResult,
 } from "@/lib/baxter-data/project-registry";
 import { parseProjectLogViewParams } from "@/lib/baxter-data/project-registry/log-view";
+import { listExpenseJobs } from "@/lib/receipts";
+import { summarizeProjectJobSync } from "@/lib/receipts/project-sync-summary";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,7 @@ export default async function AdminMasterProjectLogPage({
   } catch (error) {
     loadError = error instanceof Error ? error.message : "Could not read the Master Project Log.";
   }
+  const syncSummary = summarizeProjectJobSync(await listExpenseJobs({ includeInactive: true }));
 
   return (
     <AppShell user={user}>
@@ -37,8 +40,9 @@ export default async function AdminMasterProjectLogPage({
         <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Master Project Log</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
           Every project on the Project Charter Master sheet. Column J (Open/Closed) decides which
-          projects Receipts, Site Inspections, and Inventory offer — only Open projects appear. Edit
-          the sheet to change a project; this page is read-only.
+          projects the tools offer: Site Inspections use Open projects only; Receipts and Inventory
+          show Open by default and can switch to Closed or All. Edit the sheet to change a project;
+          this page is read-only.
         </p>
       </div>
       <MasterProjectLogClient
@@ -49,6 +53,7 @@ export default async function AdminMasterProjectLogPage({
         fromCache={loaded?.fromCache ?? false}
         loadError={loadError}
         initialView={view}
+        syncSummary={syncSummary}
       />
     </AppShell>
   );
