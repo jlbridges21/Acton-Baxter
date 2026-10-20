@@ -11,6 +11,7 @@ import {
 import {
   clearProjectLogCacheForTests,
   detectProjectRegistryQuery,
+  detectProjectStatusScope,
   formatProjectRegistryAnswer,
   lookupProjectRow,
   parseMasterProjectLogGrid,
@@ -33,6 +34,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Walnut Creek",
     postalCode: "94598",
     jurisdiction: "Walnut Creek",
+    status: "open",
     rowNumber: 12,
   },
   {
@@ -45,6 +47,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Lafayette",
     postalCode: "94549",
     jurisdiction: "Lafayette",
+    status: "open",
     rowNumber: 14,
   },
   {
@@ -57,6 +60,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Austin",
     postalCode: "78701",
     jurisdiction: "Austin",
+    status: "open",
     rowNumber: 15,
   },
   {
@@ -69,6 +73,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "San Jose",
     postalCode: "95112",
     jurisdiction: "San Jose",
+    status: "open",
     rowNumber: 8,
   },
   {
@@ -81,6 +86,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "San Jose",
     postalCode: "95113",
     jurisdiction: "San Jose",
+    status: "open",
     rowNumber: 9,
   },
 ];
@@ -342,5 +348,214 @@ describe("Master Project Log registry", () => {
     ).toBe(true);
     const answer = result.earlyAnswer?.answer ?? "";
     expect(answer).not.toMatch(/Nancy Yeh|Mike Yeh|@hotmail/);
+  });
+});
+
+describe("Master Project Log status (column J)", () => {
+  const HEADER = [
+    "Project Number",
+    "Project Name",
+    "Project Advisor",
+    "FP Date",
+    "Customer Name",
+    "Street Address",
+    "City",
+    "Zip Code",
+    "Jurisdiction",
+    "Status",
+  ];
+
+  function dataRow(number: string, name: string, status: string): string[] {
+    return [
+      number,
+      name,
+      "Jenn Lee",
+      "3/1/2026",
+      `Pat ${name}`,
+      "1 Main St",
+      "San Jose",
+      "95110",
+      "San Jose",
+      status,
+    ];
+  }
+
+  it("finds the header in row 6 below a 5-row logo banner", () => {
+    const grid = [
+      [],
+      ["Acton ADU — Project Charter Master"],
+      [],
+      [""],
+      [],
+      HEADER,
+      dataRow("L01-26001", "Alpha", "Open"),
+      dataRow("L01-26002", "Bravo", "Closed"),
+    ];
+    const rows = parseMasterProjectLogGrid(grid);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      projectNumber: "L01-26001",
+      shortName: "Alpha",
+      salesperson: "Jenn Lee",
+      startDate: "3/1/2026",
+      customerName: "Pat Alpha",
+      street: "1 Main St",
+      city: "San Jose",
+      postalCode: "95110",
+      jurisdiction: "San Jose",
+      status: "open",
+      rowNumber: 7,
+    });
+    expect(rows[1]).toMatchObject({ status: "closed", rowNumber: 8 });
+  });
+
+  it("normalizes Open/Closed and treats anything else as unknown", () => {
+    const cases: Array<[string, string]> = [
+      ["Open", "open"],
+      ["closed ", "closed"],
+      ["CLOSED", "closed"],
+      [" open", "open"],
+      ["", "unknown"],
+      ["On hold", "unknown"],
+      ["N/A", "unknown"],
+    ];
+    const grid = [HEADER, ...cases.map(([status], i) => dataRow(`L01-2610${i}`, `P${i}`, status))];
+    const rows = parseMasterProjectLogGrid(grid);
+    expect(rows.map((r) => r.status)).toEqual(cases.map(([, expected]) => expected));
+    // A row with no column J at all is unknown too.
+    const short = parseMasterProjectLogGrid([
+      HEADER,
+      dataRow("L01-26200", "Short", "").slice(0, 9),
+    ]);
+    expect(short[0]?.status).toBe("unknown");
+  });
+
+  it("falls back to fixed positions (Status in J) when no header row exists", () => {
+    const rows = parseMasterProjectLogGrid([
+      dataRow("L01-26003", "Charlie", "Closed"),
+      dataRow("L01-26004", "Delta", "Open"),
+    ]);
+    expect(rows.map((r) => [r.projectNumber, r.status, r.rowNumber])).toEqual([
+      ["L01-26003", "closed", 1],
+      ["L01-26004", "open", 2],
+    ]);
+  });
+
+  it("maps a Status header wherever it sits without stealing customer or jurisdiction", () => {
+    const rows = parseMasterProjectLogGrid([
+      ["Status", "Project Number", "Customer Name", "City", "Jurisdiction"],
+      ["Closed", "L01-26005", "Echo Customer", "Campbell", "Santa Clara County"],
+    ]);
+    expect(rows[0]).toMatchObject({
+      projectNumber: "L01-26005",
+      customerName: "Echo Customer",
+      city: "Campbell",
+      jurisdiction: "Santa Clara County",
+      status: "closed",
+    });
+  });
+
+  const STATUS_ROWS: ProjectLogRow[] = [
+    {
+      ...FIXTURE_ROWS[0]!,
+      projectNumber: "L01-26301",
+      shortName: "Openone",
+      city: "San Jose",
+      jurisdiction: "San Jose",
+      salesperson: "Jenn Lee",
+      status: "open",
+      rowNumber: 7,
+    },
+    {
+      ...FIXTURE_ROWS[0]!,
+      projectNumber: "L01-26302",
+      shortName: "Opentwo",
+      city: "San Jose",
+      jurisdiction: "San Jose",
+      salesperson: "Jenn Lee",
+      status: "open",
+      rowNumber: 8,
+    },
+    {
+      ...FIXTURE_ROWS[0]!,
+      projectNumber: "L01-26303",
+      shortName: "Shutdown",
+      customerName: "Sam Shutdown",
+      city: "San Jose",
+      jurisdiction: "San Jose",
+      salesperson: "Jenn Lee",
+      status: "closed",
+      rowNumber: 9,
+    },
+    {
+      ...FIXTURE_ROWS[0]!,
+      projectNumber: "L01-26304",
+      shortName: "Blankstat",
+      city: "San Jose",
+      jurisdiction: "San Jose",
+      salesperson: "Alex Kim",
+      status: "unknown",
+      rowNumber: 10,
+    },
+  ];
+
+  function answer(question: string): string {
+    const query = detectProjectRegistryQuery(question);
+    expect(query, question).toBeTruthy();
+    return formatProjectRegistryAnswer({
+      query: query!,
+      rows: STATUS_ROWS,
+      tabName: "Master Project Log",
+    }).answer;
+  }
+
+  it("counts Open projects by default and says so", () => {
+    const text = answer("How many projects in San Jose?");
+    expect(text).toMatch(/There are 2 Open projects in San Jose/);
+    expect(text).toMatch(/Counting Open projects only/);
+    expect(text).toMatch(/2 Closed or unmarked projects match/);
+  });
+
+  it("includes closed or all projects when asked", () => {
+    expect(answer("How many closed projects in San Jose?")).toMatch(
+      /There is 1 Closed project in San Jose/,
+    );
+    expect(answer("How many projects in San Jose including closed?")).toMatch(
+      /There are 4 projects in San Jose/,
+    );
+    expect(detectProjectStatusScope("list all projects in San Jose")).toBe("all");
+    expect(detectProjectStatusScope("which projects are in San Jose")).toBe("open");
+  });
+
+  it("lists a salesperson's Open projects by default", () => {
+    const query = detectProjectRegistryQuery("list Jenn's projects");
+    expect(query).toMatchObject({
+      kind: "filter_salesperson",
+      salesperson: "Jenn",
+      statusScope: "open",
+    });
+    const text = answer("list Jenn's projects");
+    expect(text).toMatch(/Open projects for Jenn \(2\)/);
+    expect(text).toMatch(/L01-26301/);
+    expect(text).not.toMatch(/L01-26303 —/);
+    expect(text).toMatch(/Counting Open projects only/);
+  });
+
+  it("city lists default to Open and label non-open rows when listing all", () => {
+    const open = answer("which projects are in San Jose");
+    expect(open).toMatch(/Open projects in San Jose \(2\)/);
+    expect(open).not.toMatch(/L01-26303|L01-26304/);
+    const all = answer("list all projects in San Jose");
+    expect(all).toMatch(/L01-26303 — Shutdown \(Closed\)/);
+    expect(all).toMatch(/L01-26304 — Blankstat \(no status\)/);
+  });
+
+  it("direct lookups still find Closed projects and label them", () => {
+    const byNumber = answer("What city is project L01-26303?");
+    expect(byNumber).toMatch(/L01-26303, Closed/);
+    expect(byNumber).toMatch(/San Jose/);
+    const byName = answer("Who is the salesperson on the Shutdown project?");
+    expect(byName).toMatch(/\(L01-26303, Closed\)/);
+    expect(byName).toMatch(/Jenn Lee/);
   });
 });

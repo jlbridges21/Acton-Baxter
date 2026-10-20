@@ -7,7 +7,7 @@ import { listExpenseJobs } from "@/lib/receipts";
 export const dynamic = "force-dynamic";
 
 /**
- * Fast path: auth + Postgres expense_jobs only.
+ * Fast path: auth + Postgres expense_jobs only (Open projects + active custom jobs).
  * Master Project Log sync is manual (/admin/expense-jobs) or after Project Setup —
  * never on this render path.
  */

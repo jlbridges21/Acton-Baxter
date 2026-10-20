@@ -39,6 +39,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Town",
     postalCode: "90000",
     jurisdiction: "Town",
+    status: "open",
     rowNumber: 1,
   },
   {
@@ -51,6 +52,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Town",
     postalCode: "90000",
     jurisdiction: "Town",
+    status: "open",
     rowNumber: 2,
   },
   {
@@ -63,6 +65,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Los Altos",
     postalCode: "94022",
     jurisdiction: "Los Altos",
+    status: "open",
     rowNumber: 3,
   },
 ];
@@ -98,6 +101,7 @@ describe("Part A — /receipts load diagnosis + fix", () => {
             "City",
             "ZIP",
             "Jurisdiction",
+            "Status",
           ],
           ...FIXTURE_ROWS.map((r) => [
             r.projectNumber,
@@ -109,6 +113,7 @@ describe("Part A — /receipts load diagnosis + fix", () => {
             r.city,
             r.postalCode,
             r.jurisdiction,
+            "Open",
           ]),
         ];
       },
@@ -119,6 +124,7 @@ describe("Part A — /receipts load diagnosis + fix", () => {
       ...FIXTURE_ROWS[0]!,
       projectNumber: `L01-${26000 + i}`,
       shortName: `P${i}`,
+      status: "open",
       rowNumber: i + 1,
     }));
     setProjectRegistryLoadDepsForTests({
@@ -141,6 +147,7 @@ describe("Part A — /receipts load diagnosis + fix", () => {
             "City",
             "ZIP",
             "Jurisdiction",
+            "Status",
           ],
           ...many.map((r) => [
             r.projectNumber,
@@ -152,6 +159,7 @@ describe("Part A — /receipts load diagnosis + fix", () => {
             r.city,
             r.postalCode,
             r.jurisdiction,
+            "Open",
           ]),
         ];
       },

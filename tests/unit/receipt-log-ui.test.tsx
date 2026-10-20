@@ -13,6 +13,7 @@ const JOHNSON_JOB: ExpenseJob = {
   label: "Johnson",
   projectNumber: "L01-26001",
   source: "project",
+  projectStatus: "open",
   isActive: true,
   sortOrder: 1,
   createdBy: null,

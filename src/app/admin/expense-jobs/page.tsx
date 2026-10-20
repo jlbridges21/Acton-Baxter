@@ -23,8 +23,9 @@ export default async function AdminExpenseJobsPage() {
         </Link>
         <h1 className="mt-2 text-2xl font-bold text-[var(--acton-navy)]">Expense jobs</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Jobs employees can pick when logging a receipt. Project rows sync from the Master Project
-          Log when you refresh below or after a Project Setup run completes. Custom rows are
+          Jobs employees can pick when logging a receipt, inspection, or inventory item. Project
+          rows sync from the Master Project Log when you refresh below or after a Project Setup run
+          completes; only projects marked Open in column J are offered. Custom rows are
           admin-managed. Hide and reorder are preserved across syncs.
         </p>
       </div>

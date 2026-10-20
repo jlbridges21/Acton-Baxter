@@ -151,7 +151,7 @@ export async function appendSheetRow(input: {
   rangeHint?: string;
 }): Promise<{ updatedRange: string | null; updatedRows: number }> {
   const tab = input.tabName.replace(/'/g, "''");
-  const range = encodeURIComponent(input.rangeHint ?? `'${tab}'!A:I`);
+  const range = encodeURIComponent(input.rangeHint ?? `'${tab}'!A:J`);
   try {
     const result = await withGoogleRetry(() =>
       googleFetch<{

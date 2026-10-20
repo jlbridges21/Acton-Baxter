@@ -8,12 +8,14 @@ import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
 import { ValidationError } from "@/lib/errors";
-import type {
-  ExpenseJob,
-  ExpenseJobCreateCustomInput,
-  ExpenseJobUpdateInput,
-  Receipt,
-  ReceiptCreateInput,
+import {
+  isPickableExpenseJob,
+  type ExpenseJob,
+  type ExpenseJobCreateCustomInput,
+  type ExpenseJobProjectStatus,
+  type ExpenseJobUpdateInput,
+  type Receipt,
+  type ReceiptCreateInput,
 } from "./types";
 import { compareExpenseJobsForList, PROJECT_JOB_SORT_BAND } from "./job-sort";
 
@@ -22,6 +24,7 @@ export type ExpenseJobRow = {
   label: string;
   project_number: string | null;
   source: "project" | "custom";
+  project_status: ExpenseJobProjectStatus;
   is_active: boolean;
   sort_order: number;
   created_by: string | null;
@@ -92,6 +95,7 @@ export function mapExpenseJob(row: ExpenseJobRow): ExpenseJob {
     label: row.label,
     projectNumber: row.project_number,
     source: row.source,
+    projectStatus: row.project_status ?? "unknown",
     isActive: row.is_active,
     sortOrder: row.sort_order,
     createdBy: row.created_by,
@@ -132,12 +136,26 @@ function isMissingTable(error: unknown): boolean {
   );
 }
 
-export async function listExpenseJobsRaw(options?: {
+export type ListExpenseJobsOptions = {
+  /** Admin views and label lookups: every row, any status. */
   includeInactive?: boolean;
-}): Promise<ExpenseJobRow[]> {
+  /**
+   * Hide Closed/unknown project rows (custom rows always pass).
+   * Defaults to true whenever includeInactive is false, so pickers get Open projects only.
+   */
+  openProjectsOnly?: boolean;
+};
+
+export async function listExpenseJobsRaw(
+  options?: ListExpenseJobsOptions,
+): Promise<ExpenseJobRow[]> {
+  const includeInactive = Boolean(options?.includeInactive);
+  const openProjectsOnly = options?.openProjectsOnly ?? !includeInactive;
   if (shouldUseMemory()) {
     const rows = Array.from(getMemory().jobs.values()).filter(
-      (j) => options?.includeInactive || j.is_active,
+      (j) =>
+        (includeInactive || j.is_active) &&
+        (!openProjectsOnly || j.source === "custom" || j.project_status === "open"),
     );
     return rows.sort((a, b) =>
       compareExpenseJobsForList(
@@ -159,8 +177,11 @@ export async function listExpenseJobsRaw(options?: {
 
   const supabase = createServiceClient();
   let query = supabase.from("expense_jobs").select("*");
-  if (!options?.includeInactive) {
+  if (!includeInactive) {
     query = query.eq("is_active", true);
+  }
+  if (openProjectsOnly) {
+    query = query.or("source.eq.custom,project_status.eq.open");
   }
   // Fetch then sort in app — project-number desc + custom grouping need richer compare than SQL alone.
   const { data, error } = await query;
@@ -187,9 +208,7 @@ export async function listExpenseJobsRaw(options?: {
   );
 }
 
-export async function listExpenseJobs(options?: {
-  includeInactive?: boolean;
-}): Promise<ExpenseJob[]> {
+export async function listExpenseJobs(options?: ListExpenseJobsOptions): Promise<ExpenseJob[]> {
   const rows = await listExpenseJobsRaw(options);
   return rows.map(mapExpenseJob);
 }
@@ -213,12 +232,34 @@ export async function getExpenseJob(id: string): Promise<ExpenseJob | null> {
 }
 
 /**
+ * Rejects a job that pickers no longer offer (hidden, Closed, or unknown status).
+ * `currentJobId` lets an existing record keep its link to a now-Closed project.
+ */
+export function assertPickableExpenseJob<
+  T extends Pick<ExpenseJob, "id" | "isActive" | "source" | "projectStatus">,
+>(job: T | null, options?: { currentJobId?: string | null }): asserts job is T {
+  if (!job) throw new ValidationError("That project is not on the shared project list");
+  if (options?.currentJobId && options.currentJobId === job.id) return;
+  if (isPickableExpenseJob(job)) return;
+  if (!job.isActive) throw new ValidationError("That job is hidden. Choose another one.");
+  if (job.projectStatus === "closed") {
+    throw new ValidationError("That project is Closed. Choose an Open project.");
+  }
+  throw new ValidationError(
+    "That project isn't marked Open on the Master Project Log. Choose an Open project.",
+  );
+}
+
+/**
  * Upsert a project-sourced job by project_number.
  * Preserves is_active and sort_order when the row already exists.
+ * `projectStatus` comes from Master Project Log column J; omitted means leave as-is
+ * (new rows default to unknown, matching the column default).
  */
 export async function upsertProjectExpenseJob(input: {
   projectNumber: string;
   label: string;
+  projectStatus?: ExpenseJobProjectStatus;
   updatedBy?: string | null;
   /** Used only when inserting a new row (existing sort_order is preserved). */
   defaultSortOrder?: number;
@@ -240,6 +281,7 @@ export async function upsertProjectExpenseJob(input: {
       const next: ExpenseJobRow = {
         ...existing,
         label,
+        project_status: input.projectStatus ?? existing.project_status,
         updated_by: input.updatedBy ?? existing.updated_by,
         updated_at: nowIso(),
       };
@@ -251,6 +293,7 @@ export async function upsertProjectExpenseJob(input: {
       label,
       project_number: projectNumber,
       source: "project",
+      project_status: input.projectStatus ?? "unknown",
       is_active: true,
       sort_order: defaultSort,
       created_by: input.updatedBy ?? null,
@@ -276,6 +319,7 @@ export async function upsertProjectExpenseJob(input: {
       .from("expense_jobs")
       .update({
         label,
+        ...(input.projectStatus ? { project_status: input.projectStatus } : {}),
         updated_by: input.updatedBy ?? null,
         updated_at: nowIso(),
       })
@@ -292,6 +336,7 @@ export async function upsertProjectExpenseJob(input: {
       label,
       project_number: projectNumber,
       source: "project",
+      project_status: input.projectStatus ?? "unknown",
       is_active: true,
       sort_order: defaultSort,
       created_by: input.updatedBy ?? null,
@@ -301,6 +346,36 @@ export async function upsertProjectExpenseJob(input: {
     .single();
   if (error) throw error;
   return data as ExpenseJobRow;
+}
+
+/** Project rows that dropped off the Master Project Log are treated as Closed. */
+export async function markProjectExpenseJobsClosed(
+  ids: string[],
+  updatedBy?: string | null,
+): Promise<void> {
+  if (ids.length === 0) return;
+  if (shouldUseMemory()) {
+    const mem = getMemory();
+    for (const id of ids) {
+      const row = mem.jobs.get(id);
+      if (row && row.source === "project") {
+        mem.jobs.set(id, {
+          ...row,
+          project_status: "closed",
+          updated_by: updatedBy ?? row.updated_by,
+          updated_at: nowIso(),
+        });
+      }
+    }
+    return;
+  }
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("expense_jobs")
+    .update({ project_status: "closed", updated_by: updatedBy ?? null, updated_at: nowIso() })
+    .in("id", ids)
+    .eq("source", "project");
+  if (error) throw error;
 }
 
 export async function createCustomExpenseJob(
@@ -319,6 +394,7 @@ export async function createCustomExpenseJob(
       label,
       project_number: null,
       source: "custom",
+      project_status: "unknown",
       is_active: input.isActive ?? true,
       // Keep customs in the low band (before PROJECT_JOB_SORT_BAND) by default.
       sort_order: input.sortOrder ?? Math.min(customMax + 10, PROJECT_JOB_SORT_BAND - 10),
@@ -452,9 +528,8 @@ export async function createReceipt(input: ReceiptCreateInput): Promise<Receipt>
 
   if (jobId) {
     const job = await getExpenseJob(jobId);
-    if (!job || !job.isActive) {
-      throw new ValidationError("Select an active job");
-    }
+    if (!job) throw new ValidationError("Select an active job");
+    assertPickableExpenseJob(job);
   }
 
   const items = input.items?.trim() || null;

@@ -1,10 +1,13 @@
 /**
- * Parse Master Project Log grid (A–I) into typed rows.
+ * Parse Master Project Log grid (A–J) into typed rows.
  * Column order matches Project Setup append: number, short name, salesperson,
- * date, customer, street, city, ZIP, jurisdiction.
+ * date, customer, street, city, ZIP, jurisdiction, status (Open/Closed).
+ *
+ * The live sheet has a logo banner (rows 1–5) above the header row (row 6), so
+ * the header is found by scanning the first rows rather than assuming row 1.
  */
 
-import type { ProjectLogRow } from "./types";
+import type { ProjectLogRow, ProjectLogStatus } from "./types";
 
 const DEFAULT_HEADERS = [
   "project number",
@@ -16,7 +19,10 @@ const DEFAULT_HEADERS = [
   "city",
   "zip",
   "jurisdiction",
+  "status",
 ] as const;
+
+const HEADER_SCAN_ROWS = 15;
 
 function normHeader(h: string): string {
   return h
@@ -37,12 +43,24 @@ function looksLikeProjectNumber(value: string): boolean {
   return /^[A-Za-z]\d{2}-\d{4,6}$/.test(value.trim());
 }
 
-function mapHeaderIndex(headers: string[]): Record<keyof Omit<ProjectLogRow, "rowNumber">, number> {
-  const idx: Record<string, number> = {};
+/** Column J cell → status. Anything other than Open/Closed (including blank) is "unknown". */
+export function normalizeProjectLogStatus(value: string | null | undefined): ProjectLogStatus {
+  const v = (value ?? "").trim().toLowerCase();
+  if (v === "open") return "open";
+  if (v === "closed") return "closed";
+  return "unknown";
+}
+
+type ColumnKey = keyof Omit<ProjectLogRow, "rowNumber">;
+
+function mapHeaderIndex(headers: string[]): Record<ColumnKey, number> {
+  const idx: Partial<Record<ColumnKey, number>> = {};
   headers.forEach((h, i) => {
     const n = normHeader(h);
     if (!n) return;
-    if (/project\s*(number|no|#)|^\s*number\s*$/.test(n) || n === "project #")
+    // Status first so it can never fall into a broader pattern below.
+    if (/^(project\s+)?status$/.test(n)) idx.status = i;
+    else if (/project\s*(number|no|#)|^\s*number\s*$/.test(n) || n === "project #")
       idx.projectNumber = i;
     else if (/^(short\s*name|last\s*name|project\s*name|name)$/.test(n)) idx.shortName = i;
     else if (/sales|rep|advisor/.test(n)) idx.salesperson = i;
@@ -54,7 +72,7 @@ function mapHeaderIndex(headers: string[]): Record<keyof Omit<ProjectLogRow, "ro
     else if (/jurisdiction|muni|county/.test(n)) idx.jurisdiction = i;
   });
 
-  // Positional fallbacks (Project Setup write order A–I).
+  // Positional fallbacks (Project Setup write order A–J).
   return {
     projectNumber: idx.projectNumber ?? 0,
     shortName: idx.shortName ?? 1,
@@ -65,6 +83,7 @@ function mapHeaderIndex(headers: string[]): Record<keyof Omit<ProjectLogRow, "ro
     city: idx.city ?? 6,
     postalCode: idx.postalCode ?? 7,
     jurisdiction: idx.jurisdiction ?? 8,
+    status: idx.status ?? 9,
   };
 }
 
@@ -74,18 +93,20 @@ function cell(row: string[], i: number): string {
 
 /**
  * Convert a raw sheet grid into project log rows.
+ * `grid[0]` must be sheet row 1 so `rowNumber` stays the real 1-based sheet row.
  */
 export function parseMasterProjectLogGrid(grid: string[][]): ProjectLogRow[] {
   if (!grid.length) return [];
 
-  let headerIdx = 0;
+  let headerIdx = -1;
   let headers: string[] = [...DEFAULT_HEADERS];
-  if (looksLikeHeaderRow(grid[0] ?? [])) {
-    headers = (grid[0] ?? []).map((c) => c.trim());
-    headerIdx = 0;
-  } else {
-    // No header — treat row 0 as data; still use default column mapping.
-    headerIdx = -1;
+  const scanLimit = Math.min(grid.length, HEADER_SCAN_ROWS);
+  for (let r = 0; r < scanLimit; r++) {
+    if (looksLikeHeaderRow(grid[r] ?? [])) {
+      headerIdx = r;
+      headers = (grid[r] ?? []).map((c) => c.trim());
+      break;
+    }
   }
 
   const map = mapHeaderIndex(headers);
@@ -96,7 +117,7 @@ export function parseMasterProjectLogGrid(grid: string[][]): ProjectLogRow[] {
     const row = grid[r] ?? [];
     const projectNumber = cell(row, map.projectNumber);
     if (!projectNumber) continue;
-    // Skip non-project rows (notes, blanks).
+    // Skip non-project rows (banner text, notes, blanks).
     if (!looksLikeProjectNumber(projectNumber) && !/^[A-Za-z]\d{2}-/.test(projectNumber)) {
       continue;
     }
@@ -110,6 +131,7 @@ export function parseMasterProjectLogGrid(grid: string[][]): ProjectLogRow[] {
       city: cell(row, map.city),
       postalCode: cell(row, map.postalCode),
       jurisdiction: cell(row, map.jurisdiction),
+      status: normalizeProjectLogStatus(row[map.status]),
       rowNumber: r + 1,
     });
   }

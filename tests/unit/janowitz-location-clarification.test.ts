@@ -52,6 +52,7 @@ const JANOWITZ_ROW: ProjectLogRow = {
   city: "Orinda",
   postalCode: "94563",
   jurisdiction: "Orinda",
+  status: "open",
   rowNumber: 21,
 };
 

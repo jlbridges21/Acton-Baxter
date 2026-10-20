@@ -114,4 +114,14 @@ describe("getAdminNavSections", () => {
       "Slack",
     ]);
   });
+
+  it("lists Master Project Log under AI Governance", () => {
+    const governance = getAdminNavSections().find((s) => s.id === "governance");
+    expect(governance?.label).toBe("AI Governance");
+    const link = governance?.links.find((l) => l.label === "Master Project Log");
+    expect(link?.href).toBe("/admin/baxter/projects");
+    expect(link?.match?.("/admin/baxter/projects")).toBe(true);
+    expect(link?.match?.("/admin/baxter/projects?status=closed")).toBe(true);
+    expect(link?.match?.("/admin/baxter/governance")).toBe(false);
+  });
 });

@@ -99,7 +99,7 @@ function answerDedicatedCapabilityHowto(
         "• **In Slack:** run `/new-project` — search GoHighLevel for the customer, pick them, confirm the details, and start the run.",
         "• **On the web:** open **New Project Setup** — same flow: look up a GHL customer, confirm project details (name, number, FP paid date, etc.), then confirm to run.",
         "",
-        "After human confirmation, Baxter automates the Master Project Log row, copies the Drive project folder from the template, creates the Project Charter in that folder, appends the Project Charter List link, and (when Slack provisioning is enabled) creates the public project channel and posts the kickoff message.",
+        "After human confirmation, Baxter automates the Master Project Log row (marked Open, so the project appears in Receipts, Site Inspections, and Inventory pickers), copies the Drive project folder from the template, creates the Project Charter in that folder, appends the Project Charter List link, and (when Slack provisioning is enabled) creates the public project channel and posts the kickoff message.",
         "",
         "Baxter does **not** auto-trigger this — someone must confirm on the web or in the Slack modal before any live write runs. Dry-run is available on the web to preview without changing Google/Slack.",
       ].join("\n"),

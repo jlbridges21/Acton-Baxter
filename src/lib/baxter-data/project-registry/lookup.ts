@@ -4,7 +4,7 @@
 
 import { normalizeEntitySearchName } from "@/lib/baxter-ai/entity-name-normalize";
 import { sanitizeSlackChannelSegment } from "@/lib/project-setup/names";
-import type { ProjectLogRow } from "./types";
+import type { ProjectLogRow, ProjectStatusScope } from "./types";
 
 function norm(s: string): string {
   return (normalizeEntitySearchName(s) || s).trim().toLowerCase();
@@ -43,6 +43,7 @@ export type ProjectLookupResult =
 
 /**
  * Resolve a project by number, short name, or customer name.
+ * Matches any status so history questions about Closed projects still resolve.
  */
 export function lookupProjectRow(rows: ProjectLogRow[], query: string): ProjectLookupResult {
   const scored = rows
@@ -76,20 +77,42 @@ export function filterProjectsByCity(rows: ProjectLogRow[], city: string): Proje
   });
 }
 
+/** Lists and counts default to Open; "all" includes Closed and unknown-status rows. */
+export function filterProjectsByStatus(
+  rows: ProjectLogRow[],
+  scope: ProjectStatusScope = "open",
+): ProjectLogRow[] {
+  if (scope === "all") return rows;
+  return rows.filter((r) => r.status === scope);
+}
+
+export function filterProjectsBySalesperson(
+  rows: ProjectLogRow[],
+  salesperson: string,
+): ProjectLogRow[] {
+  const s = norm(salesperson);
+  if (!s) return [];
+  return rows.filter((r) => {
+    const n = norm(r.salesperson);
+    return Boolean(n) && (n === s || n.includes(s) || s.includes(n));
+  });
+}
+
 export function countProjects(
   rows: ProjectLogRow[],
-  filters: { city?: string | null; salesperson?: string | null; year?: number | null },
+  filters: {
+    city?: string | null;
+    salesperson?: string | null;
+    year?: number | null;
+    statusScope?: ProjectStatusScope;
+  },
 ): { count: number; rows: ProjectLogRow[] } {
-  let filtered = rows;
+  let filtered = filterProjectsByStatus(rows, filters.statusScope);
   if (filters.city?.trim()) {
     filtered = filterProjectsByCity(filtered, filters.city);
   }
   if (filters.salesperson?.trim()) {
-    const s = norm(filters.salesperson);
-    filtered = filtered.filter((r) => {
-      const n = norm(r.salesperson);
-      return n === s || n.includes(s) || s.includes(n);
-    });
+    filtered = filterProjectsBySalesperson(filtered, filters.salesperson);
   }
   if (filters.year) {
     const y = String(filters.year);

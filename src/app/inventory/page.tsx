@@ -5,7 +5,7 @@ import { requireActiveUser } from "@/lib/auth/session";
 import { parseInventoryFilters } from "@/lib/inventory/filters";
 import { signInventoryFiles } from "@/lib/inventory/order-files";
 import { listAllInventoryItems, listInventoryVocab } from "@/lib/inventory/store";
-import { listExpenseJobs } from "@/lib/receipts";
+import { listExpenseJobs, splitPickerJobs } from "@/lib/receipts";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +14,17 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 export default async function InventoryPage({ searchParams }: { searchParams: SearchParams }) {
   const user = await requireActiveUser();
   const filters = parseInventoryFilters(await searchParams);
-  const [rawItems, statuses, storageStates, jobs] = await Promise.all([
+  const [rawItems, statuses, storageStates, allJobs] = await Promise.all([
     listAllInventoryItems(),
     listInventoryVocab("status"),
     listInventoryVocab("storage"),
-    listExpenseJobs({ includeInactive: false }),
+    listExpenseJobs({ includeInactive: true }),
   ]);
+  // New assignments offer Open projects only; items on a Closed project keep their label.
+  const { pickable: jobs, linkedLabels } = splitPickerJobs(
+    allJobs,
+    rawItems.map((item) => item.jobId),
+  );
   // Full list stays on the client so sort, filter, and search do not reload the page.
   // Revisit around 2,000 rows, when shipping every signed photo URL on first load
   // is no longer cheaper than a paged query.
@@ -58,6 +63,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Se
         statuses={statuses}
         storageStates={storageStates}
         jobs={jobs.map((job) => ({ id: job.id, label: job.label }))}
+        linkedJobLabels={linkedLabels}
         projectOptions={[...projectOptions.entries()].map(([value, label]) => ({ value, label }))}
         vendors={vendors}
         orderNumbers={orderNumbers}

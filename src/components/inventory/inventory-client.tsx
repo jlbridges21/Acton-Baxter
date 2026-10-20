@@ -107,6 +107,8 @@ type Props = {
   statuses: InventoryVocabValue[];
   storageStates: InventoryVocabValue[];
   jobs: InventoryJobOption[];
+  /** Labels for linked jobs no longer offered as options, e.g. "… (Closed)". */
+  linkedJobLabels?: Record<string, string>;
   projectOptions: { value: string; label: string }[];
   vendors: string[];
   orderNumbers: string[];
@@ -1099,6 +1101,7 @@ export function InventoryClient(props: Props) {
         statuses={props.statuses}
         storageStates={props.storageStates}
         jobs={props.jobs}
+        linkedJobLabels={props.linkedJobLabels}
         onClose={() => setEditor(null)}
         onOptimistic={(next) => {
           writeCatalog((current) => upsertCatalog(remember(current), next));
@@ -1729,17 +1732,23 @@ function InlineVocabSelect({
 
 function ProjectField({
   jobs,
+  currentJob,
   jobId,
   customProjectLabel,
   onChange,
 }: {
   jobs: InventoryJobOption[];
+  /** Kept as the selection but not offered again once cleared. */
+  currentJob: InventoryJobOption | null;
   jobId: string;
   customProjectLabel: string;
   onChange: (next: { jobId: string; customProjectLabel: string }) => void;
 }) {
   const [query, setQuery] = useState(
-    customProjectLabel || jobs.find((job) => job.id === jobId)?.label || "",
+    customProjectLabel ||
+      jobs.find((job) => job.id === jobId)?.label ||
+      (currentJob && currentJob.id === jobId ? currentJob.label : "") ||
+      "",
   );
   const [open, setOpen] = useState(false);
   const filtered = useMemo(() => {
@@ -1848,7 +1857,10 @@ function itemFromDraft(
     orderId: existing?.orderId ?? null,
     jobId: draft.jobId || null,
     customProjectLabel: draft.customProjectLabel.trim() || null,
-    projectLabel: job?.label || draft.customProjectLabel.trim(),
+    projectLabel:
+      job?.label ||
+      (existing?.jobId && existing.jobId === draft.jobId ? existing.projectLabel : "") ||
+      draft.customProjectLabel.trim(),
     vendor: draft.vendor.trim() || null,
     orderNumber: draft.orderNumber.trim() || null,
     category: draft.category.trim() || null,
@@ -1881,6 +1893,7 @@ function ItemDialog({
   statuses,
   storageStates,
   jobs,
+  linkedJobLabels,
   onClose,
   onOptimistic,
   onRollback,
@@ -1891,6 +1904,7 @@ function ItemDialog({
   statuses: InventoryVocabValue[];
   storageStates: InventoryVocabValue[];
   jobs: InventoryJobOption[];
+  linkedJobLabels?: Record<string, string>;
   onClose: () => void;
   onOptimistic: (next: InventoryItem) => void;
   onRollback: () => void;
@@ -1906,6 +1920,11 @@ function ItemDialog({
         statuses={statuses}
         storageStates={storageStates}
         jobs={jobs}
+        currentJobLabel={
+          item?.jobId && !jobs.some((job) => job.id === item.jobId)
+            ? (linkedJobLabels?.[item.jobId] ?? item.projectLabel)
+            : null
+        }
         initial={item ? draftFromItem(item) : emptyDraft(statuses)}
         onClose={onClose}
         onOptimistic={onOptimistic}
@@ -1921,6 +1940,7 @@ function ItemDialogForm({
   statuses,
   storageStates,
   jobs,
+  currentJobLabel,
   initial,
   onClose,
   onOptimistic,
@@ -1931,6 +1951,8 @@ function ItemDialogForm({
   statuses: InventoryVocabValue[];
   storageStates: InventoryVocabValue[];
   jobs: InventoryJobOption[];
+  /** The item's existing project when it is no longer an option (e.g. Closed). */
+  currentJobLabel: string | null;
   initial: ItemDraft;
   onClose: () => void;
   onOptimistic: (next: InventoryItem) => void;
@@ -2072,6 +2094,9 @@ function ItemDialogForm({
           <div className="mt-1">
             <ProjectField
               jobs={jobs}
+              currentJob={
+                item?.jobId && currentJobLabel ? { id: item.jobId, label: currentJobLabel } : null
+              }
               jobId={draft.jobId}
               customProjectLabel={draft.customProjectLabel}
               onChange={(next) => patch(next)}

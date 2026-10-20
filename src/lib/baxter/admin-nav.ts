@@ -22,6 +22,7 @@ import {
   Search,
   Settings,
   Stethoscope,
+  Table,
   Users,
   UsersRound,
 } from "lucide-react";
@@ -169,6 +170,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Process Monitoring",
       icon: Bell,
       match: (pathname) => pathname.startsWith("/admin/baxter/monitoring"),
+    },
+    {
+      href: "/admin/baxter/projects",
+      label: "Master Project Log",
+      icon: Table,
+      match: (pathname) => pathname.startsWith("/admin/baxter/projects"),
     },
     {
       href: "/admin/baxter/evaluations",

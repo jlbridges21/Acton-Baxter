@@ -67,6 +67,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Los Altos",
     postalCode: "94022",
     jurisdiction: "Los Altos",
+    status: "open",
     rowNumber: 15,
   },
   {
@@ -79,6 +80,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "Walnut Creek",
     postalCode: "94598",
     jurisdiction: "Walnut Creek",
+    status: "open",
     rowNumber: 12,
   },
   {
@@ -91,6 +93,7 @@ const FIXTURE_ROWS: ProjectLogRow[] = [
     city: "San Jose",
     postalCode: "95112",
     jurisdiction: "San Jose",
+    status: "open",
     rowNumber: 8,
   },
 ];

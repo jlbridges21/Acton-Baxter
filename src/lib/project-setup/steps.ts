@@ -176,12 +176,14 @@ async function executeAppendMasterLogRow(
     city: ctx.run.contactSnapshot.city ?? "",
     postalCode: ctx.run.contactSnapshot.postalCode ?? "",
     jurisdiction: ctx.run.contactSnapshot.city ?? "",
+    // Column J. New projects start Open so they appear in tool pickers after the post-setup sync.
+    status: "Open",
   };
 
   const planned = {
     spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
     tabName: ctx.settings.masterLogTabName,
-    columns: "A–I",
+    columns: "A–J",
     row,
   };
 
@@ -218,12 +220,14 @@ async function executeAppendMasterLogRow(
     row.city,
     row.postalCode,
     row.jurisdiction,
+    row.status,
   ];
 
   const appended = await appendSheetRow({
     spreadsheetId: ctx.settings.masterCharterSpreadsheetId,
     tabName: ctx.settings.masterLogTabName,
     values,
+    rangeHint: `'${ctx.settings.masterLogTabName.replace(/'/g, "''")}'!A:J`,
   });
 
   return {

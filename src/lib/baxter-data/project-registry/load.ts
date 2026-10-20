@@ -1,6 +1,7 @@
 /**
  * Load Master Project Log from the configured Project Charter Master spreadsheet.
  * Reads spreadsheet ID + tab from project_setup_settings (never hardcoded).
+ * Range A:J — column J is the Open/Closed status that gates tool pickers.
  */
 
 import "server-only";
@@ -85,7 +86,7 @@ export async function loadMasterProjectLog(
   const grid = await readSheet({
     spreadsheetId,
     tabName,
-    rangeA1: "A:I",
+    rangeA1: "A:J",
     valueRenderOption: "FORMATTED_VALUE",
   });
   const rows = parseMasterProjectLogGrid(grid);

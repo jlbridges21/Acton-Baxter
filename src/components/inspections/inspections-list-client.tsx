@@ -26,6 +26,7 @@ type Assignee = { id: string; displayName: string };
 export function InspectionsListClient({
   initialInspections,
   jobs,
+  linkedJobLabels,
   templates,
   assignees,
   currentUserId,
@@ -34,6 +35,8 @@ export function InspectionsListClient({
 }: {
   initialInspections: SiteInspectionSummary[];
   jobs: ExpenseJob[];
+  /** Labels for linked projects no longer offered in the picker, e.g. "… (Closed)". */
+  linkedJobLabels?: Record<string, string>;
   templates: InspectionTemplateSummary[];
   assignees: Assignee[];
   currentUserId: string;
@@ -291,6 +294,7 @@ export function InspectionsListClient({
           key={editTarget.id}
           row={editTarget}
           jobs={jobs}
+          linkedJobLabels={linkedJobLabels}
           assignees={assignees}
           onClose={() => setEditTarget(null)}
           onSaved={(inspection) => {

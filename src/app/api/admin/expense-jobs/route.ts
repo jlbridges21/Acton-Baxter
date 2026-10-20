@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/auth/session";
+import { clearProjectLogCache } from "@/lib/baxter-data/project-registry";
 import { jsonError, jsonOk } from "@/lib/api";
 import {
   createCustomExpenseJob,
@@ -73,6 +74,8 @@ export async function POST(request: Request) {
       return jsonOk({ jobs });
     }
 
+    // Refresh means a fresh sheet read, not the short-lived registry cache.
+    clearProjectLogCache();
     const sync = await syncExpenseJobsFromMasterProjectLog({ updatedBy: user.id });
     const jobs = await listExpenseJobs({ includeInactive: true });
     return jsonOk({
@@ -82,6 +85,8 @@ export async function POST(request: Request) {
         added: sync.added,
         updated: sync.updated,
         deactivatedMissing: sync.deactivatedMissing,
+        statusCounts: sync.statusCounts,
+        fetchedAt: new Date().toISOString(),
       },
     });
   } catch (error) {

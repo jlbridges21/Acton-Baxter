@@ -27,12 +27,14 @@ type Assignee = { id: string; displayName: string };
 export function EditInspectionDialog({
   row,
   jobs,
+  linkedJobLabels,
   assignees,
   onClose,
   onSaved,
 }: {
   row: SiteInspectionSummary;
   jobs: ExpenseJob[];
+  linkedJobLabels?: Record<string, string>;
   assignees: Assignee[];
   onClose: () => void;
   onSaved: (inspection: SiteInspectionDetail) => void;
@@ -46,6 +48,9 @@ export function EditInspectionDialog({
   const [serverError, setServerError] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const currentJobLabel = row.jobId
+    ? (jobs.find((job) => job.id === row.jobId)?.label ?? linkedJobLabels?.[row.jobId] ?? null)
+    : null;
 
   const dirty = useMemo(() => {
     const address = (selectedAddress?.formattedAddress || addressQuery).trim();
@@ -129,6 +134,14 @@ export function EditInspectionDialog({
             <p className="mb-1 block text-sm font-medium text-[var(--acton-navy)]">
               Linked project
             </p>
+            {currentJobLabel && jobId === row.jobId ? (
+              <p
+                className="mb-2 text-sm text-[var(--acton-navy)]"
+                data-testid="current-linked-project"
+              >
+                Current: {currentJobLabel}
+              </p>
+            ) : null}
             <InspectionProjectPicker jobs={jobs} onPick={onPick} disabled={busy} />
             <p className="mt-1 text-xs text-[var(--acton-muted)]">
               Choosing a project fills in the name and address.

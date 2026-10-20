@@ -140,14 +140,14 @@ describe("append idempotency helpers", () => {
     expect(columnAContainsProjectNumber([["L01-26017"]], "L01-26018")).toBe(false);
   });
 
-  it("orders Master Log columns A–I", async () => {
+  it("orders Master Log columns A–J and writes new projects as Open", async () => {
     const { execute } = (await import("@/lib/project-setup/steps")).PROJECT_SETUP_STEPS.find(
       (s) => s.key === "append_master_log_row",
     )!;
 
     readSheetColumn.mockResolvedValue([["L01-26017"]]);
     appendSheetRow.mockResolvedValue({
-      updatedRange: "Master Project Log!A42:I42",
+      updatedRange: "Master Project Log!A42:J42",
       updatedRows: 1,
     });
 
@@ -220,10 +220,12 @@ describe("append idempotency helpers", () => {
           "San Jose",
           "95110",
           "San Jose",
+          "Open",
         ],
+        rangeHint: "'Master Project Log'!A:J",
       }),
     );
-    expect(result.outputJson.updatedRange).toBe("Master Project Log!A42:I42");
+    expect(result.outputJson.updatedRange).toBe("Master Project Log!A42:J42");
 
     readSheetColumn.mockResolvedValue([["L01-26018"]]);
     appendSheetRow.mockClear();

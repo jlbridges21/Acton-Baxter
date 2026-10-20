@@ -18,7 +18,7 @@ Automated new-project kickoff after a Feasibility Package signs in GoHighLevel.
 - Durable `project_setup` job with resumable steps
 - **Real** Google steps when write scopes are connected and dry-run is unchecked:
   1. Allocate next project number (year rollover)
-  2. Append Master Project Log row (A–I), idempotent if number already present
+  2. Append Master Project Log row (A–J, with `Open` in column J), idempotent if number already present
   3. Recursively copy template folder under `02 Projects` (excludes Project Charter Master by file id)
   4. Copy master charter into the new folder (all tabs retained)
   5. Append Project Charter List hyperlink row
@@ -48,6 +48,20 @@ Reconnect at `/admin/connectors/google` so `granted_scopes` include:
 ## Project numbers
 
 Format `<prefix>-<YY><seq>` e.g. `L01-26017`. FP paid year rollover → `<prefix>-<newYY>001`.
+
+Allocation reads every row of column A, whatever its status. A Closed project's number is never reused.
+
+## Master Project Log status (column J)
+
+The Master Project Log has a logo banner in rows 1–5, headers in row 6, and data from row 7. Column J, **Status**, is a dropdown holding `Open` or `Closed`.
+
+- Baxter reads `A:J` and finds the header row by scanning the first rows, so the banner is skipped.
+- `Open` and `Closed` are read case-insensitively. Anything else, including a blank cell, is **Unknown**.
+- **Only Open projects appear in tool pickers** (Receipts, Site Inspections, Inventory). Closed and Unknown are hidden. Records already linked to a project that later Closes keep showing its label.
+- Project Setup writes `Open` in column J for every new project, and the post-setup sync makes it pickable straight away.
+- `expense_jobs.project_status` (migration **066**) holds the synced status. A refresh upserts every sheet row with its status and marks project rows that are no longer on the sheet as `closed`.
+- Admins can see every project, filter by status, and refresh at **AI Governance → Master Project Log** (`/admin/baxter/projects`). The same refresh is on `/admin/expense-jobs`.
+- Baxter AI lists and counts cover Open projects unless the question asks about closed or all projects. Lookups by project number or name find any status and label Closed projects.
 
 ## Manual setup (Prompt 3)
 

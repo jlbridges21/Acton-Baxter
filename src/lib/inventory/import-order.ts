@@ -17,7 +17,7 @@ import {
   type ParsedOrderLine,
   type PdfPageLayout,
 } from "./build-com-parse";
-import { createInventoryItem, listInventoryVocab } from "./store";
+import { assertInventoryProjectAssignable, createInventoryItem, listInventoryVocab } from "./store";
 import type { InventoryItem } from "./types";
 import { readBuildComPdfLayout } from "./pdf-layout";
 import type {
@@ -351,6 +351,7 @@ export async function commitInventoryImport(input: {
   actorId: string;
 }): Promise<{ orderId: string; itemCount: number; items: InventoryItem[] }> {
   if (!input.lines.length) throw new ValidationError("Add at least one line before importing");
+  await assertInventoryProjectAssignable(input);
   const duplicate = await findInventoryOrderDuplicate({
     sha256: input.sha256,
     orderNumber: input.orderNumber,

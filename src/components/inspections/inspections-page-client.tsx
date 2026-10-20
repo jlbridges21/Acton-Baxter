@@ -20,6 +20,7 @@ type Assignee = { id: string; displayName: string };
 export function InspectionsPageClient({
   initialInspections,
   jobs,
+  linkedJobLabels,
   templates,
   assignees,
   currentUserId,
@@ -27,6 +28,7 @@ export function InspectionsPageClient({
 }: {
   initialInspections: SiteInspectionSummary[];
   jobs: ExpenseJob[];
+  linkedJobLabels?: Record<string, string>;
   templates: InspectionTemplateSummary[];
   assignees: Assignee[];
   currentUserId: string;
@@ -52,6 +54,7 @@ export function InspectionsPageClient({
       <InspectionsListClient
         initialInspections={initialInspections}
         jobs={jobs}
+        linkedJobLabels={linkedJobLabels}
         templates={templates}
         assignees={assignees}
         currentUserId={currentUserId}

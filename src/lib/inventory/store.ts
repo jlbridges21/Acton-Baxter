@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { getEnv } from "@/lib/env";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { createServiceClient } from "@/lib/supabase/admin";
+import { assertPickableExpenseJob } from "@/lib/receipts/store";
+import type { ExpenseJobProjectStatus, ExpenseJobSource } from "@/lib/receipts/types";
 import { applyInventoryBulkPatch, type InventoryBulkPatch } from "./bulk";
 import { applyInventoryQuery } from "./filters";
 import { inventoryTotalCents } from "./money";
@@ -21,7 +23,15 @@ type Memory = {
   statuses: InventoryVocabValue[];
   storage: InventoryVocabValue[];
   items: MemoryItem[];
-  jobLabels: Map<string, string>;
+  jobs: Map<string, InventoryJobRef>;
+};
+
+type InventoryJobRef = {
+  id: string;
+  label: string;
+  source: ExpenseJobSource;
+  isActive: boolean;
+  projectStatus: ExpenseJobProjectStatus;
 };
 
 const globalMemory = globalThis as typeof globalThis & { __baxterInventory?: Memory };
@@ -58,7 +68,7 @@ function emptyMemory(): Memory {
       isDefault,
     })),
     items: [],
-    jobLabels: new Map(),
+    jobs: new Map(),
   };
 }
 
@@ -71,8 +81,18 @@ export function resetInventoryMemoryForTests() {
   globalMemory.__baxterInventory = emptyMemory();
 }
 
-export function rememberInventoryJobLabelForTests(jobId: string, label: string) {
-  memory().jobLabels.set(jobId, label);
+export function rememberInventoryJobLabelForTests(
+  jobId: string,
+  label: string,
+  options?: { projectStatus?: ExpenseJobProjectStatus; isActive?: boolean },
+) {
+  memory().jobs.set(jobId, {
+    id: jobId,
+    label,
+    source: "project",
+    isActive: options?.isActive ?? true,
+    projectStatus: options?.projectStatus ?? "open",
+  });
 }
 
 function shouldUseMemory(): boolean {
@@ -146,31 +166,53 @@ function clean(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-async function resolveProject(input: {
-  jobId?: string | null;
-  customProjectLabel?: string | null;
-}): Promise<{ jobId: string | null; customProjectLabel: string | null; projectLabel: string }> {
+/**
+ * New links must be an Open project (or active custom job). `currentJobId` is the
+ * item's existing link, which may stay on a project that has since Closed.
+ */
+async function resolveProject(
+  input: {
+    jobId?: string | null;
+    customProjectLabel?: string | null;
+  },
+  currentJobId?: string | null,
+): Promise<{ jobId: string | null; customProjectLabel: string | null; projectLabel: string }> {
   const jobId = input.jobId ?? null;
   const custom = clean(input.customProjectLabel);
   if (jobId && custom)
     throw new ValidationError("Choose a project from the list or a custom name, not both");
   if (!jobId && !custom) throw new ValidationError("Project is required");
   if (custom) return { jobId: null, customProjectLabel: custom, projectLabel: custom };
-  const label = await lookupJobLabel(jobId!);
-  if (!label) throw new ValidationError("That project is not on the shared project list");
-  return { jobId, customProjectLabel: null, projectLabel: label };
+  const job = await lookupJob(jobId!);
+  assertPickableExpenseJob(job, { currentJobId });
+  return { jobId, customProjectLabel: null, projectLabel: job.label };
 }
 
-async function lookupJobLabel(jobId: string): Promise<string | null> {
-  if (shouldUseMemory()) return memory().jobLabels.get(jobId) ?? null;
+/** Validate an order's project before anything is written (import commit). */
+export async function assertInventoryProjectAssignable(input: {
+  jobId?: string | null;
+  customProjectLabel?: string | null;
+}): Promise<void> {
+  await resolveProject(input);
+}
+
+async function lookupJob(jobId: string): Promise<InventoryJobRef | null> {
+  if (shouldUseMemory()) return memory().jobs.get(jobId) ?? null;
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("expense_jobs")
-    .select("label")
+    .select("id, label, source, is_active, project_status")
     .eq("id", jobId)
     .maybeSingle();
   if (error) throw error;
-  return (data?.label as string | undefined) ?? null;
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    label: data.label as string,
+    source: data.source as ExpenseJobSource,
+    isActive: data.is_active as boolean,
+    projectStatus: (data.project_status as ExpenseJobProjectStatus | undefined) ?? "unknown",
+  };
 }
 
 function assertUrl(value: string | null, label: string): string | null {
@@ -316,7 +358,7 @@ export async function updateInventoryItem(
   input: InventoryItemInput,
 ): Promise<InventoryItem> {
   const existing = await getInventoryItem(id);
-  const project = await resolveProject(input);
+  const project = await resolveProject(input, existing.jobId);
   const status = await requireStatus(input.statusId ?? existing.statusId);
   const storage = await optionalStorage(
     input.storageStateId === undefined ? existing.storageStateId : input.storageStateId,

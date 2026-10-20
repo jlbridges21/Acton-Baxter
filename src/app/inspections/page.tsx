@@ -4,24 +4,30 @@ import { isAdminRole } from "@/lib/auth/roles";
 import { requireActiveUser } from "@/lib/auth/session";
 import { listGovernanceOwnerCandidates } from "@/lib/baxter-ai/governance/owner-candidates";
 import { listSiteInspections, listTemplates } from "@/lib/inspections";
-import { listExpenseJobs } from "@/lib/receipts";
+import { listExpenseJobs, splitPickerJobs } from "@/lib/receipts";
 
 export const dynamic = "force-dynamic";
 
 export default async function InspectionsPage() {
   const user = await requireActiveUser();
-  const [inspections, jobs, templates, assignees] = await Promise.all([
+  const [inspections, allJobs, templates, assignees] = await Promise.all([
     listSiteInspections(),
-    listExpenseJobs({ includeInactive: false }),
+    listExpenseJobs({ includeInactive: true }),
     listTemplates({ includeArchived: true }),
     listGovernanceOwnerCandidates(),
   ]);
+  // Pickers offer Open projects only; inspections on a Closed project keep their label.
+  const { pickable: jobs, linkedLabels } = splitPickerJobs(
+    allJobs,
+    inspections.map((inspection) => inspection.jobId),
+  );
 
   return (
     <AppShell user={user}>
       <InspectionsPageClient
         initialInspections={inspections}
         jobs={jobs}
+        linkedJobLabels={linkedLabels}
         templates={templates}
         assignees={assignees.map((a) => ({ id: a.id, displayName: a.displayName }))}
         currentUserId={user.id}

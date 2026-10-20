@@ -11,6 +11,7 @@ import { getEnv } from "@/lib/env";
 import { AuthorizationError, NotFoundError, ValidationError } from "@/lib/errors";
 import { formatHumanDisplayName } from "@/lib/pem-neat/display-name";
 import { isAdminRole } from "@/lib/auth/roles";
+import { assertPickableExpenseJob, getExpenseJob } from "@/lib/receipts/store";
 import { getTemplate } from "./store";
 import {
   buildInspectionSnapshot,
@@ -854,6 +855,15 @@ function enrichItemSummariesWithStale(
   });
 }
 
+/** New links must be an Open project; an inspection may keep a link to one that has Closed. */
+async function assertInspectionJobAssignable(
+  jobId: string | null,
+  currentJobId: string | null,
+): Promise<void> {
+  if (!jobId || jobId === currentJobId) return;
+  assertPickableExpenseJob(await getExpenseJob(jobId));
+}
+
 export async function createSiteInspection(
   input: CreateSiteInspectionInput,
 ): Promise<SiteInspectionDetail> {
@@ -867,6 +877,7 @@ export async function createSiteInspection(
   if (template.archivedAt) {
     throw new ValidationError("Choose an active template");
   }
+  await assertInspectionJobAssignable(input.jobId ?? null, null);
 
   const snapshot = buildInspectionSnapshot(template);
   const total = countSnapshotItems(snapshot);
@@ -1008,6 +1019,7 @@ export async function updateSiteInspectionDetails(input: {
   );
   const assignedTo = input.assignedTo === undefined ? existing.assigned_to : input.assignedTo;
   const jobId = input.jobId === undefined ? existing.job_id : input.jobId;
+  await assertInspectionJobAssignable(jobId, existing.job_id);
   const locationChanged =
     addressChanged ||
     !sameCoordinate(existing.latitude, coordinates.latitude) ||

@@ -55,6 +55,7 @@ const job: ExpenseJob = {
   label: "L01-26019 Liniger — 25 N Avalon Dr, Los Altos",
   projectNumber: "L01-26019",
   source: "project",
+  projectStatus: "open",
   isActive: true,
   sortOrder: 0,
   createdBy: null,

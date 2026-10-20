@@ -68,7 +68,7 @@ Five tables, each cascade-deleting into the next.
 **`site_inspections`**
 
 - `project_name`, `address`, both required and non-empty
-- `job_id` → `expense_jobs`, the project list shared with Receipt Log
+- `job_id` → `expense_jobs`, the project list shared with Receipt Log. The picker offers only Open projects (Master Project Log column J, `expense_jobs.project_status = 'open'`) and active custom jobs. The server rejects a new link to a Closed or Unknown project, but an inspection may keep a link to a project that has since Closed; the edit dialog shows it as "Current: … (Closed)".
 - `assigned_to` → `profiles`
 - `source_template_id` → provenance only
 - **`snapshot_json`** — the frozen structure

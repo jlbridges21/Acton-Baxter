@@ -2,10 +2,17 @@
  * Deterministic Master Project Log answers — answer then cite, never dump rows.
  */
 
-import type { ProjectLogRow, ProjectRegistryField, ProjectRegistryQuery } from "./types";
+import type {
+  ProjectLogRow,
+  ProjectRegistryField,
+  ProjectRegistryQuery,
+  ProjectStatusScope,
+} from "./types";
 import {
   countProjects,
   filterProjectsByCity,
+  filterProjectsBySalesperson,
+  filterProjectsByStatus,
   lookupProjectRow,
   type ProjectLookupResult,
 } from "./lookup";
@@ -46,15 +53,72 @@ function fieldValue(row: ProjectLogRow, field: ProjectRegistryField): string | n
   }
 }
 
+function projectRef(row: ProjectLogRow): string {
+  return row.status === "closed" ? `${row.projectNumber}, Closed` : row.projectNumber;
+}
+
 function projectLabel(row: ProjectLogRow): string {
   const short = row.shortName.trim() || row.customerName.trim() || row.projectNumber;
-  return `${short} project (${row.projectNumber})`;
+  return `${short} project (${projectRef(row)})`;
+}
+
+function scopeWord(scope: ProjectStatusScope): string {
+  if (scope === "open") return "Open ";
+  if (scope === "closed") return "Closed ";
+  return "";
+}
+
+/** Tells the reader which statuses a list or count covers, and what was left out. */
+function scopeNote(scope: ProjectStatusScope, excluded: number): string {
+  if (scope === "all") return "Includes Open, Closed, and projects with no status in column J.";
+  if (scope === "closed") return "Counting Closed projects only.";
+  const left =
+    excluded > 0
+      ? ` ${excluded} Closed or unmarked project${excluded === 1 ? " matches" : "s match"} but ${excluded === 1 ? "isn’t" : "aren’t"} included.`
+      : "";
+  return `Counting Open projects only.${left} Ask about closed or all projects to include them.`;
+}
+
+function listLine(row: ProjectLogRow, scope: ProjectStatusScope): string {
+  const name = row.shortName || row.customerName || "Unnamed";
+  const status =
+    scope === "all" && row.status !== "open"
+      ? ` (${row.status === "closed" ? "Closed" : "no status"})`
+      : "";
+  return `• ${row.projectNumber} — ${name}${status}`;
+}
+
+function formatProjectList(input: {
+  matched: ProjectLogRow[];
+  excluded: number;
+  scope: ProjectStatusScope;
+  heading: string;
+  emptyMessage: string;
+  tabName: string;
+}): { answer: string; softMiss?: boolean; matchedRow?: ProjectLogRow | null } {
+  const { matched, excluded, scope, heading, emptyMessage, tabName } = input;
+  const note = scopeNote(scope, excluded);
+  if (matched.length === 0) {
+    return {
+      answer: `${emptyMessage} ${note}\n\n${citation(tabName)}`,
+      softMiss: true,
+    };
+  }
+  const lines = matched
+    .slice(0, 12)
+    .map((r) => listLine(r, scope))
+    .join("\n");
+  const more = matched.length > 12 ? `\n…and ${matched.length - 12} more.` : "";
+  return {
+    answer: `${heading} (${matched.length}):\n${lines}${more}\n\n${note}\n\n${citation(tabName, matched[0])}`,
+    matchedRow: matched[0] ?? null,
+  };
 }
 
 function formatAmbiguous(rows: ProjectLogRow[]): string {
   const names = rows.map((r) => {
     const who = r.customerName.trim() || r.shortName.trim();
-    return `${r.projectNumber}${who ? ` — ${who}` : ""}`;
+    return `${projectRef(r)}${who ? ` — ${who}` : ""}`;
   });
   const shown = names.slice(0, 6);
   const list =
@@ -105,7 +169,7 @@ function formatFieldAnswer(row: ProjectLogRow, field: ProjectRegistryField): str
 function formatCityAnswer(row: ProjectLogRow): string {
   const city = row.city.trim();
   const zip = row.postalCode.trim();
-  const label = `${row.shortName.trim() || "This"} project (${row.projectNumber})`;
+  const label = `${row.shortName.trim() || "This"} project (${projectRef(row)})`;
   if (!city) {
     return `I found the ${label} in the Master Project Log, but the city field is blank on that row.`;
   }
@@ -121,35 +185,49 @@ export function formatProjectRegistryAnswer(input: {
   const { query, rows, tabName } = input;
 
   if (query.kind === "count") {
-    const { count, rows: matched } = countProjects(rows, query);
+    const scope = query.statusScope ?? "open";
+    const { count, rows: matched } = countProjects(rows, { ...query, statusScope: scope });
+    const excluded =
+      scope === "open" ? countProjects(rows, { ...query, statusScope: "all" }).count - count : 0;
     const bits: string[] = [];
     if (query.city) bits.push(`in ${query.city}`);
     if (query.salesperson) bits.push(`for ${query.salesperson}`);
     if (query.year) bits.push(`in ${query.year}`);
-    const scope = bits.length ? ` ${bits.join(" ")}` : "";
+    const where = bits.length ? ` ${bits.join(" ")}` : "";
     return {
-      answer: `There ${count === 1 ? "is" : "are"} ${count} project${count === 1 ? "" : "s"}${scope} in the Master Project Log.\n\n${citation(tabName, matched[0])}`,
+      answer: `There ${count === 1 ? "is" : "are"} ${count} ${scopeWord(scope)}project${count === 1 ? "" : "s"}${where} in the Master Project Log. ${scopeNote(scope, excluded)}\n\n${citation(tabName, matched[0])}`,
       matchedRow: matched[0] ?? null,
     };
   }
 
   if (query.kind === "filter_city") {
-    const matched = filterProjectsByCity(rows, query.city);
-    if (matched.length === 0) {
-      return {
-        answer: `I couldn’t find any projects in ${query.city} in the Master Project Log.\n\n${citation(tabName)}`,
-        softMiss: true,
-      };
-    }
-    const lines = matched
-      .slice(0, 12)
-      .map((r) => `• ${r.projectNumber} — ${r.shortName || r.customerName || "Unnamed"}`)
-      .join("\n");
-    const more = matched.length > 12 ? `\n…and ${matched.length - 12} more.` : "";
-    return {
-      answer: `Projects in ${query.city} (${matched.length}):\n${lines}${more}\n\n${citation(tabName, matched[0])}`,
-      matchedRow: matched[0] ?? null,
-    };
+    const scope = query.statusScope ?? "open";
+    const anyStatus = filterProjectsByCity(rows, query.city);
+    const matched = filterProjectsByStatus(anyStatus, scope);
+    return formatProjectList({
+      matched,
+      excluded: anyStatus.length - matched.length,
+      scope,
+      heading: `${scopeWord(scope)}projects in ${query.city}`.replace(/^./, (c) => c.toUpperCase()),
+      emptyMessage: `I couldn’t find any ${scopeWord(scope)}projects in ${query.city} in the Master Project Log.`,
+      tabName,
+    });
+  }
+
+  if (query.kind === "filter_salesperson") {
+    const scope = query.statusScope ?? "open";
+    const anyStatus = filterProjectsBySalesperson(rows, query.salesperson);
+    const matched = filterProjectsByStatus(anyStatus, scope);
+    return formatProjectList({
+      matched,
+      excluded: anyStatus.length - matched.length,
+      scope,
+      heading: `${scopeWord(scope)}projects for ${query.salesperson}`.replace(/^./, (c) =>
+        c.toUpperCase(),
+      ),
+      emptyMessage: `I couldn’t find any ${scopeWord(scope)}projects for ${query.salesperson} in the Master Project Log.`,
+      tabName,
+    });
   }
 
   const lookup: ProjectLookupResult = lookupProjectRow(rows, query.projectQuery);

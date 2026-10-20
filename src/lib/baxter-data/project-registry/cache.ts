@@ -46,6 +46,11 @@ export function setCachedProjectLog(input: {
   };
 }
 
-export function clearProjectLogCacheForTests(): void {
+/** Drop cached rows so the next load reads the sheet (admin "Refresh from sheet"). */
+export function clearProjectLogCache(): void {
   cache = null;
+}
+
+export function clearProjectLogCacheForTests(): void {
+  clearProjectLogCache();
 }

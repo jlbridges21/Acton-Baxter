@@ -1,12 +1,20 @@
 export type {
   ExpenseJob,
+  ExpenseJobProjectStatus,
   ExpenseJobSource,
   Receipt,
   ReceiptCreateInput,
   ExpenseJobCreateCustomInput,
   ExpenseJobUpdateInput,
 } from "./types";
-export { RECEIPT_PHOTOS_BUCKET, EXPENSE_JOB_SOURCES } from "./types";
+export {
+  RECEIPT_PHOTOS_BUCKET,
+  EXPENSE_JOB_SOURCES,
+  EXPENSE_JOB_PROJECT_STATUSES,
+  isPickableExpenseJob,
+  expenseJobDisplayLabel,
+  splitPickerJobs,
+} from "./types";
 export { parseAmountToCents, formatCentsAsUsd, formatCentsAsDecimalDollars } from "./amount";
 export {
   receiptSubmitSchema,
@@ -20,6 +28,9 @@ export {
   listExpenseJobs,
   listExpenseJobsRaw,
   getExpenseJob,
+  assertPickableExpenseJob,
+  markProjectExpenseJobsClosed,
+  type ListExpenseJobsOptions,
   createCustomExpenseJob,
   updateExpenseJob,
   reorderExpenseJobs,
@@ -109,4 +120,6 @@ export {
   syncExpenseJobsFromMasterProjectLog,
   syncExpenseJobsAfterProjectSetup,
   projectRowsToLabels,
+  type SyncExpenseJobsResult,
+  type SyncExpenseJobsStatusCounts,
 } from "./sync-jobs";

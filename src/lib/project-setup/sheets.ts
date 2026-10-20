@@ -4,6 +4,8 @@ import { googleFetch } from "@/lib/connectors/google/auth";
 
 /**
  * Read column A of a Google Sheet tab (read-only scopes).
+ * Project number allocation uses every row regardless of the Open/Closed status
+ * in column J, so a Closed project's number is never reused.
  */
 export async function readSheetColumnA(input: {
   spreadsheetId: string;
