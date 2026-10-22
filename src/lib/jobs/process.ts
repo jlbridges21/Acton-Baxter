@@ -238,6 +238,9 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
     } else if (job.jobType === "inventory_order_import") {
       const { runInventoryOrderImportJob } = await import("@/lib/inventory/import-order");
       await runInventoryOrderImportJob(job);
+    } else if (job.jobType === "ai_agent_task") {
+      const { processAgentTaskJob } = await import("@/lib/agents/jobs");
+      await processAgentTaskJob(job);
     } else {
       throw new Error(`Unknown job type: ${(job as ReportJob).jobType}`);
     }
@@ -290,6 +293,14 @@ export async function processQueuedJobs(options?: { limit?: number }): Promise<{
 
   // Fail researching reports that have no live job backing them (pre-queue crashes).
   const { recovered: staleReportsRecovered } = await recoverStaleResearchingReports();
+
+  // Re-queue AI Workforce tasks orphaned by a crashed or timed-out function.
+  try {
+    const { recoverStaleAgentTasks } = await import("@/lib/agents/jobs");
+    await recoverStaleAgentTasks();
+  } catch (error) {
+    logServerError("processQueuedJobs:recoverStaleAgentTasks", error);
+  }
 
   for (let i = 0; i < limit; i += 1) {
     const job = await claimNextJob();

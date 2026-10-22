@@ -33,6 +33,8 @@ export default defineConfig({
       NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: "",
       GOOGLE_MAPS_SERVER_API_KEY: "",
       GOOGLE_MAPS_API_KEY: "",
+      // Never call Anthropic from E2E (AI Workforce specialists default to Claude).
+      ANTHROPIC_API_KEY: "",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
       SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",

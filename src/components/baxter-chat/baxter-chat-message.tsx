@@ -1,7 +1,12 @@
 "use client";
 
 import { BaxterSourceList } from "./baxter-source-list";
-import type { BaxterAnswerMode, BaxterSourceReference } from "@/lib/baxter-ai/types";
+import type {
+  BaxterAnswerMode,
+  BaxterDelegationSummary,
+  BaxterSourceReference,
+} from "@/lib/baxter-ai/types";
+import { BaxterDelegationTrace } from "./baxter-delegation-trace";
 import { deriveAnswerTypeLabel } from "@/lib/baxter-ai/classify";
 import { cn } from "@/lib/utils";
 import { BaxterMessageFeedback } from "./baxter-message-feedback";
@@ -15,6 +20,7 @@ export type ChatUiMessage = {
   answerMode?: BaxterAnswerMode | null;
   isError?: boolean;
   conversationId?: string | null;
+  delegation?: BaxterDelegationSummary | null;
 };
 
 export function BaxterChatMessage({ message }: { message: ChatUiMessage }) {
@@ -40,6 +46,9 @@ export function BaxterChatMessage({ message }: { message: ChatUiMessage }) {
                 : "border border-[var(--acton-border)] bg-white text-[var(--acton-navy)]",
         )}
       >
+        {!isUser && message.delegation ? (
+          <BaxterDelegationTrace delegation={message.delegation} />
+        ) : null}
         {modeLabel ? (
           <p className="mb-1 text-[10px] font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
             {modeLabel}

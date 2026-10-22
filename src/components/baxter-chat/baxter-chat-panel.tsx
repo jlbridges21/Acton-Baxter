@@ -6,7 +6,11 @@ import { BaxterAvatar } from "./baxter-avatar";
 import { BaxterChatInput } from "./baxter-chat-input";
 import { BaxterChatMessage, type ChatUiMessage } from "./baxter-chat-message";
 import { Button } from "@/components/ui/button";
-import type { BaxterAnswerMode, BaxterSourceReference } from "@/lib/baxter-ai/types";
+import type {
+  BaxterAnswerMode,
+  BaxterDelegationSummary,
+  BaxterSourceReference,
+} from "@/lib/baxter-ai/types";
 
 const GREETING: ChatUiMessage = {
   id: "greeting",
@@ -78,6 +82,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
           sources?: BaxterSourceReference[];
           answerMode?: BaxterAnswerMode | null;
           errorCode?: string | null;
+          delegation?: BaxterDelegationSummary | null;
         };
         error?: { message?: string; code?: string };
       };
@@ -127,6 +132,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
           insufficientKnowledge: Boolean(payload.message?.insufficientKnowledge),
           answerMode: payload.message?.answerMode ?? null,
           conversationId: payload.conversationId ?? conversationId,
+          delegation: payload.message?.delegation ?? null,
         },
       ]);
     } catch {

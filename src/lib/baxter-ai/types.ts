@@ -13,7 +13,8 @@ export type BaxterSourceKind =
   | "gohighlevel"
   | "rulebook"
   | "capability"
-  | "slack";
+  | "slack"
+  | "agent_knowledge";
 
 export type BaxterAnswerMode =
   "identity" | "grounded" | "general" | "mixed" | "clarification" | "error";
@@ -55,6 +56,10 @@ export type BaxterQuestionInput = {
    * even if the question wording is ambiguous.
    */
   slackRecallForced?: boolean;
+  /** Slack channel/thread of the triggering message (AI Workforce follow-ups + privacy). */
+  slackChannelId?: string | null;
+  slackReplyThreadTs?: string | null;
+  slackIsDirectMessage?: boolean;
 };
 
 export type BaxterAnswer = {
@@ -66,6 +71,22 @@ export type BaxterAnswer = {
   messageId?: string;
   answerMode?: BaxterAnswerMode;
   errorCode?: string | null;
+  /** Present when Baxter handed the request to an AI Workforce specialist. */
+  delegation?: BaxterDelegationSummary | null;
+};
+
+/** Non-sensitive delegation trace shown under a Baxter answer. */
+export type BaxterDelegationSummary = {
+  taskId: string;
+  agentSlug: string;
+  agentName: string;
+  agentTitle: string;
+  avatarUrl: string | null;
+  status: string;
+  outcome: string | null;
+  method: string;
+  explanation: string;
+  pendingApprovals: number;
 };
 
 export type BaxterContextItem = {

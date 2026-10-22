@@ -8,6 +8,9 @@ import { baxterChatRequestSchema } from "@/lib/baxter-ai/schemas";
 import { BaxterConfigError, employeeFacingErrorMessage } from "@/lib/baxter-ai/errors";
 import { getIdempotentChatAnswer, storeIdempotentChatAnswer } from "@/lib/baxter-ai/idempotency";
 
+// Specialist delegation (AI Workforce) can take longer than a plain Baxter answer.
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   try {
     const env = getEnv();
@@ -45,6 +48,7 @@ export async function POST(request: Request) {
             sources: cached.sources,
             answerMode: cached.answerMode ?? null,
             errorCode: cached.errorCode ?? null,
+            delegation: cached.delegation ?? null,
           },
           idempotentReplay: true,
         });
@@ -73,6 +77,7 @@ export async function POST(request: Request) {
         sources: result.sources,
         answerMode: result.answerMode ?? null,
         errorCode: result.errorCode ?? null,
+        delegation: result.delegation ?? null,
       },
     });
   } catch (error) {

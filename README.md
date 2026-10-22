@@ -99,6 +99,14 @@ Authenticated employees see **Ask Baxter** on the Baxter Dashboard (`/`) only.
 - Employee guide: `docs/baxter-employee-guide.md`
 - Troubleshooting: `docs/baxter-troubleshooting.md`
 
+## AI Workspace (Baxter + Sam)
+
+Baxter is the **AI CEO** and hands HR / administration / legal-reference work to **Sam**. Manage agents, instructions, models, documents, onboarding, approvals, and the animated AI Office at `/ai` — no code needed.
+
+- Requires migration `supabase/migrations/067_ai_workforce.sql` (until applied, Baxter chat behaves exactly as before)
+- Summary and guides: `docs/ai-workforce/README.md` (admin guide, security, operations, developer guide)
+- Kill switch: `AI_WORKFORCE_DELEGATION_ENABLED=false`
+
 ## Connectors (Google Workspace, GoHighLevel, Slack)
 
 - Admin top nav **Integrations** → `/admin/connectors` (Google Workspace, GoHighLevel, Slack, future connectors)

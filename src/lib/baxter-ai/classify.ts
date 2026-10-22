@@ -133,6 +133,7 @@ function bucketForSourceKind(kind: BaxterSourceKind): AnswerTypeBucket {
     case "google_sheet":
     case "google_file":
     case "rulebook":
+    case "agent_knowledge":
       return "approved";
     case "gohighlevel":
       return "live";

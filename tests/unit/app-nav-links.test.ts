@@ -9,6 +9,7 @@ function labels(role: string, pathname = "/") {
 const EMPLOYEE_NAV = [
   "Dashboard",
   "Knowledge Center",
+  "AI Workspace",
   "PEM NEAT",
   "New Project Setup",
   "Receipt Log",

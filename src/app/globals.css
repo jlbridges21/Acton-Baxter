@@ -140,3 +140,131 @@ body {
     display: block !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * AI Office (pixel-art workspace). Animations reflect real task state only and
+ * are disabled for prefers-reduced-motion or the in-page "Reduce motion" toggle.
+ * ------------------------------------------------------------------------- */
+.ai-office {
+  --office-floor-a: #efe4cf;
+  --office-floor-b: #e7d9bf;
+  --office-wall: #6b4f3a;
+  --office-room-border: #4a3628;
+  --office-desk: #a0703f;
+  --office-desk-top: #c38b52;
+  --office-screen: #1d2b3a;
+  --office-screen-on: #58c4f5;
+  --office-label-bg: #fffaf0;
+  --office-bg: #c9b99a;
+  image-rendering: pixelated;
+}
+.ai-office[data-theme="evening"] {
+  --office-floor-a: #3b3348;
+  --office-floor-b: #342d40;
+  --office-wall: #221c2c;
+  --office-room-border: #15111c;
+  --office-desk: #5a4636;
+  --office-desk-top: #7a5f48;
+  --office-screen: #0b0f16;
+  --office-screen-on: #f5c518;
+  --office-label-bg: #f3ecff;
+  --office-bg: #1c1724;
+}
+.ai-office[data-theme="blueprint"] {
+  --office-floor-a: #1f4e8c;
+  --office-floor-b: #1c4880;
+  --office-wall: #e6f0ff;
+  --office-room-border: #cfe0ff;
+  --office-desk: #2f6bb8;
+  --office-desk-top: #4a86d4;
+  --office-screen: #0c2a52;
+  --office-screen-on: #ffffff;
+  --office-label-bg: #e6f0ff;
+  --office-bg: #173f73;
+}
+.ai-office-floor {
+  background-color: var(--office-floor-a);
+  background-image:
+    linear-gradient(45deg, var(--office-floor-b) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--office-floor-b) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--office-floor-b) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--office-floor-b) 75%);
+  background-size: 32px 32px;
+  background-position:
+    0 0,
+    0 16px,
+    16px -16px,
+    -16px 0;
+}
+.ai-office[data-theme="blueprint"] .ai-office-floor {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+}
+@keyframes ai-office-type {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+@keyframes ai-office-screen {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes ai-office-bubble {
+  0%,
+  100% {
+    transform: translate(-50%, 0);
+  }
+  50% {
+    transform: translate(-50%, -3px);
+  }
+}
+@keyframes ai-office-dots {
+  0% {
+    content: ".";
+  }
+  33% {
+    content: "..";
+  }
+  66% {
+    content: "...";
+  }
+}
+.ai-office [data-anim="working"] .ai-office-body {
+  animation: ai-office-type 0.5s steps(2) infinite;
+}
+.ai-office [data-anim="working"] .ai-office-screen {
+  animation: ai-office-screen 0.9s steps(2) infinite;
+}
+.ai-office [data-anim="bubble"] .ai-office-bubble {
+  animation: ai-office-bubble 1.4s steps(4) infinite;
+}
+.ai-office .ai-office-dots::after {
+  content: "...";
+}
+.ai-office [data-anim="working"] .ai-office-dots::after {
+  animation: ai-office-dots 1.2s steps(1) infinite;
+}
+.ai-office[data-reduced-motion="true"] *,
+.ai-office[data-reduced-motion="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-office *,
+  .ai-office *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

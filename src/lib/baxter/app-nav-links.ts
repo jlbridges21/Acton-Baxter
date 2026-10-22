@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Bot,
   ClipboardCheck,
   ClipboardList,
   FolderKanban,
@@ -48,6 +49,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       label: "Knowledge Center",
       icon: BookOpen,
       match: (pathname) => pathname.startsWith("/knowledge"),
+    },
+    {
+      href: "/ai",
+      label: "AI Workspace",
+      icon: Bot,
+      match: (pathname) => pathname === "/ai" || pathname.startsWith("/ai/"),
     },
     {
       href: "/pem-neats",

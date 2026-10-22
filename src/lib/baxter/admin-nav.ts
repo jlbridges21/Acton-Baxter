@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Bell,
   BookOpen,
+  Bot,
   BookMarked,
   ClipboardCheck,
   ClipboardList,
@@ -153,6 +154,12 @@ export function getAdminNavSections(): AdminNavSection[] {
   ];
 
   const governance: AdminNavLink[] = [
+    {
+      href: "/ai",
+      label: "AI Workspace",
+      icon: Bot,
+      match: (pathname) => pathname === "/ai" || pathname.startsWith("/ai/"),
+    },
     {
       href: "/admin/baxter/governance",
       label: "Governance",

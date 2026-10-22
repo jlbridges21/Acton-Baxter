@@ -14,6 +14,7 @@ export const JOB_TYPES = [
   "site_inspection_pdf_export",
   "site_inspection_street_view_backfill",
   "inventory_order_import",
+  "ai_agent_task",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

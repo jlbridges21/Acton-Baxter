@@ -479,6 +479,8 @@ export async function appendAssistantMessage(input: {
   errorCode?: string | null;
   sources: BaxterSourceReference[];
   sourceEntryIds: Array<{ id: string; relevanceScore: number | null; order: number }>;
+  /** Extra non-sensitive metadata (e.g. AI Workforce delegation trace). */
+  extraMetadata?: Record<string, unknown>;
 }): Promise<BaxterMessage> {
   const message: BaxterMessage = {
     id: randomUUID(),
@@ -494,7 +496,7 @@ export async function appendAssistantMessage(input: {
     latency_ms: input.latencyMs ?? null,
     error_code: input.errorCode ?? null,
     created_at: nowIso(),
-    metadata: { sources: input.sources },
+    metadata: { ...(input.extraMetadata ?? {}), sources: input.sources },
     slack_channel_id: null,
     slack_message_ts: null,
   };

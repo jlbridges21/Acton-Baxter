@@ -220,7 +220,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     externalUserId: input.externalUserId,
   });
 
-  await appendUserMessage({
+  const userMessage = await appendUserMessage({
     conversationId: conversation.id,
     content: question,
   });
@@ -307,6 +307,50 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       insufficientKnowledge: false,
       answerMode: "clarification",
     });
+  }
+
+  // AI Workforce: hand specialist work (e.g. HR/onboarding → Sam) to the right agent.
+  // Falls through to Baxter's normal pipeline when no specialist applies.
+  const { maybeDelegateBaxterRequest } = await import("@/lib/agents/orchestrator");
+  const delegated = await maybeDelegateBaxterRequest({
+    question: routingQuestion,
+    channel: input.channel,
+    userId: input.userId,
+    userName: input.userName ?? null,
+    conversationId: conversation.id,
+    messageId: userMessage.id,
+    slackUserId: input.channel === "slack" ? (input.externalUserId ?? null) : null,
+    slackTeamId: input.slackTeamId ?? null,
+    slackIsDirectMessage: input.slackIsDirectMessage ?? false,
+    slackChannelId: input.slackChannelId ?? null,
+    slackThreadTs: input.slackReplyThreadTs ?? null,
+  });
+  if (delegated.handled) {
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: delegated.answer,
+      insufficientKnowledge: delegated.insufficientKnowledge,
+      confidence: delegated.confidence,
+      modelProvider: delegated.modelProvider,
+      modelName: delegated.modelName,
+      inputTokens: delegated.inputTokens,
+      outputTokens: delegated.outputTokens,
+      sources: delegated.sources,
+      sourceEntryIds: [],
+      extraMetadata: delegated.delegation ? { delegation: delegated.delegation } : {},
+    });
+    return {
+      ...toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: delegated.answer,
+        sources: delegated.sources,
+        confidence: delegated.confidence,
+        insufficientKnowledge: delegated.insufficientKnowledge,
+        answerMode: delegated.answerMode,
+      }),
+      delegation: delegated.delegation,
+    };
   }
 
   // Identity / capability FAQs: answer before GHL write checks + semantic routing.
