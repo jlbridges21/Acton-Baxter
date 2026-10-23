@@ -74,7 +74,8 @@ commitments) → **internal**; email/phone fields → **customer**; other target
 - Admin edits (display names, descriptions, categories, vocabulary mappings — including an
   explicit "not mapped") are never overwritten by discovery.
 - Only one sync runs at a time (a run younger than 10 minutes blocks a new one).
-- Triggers: **Sync now** in Data settings, or scheduled via the existing cron when
-  `JOBTREAD_SYNC_ENABLED=true` and the interval has elapsed.
+- Triggers: **Sync now** in Data settings, scheduled via the existing cron when
+  `JOBTREAD_SYNC_ENABLED=true` and the interval has elapsed, and automatically on first use
+  (the first report view or Dexter request after connecting runs the initial sync).
 - Freshness is shown on every report ("JobTread data synced 12 min ago · project details live
   just now").

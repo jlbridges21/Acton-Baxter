@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { BarChart3, Loader2, Maximize2, Minimize2, Send, X } from "lucide-react";
+import { BarChart3, Loader2, Maximize2, Minimize2, RotateCcw, Send, X } from "lucide-react";
 import { AgentAvatar, aiFetch, errorMessage, useLoad } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,9 @@ export function DexterChat({
   blockedReason,
   suggestions = [],
   onArtifact,
+  open: openProp,
+  onOpenChange,
+  avatarUrl = null,
 }: {
   reportId: string | null;
   variant?: "floating" | "inline";
@@ -33,8 +36,18 @@ export function DexterChat({
   blockedReason?: string | null;
   suggestions?: string[];
   onArtifact?: (artifact: ChatArtifact) => void;
+  /** Optional controlled open state for the floating panel (e.g. "Ask Dexter to build it"). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Dexter's portrait (from AI Studio). */
+  avatarUrl?: string | null;
 }) {
-  const [open, setOpen] = useState(variant === "inline");
+  const [openState, setOpenState] = useState(variant === "inline");
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean) => {
+    setOpenState(next);
+    onOpenChange?.(next);
+  };
   const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -78,6 +91,18 @@ export function DexterChat({
     return () => window.clearInterval(timer);
   }, [pending]);
 
+  const startOver = async () => {
+    try {
+      await aiFetch(`/api/reports/chat${reportId ? `?reportId=${reportId}` : ""}`, {
+        method: "DELETE",
+      });
+      setMessages([]);
+      setError(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
   const send = async (text: string) => {
     const message = text.trim();
     if (!message || pending || blockedReason) return;
@@ -119,7 +144,7 @@ export function DexterChat({
         onClick={() => setOpen(true)}
         className="fixed right-5 bottom-5 z-30 inline-flex items-center gap-2 rounded-full bg-[var(--acton-navy)] py-2 pr-4 pl-2 text-sm font-semibold text-white shadow-lg hover:bg-[var(--acton-navy-dark)] focus-visible:ring-2 focus-visible:ring-[var(--acton-yellow)] focus-visible:outline-none print:hidden"
       >
-        <AgentAvatar name="Dexter" url={null} size={32} color={DEXTER_COLOR} />
+        <AgentAvatar name="Dexter" url={avatarUrl} size={32} color={DEXTER_COLOR} />
         Ask Dexter
       </button>
     );
@@ -141,13 +166,24 @@ export function DexterChat({
       )}
     >
       <header className="flex items-center gap-3 border-b border-[var(--acton-border)] px-4 py-3">
-        <AgentAvatar name="Dexter" url={null} size={36} color={DEXTER_COLOR} />
+        <AgentAvatar name="Dexter" url={avatarUrl} size={36} color={DEXTER_COLOR} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-bold text-[var(--acton-navy)]">Dexter</p>
           <p className="truncate text-xs text-[var(--acton-muted)]">
             AI Reporting &amp; Data Analytics Specialist
           </p>
         </div>
+        {messages.length && !pending ? (
+          <button
+            type="button"
+            onClick={() => void startOver()}
+            className="rounded p-1.5 text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)]"
+            aria-label="New conversation"
+            title="New conversation"
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
         {variant === "floating" ? (
           <>
             <button
@@ -206,8 +242,14 @@ export function DexterChat({
         {messages.map((m) => (
           <div
             key={m.id}
-            className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}
+            className={cn(
+              "flex items-end gap-2",
+              m.role === "user" ? "justify-end" : "justify-start",
+            )}
           >
+            {m.role === "dexter" ? (
+              <AgentAvatar name="Dexter" url={avatarUrl} size={24} color={DEXTER_COLOR} />
+            ) : null}
             <div
               className={cn(
                 "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap",
@@ -236,7 +278,8 @@ export function DexterChat({
           </div>
         ))}
         {pending ? (
-          <div className="flex justify-start">
+          <div className="flex items-end justify-start gap-2">
+            <AgentAvatar name="Dexter" url={avatarUrl} size={24} color={DEXTER_COLOR} />
             <div className="max-w-[85%] rounded-2xl bg-[var(--acton-gray-50)] px-3.5 py-2 text-sm text-[var(--acton-navy)]">
               <p className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Dexter is working…

@@ -245,6 +245,38 @@ describe("structured edits", () => {
 // Execution against a synced (synthetic) JobTread cache
 // ---------------------------------------------------------------------------
 
+describe("first use", () => {
+  beforeEach(async () => {
+    await setupAgentTestEnv();
+    invalidateFieldCatalog();
+  });
+  afterEach(() => uninstallFakePave());
+
+  it("syncs JobTread automatically the first time a report runs, so nobody sees an empty cache", async () => {
+    const fake = installFakePave();
+    const result = await executeReport({
+      spec: ACTIVE_PROJECTS_TEMPLATE,
+      access: await getReportsAccess(employee),
+    });
+    expect((result.widgets.active_count as KpiResult).value).toBe(4);
+    expect(result.freshness.syncedAt).not.toBeNull();
+    const calls = fake.calls;
+    await executeReport({
+      spec: ACTIVE_PROJECTS_TEMPLATE,
+      access: await getReportsAccess(employee),
+    });
+    expect(fake.calls).toBe(calls); // no second sync
+  });
+
+  it("explains that JobTread isn't connected instead of syncing", async () => {
+    const result = await executeReport({
+      spec: ACTIVE_PROJECTS_TEMPLATE,
+      access: await getReportsAccess(employee),
+    });
+    expect(result.issues.join(" ")).toMatch(/hasn't been synced/);
+  });
+});
+
 describe("report execution", () => {
   beforeEach(async () => {
     await setupAgentTestEnv();

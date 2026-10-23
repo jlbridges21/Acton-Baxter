@@ -6,10 +6,14 @@ import { loadReportsPageContext } from "@/lib/reports/page-access";
 export const dynamic = "force-dynamic";
 
 export default async function NewReportPage() {
-  const { user, access } = await loadReportsPageContext();
+  const { user, access, dexterAvatarUrl } = await loadReportsPageContext();
   return (
     <AppShell user={user}>
-      {access?.canUse ? <CreateWithDexter canChat={access.canChat} /> : <ReportsNoAccess />}
+      {access?.canUse ? (
+        <CreateWithDexter canChat={access.canChat} dexterAvatarUrl={dexterAvatarUrl} />
+      ) : (
+        <ReportsNoAccess />
+      )}
     </AppShell>
   );
 }

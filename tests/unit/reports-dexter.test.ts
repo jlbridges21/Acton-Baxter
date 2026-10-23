@@ -88,7 +88,7 @@ describe("Dexter registration", () => {
       manager_agent_id: baxter.row.id,
       kind: "specialist",
     });
-    expect(dexter.row.avatar_url ?? null).toBeNull();
+    expect(dexter.row.avatar_url).toBe("/baxter/Dexter.png");
     expect(dexter.config.tools.enabled.every((t) => t.startsWith("reports_"))).toBe(true);
     expect((await listDelegationTargets(baxter.row.id)).map((a) => a.row.slug)).toContain("dexter");
     expect(baxter.config.instructions.delegationGuidelines).toMatch(/Dexter/);

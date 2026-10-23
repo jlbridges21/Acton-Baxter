@@ -449,6 +449,14 @@ export async function listChatMessages(
   return rows.reverse();
 }
 
+/** Start a fresh conversation (the user's own thread only; reports and versions are kept). */
+export async function clearChatMessages(userId: string, reportId: string | null): Promise<void> {
+  await agentDb().remove("bi_report_chat_messages", [
+    eq("user_id", userId),
+    reportId ? eq("report_id", reportId) : { col: "report_id", op: "is_null" },
+  ]);
+}
+
 export async function appendChatMessage(
   input: Omit<ChatMessageRow, "id" | "created_at">,
 ): Promise<ChatMessageRow> {

@@ -19,8 +19,10 @@ import {
 import { Input } from "@/components/ui/input";
 import {
   CHART_TYPES,
+  DEFAULT_DATASETS,
   METRIC_OPS,
   widgetSchema,
+  type DatasetSpec,
   type ReportSpec,
   type WidgetSpec,
 } from "@/lib/reports/spec";
@@ -127,13 +129,16 @@ export function AddWidgetDialog({
   open: boolean;
   onClose: () => void;
   spec: ReportSpec;
-  onAdd: (w: WidgetSpec) => void;
+  /** `dataset` is set when the widget needs a data source the report doesn't have yet. */
+  onAdd: (w: WidgetSpec, dataset?: DatasetSpec) => void;
 }) {
   const fields = useFieldOptions();
   const pickers = spec.controls.filter((c) => c.kind === "job_picker");
   const [type, setType] = useState<WidgetSpec["type"]>("chart");
   const [title, setTitle] = useState("");
-  const [dataset, setDataset] = useState(spec.datasets[0]?.id ?? "");
+  // Reports without data sources (older blank reports) can pick a default one here.
+  const datasets = spec.datasets.length ? spec.datasets : DEFAULT_DATASETS;
+  const [dataset, setDataset] = useState(datasets[0]?.id ?? "");
   const [chart, setChart] = useState<(typeof CHART_TYPES)[number]>("bar");
   const [op, setOp] = useState<(typeof METRIC_OPS)[number]>("count");
   const [metricField, setMetricField] = useState("");
@@ -144,7 +149,7 @@ export function AddWidgetDialog({
   const [control, setControl] = useState(pickers[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
 
-  const source = spec.datasets.find((d) => d.id === dataset)?.source ?? "jobs";
+  const source = datasets.find((d) => d.id === dataset)?.source ?? "jobs";
   const options = fields?.[source] ?? { business: [], all: [] };
   const needsDataset = ["kpi", "chart", "table"].includes(type);
   const needsPicker = ["project_header", "detail", "milestones", "documents"].includes(type);
@@ -199,7 +204,11 @@ export function AddWidgetDialog({
       );
       return;
     }
-    onAdd(parsed.data);
+    const missing =
+      needsDataset && !spec.datasets.some((d) => d.id === dataset)
+        ? datasets.find((d) => d.id === dataset)
+        : undefined;
+    onAdd(parsed.data, missing);
     onClose();
   };
 
@@ -248,7 +257,7 @@ export function AddWidgetDialog({
                 value={dataset}
                 onChange={(e) => setDataset(e.target.value)}
               >
-                {spec.datasets.map((d) => (
+                {datasets.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.label ?? d.id}
                   </option>

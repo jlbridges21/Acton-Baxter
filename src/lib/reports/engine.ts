@@ -863,6 +863,21 @@ async function controlOptions(ctx: Ctx, control: ControlSpec): Promise<ControlOp
   };
 }
 
+/**
+ * The last successful sync, running the first one if JobTread is connected but has never
+ * been synced (so the first report or Dexter request sees real data, not an empty cache).
+ */
+export async function ensureJobTreadData() {
+  const lastSync = await lastSuccessfulSync().catch(() => null);
+  if (lastSync || !(isJobTreadConfigured() || isJobTreadFixtureEnabled())) return lastSync;
+  const run = await runFullSync(isJobTreadFixtureEnabled() ? "e2e-fixture" : "first-use").catch(
+    () => null,
+  );
+  if (run?.status !== "succeeded") return null;
+  invalidateFieldCatalog();
+  return lastSuccessfulSync();
+}
+
 export async function executeReport(input: {
   spec: ReportSpec;
   access: ReportsAccess;
@@ -871,13 +886,7 @@ export async function executeReport(input: {
   widgetIds?: string[];
 }): Promise<ExecutionResult> {
   const started = Date.now();
-  let lastSync = await lastSuccessfulSync().catch(() => null);
-  if (!lastSync && isJobTreadFixtureEnabled()) {
-    // E2E only: populate the cache from the synthetic fixture on first use.
-    await runFullSync("e2e-fixture");
-    invalidateFieldCatalog();
-    lastSync = await lastSuccessfulSync();
-  }
+  const lastSync = await ensureJobTreadData();
   const catalog = await getFieldCatalog();
   const ctx: Ctx = {
     spec: input.spec,

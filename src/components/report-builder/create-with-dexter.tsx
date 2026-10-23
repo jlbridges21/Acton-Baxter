@@ -14,7 +14,13 @@ const SUGGESTIONS = [
   "How many active projects are in permitting, and which ones?",
 ];
 
-export function CreateWithDexter({ canChat }: { canChat: boolean }) {
+export function CreateWithDexter({
+  canChat,
+  dexterAvatarUrl,
+}: {
+  canChat: boolean;
+  dexterAvatarUrl: string | null;
+}) {
   const router = useRouter();
   return (
     <div className="mx-auto max-w-3xl space-y-4">
@@ -33,6 +39,7 @@ export function CreateWithDexter({ canChat }: { canChat: boolean }) {
       </div>
       <DexterChat
         reportId={null}
+        avatarUrl={dexterAvatarUrl}
         variant="inline"
         canChat={canChat}
         suggestions={SUGGESTIONS}

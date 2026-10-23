@@ -39,7 +39,7 @@ const TABS = [
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
-export function ReportsHub() {
+export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null }) {
   const router = useRouter();
   const [reports, setReports] = useState<ReportSummary[] | null>(null);
   const [access, setAccess] = useState<ReportsAccessView | null>(null);
@@ -143,7 +143,7 @@ export function ReportsHub() {
         href="/reports/new"
         className="flex items-center gap-4 rounded-xl border border-[var(--acton-border)] bg-white p-4 shadow-sm hover:border-[var(--acton-navy)]"
       >
-        <AgentAvatar name="Dexter" url={null} size={48} color="#0f766e" />
+        <AgentAvatar name="Dexter" url={dexterAvatarUrl} size={48} color="#0f766e" />
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-[var(--acton-navy)]">Tell Dexter what you need</p>
           <p className="text-sm text-[var(--acton-muted)]">

@@ -37,7 +37,13 @@ import {
 } from "@/lib/reports/spec";
 import { agentDb } from "./store";
 import type { AgentTool, ToolContext, ToolResult } from "./tools";
-import { jobRowFromCache, isProductModel, modelRowFromCache } from "@/lib/reports/engine";
+import { ACTIVE_PHASES } from "@/lib/reports/templates";
+import {
+  ensureJobTreadData,
+  jobRowFromCache,
+  isProductModel,
+  modelRowFromCache,
+} from "@/lib/reports/engine";
 
 const SPEC_GUIDE = `REPORT SPEC (JSON). Fields: "job.*" built-ins, "cf:<id>" custom fields, "sem:<key>" business names, "model.*" for catalog_models. Use keys exactly as reports_list_fields returns them.
 { "title": str, "description": str,
@@ -58,6 +64,7 @@ Ids: lowercase letters/numbers/_/- . Detail/header/milestones/documents widgets 
 async function accessFor(ctx: ToolContext): Promise<ReportsAccess> {
   const access = await getReportsAccess(ctx.requester);
   if (!access.canUse) throw new Error("The requester doesn't have access to Reports.");
+  await ensureJobTreadData();
   return access;
 }
 
@@ -145,20 +152,22 @@ const listFields: AgentTool = {
       .map((c) => CATEGORY_LABELS[c]);
     const semantic =
       source === "jobs"
-        ? [...catalog.semantic.entries()].map(([key, s]) => {
-            const r = s.ref ? resolveField(catalog, key) : null;
-            return {
-              key,
-              label: s.label,
-              mappedTo: r && r.ok ? r.key : null,
-              available: Boolean(r && r.ok && canSeeField(access, r.def)),
-              note: !s.ref
-                ? (s.description ?? "Not mapped to a JobTread field.")
-                : r && r.ok && !canSeeField(access, r.def)
-                  ? "Requester lacks access"
-                  : undefined,
-            };
-          })
+        ? [...catalog.semantic.entries()]
+            .filter(([key, s]) => !q || s.label.toLowerCase().includes(q) || key.includes(q))
+            .map(([key, s]) => {
+              const r = s.ref ? resolveField(catalog, key) : null;
+              return {
+                key,
+                label: s.label,
+                mappedTo: r && r.ok ? r.key : null,
+                available: Boolean(r && r.ok && canSeeField(access, r.def)),
+                note: !s.ref
+                  ? (s.description ?? "Not mapped to a JobTread field.")
+                  : r && r.ok && !canSeeField(access, r.def)
+                    ? "Requester lacks access"
+                    : undefined,
+              };
+            })
         : [];
     return {
       data: {
@@ -167,9 +176,15 @@ const listFields: AgentTool = {
         fields,
         businessNames: semantic,
         hiddenCategoriesForThisRequester: hiddenCategories,
+        ...(rows.length === 0
+          ? {
+              dataStatus:
+                "No synced JobTread records yet. Tell the requester the data is still being synced (or ask an administrator to run Reports → Data settings → Sync now) and offer to try again; don't conclude that fields are missing.",
+            }
+          : {}),
         note:
           source === "jobs"
-            ? "Active work is identified by the Phase field; the Status field is mostly blank in JobTread."
+            ? `Active work is identified by the Phase field (sem:phase); the Status field is mostly blank in JobTread. Active phases: ${ACTIVE_PHASES.join(", ")}.`
             : "Models are top-level catalog cost groups; most have budgets pending import.",
       },
       logSummary: `Listed ${fields.length} ${source} field(s).`,

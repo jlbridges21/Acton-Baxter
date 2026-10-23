@@ -4,7 +4,7 @@ import { AppError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendDexterMessage, toChatView } from "@/lib/reports/chat";
 import { requireReportsContext } from "@/lib/reports/http";
-import { listChatMessages, loadReportFor } from "@/lib/reports/repo";
+import { clearChatMessages, listChatMessages, loadReportFor } from "@/lib/reports/repo";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -50,5 +50,18 @@ export async function POST(request: Request) {
     return jsonOk(result);
   } catch (error) {
     return jsonError(error, "POST /api/reports/chat");
+  }
+}
+
+/** "New conversation": clears the caller's own messages for this report (or the draft thread). */
+export async function DELETE(request: Request) {
+  try {
+    const ctx = await requireReportsContext();
+    const reportId = new URL(request.url).searchParams.get("reportId");
+    if (reportId) await loadReportFor(reportId, ctx.requester, ctx.access);
+    await clearChatMessages(ctx.user.id, reportId || null);
+    return jsonOk({ cleared: true });
+  } catch (error) {
+    return jsonError(error, "DELETE /api/reports/chat");
   }
 }

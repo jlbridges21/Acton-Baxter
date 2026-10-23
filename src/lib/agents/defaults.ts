@@ -12,6 +12,8 @@ import { agentConfigSchema, type AgentConfig } from "./types";
 export const BAXTER_SLUG = "baxter";
 export const SAM_SLUG = "sam";
 export const DEXTER_SLUG = "dexter";
+/** Default portrait; an avatar uploaded in AI Studio replaces it. */
+export const DEXTER_AVATAR_PATH = "/baxter/Dexter.png";
 
 /** Existing bundled portrait — referenced in place, never copied or renamed. */
 export const BAXTER_AVATAR_PATH = "/baxter/avatar.png";

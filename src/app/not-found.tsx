@@ -8,7 +8,7 @@ export default function NotFound() {
         The page or report you requested does not exist.
       </p>
       <Link
-        href="/dashboard"
+        href="/"
         className="mt-6 inline-flex h-10 items-center rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white"
       >
         Back to dashboard

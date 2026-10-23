@@ -92,7 +92,7 @@ test("Financial figures stay hidden from people without financial access", async
     timeout: 30_000,
   });
   await expect(
-    page.getByRole("region", { name: "Models" }).getByText("3", { exact: true }),
+    page.getByRole("region", { name: "Models", exact: true }).getByText("3", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("$368,621")).toHaveCount(0);
 });
@@ -107,4 +107,35 @@ test("Dexter's chat panel opens from a report and old routes redirect", async ({
 
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/property-research$/);
+});
+
+test("A blank report offers Dexter and the widget builder, and saves a first widget", async ({
+  page,
+}) => {
+  await page.goto("/reports");
+  await page.getByRole("button", { name: "Blank report" }).click();
+  await expect(page).toHaveURL(/\/reports\/[0-9a-f-]{36}/);
+  await expect(page.getByText("This report is empty")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ask Dexter to build it" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add a widget" }).click();
+  await page.getByLabel("Type", { exact: true }).selectOption("kpi");
+  await page.getByLabel("Title", { exact: true }).fill("All jobs");
+  await page.getByRole("dialog").getByRole("button", { name: "Add widget" }).click();
+  await expect(
+    page.getByRole("region", { name: "All jobs", exact: true }).getByText("6", { exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(/Saved version 2/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Ask Dexter to build it" }).waitFor({ state: "detached" });
+});
+
+test("Unknown report ids show a Reports not-found page that links back to Reports", async ({
+  page,
+}) => {
+  await page.goto("/reports/00000000-0000-4000-8000-000000000000");
+  await expect(page.getByRole("heading", { name: "Report not found" })).toBeVisible();
+  await page.getByRole("link", { name: "Back to Reports" }).click();
+  await expect(page).toHaveURL(/\/reports$/);
 });

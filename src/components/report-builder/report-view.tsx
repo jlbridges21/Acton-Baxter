@@ -44,6 +44,7 @@ import {
   Redo2,
   RefreshCw,
   Share2,
+  Sparkles,
   Trash2,
   Undo2,
 } from "lucide-react";
@@ -111,7 +112,15 @@ function readState(params: URLSearchParams): ControlState {
   }
 }
 
-export function ReportView({ reportId, canChat }: { reportId: string; canChat: boolean }) {
+export function ReportView({
+  reportId,
+  canChat,
+  dexterAvatarUrl = null,
+}: {
+  reportId: string;
+  canChat: boolean;
+  dexterAvatarUrl?: string | null;
+}) {
   const router = useRouter();
   const params = useSearchParams();
   const [report, setReport] = useState<ReportDetail | null>(null);
@@ -145,6 +154,7 @@ export function ReportView({ reportId, canChat }: { reportId: string; canChat: b
     error: string | null;
   } | null>(null);
   const [rowView, setRowView] = useState<RowState>(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | null>(null);
 
   const load = useCallback(async () => {
@@ -626,9 +636,31 @@ export function ReportView({ reportId, canChat }: { reportId: string; canChat: b
       />
 
       {visibleWidgets.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-[var(--acton-border)] bg-white px-6 py-12 text-center text-sm text-[var(--acton-muted)]">
-          This report has no widgets yet.{" "}
-          {permission.canEdit ? "Ask Dexter to build it, or choose Edit layout → Add widget." : ""}
+        <div className="rounded-lg border border-dashed border-[var(--acton-border)] bg-white px-6 py-12 text-center">
+          <p className="text-base font-semibold text-[var(--acton-navy)]">This report is empty</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-[var(--acton-muted)]">
+            {permission.canEdit
+              ? "Describe what you want to see and Dexter will build it from JobTread data, or add charts and tables yourself."
+              : "The owner hasn't added anything yet."}
+          </p>
+          {permission.canEdit ? (
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {canChat ? (
+                <Button onClick={() => setChatOpen(true)}>
+                  <Sparkles className="h-4 w-4" aria-hidden /> Ask Dexter to build it
+                </Button>
+              ) : null}
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (!editing) startEdit();
+                  setDialog("add");
+                }}
+              >
+                <Plus className="h-4 w-4" aria-hidden /> Add a widget
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
@@ -705,7 +737,13 @@ export function ReportView({ reportId, canChat }: { reportId: string; canChat: b
           open
           onClose={() => setDialog(null)}
           spec={draft}
-          onAdd={(widget) => applyDraft((s) => ({ ...s, widgets: [...s.widgets, widget] }))}
+          onAdd={(widget, dataset) =>
+            applyDraft((s) => ({
+              ...s,
+              datasets: dataset ? [...s.datasets, dataset] : s.datasets,
+              widgets: [...s.widgets, widget],
+            }))
+          }
         />
       ) : null}
       <ConfirmDialog
@@ -720,7 +758,10 @@ export function ReportView({ reportId, canChat }: { reportId: string; canChat: b
 
       <DexterChat
         reportId={reportId}
+        avatarUrl={dexterAvatarUrl}
         canChat={canChat}
+        open={chatOpen}
+        onOpenChange={setChatOpen}
         blockedReason={
           dirty
             ? "Save or cancel your layout changes before asking Dexter to change the report."

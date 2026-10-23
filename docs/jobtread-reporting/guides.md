@@ -26,7 +26,9 @@ it for everyone; employees use _Make a copy_ / _Use template_ to get their own v
 
 1. Open **Reports** in the navigation.
 2. Start from a template (**Design Handoff**, **Product Library**, **Active Projects**), a
-   **Blank report**, or **Create with Dexter**.
+   **Blank report**, or **Create with Dexter**. An empty report offers **Ask Dexter to build
+   it** and **Add a widget** (new reports come with two data sources: all JobTread jobs and
+   Product Library models).
 3. Use the filter bar (phase, project manager, search, ranges, project picker). Filters are in
    the link, so you can bookmark or send a filtered view.
 4. Hover charts for exact values; click a bar, slice, or KPI to see the records behind it;
@@ -64,4 +66,6 @@ which report you're looking at:
 
 Each Dexter change is a new version titled with what changed; undo it from **History**. Dexter
 can only edit reports you can edit — on a view-only report he'll offer to make you a copy.
-Save or cancel manual layout edits before asking Dexter to change the report.
+Save or cancel manual layout edits before asking Dexter to change the report. Use the ↺
+(**New conversation**) button in the chat header to start fresh — Dexter reads recent turns as
+context, so clearing an old thread avoids stale answers.

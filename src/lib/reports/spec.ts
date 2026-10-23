@@ -380,4 +380,13 @@ export function collectFieldRefs(spec: ReportSpec): string[] {
   return [...refs];
 }
 
-export const BLANK_SPEC: ReportSpec = reportSpecSchema.parse({ title: "Untitled report" });
+/** Data sources every new report can use right away. */
+export const DEFAULT_DATASETS: DatasetSpec[] = [
+  { id: "jobs", source: "jobs", label: "All JobTread jobs", filters: [] },
+  { id: "models", source: "catalog_models", label: "Product Library models", filters: [] },
+];
+
+export const BLANK_SPEC: ReportSpec = reportSpecSchema.parse({
+  title: "Untitled report",
+  datasets: DEFAULT_DATASETS,
+});
