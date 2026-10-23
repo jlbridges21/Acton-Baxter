@@ -4,6 +4,8 @@ import type { ConnectorHealth, KnowledgeConnector } from "./types";
 import { GoogleWorkspaceConnector } from "./google/sync";
 import { SlackConnectorHealth } from "./slack/health";
 import { GhlConnectorHealth } from "./ghl/health";
+import { BambooHRConnectorHealth } from "./bamboohr/health";
+import { JobTreadConnectorHealth } from "./jobtread/health";
 
 const FUTURE: Array<{ key: ConnectorHealth["key"]; name: string }> = [
   { key: "buildertrend", name: "Buildertrend" },
@@ -15,10 +17,12 @@ export function getGoogleConnector(): KnowledgeConnector {
 }
 
 export async function listConnectorHealth(): Promise<ConnectorHealth[]> {
-  const [google, slack, ghl] = await Promise.all([
+  const [google, slack, ghl, jobtread, bamboohr] = await Promise.all([
     getGoogleConnector().health(),
     SlackConnectorHealth(),
     GhlConnectorHealth(),
+    JobTreadConnectorHealth(),
+    BambooHRConnectorHealth(),
   ]);
   const future: ConnectorHealth[] = FUTURE.map((item) => ({
     key: item.key,
@@ -30,5 +34,5 @@ export async function listConnectorHealth(): Promise<ConnectorHealth[]> {
     itemsSynced: null,
     details: "Not implemented in this release.",
   }));
-  return [google, slack, ghl, ...future];
+  return [google, slack, ghl, jobtread, bamboohr, ...future];
 }

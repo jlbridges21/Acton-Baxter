@@ -42,6 +42,12 @@ export async function POST(request: Request) {
         enqueued: false,
         reason: error instanceof Error ? error.message : "error",
       }));
+    // Global Search index refresh (internal + synced data only). Never blocks other jobs.
+    const searchIndex = await import("@/lib/search/admin")
+      .then((m) => m.refreshStaleSearchIndexes())
+      .catch((error: unknown) => [
+        { provider: "all", status: error instanceof Error ? error.message : "error" },
+      ]);
     const result = await processQueuedJobs({ limit: 10 });
     recordCronInvocation({ ok: true, code: null });
     return jsonOk({
@@ -51,6 +57,7 @@ export async function POST(request: Request) {
       streetViewBackfill,
       jobtreadSync,
       samOperations,
+      searchIndex,
     });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");

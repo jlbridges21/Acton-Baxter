@@ -1,0 +1,21 @@
+# Index lifecycle
+
+Applies to providers with `indexing: "index"` (JobTread jobs, knowledge, inventory, site
+inspections).
+
+| Event                   | What happens                                                                                                                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Initial index**       | The first search that touches a never-indexed provider builds it inline, bounded by the provider's timeout. If it doesn't finish in time, it completes in the background. The scheduled refresh also builds it.                                                                                               |
+| **Incremental refresh** | `/api/internal/process-jobs` (Vercel cron, every 2 min) calls `refreshStaleSearchIndexes()`, which rebuilds providers whose interval has passed: jobs 15 min, knowledge 10, inventory 5, inspections 10. A search that finds a stale index schedules a refresh with `after()`, so the response isn't delayed. |
+| **Updates**             | A full refresh upserts every current document with this run's `indexed_at`.                                                                                                                                                                                                                                   |
+| **Deletions**           | The same refresh deletes every row of the provider whose `indexed_at` isn't this run's. Between refreshes, `lookup` re-reads the source, so deleted or soft-deleted records (e.g. `jt_jobs.removed_at`, `inventory_items.deleted_at`) never appear.                                                           |
+| **Permission changes**  | ACLs are evaluated against the viewer's current access on every query, and `lookup` re-checks per record, so no reindex is needed for permission changes to take effect.                                                                                                                                      |
+| **Field changes**       | Changing searchable fields on `/admin/search` triggers a rebuild, so removed fields leave the index immediately.                                                                                                                                                                                              |
+| **Provider disabled**   | The admin toggle purges the provider's rows immediately. Re-enabling rebuilds on the next search or refresh.                                                                                                                                                                                                  |
+| **Source disconnected** | A refresh that finds the source unavailable (e.g. JobTread not configured) purges the rows and records `purged`. Searches report the provider as unavailable.                                                                                                                                                 |
+| **Manual reindex**      | "Reindex" per provider, or "Reindex all", on `/admin/search`. Audited.                                                                                                                                                                                                                                        |
+| **Concurrency**         | A simple lease (`last_index_status = running` for under 5 min) stops overlapping runs.                                                                                                                                                                                                                        |
+
+State per provider lives in `global_search_providers`: `last_indexed_at`,
+`last_index_status`, `last_index_error`, `indexed_count`, `last_index_duration_ms`,
+`last_index_trigger`, and `index_started_at`. It is shown on the admin page.

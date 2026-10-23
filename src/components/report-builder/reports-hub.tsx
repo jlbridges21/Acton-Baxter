@@ -6,7 +6,7 @@
  * library with tabs, groups (folders), search, and a per-card actions menu.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -98,6 +98,7 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
   const [renaming, setRenaming] = useState<ReportSummary | null>(null);
   const [adding, setAdding] = useState<ReportGroup | null>(null);
 
+  const groupLinkApplied = useRef(false);
   const loadLibrary = useCallback(async () => {
     try {
       const res = await aiFetch<{
@@ -108,6 +109,13 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
       setReports(res.reports);
       setGroups(res.groups ?? []);
       setAccess(res.access);
+      // Deep link from Global Search: /reports?group=<id> opens that group once.
+      if (!groupLinkApplied.current) {
+        groupLinkApplied.current = true;
+        const linked = new URLSearchParams(window.location.search).get("group");
+        if (linked && (res.groups ?? []).some((g) => g.id === linked && !g.archived))
+          setGroup(linked);
+      }
     } catch (e) {
       setError(errorMessage(e));
     }

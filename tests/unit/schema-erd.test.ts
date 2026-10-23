@@ -1,4 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { getAdminNavSections } from "@/lib/baxter/admin-nav";
+import { getNavEntry } from "@/lib/navigation/registry";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { Graph, layout } from "@dagrejs/dagre";
@@ -229,9 +231,10 @@ describe("schema diagram", () => {
     expect(page).toContain("isAdminRole");
     expect(page).toContain('width="full"');
     expect(page).toContain("loadSchemaErd");
-    const people = readFileSync(path.join(process.cwd(), "src/lib/baxter/admin-nav.ts"), "utf8");
-    expect(people).toContain('href: "/admin/schema"');
-    expect(people).toContain('label: "Schema"');
+    // Admin nav is derived from the canonical page registry; Schema stays admin-only.
+    const people = getAdminNavSections().find((s) => s.id === "people")!;
+    expect(people.links.find((l) => l.href === "/admin/schema")?.label).toBe("Schema");
+    expect(getNavEntry("schema")?.audience).toBe("admin");
   });
 });
 

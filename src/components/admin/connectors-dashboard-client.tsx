@@ -18,7 +18,8 @@ export function ConnectorsDashboardClient({
       <div>
         <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Connectors</h1>
         <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Baxter knowledge and conversation connectors. Only configured systems show as Active.
+          Baxter knowledge, conversation, and business-data connectors. Only configured systems show
+          as Active.
         </p>
       </div>
 
@@ -57,6 +58,16 @@ export function ConnectorsDashboardClient({
               {connector.key === "gohighlevel" ? (
                 <Link href="/admin/connectors/ghl">
                   <Button size="sm">Manage GoHighLevel</Button>
+                </Link>
+              ) : null}
+              {connector.key === "jobtread" ? (
+                <Link href="/reports/settings">
+                  <Button size="sm">Manage JobTread</Button>
+                </Link>
+              ) : null}
+              {connector.key === "bamboohr" ? (
+                <Link href="/ai/operations?tab=setup">
+                  <Button size="sm">Manage BambooHR</Button>
                 </Link>
               ) : null}
               {connector.key === "slack" ? (

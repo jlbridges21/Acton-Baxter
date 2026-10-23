@@ -11,6 +11,7 @@ import { isAdminRole } from "@/lib/auth/roles";
 import { getAppNavLinksForRole, getAppNavSectionsForRole } from "@/lib/baxter/app-nav-links";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { GlobalSearch } from "@/components/search/global-search";
 
 export function AppNav({
   userName,
@@ -138,6 +139,7 @@ export function AppNav({
           >
             {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </Button>
+          <GlobalSearch />
         </div>
       </div>
       {mobileOpen ? (

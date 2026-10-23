@@ -24,6 +24,36 @@
         "3100"
       ],
       "port": 3100
+    },
+    {
+      "name": "baxter-search-sandbox",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "E2E_TEST_AUTH_BYPASS=true",
+        "E2E_TEST_USER_ROLE=admin",
+        "E2E_TEST_USER_NAME=Avery Admin",
+        "ENABLE_MOCK_RESEARCH=true",
+        "NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54399",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY=test-anon",
+        "SUPABASE_SERVICE_ROLE_KEY=test-service",
+        "OPENAI_API_KEY=",
+        "ANTHROPIC_API_KEY=",
+        "AI_PROVIDER=deterministic",
+        "ENABLE_SLACK_INTEGRATION=false",
+        "ENABLE_GHL_INTEGRATION=false",
+        "JOBTREAD_GRANT_KEY=test-grant-key-never-real-0123456789",
+        "JOBTREAD_ORGANIZATION_ID=orgTest0001",
+        "JOBTREAD_E2E_FIXTURE=true",
+        "JOBTREAD_SYNC_ENABLED=false",
+        "BAMBOOHR_CLIENT_ID=",
+        "BAMBOOHR_CLIENT_SECRET=",
+        "npx",
+        "next",
+        "dev",
+        "-p",
+        "3200"
+      ],
+      "port": 3200
     }
   ]
 }

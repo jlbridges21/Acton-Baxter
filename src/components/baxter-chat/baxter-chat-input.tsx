@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 export function BaxterChatInput({
   disabled,
   onSend,
+  initialValue,
 }: {
   disabled?: boolean;
   onSend: (question: string) => void | Promise<void>;
+  initialValue?: string;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue ?? "");
 
   async function submit() {
     const question = value.trim();
@@ -29,6 +31,7 @@ export function BaxterChatInput({
         <textarea
           id="baxter-chat-input"
           rows={2}
+          autoFocus={Boolean(initialValue)}
           value={value}
           disabled={disabled}
           placeholder="Ask Baxter anything…"

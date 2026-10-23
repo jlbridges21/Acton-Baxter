@@ -34,9 +34,12 @@ export type BaxterRequestLifecycle =
 export function BaxterChatPanel({
   onClose,
   onRequestLifecycle,
+  initialDraft,
 }: {
   onClose: () => void;
   onRequestLifecycle?: (event: BaxterRequestLifecycle) => void;
+  /** Prefill the input (e.g. a query handed over from Global Search). Not sent automatically. */
+  initialDraft?: string;
 }) {
   const [messages, setMessages] = useState<ChatUiMessage[]>([GREETING]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -238,7 +241,7 @@ export function BaxterChatPanel({
       </p>
 
       <div className="shrink-0">
-        <BaxterChatInput disabled={pending} onSend={sendQuestion} />
+        <BaxterChatInput disabled={pending} onSend={sendQuestion} initialValue={initialDraft} />
       </div>
     </div>
   );

@@ -81,6 +81,11 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   bi_report_shares: [["report_id", "principal_type", "principal_value"]],
   bi_report_views: [["report_id", "user_id"]],
   bi_report_pins: [["report_id", "user_id"]],
+  // Global Search (074_global_search.sql)
+  global_search_index: [["provider", "record_id"]],
+  global_search_providers: [["provider"]],
+  global_search_synonyms: [["term"]],
+  global_search_recents: [["user_id", "provider", "record_id"]],
 };
 
 const NO_ID_TABLES = new Set([
@@ -97,6 +102,8 @@ const NO_ID_TABLES = new Set([
   "bi_report_group_items",
   "bi_report_suggestion_states",
   "bi_report_user_prefs",
+  "global_search_providers",
+  "global_search_recents",
 ]);
 const NO_UPDATED_AT = new Set([
   "ai_agent_config_versions",

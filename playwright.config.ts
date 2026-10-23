@@ -41,6 +41,8 @@ export default defineConfig({
       JOBTREAD_ORGANIZATION_ID: "orgTest0001",
       JOBTREAD_E2E_FIXTURE: "true",
       JOBTREAD_SYNC_ENABLED: "false",
+      // Never call GoHighLevel from E2E: .env.local may hold live CRM credentials.
+      ENABLE_GHL_INTEGRATION: "false",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
       SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",

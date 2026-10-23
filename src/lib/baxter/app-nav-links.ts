@@ -1,30 +1,12 @@
-import {
-  BarChart3,
-  BookOpen,
-  Bot,
-  ClipboardCheck,
-  ClipboardList,
-  FolderKanban,
-  LayoutDashboard,
-  LayoutTemplate,
-  Orbit,
-  Package,
-  QrCode,
-  Plug,
-  Receipt,
-  Search,
-  Settings,
-  UsersRound,
-  type LucideIcon,
-} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { isAdminRole, isAppAccessRole } from "@/lib/auth/roles";
-import { FLOOR_PLAN_LIBRARY_URL } from "@/lib/baxter/tools";
 import {
   getAdminNavLinks,
   getAdminNavSections,
   type AdminNavSection,
 } from "@/lib/baxter/admin-nav";
+import { EMPLOYEE_NAV, navLinksFor } from "@/lib/navigation/registry";
 
 export type AppNavLink = {
   href: string;
@@ -35,112 +17,11 @@ export type AppNavLink = {
 
 /**
  * Persistent primary nav for the standard app-access role (`user`).
- * Always the same items — not context-scoped by pathname.
+ * Always the same items — not context-scoped by pathname. Derived from the canonical page
+ * registry (src/lib/navigation/registry.ts), which also feeds Global Search.
  */
 export function getEmployeeNavLinks(): AppNavLink[] {
-  return [
-    {
-      href: "/",
-      label: "Dashboard",
-      icon: LayoutDashboard,
-      match: (pathname) => pathname === "/",
-    },
-    {
-      href: "/knowledge",
-      label: "Knowledge Center",
-      icon: BookOpen,
-      match: (pathname) => pathname.startsWith("/knowledge"),
-    },
-    {
-      href: "/ai",
-      label: "AI Workspace",
-      icon: Bot,
-      match: (pathname) => pathname === "/ai" || pathname.startsWith("/ai/"),
-    },
-    {
-      href: "/reports",
-      label: "Reports",
-      icon: BarChart3,
-      match: (pathname) => pathname === "/reports" || pathname.startsWith("/reports/"),
-    },
-    {
-      href: "/pem-neats",
-      label: "PEM NEAT",
-      icon: ClipboardList,
-      match: (pathname) => pathname.startsWith("/pem-neats"),
-    },
-    {
-      href: "/projects/setup",
-      label: "New Project Setup",
-      icon: FolderKanban,
-      match: (pathname) => pathname.startsWith("/projects/setup"),
-    },
-    {
-      href: "/receipts",
-      label: "Receipt Log",
-      icon: Receipt,
-      match: (pathname) => pathname.startsWith("/receipts"),
-    },
-    {
-      href: "/inspections",
-      label: "Site Inspections",
-      icon: ClipboardCheck,
-      match: (pathname) => pathname.startsWith("/inspections"),
-    },
-    {
-      href: "/inventory",
-      label: "Inventory",
-      icon: Package,
-      match: (pathname) => pathname === "/inventory" || pathname.startsWith("/inventory/"),
-    },
-    {
-      href: "/property-research",
-      label: "Property Research",
-      icon: Search,
-      match: (pathname) => pathname.startsWith("/property-research") || pathname === "/dashboard",
-    },
-    {
-      href: "/customers/lookup",
-      label: "Customer Center",
-      icon: UsersRound,
-      match: (pathname) => pathname.startsWith("/customers"),
-    },
-    {
-      href: FLOOR_PLAN_LIBRARY_URL,
-      label: "Floor Plan Library",
-      icon: LayoutTemplate,
-    },
-    {
-      href: "/tools/qr",
-      label: "QR Code",
-      icon: QrCode,
-      match: (pathname) => pathname.startsWith("/tools/qr"),
-    },
-    {
-      href: "/tours",
-      label: "Tours",
-      icon: Orbit,
-      match: (pathname) => pathname === "/tours" || pathname.startsWith("/tours/"),
-    },
-    {
-      href: "/surveys",
-      label: "Surveys",
-      icon: ClipboardList,
-      match: (pathname) => pathname === "/surveys" || pathname.startsWith("/surveys/"),
-    },
-    {
-      href: "/settings/integrations",
-      label: "Integrations",
-      icon: Plug,
-      match: (pathname) => pathname.startsWith("/settings/integrations"),
-    },
-    {
-      href: "/settings",
-      label: "Settings",
-      icon: Settings,
-      match: (pathname) => pathname === "/settings" || pathname.startsWith("/settings/account"),
-    },
-  ];
+  return navLinksFor(EMPLOYEE_NAV, false);
 }
 
 /** Resolve visible nav links for a role — shared by AppNav and unit tests. */

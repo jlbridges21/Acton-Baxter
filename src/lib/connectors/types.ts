@@ -1,4 +1,5 @@
-export type ConnectorKey = "google_workspace" | "slack" | "gohighlevel" | "buildertrend" | "domo";
+export type ConnectorKey =
+  "google_workspace" | "slack" | "gohighlevel" | "bamboohr" | "jobtread" | "buildertrend" | "domo";
 
 export type ConnectorHealthStatus = "healthy" | "warning" | "offline" | "coming_soon";
 
