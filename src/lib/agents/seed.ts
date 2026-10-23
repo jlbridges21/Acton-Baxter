@@ -12,6 +12,7 @@ import {
   BAXTER_DEFAULT_CONFIG,
   BAXTER_DELEGATION_GUIDELINES,
   BAXTER_DELEGATION_GUIDELINES_V1,
+  BAXTER_DELEGATION_GUIDELINES_V2,
   BAXTER_SLUG,
   DEFAULT_DEPARTMENTS,
   DEXTER_AVATAR_PATH,
@@ -24,7 +25,13 @@ import {
   DEXTER_SLUG,
   PLACEHOLDER_ONBOARDING_TEMPLATE,
   SAM_DEFAULT_CONFIG,
+  SAM_DEFAULT_CONFIG_V1,
+  SAM_DESCRIPTION,
+  SAM_DESCRIPTION_V1,
+  SAM_OPS_TOOLS,
   SAM_SLUG,
+  SAM_TITLE,
+  SAM_TITLE_V1,
 } from "./defaults";
 import { agentDb, callRpc, eq, isUniqueViolation, selectOne, usesAgentMemoryStore } from "./store";
 import {
@@ -181,9 +188,8 @@ async function runSeed(): Promise<void> {
     slug: SAM_SLUG,
     row: {
       display_name: "Sam",
-      title: "HR, Administration & Legal Specialist",
-      description:
-        "Handles onboarding, HR administration, SOP-driven processes, employee communication drafts, and HR-related legal reference support. Reports to Baxter.",
+      title: SAM_TITLE,
+      description: SAM_DESCRIPTION,
       kind: "specialist",
       department_id: departments.get("hr-admin-legal")?.id ?? null,
       manager_agent_id: baxter.id,
@@ -222,6 +228,8 @@ async function runSeed(): Promise<void> {
     filters: [eq("slug", DEXTER_SLUG)],
   });
   if (dexter) await upgradeDexterConfig(dexter.id);
+  const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
+  if (sam) await upgradeSamConfig(sam);
   await ensurePlaceholderOnboardingTemplate();
 }
 
@@ -240,7 +248,9 @@ async function upgradeBaxterGuidelines(baxterId: string) {
   const parsed = agentConfigSchema.safeParse(published.config);
   if (
     !parsed.success ||
-    parsed.data.instructions.delegationGuidelines !== BAXTER_DELEGATION_GUIDELINES_V1
+    ![BAXTER_DELEGATION_GUIDELINES_V1, BAXTER_DELEGATION_GUIDELINES_V2].includes(
+      parsed.data.instructions.delegationGuidelines,
+    )
   )
     return;
   const config = {
@@ -257,7 +267,8 @@ async function upgradeBaxterGuidelines(baxterId: string) {
       version_number: nextVersion,
       status: "draft",
       config,
-      change_summary: "System: added Dexter to Baxter's delegation guidelines",
+      change_summary:
+        "System: updated Baxter's delegation guidelines for Dexter and Sam Operations",
       published_by: null,
       published_at: null,
     });
@@ -340,6 +351,72 @@ async function upgradeDexterConfig(dexterId: string) {
     published,
     config,
     `${DEXTER_UPGRADE_MARKER}: data catalog, feasibility, planning, attachments, and business-rule tools`,
+  );
+}
+
+const SAM_UPGRADE_MARKER = "System: Sam operations upgrade";
+
+/**
+ * One-time upgrade of Sam for Sam Operations Studio (leadership brief): new overview, operations
+ * tools, and instructions/delegation text — each replaced only where it still equals the Phase 1
+ * default, so anything an admin customized in AI Studio is kept.
+ */
+async function upgradeSamConfig(sam: AgentRow) {
+  if (sam.title === SAM_TITLE_V1 && sam.description === SAM_DESCRIPTION_V1) {
+    await agentDb().update("ai_agents", [eq("id", sam.id)], {
+      title: SAM_TITLE,
+      description: SAM_DESCRIPTION,
+    });
+  }
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", sam.id)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(SAM_UPGRADE_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const current = parsed.data;
+  const v1 = SAM_DEFAULT_CONFIG_V1;
+  const next = SAM_DEFAULT_CONFIG;
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const instructions = { ...current.instructions };
+  for (const key of Object.keys(instructions) as Array<keyof typeof instructions>) {
+    if (instructions[key] === v1.instructions[key]) instructions[key] = next.instructions[key];
+  }
+  const delegation = { ...current.delegation };
+  for (const key of [
+    "specialization",
+    "supportedTasks",
+    "eligibilityCriteria",
+    "positiveExamples",
+    "negativeExamples",
+    "keywords",
+    "escalationRules",
+    "requiredKnowledgeCategories",
+  ] as const) {
+    if (same(delegation[key], v1.delegation[key]))
+      Object.assign(delegation, { [key]: next.delegation[key] });
+  }
+  const config = {
+    ...current,
+    instructions,
+    delegation,
+    tools: {
+      ...current.tools,
+      enabled: [...new Set([...current.tools.enabled, ...SAM_OPS_TOOLS])],
+    },
+    knowledge: same(current.knowledge.categories, v1.knowledge.categories)
+      ? next.knowledge
+      : current.knowledge,
+  };
+  if (same(config, current)) return;
+  await publishSystemVersion(
+    sam.id,
+    versions,
+    published,
+    config,
+    `${SAM_UPGRADE_MARKER}: HR/admin/legal operations coordinator, operations tools, and leadership-brief instructions`,
   );
 }
 

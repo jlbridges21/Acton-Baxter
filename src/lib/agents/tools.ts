@@ -14,6 +14,7 @@ import "server-only";
 import { z } from "zod";
 import { createApproval } from "./approvals";
 import { searchAgentKnowledge } from "./knowledge";
+import { OPS_TOOLS } from "./ops-tools";
 import { REPORT_INTEL_TOOLS } from "./report-intel-tools";
 import { REPORT_TOOLS } from "./report-tools";
 import {
@@ -302,6 +303,7 @@ function plannedTool(
 export const TOOL_REGISTRY: AgentTool[] = [
   ...REPORT_TOOLS,
   ...REPORT_INTEL_TOOLS,
+  ...OPS_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,
@@ -310,9 +312,9 @@ export const TOOL_REGISTRY: AgentTool[] = [
   plannedTool(
     "send_email",
     "Send email",
-    "Send approved communications from a dedicated HR mailbox.",
+    "Send approved communications directly. Sam Operations queues approved emails instead (ops_propose_message).",
     "external",
-    "Needs a dedicated mailbox, credentials, and an approved sending policy.",
+    "Direct sending is replaced by CEO/COO-approved actions in Sam Operations; Gmail sending also needs Google's gmail.send permission.",
   ),
   plannedTool(
     "bamboohr_read",

@@ -16,6 +16,7 @@ export const JOB_TYPES = [
   "inventory_order_import",
   "ai_agent_task",
   "jobtread_sync",
+  "sam_operations_sweep",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

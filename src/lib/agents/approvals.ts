@@ -80,6 +80,16 @@ export async function decideApproval(input: {
   const approval = await getApproval(input.id);
   if (!approval) throw new NotFoundError("Approval request not found");
   if (approval.status !== "pending") throw new ValidationError("This request was already decided.");
+  // Sam Operations actions: CEO/COO only, bound to the exact payload, never edited in place.
+  const isOps = approval.action_type.startsWith("ops.");
+  if (isOps) {
+    if (input.editedPayload)
+      throw new ValidationError(
+        "Sam's actions can't be edited during approval. Reject it and ask for a revised request.",
+      );
+    const { handleOpsApprovalDecision } = await import("@/lib/ops/actions");
+    await handleOpsApprovalDecision(approval, input.decision, input.userId);
+  }
   const payload = { ...approval.payload };
   if (input.editedPayload?.subject !== undefined)
     payload.subject = input.editedPayload.subject.slice(0, 300);
@@ -98,6 +108,10 @@ export async function decideApproval(input: {
     },
   );
   if (!updated) throw new ValidationError("This request was already decided.");
+  if (isOps) {
+    const { afterOpsApprovalDecision } = await import("@/lib/ops/actions");
+    await afterOpsApprovalDecision(approval.id, input.decision, input.userId);
+  }
 
   if (approval.task_id) {
     await appendTaskEvent(

@@ -35,6 +35,13 @@ export async function POST(request: Request) {
         enqueued: false,
         reason: error instanceof Error ? error.message : "error",
       }));
+    // Sam Operations sweep (reminders, approved actions, waiting steps). Never blocks other jobs.
+    const samOperations = await import("@/lib/ops/schedule")
+      .then((m) => m.maybeEnqueueSamOperationsSweep())
+      .catch((error: unknown) => ({
+        enqueued: false,
+        reason: error instanceof Error ? error.message : "error",
+      }));
     const result = await processQueuedJobs({ limit: 10 });
     recordCronInvocation({ ok: true, code: null });
     return jsonOk({
@@ -43,6 +50,7 @@ export async function POST(request: Request) {
       monitoring,
       streetViewBackfill,
       jobtreadSync,
+      samOperations,
     });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");

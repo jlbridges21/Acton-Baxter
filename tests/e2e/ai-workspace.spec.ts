@@ -25,7 +25,9 @@ test("AI Office shows Baxter and Sam with real (idle) status and an accessible l
   await asRole(context, "admin");
   await page.goto("/ai");
   await expect(page.getByRole("button", { name: /Baxter, AI CEO\. Available\./ })).toBeVisible();
-  const sam = page.getByRole("button", { name: /^Sam, HR, Administration & Legal Specialist/ });
+  const sam = page.getByRole("button", {
+    name: /^Sam, HR, Administration & Legal Operations Coordinator/,
+  });
   await expect(sam).toBeVisible();
   // Sam is animated (may be walking), so Playwright's "stable" wait never settles.
   await sam.dispatchEvent("click");

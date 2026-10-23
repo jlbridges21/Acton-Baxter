@@ -244,6 +244,9 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
         typeof job.metadata.source === "string" ? job.metadata.source : "job",
       );
       if (run.status === "failed") throw new Error(run.error ?? "JobTread sync failed");
+    } else if (job.jobType === "sam_operations_sweep") {
+      const { runSamOperationsSweep } = await import("@/lib/ops/schedule");
+      await runSamOperationsSweep();
     } else if (job.jobType === "ai_agent_task") {
       const { processAgentTaskJob } = await import("@/lib/agents/jobs");
       await processAgentTaskJob(job);

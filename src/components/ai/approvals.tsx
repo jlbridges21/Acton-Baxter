@@ -38,6 +38,8 @@ type Approval = {
 
 function ApprovalCard({ approval, onDecided }: { approval: Approval; onDecided: () => void }) {
   const isDraft = approval.actionType === "employee_communication";
+  // Sam Operations actions: approval is bound to the exact payload and can't be edited here.
+  const isOps = approval.actionType.startsWith("ops.");
   const [subject, setSubject] = useState(String(approval.payload.subject ?? ""));
   const [body, setBody] = useState(String(approval.payload.body ?? ""));
   const [note, setNote] = useState("");
@@ -133,6 +135,30 @@ function ApprovalCard({ approval, onDecided }: { approval: Approval; onDecided: 
             <Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy text"}
           </Button>
         </div>
+      ) : isOps ? (
+        <div className="space-y-1 rounded-md border border-[var(--acton-border)] p-3 text-sm">
+          <p>
+            <b>{String(approval.payload.actionLabel ?? "Action")}:</b>{" "}
+            {String(approval.payload.target ?? "—")}
+          </p>
+          <p className="text-[var(--acton-muted)]">{String(approval.payload.effect ?? "")}</p>
+          {approval.payload.mode === "test" ? (
+            <p className="text-xs font-semibold text-violet-800">
+              Test mode — nothing external happens.
+            </p>
+          ) : null}
+          <details>
+            <summary className="cursor-pointer text-xs font-semibold text-[var(--acton-muted)]">
+              Exact details being approved
+            </summary>
+            <pre className="mt-1 max-h-64 overflow-auto rounded bg-[var(--acton-gray-50)] p-2 text-xs">
+              {JSON.stringify(approval.payload.preview ?? {}, null, 2)}
+            </pre>
+          </details>
+          <Link className="text-xs font-semibold underline" href="/ai/operations?tab=approvals">
+            Open in Sam Operations
+          </Link>
+        </div>
       ) : approval.payload.reason ? (
         <p className="text-sm">
           <b>Reason:</b> {String(approval.payload.reason)}
@@ -152,7 +178,8 @@ function ApprovalCard({ approval, onDecided }: { approval: Approval; onDecided: 
           {error ? <Notice tone="error">{error}</Notice> : null}
           <div className="flex gap-2">
             <Button type="button" onClick={() => decide("approved")} disabled={busy}>
-              <Check className="h-4 w-4" /> {isDraft ? "Approve draft" : "Mark reviewed"}
+              <Check className="h-4 w-4" />{" "}
+              {isDraft ? "Approve draft" : isOps ? "Approve" : "Mark reviewed"}
             </Button>
             <Button
               type="button"
@@ -160,7 +187,7 @@ function ApprovalCard({ approval, onDecided }: { approval: Approval; onDecided: 
               onClick={() => decide("rejected")}
               disabled={busy}
             >
-              <X className="h-4 w-4" /> Reject
+              <X className="h-4 w-4" /> {isOps ? "Decline" : "Reject"}
             </Button>
           </div>
         </>

@@ -9,6 +9,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Bot,
+  BriefcaseBusiness,
   CheckCircle2,
   ClipboardCheck,
   Gauge,
@@ -76,6 +77,7 @@ const TABS = [
   { href: "/ai", label: "AI Office", icon: Building2, exact: true },
   { href: "/ai/agents", label: "Agents", icon: UsersRound },
   { href: "/ai/knowledge", label: "Knowledge Hub", icon: LibraryBig },
+  { href: "/ai/operations", label: "Sam Operations", icon: BriefcaseBusiness },
   { href: "/ai/onboarding", label: "Onboarding", icon: ListChecks },
   { href: "/ai/tasks", label: "Tasks", icon: ClipboardCheck },
   { href: "/ai/approvals", label: "Approvals", icon: CheckCircle2 },

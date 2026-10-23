@@ -33,7 +33,9 @@ export async function GET(request: Request) {
         agentSlug: agents.get(a.agent_id)?.row.slug ?? null,
         avatarUrl: agents.get(a.agent_id)?.row.avatar_url ?? null,
         actionType: a.action_type,
-        actionLabel: APPROVAL_ACTION_LABELS[a.action_type] ?? a.action_type,
+        actionLabel:
+          APPROVAL_ACTION_LABELS[a.action_type] ??
+          (a.action_type.startsWith("ops.") ? "Sam Operations action" : a.action_type),
         title: a.title,
         summary: a.summary,
         payload: a.payload,
