@@ -235,7 +235,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     { role: "user", content: question },
   ]);
   const followUpResolved = resolveConceptFollowUp(retryResolved ?? question, historyForRouting);
-  const routingQuestion = followUpResolved ?? retryResolved ?? question;
+  let routingQuestion = followUpResolved ?? retryResolved ?? question;
   const questionClass = classifyBaxterQuestion(routingQuestion);
   const conceptIntent = detectConceptQuestion(routingQuestion);
 
@@ -309,10 +309,12 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     });
   }
 
-  // AI Workforce: hand specialist work (e.g. HR/onboarding → Sam) to the right agent.
-  // Falls through to Baxter's normal pipeline when no specialist applies.
-  const { maybeDelegateBaxterRequest } = await import("@/lib/agents/orchestrator");
-  const delegated = await maybeDelegateBaxterRequest({
+  // AI organization awareness (live Agent Registry): questions ABOUT agents, the AI team, or
+  // available tools are answered here — before delegation and before any CRM / knowledge search —
+  // so "Who is Sam?" never becomes a GoHighLevel contact lookup. Pronouns and clarification
+  // answers are resolved for the steps below.
+  const { routeOrganizationRequest } = await import("@/lib/agents/org-routing");
+  const org = await routeOrganizationRequest({
     question: routingQuestion,
     channel: input.channel,
     userId: input.userId,
@@ -322,10 +324,57 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     slackUserId: input.channel === "slack" ? (input.externalUserId ?? null) : null,
     slackTeamId: input.slackTeamId ?? null,
     slackIsDirectMessage: input.slackIsDirectMessage ?? false,
-    slackChannelId: input.slackChannelId ?? null,
-    slackThreadTs: input.slackReplyThreadTs ?? null,
     history: historyForRouting,
-  });
+  }).catch(() => null);
+  if (org?.handled) {
+    const message = await appendAssistantMessage({
+      conversationId: conversation.id,
+      content: org.answer,
+      insufficientKnowledge: false,
+      confidence: "high",
+      modelProvider: "agent-registry",
+      modelName: org.trace.intent,
+      sources: org.sources,
+      sourceEntryIds: [],
+      extraMetadata: { routing: org.trace },
+    });
+    return {
+      ...toPublicAnswer({
+        conversationId: conversation.id,
+        messageId: message.id,
+        answer: org.answer,
+        sources: org.sources,
+        confidence: "high",
+        insufficientKnowledge: false,
+        answerMode: org.trace.strategy === "clarify" ? "clarification" : "identity",
+      }),
+      routing: org.trace,
+    };
+  }
+  if (org && !org.handled) routingQuestion = org.routingQuestion;
+
+  // AI Workforce: hand specialist work (e.g. HR/onboarding → Sam) to the right agent.
+  // Falls through to Baxter's normal pipeline when no specialist applies.
+  const { maybeDelegateBaxterRequest } = await import("@/lib/agents/orchestrator");
+  // When the org layer saw an agent's name used for a CRM / employee record ("phone number for
+  // Sam Johnson"), don't let name-based delegation hand it to the agent.
+  const delegated =
+    org && !org.handled && org.skipDelegation
+      ? { handled: false as const }
+      : await maybeDelegateBaxterRequest({
+          question: routingQuestion,
+          channel: input.channel,
+          userId: input.userId,
+          userName: input.userName ?? null,
+          conversationId: conversation.id,
+          messageId: userMessage.id,
+          slackUserId: input.channel === "slack" ? (input.externalUserId ?? null) : null,
+          slackTeamId: input.slackTeamId ?? null,
+          slackIsDirectMessage: input.slackIsDirectMessage ?? false,
+          slackChannelId: input.slackChannelId ?? null,
+          slackThreadTs: input.slackReplyThreadTs ?? null,
+          history: historyForRouting,
+        });
   if (delegated.handled) {
     const message = await appendAssistantMessage({
       conversationId: conversation.id,
@@ -338,7 +387,10 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
       outputTokens: delegated.outputTokens,
       sources: delegated.sources,
       sourceEntryIds: [],
-      extraMetadata: delegated.delegation ? { delegation: delegated.delegation } : {},
+      extraMetadata: {
+        ...(delegated.delegation ? { delegation: delegated.delegation } : {}),
+        ...(org ? { routing: { ...org.trace, strategy: "delegation" } } : {}),
+      },
     });
     return {
       ...toPublicAnswer({
@@ -351,6 +403,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
         answerMode: delegated.answerMode,
       }),
       delegation: delegated.delegation,
+      routing: org ? { ...org.trace, strategy: "delegation" as const } : null,
     };
   }
 

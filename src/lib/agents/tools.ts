@@ -72,6 +72,13 @@ export type AgentTool = {
   unavailableReason?: string;
   args: z.ZodType;
   execute: (ctx: ToolContext, args: unknown) => Promise<ToolResult>;
+  /** Integration the tool reads from or acts on (for capability discovery and attribution). */
+  source?: string;
+  /**
+   * Whether the tool can actually work right now (e.g. its integration is connected). Tools
+   * without this are considered operational when available. Cheap, no model calls.
+   */
+  readiness?: () => Promise<{ ready: boolean; detail: string }>;
 };
 
 const knowledgeSearch: AgentTool = {

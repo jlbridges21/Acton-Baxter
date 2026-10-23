@@ -1,10 +1,15 @@
 import { requireAdmin } from "@/lib/auth/session";
 import { listEvalCases } from "@/lib/baxter-ai/evaluations";
 import { BaxterEvaluationsClient } from "@/components/admin/baxter-evaluations-client";
+import { BaxterOrgQuality } from "@/components/admin/baxter-org-quality";
+import { getOrgQuality } from "@/lib/agents/org-quality";
 
 export default async function BaxterEvaluationsPage() {
   await requireAdmin();
-  const cases = await listEvalCases();
+  const [cases, orgQuality] = await Promise.all([
+    listEvalCases(),
+    getOrgQuality().catch(() => null),
+  ]);
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
       <div>
@@ -14,6 +19,7 @@ export default async function BaxterEvaluationsPage() {
           organizational recall.
         </p>
       </div>
+      {orgQuality && <BaxterOrgQuality quality={orgQuality} />}
       <BaxterEvaluationsClient
         initialCases={cases.map((c) => ({
           id: c.id,

@@ -420,6 +420,41 @@ export async function listRecentConversations(limit = 30): Promise<BaxterConvers
   return (data as BaxterConversation[]) ?? [];
 }
 
+/**
+ * Recent organization-routing traces (strategy / intent / agent / latency) for the admin quality
+ * view. Reads only the trace, never message content.
+ */
+export async function listRecentRoutingTraces(
+  limit = 200,
+): Promise<Array<{ createdAt: string; routing: Record<string, unknown> }>> {
+  if (shouldUseMemoryStore()) {
+    return Array.from(getMemory().messages.values())
+      .flat()
+      .filter((m) => m.role === "assistant" && m.metadata?.routing)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
+      .map((m) => ({
+        createdAt: m.created_at,
+        routing: m.metadata!.routing as Record<string, unknown>,
+      }));
+  }
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("baxter_messages")
+    .select("created_at, routing:metadata->routing")
+    .eq("role", "assistant")
+    .not("metadata->routing", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isMissingTableError(error)) return [];
+    throw error;
+  }
+  return ((data ?? []) as Array<{ created_at: string; routing: Record<string, unknown> | null }>)
+    .filter((r) => r.routing)
+    .map((r) => ({ createdAt: r.created_at, routing: r.routing! }));
+}
+
 export async function listMessagesForConversation(
   conversationId: string,
 ): Promise<BaxterMessage[]> {

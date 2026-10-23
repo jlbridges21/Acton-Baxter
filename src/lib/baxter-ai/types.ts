@@ -77,6 +77,14 @@ export type BaxterAnswer = {
   errorCode?: string | null;
   /** Present when Baxter handed the request to an AI Workforce specialist. */
   delegation?: BaxterDelegationSummary | null;
+  /** Concise, non-sensitive routing trace (strategy, intent, agent, reason) for quality review. */
+  routing?: {
+    strategy: "registry" | "clarify" | "delegation" | "pipeline";
+    intent: string;
+    agent: string | null;
+    reason: string;
+    latencyMs: number;
+  } | null;
 };
 
 /** Non-sensitive delegation trace shown under a Baxter answer. */
