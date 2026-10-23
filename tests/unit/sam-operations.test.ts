@@ -28,7 +28,7 @@ import {
   sweepOperations,
   type StepRow,
 } from "@/lib/ops/engine";
-import { saveIntegrationSettings, setOpsFetcherForTests } from "@/lib/ops/integrations";
+import { setGoogleForTests, setOpsFetcherForTests } from "@/lib/ops/integrations";
 import {
   getOpsAccess,
   listEntities,
@@ -228,8 +228,6 @@ beforeEach(async () => {
     calls.push(c);
     return respond(c);
   });
-  delete process.env.BAMBOOHR_SUBDOMAIN;
-  delete process.env.BAMBOOHR_API_KEY;
 });
 
 afterEach(() => setOpsFetcherForTests(null));
@@ -463,19 +461,9 @@ describe("Scenario 1 — onboarding (live, approval-controlled)", () => {
   });
 });
 
-describe("Scenario 2 — BambooHR record updates", () => {
-  beforeEach(() => {
-    process.env.BAMBOOHR_SUBDOMAIN = "synthetic";
-    process.env.BAMBOOHR_API_KEY = "test-key";
-  });
-
-  it("writes an approved allowlisted field with read-back; rejected or blocked changes never write", async () => {
+describe("Scenario 2 — BambooHR stays read-only", () => {
+  it("never writes: approved updates become manual tasks, blocked fields fail, rejected ones stop", async () => {
     await bootstrapLeadership();
-    await saveIntegrationSettings("bamboohr", { config: { writableFields: ["jobTitle"] } }, CEO_ID);
-    respond = (c) =>
-      c.method === "GET"
-        ? Response.json({ jobTitle: "Estimator" })
-        : new Response("", { status: 200 });
     const propose = (changes: Record<string, string>, key: string) =>
       proposeAction({
         logicalKey: key,
@@ -496,7 +484,6 @@ describe("Scenario 2 — BambooHR record updates", () => {
       note: "no",
     });
     expect((await action(rejected.id)).status).toBe("rejected");
-    expect(calls).toHaveLength(0);
 
     const ok = await propose({ jobTitle: "Estimator" }, "b2");
     await decideApproval({
@@ -505,12 +492,12 @@ describe("Scenario 2 — BambooHR record updates", () => {
       userId: COO_ID,
       note: null,
     });
-    const done = await action(ok.id);
-    expect(done.status).toBe("succeeded");
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
-    expect(calls.some((c) => c.method === "GET" && c.url.includes("fields=jobTitle"))).toBe(true);
+    const manual = await action(ok.id);
+    expect(manual.status).toBe("manual_required");
+    expect(String((manual.result as { instructions?: string }).instructions)).toMatch(
+      /jobTitle = Estimator/,
+    );
 
-    calls = [];
     const blocked = await propose({ payRate: "99" }, "b3");
     await decideApproval({
       id: blocked.approval_request_id!,
@@ -520,13 +507,12 @@ describe("Scenario 2 — BambooHR record updates", () => {
     });
     const failed = await action(blocked.id);
     expect(failed.status).toBe("failed");
-    expect(failed.last_error).toMatch(/approved BambooHR field/);
+    expect(failed.last_error).toMatch(/can never be updated/);
     expect(calls).toHaveLength(0);
   });
 
   it("binds approval to the exact payload: a changed request supersedes and invalidates the old one", async () => {
     await bootstrapLeadership();
-    await saveIntegrationSettings("bamboohr", { config: { writableFields: ["jobTitle"] } }, CEO_ID);
     const base = {
       logicalKey: "same-change",
       actionType: "bamboohr_update" as const,
@@ -564,6 +550,21 @@ describe("Scenario 2 — BambooHR record updates", () => {
 });
 
 describe("Scenario 3 — idempotency, failures, and safe retry", () => {
+  const GMAIL = "https://www.googleapis.com/auth/gmail.send";
+  const email = (key: string, to: string) =>
+    proposeAction({
+      logicalKey: key,
+      actionType: "send_email",
+      title: "Email",
+      summary: "s",
+      payload: { to, subject: "Hi", body: "Synthetic" },
+      display: { target: to, effect: "send" },
+      mode: "live",
+      requestedBy: { userId: HR_ID, label: "HR" },
+    });
+  beforeEach(() => setGoogleForTests({ scopes: [GMAIL], token: "test-token" }));
+  afterEach(() => setGoogleForTests(null));
+
   it("duplicate workflow starts return the same instance; concurrent execution runs once", async () => {
     await bootstrapLeadership();
     const hr = await access(HR_ID);
@@ -590,21 +591,8 @@ describe("Scenario 3 — idempotency, failures, and safe retry", () => {
       }),
     ).toHaveLength(1);
 
-    process.env.BAMBOOHR_SUBDOMAIN = "synthetic";
-    process.env.BAMBOOHR_API_KEY = "test-key";
-    await saveIntegrationSettings("bamboohr", { config: { writableFields: ["jobTitle"] } }, CEO_ID);
-    respond = (c) =>
-      c.method === "GET" ? Response.json({ jobTitle: "PM" }) : new Response("", { status: 200 });
-    const act = await proposeAction({
-      logicalKey: "once",
-      actionType: "bamboohr_update",
-      title: "u",
-      summary: "s",
-      payload: { employeeId: "7", changes: { jobTitle: "PM" } },
-      display: { target: "#7", effect: "u" },
-      mode: "live",
-      requestedBy: { userId: HR_ID, label: "HR" },
-    });
+    respond = () => Response.json({ id: "m1", threadId: "t1" });
+    const act = await email("once", "a@example.com");
     await agentDb().update("ai_approval_requests", [eq("id", act.approval_request_id!)], {
       status: "approved",
       decided_by: CEO_ID,
@@ -616,20 +604,8 @@ describe("Scenario 3 — idempotency, failures, and safe retry", () => {
 
   it("retryable failures keep state and retry; credential failures stop with an actionable error", async () => {
     await bootstrapLeadership();
-    process.env.BAMBOOHR_SUBDOMAIN = "synthetic";
-    process.env.BAMBOOHR_API_KEY = "test-key";
-    await saveIntegrationSettings("bamboohr", { config: { writableFields: ["jobTitle"] } }, CEO_ID);
     respond = () => new Response("busy", { status: 503 });
-    const act = await proposeAction({
-      logicalKey: "retry",
-      actionType: "bamboohr_update",
-      title: "u",
-      summary: "s",
-      payload: { employeeId: "8", changes: { jobTitle: "PM" } },
-      display: { target: "#8", effect: "u" },
-      mode: "live",
-      requestedBy: { userId: HR_ID, label: "HR" },
-    });
+    const act = await email("retry", "b@example.com");
     await decideApproval({
       id: act.approval_request_id!,
       decision: "approved",
@@ -639,24 +615,14 @@ describe("Scenario 3 — idempotency, failures, and safe retry", () => {
     let row = await action(act.id);
     expect(row.status).toBe("approved"); // queued for retry, not lost
     expect(row.last_error).toMatch(/temporarily unavailable/);
-    respond = (c) =>
-      c.method === "GET" ? Response.json({ jobTitle: "PM" }) : new Response("", { status: 200 });
+    respond = () => Response.json({ id: "m2", threadId: "t2" });
     await runPendingActions();
     row = await action(act.id);
     expect(row.status).toBe("succeeded");
     expect(row.attempts).toBe(2);
 
     respond = () => new Response("nope", { status: 401 });
-    const denied = await proposeAction({
-      logicalKey: "denied",
-      actionType: "bamboohr_update",
-      title: "u",
-      summary: "s",
-      payload: { employeeId: "9", changes: { jobTitle: "PM" } },
-      display: { target: "#9", effect: "u" },
-      mode: "live",
-      requestedBy: { userId: HR_ID, label: "HR" },
-    });
+    const denied = await email("denied", "c@example.com");
     await decideApproval({
       id: denied.approval_request_id!,
       decision: "approved",

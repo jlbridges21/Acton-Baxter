@@ -87,6 +87,7 @@ const metaSchema = z
     status: z.enum(["active", "archived"]).optional(),
     pinned: z.boolean().optional(),
     ownerId: z.string().uuid().optional(),
+    title: z.string().trim().min(1).max(160).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, "Nothing to update");
 
@@ -108,6 +109,21 @@ export async function PATCH(request: Request, { params }: Params) {
       if (!target || target.role === "new_user")
         throw new ValidationError("Choose an active employee as the new owner.");
     }
+    // Renaming is an edit: saved as a new version so history (and group filing) is preserved.
+    let current = report;
+    if (body.title && body.title !== report.title) {
+      if (!permission.canEdit)
+        throw new AuthorizationError("You can view this report but not rename it.");
+      current = (
+        await saveReportVersion({
+          report,
+          spec: { ...report.spec, title: body.title },
+          authorId: ctx.user.id,
+          authorKind: "user",
+          summary: `Renamed to "${body.title}"`,
+        })
+      ).report;
+    }
     // Pins are personal: anyone who can view a report can pin it for themselves.
     if (body.pinned !== undefined) await setPinned(report.id, ctx.user.id, body.pinned);
     const meta = {
@@ -115,12 +131,13 @@ export async function PATCH(request: Request, { params }: Params) {
       ...(body.status ? { status: body.status } : {}),
       ...(body.ownerId ? { owner_id: body.ownerId } : {}),
     };
-    const updated = Object.keys(meta).length ? await updateReportMeta(report, meta) : report;
+    const updated = Object.keys(meta).length ? await updateReportMeta(current, meta) : current;
     return jsonOk({
       visibility: updated.visibility,
       status: updated.status,
       pinned: await isPinned(report.id, ctx.user.id),
       ownerId: updated.owner_id,
+      title: updated.title,
     });
   } catch (error) {
     return jsonError(error, "PATCH /api/reports/[reportId]");

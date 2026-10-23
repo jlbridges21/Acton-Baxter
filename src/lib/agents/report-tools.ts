@@ -315,7 +315,7 @@ const listReports: AgentTool = {
   label: "List saved reports",
   description: "Lists reports the requester can open.",
   modelUsage:
-    'reports_list {"search"?: string} — reports this requester can open (id, title, updated, whether they can edit).',
+    'reports_list {"search"?: string} — reports this requester can open: id, title, updated, canEdit, mine/shared, pinned, groups (empty = ungrouped), fromSuggestion, and isCurrentReport (the report being viewed/edited).',
   risk: "read",
   alwaysRequiresApproval: false,
   available: true,
@@ -325,6 +325,13 @@ const listReports: AgentTool = {
     const access = await accessFor(ctx);
     const all = await listReportsFor(ctx.requester, access);
     const q = search?.toLowerCase();
+    const { listGroupsFor } = await import("@/lib/reports/groups");
+    const { groups, membership } = await listGroupsFor(
+      { requester: ctx.requester, access },
+      { visibleReportIds: new Set(all.map((x) => x.report.id)) },
+    );
+    const groupName = new Map(groups.map((g) => [g.id, g.name]));
+    const current = ctx.task.allowed_context?.reportId ?? null;
     const items = all
       .filter(
         (x) => x.report.status === "active" && (!q || x.report.title.toLowerCase().includes(q)),
@@ -336,6 +343,12 @@ const listReports: AgentTool = {
         template: x.report.is_template,
         updatedAt: x.report.updated_at,
         canEdit: x.permission.canEdit,
+        mine: x.report.owner_id === ctx.requester.userId,
+        shared: x.report.owner_id !== ctx.requester.userId && !x.report.is_template,
+        pinned: x.pinned,
+        groups: (membership.get(x.report.id) ?? []).map((id) => groupName.get(id)).filter(Boolean),
+        fromSuggestion: x.report.origin_suggestion_key ?? null,
+        isCurrentReport: x.report.id === current,
       }));
     return { data: items, logSummary: `Listed ${items.length} report(s).` };
   },
@@ -411,18 +424,59 @@ function artifactResult(
   };
 }
 
+/** File a newly saved report into a group; problems are reported, never undo the save. */
+async function fileIntoGroup(
+  ctx: ToolContext,
+  access: ReportsAccess,
+  reportId: string,
+  groupRef: string,
+  create: boolean,
+) {
+  const { assignReportToGroup, createGroup, findGroupByName, getGroupById } =
+    await import("@/lib/reports/groups");
+  const c = { requester: ctx.requester, access, actorLabel: `Dexter for ${ctx.requester.label}` };
+  try {
+    let g = /^[0-9a-f-]{36}$/i.test(groupRef)
+      ? await getGroupById(groupRef, c)
+      : await findGroupByName(groupRef, c);
+    if (!g) {
+      if (!create)
+        return { filed: false, problem: `No group named "${groupRef}". Ask whether to create it.` };
+      g = await createGroup({ ...c, name: groupRef });
+    }
+    await assignReportToGroup({ ...c, reportId, groupId: g.id });
+    return { filed: true, name: g.name };
+  } catch (error) {
+    return {
+      filed: false,
+      problem: error instanceof Error ? error.message : "Couldn't file the report.",
+    };
+  }
+}
+
 const createReportTool: AgentTool = {
   key: "reports_create",
   label: "Save a new report",
   description:
     "Validates and saves a new report definition owned by the requester (private until shared).",
-  modelUsage: `reports_create {"spec": ReportSpec, "summary"?: string} — validates every field, dry-runs the report, and saves it. Fails with specific problems you must fix (unknown fields, missing controls). Widgets that would be empty are reported back.\n${SPEC_GUIDE}`,
+  modelUsage: `reports_create {"spec": ReportSpec, "summary"?: string, "group"?: group name or id, "createGroupIfMissing"?: boolean} — validates every field, dry-runs the report, and saves it. Fails with specific problems you must fix (unknown fields, missing controls). Widgets that would be empty are reported back.
+Groups: if the person named a group, pass it (createGroupIfMissing only when they asked for a new group by name). If they didn't, you may suggest one obvious existing group (commissions → Sales, design handoff → Design, product comparison → Product Library) and ask before filing; if several fit, ask which. Never make grouping mandatory — leaving it Ungrouped is fine. Editing a report later keeps its group.\n${SPEC_GUIDE}`,
   risk: "draft",
   alwaysRequiresApproval: false,
   available: true,
-  args: z.object({ spec: z.unknown(), summary: z.string().max(300).optional() }),
+  args: z.object({
+    spec: z.unknown(),
+    summary: z.string().max(300).optional(),
+    group: z.string().trim().min(1).max(80).optional(),
+    createGroupIfMissing: z.boolean().optional(),
+  }),
   async execute(ctx, raw) {
-    const input = this.args.parse(raw) as { spec: unknown; summary?: string };
+    const input = this.args.parse(raw) as {
+      spec: unknown;
+      summary?: string;
+      group?: string;
+      createGroupIfMissing?: boolean;
+    };
     const access = await accessFor(ctx);
     const parsed = parseReportSpec(input.spec);
     if (!parsed.ok)
@@ -450,7 +504,24 @@ const createReportTool: AgentTool = {
       await attachSessionToReport(ctx.requester.userId, report.id);
       await attachAttachmentsToReport(ctx.requester.userId, report.id);
     }
+    // A saved report retires the suggestion the person was building (only on success).
+    const completedSuggestion = ctx.requester.userId
+      ? await import("@/lib/reports/smart-suggestions")
+          .then((m) => m.linkNewReportToSuggestion(ctx.requester.userId!, report))
+          .catch(() => null)
+      : null;
+    const filed = input.group
+      ? await fileIntoGroup(
+          ctx,
+          access,
+          report.id,
+          input.group,
+          Boolean(input.createGroupIfMissing),
+        )
+      : null;
     return artifactResult(report, `Created report "${report.title}".`, {
+      completedSuggestion,
+      group: filed,
       emptyWidgets: check.empty,
       notes: check.issues,
       restrictedForThisUser: check.restricted,

@@ -422,6 +422,12 @@ export const specialistSourceSchema = z.object({
   documentId: z.string().max(80).nullable().default(null),
   title: z.string().max(300),
   excerpt: z.string().max(600).default(""),
+  /** Set by tools (never by the model) for external systems such as BambooHR. */
+  provider: z.enum(["bamboohr"]).optional(),
+  recordType: z.string().max(80).optional(),
+  recordId: z.string().max(40).nullable().optional(),
+  retrievedAt: z.string().max(40).optional(),
+  freshness: z.enum(["live", "cached", "unavailable"]).optional(),
 });
 
 export const specialistResultSchema = z.object({

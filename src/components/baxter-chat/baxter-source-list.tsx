@@ -2,6 +2,7 @@
 
 import type { BaxterSourceReference } from "@/lib/baxter-ai/types";
 import { formatRelativeUpdated } from "@/lib/baxter-ai/citations";
+import { SourceBadge } from "@/components/sources/source-badge";
 
 function confidenceLabel(score: number): string {
   if (score >= 40) return "High match";
@@ -67,7 +68,28 @@ export function BaxterSourceList({ sources }: { sources: BaxterSourceReference[]
       </p>
       <ul className="mt-2 space-y-2">
         {sources.map((source) =>
-          source.sourceKind === "slack" ? (
+          source.sourceKind === "bamboohr" ? (
+            <li
+              key={`${source.citationLabel}-${source.knowledgeEntryId ?? source.title}`}
+              className="text-xs text-[var(--acton-navy)]"
+            >
+              <SourceBadge
+                provider="bamboohr"
+                recordType={source.recordType ?? source.category}
+                freshness={source.freshness ?? "live"}
+                retrievedAt={source.lastUpdated}
+                detailed
+              />
+              {source.availability === "available" && source.sourceUrl ? (
+                <a
+                  href={source.sourceUrl}
+                  className="mt-1 block font-semibold text-[var(--acton-navy)] underline-offset-2 hover:underline"
+                >
+                  {source.openLabel}
+                </a>
+              ) : null}
+            </li>
+          ) : source.sourceKind === "slack" ? (
             <SlackSourceCard
               key={`${source.citationLabel}-${source.knowledgeEntryId ?? source.title}`}
               source={source}

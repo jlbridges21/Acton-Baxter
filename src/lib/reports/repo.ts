@@ -34,6 +34,9 @@ export type ReportRow = {
   version: number;
   created_by_agent: boolean;
   last_data_refresh_at: string | null;
+  /** Where the report came from (migration 073): used to retire matching suggestions. */
+  origin_suggestion_key?: string | null;
+  origin_template_key?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -240,6 +243,8 @@ export async function createReport(input: {
   authorKind: RevisionRow["author_kind"];
   taskId?: string | null;
   summary?: string;
+  originTemplateKey?: string | null;
+  originSuggestionKey?: string | null;
 }): Promise<ReportRow> {
   const spec = assertValid(input.spec);
   const [row] = await agentDb().insert<ReportRow>("bi_reports", {
@@ -253,6 +258,8 @@ export async function createReport(input: {
     spec,
     version: 1,
     created_by_agent: input.authorKind === "dexter",
+    ...(input.originTemplateKey ? { origin_template_key: input.originTemplateKey } : {}),
+    ...(input.originSuggestionKey ? { origin_suggestion_key: input.originSuggestionKey } : {}),
   });
   await agentDb().insert("bi_report_revisions", {
     report_id: row!.id,
@@ -346,6 +353,9 @@ export async function duplicateReport(report: ReportRow, ownerId: string | null,
     summary: report.is_template
       ? `Created from the ${report.spec.title} template`
       : `Duplicated from "${report.title}"`,
+    originTemplateKey: report.is_template
+      ? report.template_key
+      : (report.origin_template_key ?? null),
   });
 }
 

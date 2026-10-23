@@ -491,9 +491,29 @@ export function finalizeResult(
         ? seenSources.get(s.documentId)
         : [...seenSources.values()].find((v) => v.title === s.title),
     )
-    .filter((s): s is ToolSource => Boolean(s))
-    .map((s) => ({ documentId: s.documentId, title: s.title, excerpt: s.excerpt.slice(0, 300) }));
-  const unique = [...new Map(sources.map((s) => [s.documentId ?? s.title, s])).values()];
+    .filter((s): s is ToolSource => Boolean(s));
+  // External-system data (BambooHR) is attributed whenever a tool returned it, whether or not
+  // the model cited it — attribution is decided by the data layer, not the model.
+  const external = [...seenSources.values()].filter((s) => s.provenance);
+  const toSource = (s: ToolSource) => ({
+    documentId: s.documentId,
+    title: s.title,
+    excerpt: s.excerpt.slice(0, 300),
+    ...(s.provenance
+      ? {
+          provider: "bamboohr" as const,
+          recordType: s.provenance.entityType,
+          recordId: s.provenance.recordId,
+          retrievedAt: s.provenance.retrievedAt,
+          freshness: s.provenance.freshness,
+        }
+      : {}),
+  });
+  const unique = [
+    ...new Map(
+      [...sources, ...external].map(toSource).map((s) => [s.documentId ?? s.title, s]),
+    ).values(),
+  ].slice(0, 12);
   const proposedActions = [
     ...result.proposedActions.map((a) => ({ ...a, approvalId: null })),
     ...approvalIds.map((id) => ({

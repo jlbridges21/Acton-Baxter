@@ -21,9 +21,9 @@ test("Reports hub lists templates and the Active Projects template computes from
 
   const activeCard = page
     .locator("div", { has: page.getByText("Active Projects", { exact: true }) })
-    .filter({ has: page.getByRole("link", { name: "Open" }) })
+    .filter({ has: page.getByRole("link", { name: "Preview" }) })
     .last();
-  await activeCard.getByRole("link", { name: "Open" }).click();
+  await activeCard.getByRole("link", { name: "Preview" }).click();
   await expect(page).toHaveURL(/\/reports\/[0-9a-f-]{36}/);
   await expect(page.getByRole("heading", { name: "Active Projects", level: 1 })).toBeVisible();
 
@@ -50,9 +50,9 @@ test("Copying a template, editing the layout, and saving creates a new version",
   await page.goto("/reports");
   const activeCard = page
     .locator("div", { has: page.getByText("Active Projects", { exact: true }) })
-    .filter({ has: page.getByRole("button", { name: "Make a copy" }) })
+    .filter({ has: page.getByRole("button", { name: "Use template" }) })
     .last();
-  await activeCard.getByRole("button", { name: "Make a copy" }).click();
+  await activeCard.getByRole("button", { name: "Use template" }).click();
   await expect(page).toHaveURL(/\/reports\/[0-9a-f-]{36}/);
   await expect(page.getByText("Version 1")).toBeVisible();
 
@@ -84,9 +84,9 @@ test("Financial figures stay hidden from people without financial access", async
   await page.goto("/reports");
   const card = page
     .locator("div", { has: page.getByText("Product Library", { exact: true }) })
-    .filter({ has: page.getByRole("link", { name: "Open" }) })
+    .filter({ has: page.getByRole("link", { name: "Preview" }) })
     .last();
-  await card.getByRole("link", { name: "Open" }).click();
+  await card.getByRole("link", { name: "Preview" }).click();
   const price = page.getByRole("region", { name: "Average base price" });
   await expect(price.getByText(/Requires "Financial figures" access/)).toBeVisible({
     timeout: 30_000,
@@ -99,7 +99,7 @@ test("Financial figures stay hidden from people without financial access", async
 
 test("Dexter's chat panel opens from a report and old routes redirect", async ({ page }) => {
   await page.goto("/reports");
-  await page.getByRole("link", { name: "Open" }).first().click();
+  await page.getByRole("link", { name: "Preview" }).first().click();
   await page.getByRole("button", { name: /Ask Dexter$/ }).click();
   await expect(page.getByRole("region", { name: "Chat with Dexter" })).toBeVisible();
   await expect(page.getByLabel("Message Dexter")).toBeVisible();
@@ -144,7 +144,9 @@ test("The Data Catalog shows verified JobTread entities, fields, and what's poss
   page,
 }) => {
   await page.goto("/reports");
-  await expect(page.getByRole("heading", { name: "Suggested reports" })).toBeVisible({
+  await expect(
+    page.getByRole("heading", { name: /Suggested reports|Start from a template/ }).first(),
+  ).toBeVisible({
     timeout: 30_000,
   });
   await page.getByRole("link", { name: "Data catalog" }).click();
@@ -214,4 +216,22 @@ test("The Sales Commissions template hides compensation data from people without
   await expect(page.getByRole("region", { name: "About these numbers" })).toContainText(
     "JobTread has no recorded customer payments",
   );
+});
+
+test("Report groups: create a group, file a report, and filter by it", async ({ page }) => {
+  await page.goto("/reports");
+  await expect(page.getByTestId("template-gallery")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("template-gallery").getByText("Sales Commissions")).toHaveCount(0);
+  await page.getByRole("button", { name: "Blank report" }).first().click();
+  await expect(page).toHaveURL(/\/reports\/[0-9a-f-]{36}/);
+  await page.goto("/reports");
+  const bar = page.getByRole("navigation", { name: "Report groups" });
+  await bar.getByRole("button", { name: "New group" }).click();
+  await page.getByLabel("Name").fill(`E2E Group ${Date.now()}`);
+  await page.getByRole("button", { name: "Create group" }).click();
+  await expect(page.getByText(/No reports in/)).toBeVisible();
+  await page.getByRole("button", { name: "Move existing reports" }).click();
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: /^Add/ }).click();
+  await expect(page.getByText(/No reports in/)).toHaveCount(0);
 });

@@ -13,6 +13,7 @@ Everything is run from **AI Workspace → Sam Operations** (`/ai/operations`). N
 | [Requirements matrix](requirements-matrix.md)                  | Each requirement in the leadership brief and implementation brief, and where it stands         |
 | [Architecture](architecture.md)                                | Developers: components, database, workflow engine, approval model, permission model            |
 | [Integration capabilities](integrations.md)                    | What each external system can and cannot do today                                              |
+| [BambooHR integration](bamboohr.md)                            | Connecting the Baxter OAuth app, scopes, fields, access, attribution                           |
 | [Configuration guides](configuration-guides.md)                | Administrators: onboarding, offboarding, recruitment, surveys, timecards, contracts, insurance |
 | [User guides](user-guides.md)                                  | Administrators, the CEO and COO, and employees                                                 |
 | [Operations](operations.md)                                    | Deployment, recovery, monitoring, support, maintenance, recurring costs                        |

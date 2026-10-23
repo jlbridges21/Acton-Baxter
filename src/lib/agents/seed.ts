@@ -16,6 +16,7 @@ import {
   BAXTER_SLUG,
   DEFAULT_DEPARTMENTS,
   DEXTER_AVATAR_PATH,
+  DEXTER_GROUP_TOOLS,
   DEXTER_DEFAULT_CONFIG,
   DEXTER_LIMITS_V1,
   DEXTER_RESPONSIBILITIES,
@@ -28,6 +29,7 @@ import {
   SAM_DEFAULT_CONFIG_V1,
   SAM_DESCRIPTION,
   SAM_DESCRIPTION_V1,
+  SAM_BAMBOOHR_TOOLS,
   SAM_OPS_TOOLS,
   SAM_SLUG,
   SAM_TITLE,
@@ -227,9 +229,15 @@ async function runSeed(): Promise<void> {
   const dexter = await selectOne<{ id: string }>("ai_agents", {
     filters: [eq("slug", DEXTER_SLUG)],
   });
-  if (dexter) await upgradeDexterConfig(dexter.id);
+  if (dexter) {
+    await upgradeDexterConfig(dexter.id);
+    await addDexterGroupTools(dexter.id);
+  }
   const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
-  if (sam) await upgradeSamConfig(sam);
+  if (sam) {
+    await upgradeSamConfig(sam);
+    await addSamBambooTools(sam.id);
+  }
   await ensurePlaceholderOnboardingTemplate();
 }
 
@@ -354,7 +362,52 @@ async function upgradeDexterConfig(dexterId: string) {
   );
 }
 
+const DEXTER_GROUPS_MARKER = "System: Dexter report organization tools";
+
+/** One-time: enable report-group tools on Dexter's published config (admin edits kept). */
+async function addDexterGroupTools(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_GROUPS_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, ...DEXTER_GROUP_TOOLS])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_GROUPS_MARKER}: create, rename, and file reports into groups`,
+  );
+}
+
 const SAM_UPGRADE_MARKER = "System: Sam operations upgrade";
+const SAM_BAMBOO_MARKER = "System: Sam BambooHR tools";
+
+/** One-time: enable the read-only BambooHR tools on Sam's published config (admin edits kept). */
+async function addSamBambooTools(samId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", samId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(SAM_BAMBOO_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, ...SAM_BAMBOOHR_TOOLS])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    samId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${SAM_BAMBOO_MARKER}: read-only BambooHR employee-record tools`,
+  );
+}
 
 /**
  * One-time upgrade of Sam for Sam Operations Studio (leadership brief): new overview, operations
@@ -404,7 +457,7 @@ async function upgradeSamConfig(sam: AgentRow) {
     delegation,
     tools: {
       ...current.tools,
-      enabled: [...new Set([...current.tools.enabled, ...SAM_OPS_TOOLS])],
+      enabled: [...new Set([...current.tools.enabled, ...SAM_OPS_TOOLS, ...SAM_BAMBOOHR_TOOLS])],
     },
     knowledge: same(current.knowledge.categories, v1.knowledge.categories)
       ? next.knowledge

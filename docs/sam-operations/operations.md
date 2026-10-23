@@ -9,7 +9,7 @@
 2. **Deploy the app.** No new npm dependencies were added.
 3. **Cron:** the existing `/api/internal/process-jobs` cron enqueues the sweep every 15 minutes. No new cron entry is needed.
 4. **Environment variables.** All are optional; each missing one leaves its integration in manual mode.
-   - BambooHR: `BAMBOOHR_SUBDOMAIN`, `BAMBOOHR_API_KEY`.
+   - BambooHR: `BAMBOOHR_CLIENT_ID`, `BAMBOOHR_CLIENT_SECRET`, `BAMBOOHR_COMPANY_DOMAIN`, optional `BAMBOOHR_REDIRECT_URI` (apply migration `072_bamboohr_integration.sql` first). See [BambooHR integration](bamboohr.md).
    - DocuSign: `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_USER_ID`, `DOCUSIGN_ACCOUNT_ID`, `DOCUSIGN_PRIVATE_KEY` (PEM, `\n` escapes allowed), `DOCUSIGN_ENVIRONMENT` (`demo` or `production`), and optionally `DOCUSIGN_BASE_URI`.
    - Google: re-consent the existing Baxter Google connection with `gmail.send` and Calendar scopes to enable sending and scheduling.
 5. **First visit:** an administrator opens **Sam Operations**.

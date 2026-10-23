@@ -167,7 +167,6 @@ export async function loadOpsState(ctx: AiContext) {
         access_level: string;
       }>("ai_agent_access_policies", { filters: [eq("agent_id", sam.row.id)] })
     : [];
-  const bambooFields = (await getIntegrationSettings("bamboohr")).config;
   return {
     ...base,
     limited: false as const,
@@ -195,11 +194,6 @@ export async function loadOpsState(ctx: AiContext) {
     timecards,
     documents: documents.map((d) => ({ ...d, extracted_text: null })),
     driveFolders,
-    bambooConfig: {
-      writableFields: (bambooFields.writableFields as string[] | undefined) ?? [],
-      availableFields:
-        (bambooFields.availableFields as Array<{ id: string; name: string }> | undefined) ?? [],
-    },
     decisionDefs: DECISION_DEFS,
     sam: sam
       ? {
@@ -287,7 +281,6 @@ export const opsCommandSchema = z.discriminatedUnion("op", [
     op: z.literal("drive_folders"),
     folders: z.record(z.string().max(80), z.string().max(120)),
   }),
-  z.object({ op: z.literal("bamboo_fields"), writableFields: z.array(z.string().max(80)).max(40) }),
   z.object({
     op: z.literal("template_create"),
     key: z.string().regex(/^[a-z][a-z0-9-]{1,50}$/),
@@ -488,24 +481,6 @@ export async function runOpsCommand(ctx: AiContext, raw: unknown): Promise<unkno
         },
         access.userId,
       );
-    case "bamboo_fields": {
-      // Allowlisting BambooHR write fields is a leadership decision.
-      requireOps(access, "sensitive");
-      const { BAMBOOHR_BLOCKED_FIELDS } = await import("./integrations");
-      const blocked = cmd.writableFields.filter((f) => BAMBOOHR_BLOCKED_FIELDS.test(f));
-      if (blocked.length)
-        throw new ValidationError(`These fields can't be written by Sam: ${blocked.join(", ")}.`);
-      return saveIntegrationSettings(
-        "bamboohr",
-        {
-          config: {
-            ...(await getIntegrationSettings("bamboohr")).config,
-            writableFields: cmd.writableFields,
-          },
-        },
-        access.userId,
-      );
-    }
     case "template_create":
       return createTemplate({ ...cmd, ...base });
     case "template_save":

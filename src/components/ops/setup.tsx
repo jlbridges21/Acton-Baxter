@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { BambooHRCard } from "./bamboohr";
 import { Field, Notice, formatDateTime, selectClass, textareaClass } from "@/components/ai/ui";
 import { cn } from "@/lib/utils";
 import {
@@ -220,19 +221,17 @@ function readiness(
         : "Needs the official checklist, then publish the workflow.",
     },
     {
-      label: "BambooHR updates",
+      label: "BambooHR records",
       state:
         integ("bamboohr")?.state === "connected"
-          ? full.bambooConfig.writableFields.length
-            ? "ready"
-            : "partial"
-          : "blocked",
+          ? "ready"
+          : integ("bamboohr")?.state === "missing_credentials"
+            ? "blocked"
+            : "partial",
       detail:
         integ("bamboohr")?.state === "connected"
-          ? full.bambooConfig.writableFields.length
-            ? "Connected with an approved field list."
-            : "Connected — choose the fields Sam may update."
-          : (integ("bamboohr")?.nextStep ?? "Needs API access."),
+          ? "Connected read-only. Updates stay off until approved SOPs enable them."
+          : (integ("bamboohr")?.nextStep ?? "Needs the BambooHR OAuth connection."),
     },
     {
       label: "Google Drive filing",
@@ -897,7 +896,6 @@ function AutonomyCard() {
 export function IntegrationsTab() {
   const { full, run, busy } = useFullOps();
   const [folders, setFolders] = useState<Record<string, string> | null>(null);
-  const [fields, setFields] = useState<string | null>(null);
   if (!full) return null;
   const folderValues = folders ?? full.driveFolders;
   const folderKinds = [
@@ -990,55 +988,7 @@ export function IntegrationsTab() {
           ) : null}
         </Card>
       </section>
-      <section>
-        <SectionHeader
-          title="BambooHR fields Sam may update"
-          description="An allowlist chosen by the CEO or COO. Pay, tax, banking, identity, demographic, status, and termination fields can never be written by Sam. Every update is approved individually and read back to verify."
-        />
-        <Card className="space-y-3">
-          {full.bambooConfig.availableFields.length ? (
-            <p className="text-xs text-[var(--acton-muted)]">
-              Available fields from the last connection test:{" "}
-              {full.bambooConfig.availableFields
-                .slice(0, 60)
-                .map((f) => f.id)
-                .join(", ")}
-            </p>
-          ) : (
-            <p className="text-xs text-[var(--acton-muted)]">
-              Connect and test BambooHR to see its field list.
-            </p>
-          )}
-          <Field label="Allowed fields (comma separated)" htmlFor="bf-list">
-            <Input
-              id="bf-list"
-              value={fields ?? full.bambooConfig.writableFields.join(", ")}
-              disabled={!full.access.canManageSensitive}
-              onChange={(e) => setFields(e.target.value)}
-            />
-          </Field>
-          {full.access.canManageSensitive ? (
-            <Button
-              size="sm"
-              disabled={busy || fields === null}
-              onClick={async () =>
-                (await run(
-                  {
-                    op: "bamboo_fields",
-                    writableFields: (fields ?? "")
-                      .split(",")
-                      .map((f) => f.trim())
-                      .filter(Boolean),
-                  },
-                  "Allowlist saved.",
-                )) !== null && setFields(null)
-              }
-            >
-              Save allowlist
-            </Button>
-          ) : null}
-        </Card>
-      </section>
+      <BambooHRCard />
     </div>
   );
 }

@@ -19,7 +19,7 @@ All of these are tracked in **Sam Operations → Setup**, which shows live progr
   - the standing-approval policy (implemented default: per-action approval);
   - autonomy (implemented default: none).
 - **Integrations:**
-  - BambooHR API access and writable fields;
+  - BambooHR: the COO connects the "Baxter" OAuth app (read-only); which custom fields Baxter may read; when (after approved SOPs) any writes are enabled;
   - Google sending identity and permissions;
   - the BetterTeams process;
   - the DocuSign account (including whether MSP applies);

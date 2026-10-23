@@ -22,6 +22,8 @@ export type ReportSummary = {
   viewedAt: string | null;
   shareCount: number;
   permission: ReportPermission;
+  /** Groups (visible to this viewer) the report is filed in; empty = ungrouped. */
+  groupIds: string[];
 };
 
 export type ReportsAccessView = {

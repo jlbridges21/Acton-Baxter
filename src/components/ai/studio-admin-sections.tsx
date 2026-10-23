@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceBadge } from "@/components/sources/source-badge";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { History, MessageSquare, Send, Trash2 } from "lucide-react";
@@ -736,7 +737,20 @@ export function ResultView({ result }: { result: SpecialistResult }) {
           <ul className="space-y-1">
             {result.sources.map((s) => (
               <li key={`${s.documentId}-${s.title}`}>
-                {s.documentId ? (
+                {s.provider === "bamboohr" ? (
+                  <SourceBadge
+                    provider="bamboohr"
+                    recordType={s.recordType}
+                    freshness={s.freshness}
+                    retrievedAt={s.retrievedAt}
+                    href={
+                      s.recordId
+                        ? `/ai/operations?tab=employees&employee=${encodeURIComponent(s.recordId)}`
+                        : "/ai/operations?tab=employees"
+                    }
+                    detailed
+                  />
+                ) : s.documentId ? (
                   <Link className="underline" href={`/ai/knowledge?document=${s.documentId}`}>
                     {s.title}
                   </Link>

@@ -240,21 +240,46 @@ function sourcesFrom(result: SpecialistResult, channel: "web" | "slack"): Baxter
   }));
   return [
     ...reports,
-    ...result.sources.map((s, index) => ({
-      title: s.title,
-      sourceName: "AI Knowledge Hub",
-      category: "Approved HR / admin document",
-      sourceUrl: s.documentId
-        ? appUrl(`/ai/knowledge?document=${s.documentId}`, channel)
-        : appUrl("/ai/onboarding", channel),
-      citationLabel: s.title,
-      sourceKind: "agent_knowledge" as const,
-      openLabel: "Open in AI Workspace",
-      lastUpdated: null,
-      relevanceScore: 100 - index,
-      availability: "available" as const,
-      knowledgeEntryId: s.documentId ? `agent-doc-${s.documentId}` : `agent-source-${index}`,
-    })),
+    // BambooHR (and future external systems): attributed with record type and freshness.
+    ...result.sources
+      .filter((s) => s.provider === "bamboohr")
+      .map((s, index) => ({
+        title: s.title,
+        sourceName: "BambooHR",
+        category: s.recordType ?? "Employee record",
+        sourceUrl: appUrl(
+          s.recordId
+            ? `/ai/operations?tab=employees&employee=${encodeURIComponent(s.recordId)}`
+            : "/ai/operations?tab=employees",
+          channel,
+        ),
+        citationLabel: `BambooHR — ${s.recordType ?? "Employee record"}`,
+        sourceKind: "bamboohr" as const,
+        openLabel: "Open in Sam Operations",
+        lastUpdated: s.retrievedAt ?? null,
+        relevanceScore: 100 - index,
+        availability: "available" as const,
+        knowledgeEntryId: `bamboohr-${s.recordType ?? "record"}-${s.recordId ?? index}`,
+        recordType: s.recordType ?? null,
+        freshness: s.freshness ?? null,
+      })),
+    ...result.sources
+      .filter((s) => s.provider !== "bamboohr")
+      .map((s, index) => ({
+        title: s.title,
+        sourceName: "AI Knowledge Hub",
+        category: "Approved HR / admin document",
+        sourceUrl: s.documentId
+          ? appUrl(`/ai/knowledge?document=${s.documentId}`, channel)
+          : appUrl("/ai/onboarding", channel),
+        citationLabel: s.title,
+        sourceKind: "agent_knowledge" as const,
+        openLabel: "Open in AI Workspace",
+        lastUpdated: null,
+        relevanceScore: 100 - index,
+        availability: "available" as const,
+        knowledgeEntryId: s.documentId ? `agent-doc-${s.documentId}` : `agent-source-${index}`,
+      })),
   ];
 }
 

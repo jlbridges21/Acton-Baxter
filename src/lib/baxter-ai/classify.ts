@@ -136,6 +136,7 @@ function bucketForSourceKind(kind: BaxterSourceKind): AnswerTypeBucket {
     case "agent_knowledge":
       return "approved";
     case "gohighlevel":
+    case "bamboohr":
       return "live";
     case "slack":
       return "slack";

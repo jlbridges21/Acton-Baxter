@@ -71,6 +71,12 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   ops_reminders: [["ref_type", "ref_id", "threshold"]],
   ops_timecard_checks: [["period_start", "period_end"]],
   ops_integration_settings: [["key"]],
+  bamboohr_connections: [["company_domain"]],
+  bi_report_group_items: [["group_id", "report_id"]],
+  bi_report_suggestion_states: [["user_id", "suggestion_key"]],
+  bi_report_user_prefs: [["user_id"]],
+  bamboohr_oauth_states: [["state"]],
+  bamboohr_identity_links: [["company_domain", "bamboohr_employee_id", "profile_id"]],
   bi_report_revisions: [["report_id", "version"]],
   bi_report_shares: [["report_id", "principal_type", "principal_value"]],
   bi_report_views: [["report_id", "user_id"]],
@@ -88,6 +94,9 @@ const NO_ID_TABLES = new Set([
   "ops_integration_settings",
   "bi_report_views",
   "bi_report_pins",
+  "bi_report_group_items",
+  "bi_report_suggestion_states",
+  "bi_report_user_prefs",
 ]);
 const NO_UPDATED_AT = new Set([
   "ai_agent_config_versions",

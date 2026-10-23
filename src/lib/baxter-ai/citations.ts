@@ -78,6 +78,8 @@ export function resolveOpenLabel(kind: BaxterSourceKind): string {
       return "Open in Baxter";
     case "slack":
       return "View in Slack";
+    case "bamboohr":
+      return "Open in Sam Operations";
     default:
       return "Open Knowledge Entry";
   }

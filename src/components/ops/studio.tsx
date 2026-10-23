@@ -18,6 +18,7 @@ import {
   SurveysTab,
   TimecardsTab,
 } from "./registers";
+import { EmployeesTab } from "./bamboohr";
 import { LibraryTab } from "./editor";
 import { ActivityTab, IntegrationsTab, OverviewTab, SamConfigTab, SetupTab } from "./setup";
 import { OpsProvider, useFullOps, useOps } from "./shared";
@@ -33,6 +34,7 @@ const TABS: TabDef[] = [
   { key: "onboarding", label: "Onboarding", group: "Workflows", full: true },
   { key: "offboarding", label: "Offboarding", group: "Workflows", full: true },
   { key: "library", label: "Library & editor", group: "Workflows", full: true },
+  { key: "employees", label: "Employees (BambooHR)", group: "Records" },
   { key: "documents", label: "Documents", group: "Records", full: true },
   { key: "recruitment", label: "Recruitment & interviews", group: "Records", full: true },
   { key: "surveys", label: "Surveys", group: "Records", full: true },
@@ -153,6 +155,7 @@ function Studio() {
         />
       ) : null}
       {current.key === "library" ? <LibraryTab /> : null}
+      {current.key === "employees" ? <EmployeesTab /> : null}
       {current.key === "documents" ? <DocumentsTab /> : null}
       {current.key === "recruitment" ? <RecruitmentTab /> : null}
       {current.key === "surveys" ? <SurveysTab /> : null}

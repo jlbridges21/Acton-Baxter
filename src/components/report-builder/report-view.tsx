@@ -157,7 +157,10 @@ export function ReportView({
   const [rowView, setRowView] = useState<RowState>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [focus, setFocus] = useState<{ widgetId: string; title: string } | null>(null);
-  const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | null>(null);
+  // "Share…" in the Reports library links here with ?share=1.
+  const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | null>(() =>
+    params.get("share") === "1" ? "share" : null,
+  );
 
   const load = useCallback(async () => {
     try {

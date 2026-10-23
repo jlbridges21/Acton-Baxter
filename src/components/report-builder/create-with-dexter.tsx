@@ -4,6 +4,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { aiFetch } from "@/components/ai/ui";
 import { ArrowLeft } from "lucide-react";
 import { DexterChat } from "./dexter-chat";
 
@@ -19,12 +21,23 @@ export function CreateWithDexter({
   canChat,
   dexterAvatarUrl,
   initialPrompt = "",
+  suggestionKey = null,
 }: {
   initialPrompt?: string;
+  /** Set when the user came from a suggested report; the suggestion is retired once Dexter saves a report. */
+  suggestionKey?: string | null;
   canChat: boolean;
   dexterAvatarUrl: string | null;
 }) {
   const router = useRouter();
+  useEffect(() => {
+    if (!suggestionKey) return;
+    // "In progress" only — the suggestion disappears after a matching report is actually saved.
+    void aiFetch("/api/reports/suggestions", {
+      method: "POST",
+      body: JSON.stringify({ op: "start", key: suggestionKey }),
+    }).catch(() => undefined);
+  }, [suggestionKey]);
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <Link

@@ -1354,5 +1354,9 @@ export async function sweepRegisters(): Promise<Record<string, number>> {
   let timecards = 0;
   // Weekly check runs only once leadership has confirmed the cutoff (no invented policy).
   if (await decisionValue("timecard_cutoff")) timecards = (await runTimecardCheck()) ? 1 : 0;
-  return { signatures, timecards };
+  // Keep the BambooHR refresh token exercised so nobody has to reconnect.
+  const bamboo = await import("@/lib/bamboohr/connection")
+    .then((m) => m.keepAlive())
+    .catch(() => "failed" as const);
+  return { signatures, timecards, bamboohrRefreshed: bamboo === "refreshed" ? 1 : 0 };
 }

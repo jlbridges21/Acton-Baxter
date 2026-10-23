@@ -153,98 +153,57 @@ async function call(url: string, init: RequestInit, label: string): Promise<Resp
 export const BAMBOOHR_BLOCKED_FIELDS =
   /(pay|salary|wage|compensation|bonus|commission|ssn|socialinsurance|taxid|tax|bank|routing|account|dateofbirth|birth|gender|ethnicity|employmenttype|terminationdate|status|password)/i;
 
-function bamboo() {
-  const subdomain = env("BAMBOOHR_SUBDOMAIN");
-  const key = env("BAMBOOHR_API_KEY");
-  if (!subdomain || !key) return null;
-  return {
-    base: `https://${subdomain}.bamboohr.com/api/v1`,
-    auth: `Basic ${Buffer.from(`${key}:x`).toString("base64")}`,
-  };
+/**
+ * BambooHR goes through the OAuth integration in src/lib/bamboohr (read-only). Writes are turned
+ * off until approved onboarding SOPs define them, so approved BambooHR updates become manual tasks
+ * with the exact change.
+ */
+async function bambooConnected(): Promise<boolean> {
+  const { getConnection } = await import("@/lib/bamboohr/connection");
+  const row = await getConnection().catch(() => null);
+  return Boolean(row && row.status === "connected");
 }
 
 export async function bambooListFields(): Promise<
   Array<{ id: string; name: string; type: string; alias?: string }>
 > {
-  const b = bamboo();
-  if (!b)
+  if (!(await bambooConnected()))
     throw new ManualRequired(
-      "BambooHR isn't connected (BAMBOOHR_SUBDOMAIN and BAMBOOHR_API_KEY). Make the change in BambooHR by hand.",
+      "BambooHR isn't connected (Sam Operations → Integrations → BambooHR).",
     );
-  const res = await call(
-    `${b.base}/meta/fields`,
-    { headers: { Authorization: b.auth, Accept: "application/json" } },
-    "BambooHR",
-  );
-  const rows = (await res.json()) as Array<{
-    id: string | number;
-    name: string;
-    type: string;
-    alias?: string;
-  }>;
-  return rows.map((r) => ({ id: String(r.id), name: r.name, type: r.type, alias: r.alias }));
+  const { listFieldMetadata } = await import("@/lib/bamboohr/service");
+  return (await listFieldMetadata()).data
+    .filter((f) => !f.sensitive)
+    .map((f) => ({ id: f.id, name: f.name, type: f.type, alias: f.alias ?? undefined }));
 }
 
 export async function bambooGetEmployee(
   employeeId: string,
   fields: string[],
 ): Promise<Record<string, unknown>> {
-  const b = bamboo();
-  if (!b) throw new ManualRequired("BambooHR isn't connected.");
-  if (!/^\d{1,12}$/.test(employeeId))
-    throw new IntegrationError("BambooHR employee ids are numeric.", false);
-  const res = await call(
-    `${b.base}/employees/${employeeId}?fields=${encodeURIComponent(fields.join(","))}`,
-    { headers: { Authorization: b.auth, Accept: "application/json" } },
-    "BambooHR",
-  );
-  return (await res.json()) as Record<string, unknown>;
+  if (!(await bambooConnected())) throw new ManualRequired("BambooHR isn't connected.");
+  const { getEmployeeFields } = await import("@/lib/bamboohr/service");
+  const { STANDARD_FIELD_IDS } = await import("@/lib/bamboohr/fields");
+  const custom = fields.filter((f) => !STANDARD_FIELD_IDS.includes(f));
+  return (await getEmployeeFields(employeeId, ["basic", "job", "contact"], custom)).data.fields;
 }
 
-/** Approved update + read-back verification. Fields must be on the admin allowlist. */
+/** Disabled in this phase: an approved update becomes a manual task with the exact change. */
 export async function bambooUpdateEmployee(
   employeeId: string,
   changes: Record<string, string>,
 ): Promise<{ verified: Record<string, unknown> }> {
-  const b = bamboo();
-  if (!b)
-    throw new ManualRequired(
-      `BambooHR isn't connected. Update employee ${employeeId} by hand: ${Object.entries(changes)
-        .map(([k, v]) => `${k} = ${v}`)
-        .join("; ")}.`,
-    );
-  const allowed = new Set(
-    ((await getIntegrationSettings("bamboohr")).config.writableFields as string[] | undefined) ??
-      [],
-  );
   for (const field of Object.keys(changes)) {
-    if (BAMBOOHR_BLOCKED_FIELDS.test(field) || !allowed.has(field))
-      throw new IntegrationError(
-        `"${field}" isn't an approved BambooHR field for Sam to update.`,
-        false,
-      );
+    if (BAMBOOHR_BLOCKED_FIELDS.test(field))
+      throw new IntegrationError(`"${field}" can never be updated by Sam.`, false);
   }
-  await call(
-    `${b.base}/employees/${employeeId}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: b.auth,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(changes),
-    },
-    "BambooHR",
+  throw new ManualRequired(
+    `Baxter doesn't write to BambooHR yet (updates stay off until approved onboarding SOPs enable them). Make this change in BambooHR by hand for employee #${employeeId}: ${Object.entries(
+      changes,
+    )
+      .map(([k, v]) => `${k} = ${v}`)
+      .join("; ")}.`,
   );
-  const verified = await bambooGetEmployee(employeeId, Object.keys(changes));
-  const mismatch = Object.entries(changes).filter(([k, v]) => String(verified[k] ?? "") !== v);
-  if (mismatch.length)
-    throw new IntegrationError(
-      `BambooHR accepted the update but read-back differs for ${mismatch.map(([k]) => k).join(", ")}.`,
-      false,
-    );
-  return { verified };
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +215,14 @@ const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
 ];
 
+let googleTestOverride: { scopes: string[]; token: string } | null = null;
+/** Tests: pretend Google is connected with these scopes (calls still go through the fake fetcher). */
+export function setGoogleForTests(v: { scopes: string[]; token: string } | null) {
+  googleTestOverride = v;
+}
+
 export async function googleScopes(): Promise<{ configured: boolean; scopes: string[] | null }> {
+  if (googleTestOverride) return { configured: true, scopes: googleTestOverride.scopes };
   // Sandbox/test mode has no Google connection table to query.
   if (usesAgentMemoryStore()) return { configured: false, scopes: null };
   try {
@@ -271,8 +237,9 @@ export async function googleScopes(): Promise<{ configured: boolean; scopes: str
 }
 
 async function gFetch<T>(url: string, init: RequestInit): Promise<T> {
-  const { mintAccessToken } = await import("@/lib/connectors/google/auth");
-  const token = await mintAccessToken();
+  const token =
+    googleTestOverride?.token ??
+    (await (await import("@/lib/connectors/google/auth")).mintAccessToken());
   const res = await call(
     url,
     { ...init, headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) } },
@@ -600,6 +567,51 @@ export async function jobtreadTimeEntryCount(): Promise<number | null> {
 // ---------------------------------------------------------------------------
 // Status & tests
 // ---------------------------------------------------------------------------
+async function bambooStatus(): Promise<IntegrationStatus> {
+  const { getConnection, configProblems } = await import("@/lib/bamboohr/connection");
+  const { missingScopes } = await import("@/lib/bamboohr/scopes");
+  const problems = configProblems();
+  const row = await getConnection().catch(() => null);
+  const missing = row ? missingScopes(row.requested_scopes, row.granted_scopes) : [];
+  const state: IntegrationState = problems.length
+    ? "missing_credentials"
+    : !row || row.status === "disconnected"
+      ? "configured_untested"
+      : row.status === "reauthorization_required"
+        ? "missing_permission"
+        : row.status === "error"
+          ? "error"
+          : missing.length
+            ? "missing_permission"
+            : "connected";
+  return {
+    key: "bamboohr",
+    label: "BambooHR",
+    state,
+    detail:
+      row?.status === "connected"
+        ? `Connected to ${row.company_name ?? row.company_domain} (OAuth, read-only).${missing.length ? ` Missing scopes: ${missing.join(", ")}.` : ""}`
+        : "Read-only employee records through the Baxter OAuth app. Updates are off until approved SOPs enable them. Surveys: no public API.",
+    nextStep: problems.length
+      ? `Set ${problems.join(", ")} in Vercel.`
+      : !row || row.status === "disconnected"
+        ? "The COO connects BambooHR from the BambooHR card below."
+        : row.status === "reauthorization_required"
+          ? "Reconnect BambooHR (the authorization expired or was revoked)."
+          : null,
+    lastTestedAt: row?.last_success_at ?? null,
+    lastError: row?.last_error ?? null,
+    capabilities: [
+      "Read employee profiles (permitted fields)",
+      "Field discovery",
+      "Onboarding status (if granted)",
+      "File list (if granted)",
+      "Writes: off",
+      "Surveys: manual",
+    ],
+  };
+}
+
 export async function integrationStatuses(): Promise<IntegrationStatus[]> {
   const settings = new Map(
     (await agentDb().select<SettingsRow>("ops_integration_settings", {})).map((r) => [r.key, r]),
@@ -615,24 +627,7 @@ export async function integrationStatuses(): Promise<IntegrationStatus[]> {
   const g = await googleScopes();
   const ds = docusignConfig();
   const out: IntegrationStatus[] = [
-    {
-      key: "bamboohr",
-      label: "BambooHR",
-      state: tested("bamboohr", bamboo() ? "configured_untested" : "missing_credentials"),
-      detail:
-        "Employee record reads and approved field updates (read back to verify). Surveys: no public API found — tracked manually.",
-      nextStep: bamboo()
-        ? "Run a connection test, then choose the fields Sam may propose updates for."
-        : "Add BAMBOOHR_SUBDOMAIN and BAMBOOHR_API_KEY (a dedicated integration user's key) in Vercel.",
-      lastTestedAt: s("bamboohr")?.last_tested_at ?? null,
-      lastError: s("bamboohr")?.last_error ?? null,
-      capabilities: [
-        "List fields",
-        "Read employee",
-        "Update allowlisted fields (approved)",
-        "Surveys: manual",
-      ],
-    },
+    await bambooStatus(),
     {
       key: "google_drive",
       label: "Google Drive",
@@ -758,7 +753,7 @@ export async function testIntegration(
     if (key === "bamboohr") {
       const fields = await bambooListFields();
       ok = true;
-      message = `Connected — ${fields.length} fields available.`;
+      message = `Connected — ${fields.length} non-sensitive fields available. Run full diagnostics on the BambooHR card.`;
       await saveIntegrationSettings(
         "bamboohr",
         {

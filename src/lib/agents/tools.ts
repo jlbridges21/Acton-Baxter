@@ -14,7 +14,9 @@ import "server-only";
 import { z } from "zod";
 import { createApproval } from "./approvals";
 import { searchAgentKnowledge } from "./knowledge";
+import { BAMBOOHR_TOOLS } from "./bamboohr-tools";
 import { OPS_TOOLS } from "./ops-tools";
+import { REPORT_GROUP_TOOLS } from "./report-group-tools";
 import { REPORT_INTEL_TOOLS } from "./report-intel-tools";
 import { REPORT_TOOLS } from "./report-tools";
 import {
@@ -24,6 +26,7 @@ import {
   listTemplates,
   summarizeProgress,
 } from "./onboarding";
+import type { Provenance } from "@/lib/bamboohr/provenance";
 import type { AccessLevel, Requester, ResolvedAgent, TaskRow } from "./types";
 
 export type ToolRisk = "read" | "draft" | "write" | "external";
@@ -35,7 +38,13 @@ export type ToolContext = {
   access: Set<AccessLevel>;
 };
 
-export type ToolSource = { documentId: string | null; title: string; excerpt: string };
+export type ToolSource = {
+  documentId: string | null;
+  title: string;
+  excerpt: string;
+  /** External provenance (BambooHR…). Sources with provenance are always attributed in the UI. */
+  provenance?: Provenance;
+};
 
 export type ToolResult = {
   /** Compact JSON-able data handed back to the model (treated as untrusted data). */
@@ -304,6 +313,8 @@ export const TOOL_REGISTRY: AgentTool[] = [
   ...REPORT_TOOLS,
   ...REPORT_INTEL_TOOLS,
   ...OPS_TOOLS,
+  ...BAMBOOHR_TOOLS,
+  ...REPORT_GROUP_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,
@@ -315,13 +326,6 @@ export const TOOL_REGISTRY: AgentTool[] = [
     "Send approved communications directly. Sam Operations queues approved emails instead (ops_propose_message).",
     "external",
     "Direct sending is replaced by CEO/COO-approved actions in Sam Operations; Gmail sending also needs Google's gmail.send permission.",
-  ),
-  plannedTool(
-    "bamboohr_read",
-    "Read BambooHR",
-    "Look up employee records in BambooHR.",
-    "read",
-    "Needs BambooHR API access and an approved field list.",
   ),
   plannedTool(
     "slack_post",

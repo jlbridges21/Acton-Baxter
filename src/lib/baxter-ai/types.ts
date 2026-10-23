@@ -14,7 +14,8 @@ export type BaxterSourceKind =
   | "rulebook"
   | "capability"
   | "slack"
-  | "agent_knowledge";
+  | "agent_knowledge"
+  | "bamboohr";
 
 export type BaxterAnswerMode =
   "identity" | "grounded" | "general" | "mixed" | "clarification" | "error";
@@ -33,6 +34,9 @@ export type BaxterSourceReference = {
   knowledgeEntryId?: string;
   pageNumber?: number | null;
   slideNumber?: number | null;
+  /** Structured provenance for external systems (e.g. BambooHR): record type and freshness. */
+  recordType?: string | null;
+  freshness?: "live" | "cached" | "unavailable" | null;
 };
 
 export type BaxterQuestionInput = {
