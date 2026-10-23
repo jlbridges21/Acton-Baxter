@@ -142,25 +142,46 @@ export function isLikelyAddressSearchQuery(query: string): boolean {
   return false;
 }
 
+/** HighLevel caps filter values (and `contains` rejects special characters) at 75 chars. */
+const GHL_SEARCH_VALUE_MAX = 75;
+
 /**
  * GHL POST /contacts/search filter group for address fields.
- * Field names match HighLevel contact schema: address1, city, state, postalCode, country.
+ *
+ * Field names follow HighLevel's documented search filter fields, which differ from the
+ * contact schema: the street filter is `address` (the API returns 400 "Invalid field
+ * address1"), and `country` does not support `contains`. `contains` rejects special
+ * characters, so punctuation is stripped from the value.
  */
 export function buildGhlAddressSearchFilters(query: string): Array<Record<string, unknown>> {
-  const value = query.trim();
+  const value = query
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, GHL_SEARCH_VALUE_MAX)
+    .trim();
   if (!value) return [];
   return [
     {
       group: "OR",
       filters: [
-        { field: "address1", operator: "contains", value },
+        { field: "address", operator: "contains", value },
         { field: "city", operator: "contains", value },
         { field: "state", operator: "contains", value },
         { field: "postalCode", operator: "contains", value },
-        { field: "country", operator: "contains", value },
       ],
     },
   ];
+}
+
+/**
+ * Free-text `query` for an address search: the street part (house number + street) of
+ * "123 Main St, San Jose, CA". Used alongside filters so address browse still works when
+ * the filter call fails; callers re-check matches with `contactMatchesAddressQuery`.
+ */
+export function buildGhlAddressFreeTextQuery(query: string): string {
+  const street = query.split(",")[0]?.trim() || query.trim();
+  return street.slice(0, GHL_SEARCH_VALUE_MAX).trim();
 }
 
 /** Local match helper after hydration (partial formatted address, street, city, state, ZIP). */
