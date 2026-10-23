@@ -99,6 +99,7 @@ function install() {
           ],
           access: { canChat: true, canManage: false, isAdmin: false, categories: [] },
         });
+      if (url === "/api/reports/groups") return json({ result: { id: "g1", name: "Sales" } });
       if (url === "/api/reports/suggestions") return json({ suggestions: state.suggestions });
       if (url === "/api/reports/prefs" && method === "GET") return json({ prefs: state.prefs });
       if (url === "/api/reports/prefs" && method === "PUT")
@@ -224,6 +225,75 @@ describe("Reports home", () => {
     fireEvent.click(within(bar).getByRole("button", { name: /Ungrouped/ }));
     expect(screen.getByText("Loose report")).toBeTruthy();
     expect(screen.queryByText("Commission check")).toBeNull();
+  });
+
+  it("lets people change who sees a group when editing it", async () => {
+    const { GroupDialog } = await import("@/components/report-builder/report-groups");
+    const group = {
+      id: "g1",
+      name: "Sales",
+      description: "",
+      color: "green" as const,
+      icon: "dollar" as const,
+      scope: "personal" as const,
+      isMine: true,
+      canManage: true,
+      reportCount: 0,
+      sortOrder: 0,
+      archived: false,
+    };
+    const onSaved = vi.fn();
+    render(
+      <GroupDialog group={group} canCreateCompany onClose={() => undefined} onSaved={onSaved} />,
+    );
+    const select = screen.getByLabelText("Who sees this group") as HTMLSelectElement;
+    expect(select.value).toBe("personal");
+    fireEvent.change(select, { target: { value: "company" } });
+    expect(
+      screen.getByText(/Everyone with Reports access will see this group's name/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const sent = calls.find((c) => c.url === "/api/reports/groups")!.body as Record<
+      string,
+      unknown
+    >;
+    expect(sent).toMatchObject({ op: "update", groupId: "g1", scope: "company" });
+  });
+
+  it("doesn't send a visibility change when it wasn't changed", async () => {
+    const { GroupDialog } = await import("@/components/report-builder/report-groups");
+    const group = {
+      id: "g2",
+      name: "Ops",
+      description: "",
+      color: "teal" as const,
+      icon: "folder" as const,
+      scope: "company" as const,
+      isMine: false,
+      canManage: true,
+      reportCount: 1,
+      sortOrder: 0,
+      archived: false,
+    };
+    render(
+      <GroupDialog
+        group={group}
+        canCreateCompany
+        onClose={() => undefined}
+        onSaved={() => undefined}
+      />,
+    );
+    const select = screen.getByLabelText("Who sees this group") as HTMLSelectElement;
+    expect(select.value).toBe("company");
+    expect(
+      (within(select).getByRole("option", { name: "Only me (personal)" }) as HTMLOptionElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Operations" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/reports/groups")).toBe(true));
+    expect(calls.find((c) => c.url === "/api/reports/groups")!.body).not.toHaveProperty("scope");
   });
 
   it("gives each report a compact actions menu", async () => {

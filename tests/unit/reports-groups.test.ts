@@ -233,6 +233,100 @@ describe("report groups", () => {
     await assignReportToGroup({ ...e, reportId: adminPrivate.id, groupId: mine.id });
   });
 
+  it("lets people change who sees a group after creating it, with safe rules for its contents", async () => {
+    const a = await c(admin);
+    const e = await c(employee);
+    const h = await c(coworker);
+    // Personal → company (Reports managers/admins only).
+    const mine = await createGroup({ ...e, name: "Field notes" });
+    await expect(
+      updateGroup({ ...e, groupId: mine.id, patch: { scope: "company" } }),
+    ).rejects.toThrow(/Only Reports managers/);
+    const g = await createGroup({ ...a, name: "Leadership" });
+    expect(g.scope).toBe("personal");
+    const own = await createReport({
+      spec: spec("Board view"),
+      ownerId: ADMIN_ID,
+      authorKind: "user",
+    });
+    await assignReportToGroup({ ...a, reportId: own.id, groupId: g.id });
+    const shared = await updateGroup({ ...a, groupId: g.id, patch: { scope: "company" } });
+    expect(shared.scope).toBe("company");
+    const coworkerView = (await listGroupsFor(h)).groups.find((x) => x.id === g.id)!;
+    expect(coworkerView).toMatchObject({ name: "Leadership", reportCount: 0 }); // name visible, private report not
+    expect((await listReportsFor(coworker, h.access)).some((x) => x.report.id === own.id)).toBe(
+      false,
+    );
+
+    // Coworker files their own report in the company group; then the owner makes it personal again.
+    const theirs = await createReport({
+      spec: spec("Coworker report"),
+      ownerId: HR_ID,
+      authorKind: "user",
+    });
+    await assignReportToGroup({ ...h, reportId: theirs.id, groupId: g.id });
+    await expect(
+      updateGroup({ ...h, groupId: g.id, patch: { scope: "personal" } }),
+    ).rejects.toThrow();
+    const back = await updateGroup({ ...a, groupId: g.id, patch: { scope: "personal" } });
+    expect(back.scope).toBe("personal");
+    expect((await listGroupsFor(h)).groups.some((x) => x.id === g.id)).toBe(false);
+    // Admin can open every report, so nothing had to be dropped; access is unchanged either way.
+    expect(back.removedOnScopeChange).toBe(0);
+    expect((await listReportsFor(coworker, h.access)).some((x) => x.report.id === theirs.id)).toBe(
+      true,
+    );
+  });
+
+  it("blocks making a group company-wide when it holds reports that can't go in a company group", async () => {
+    const a = await c(admin);
+    const company = await createGroup({ ...a, name: "Exec", scope: "company" });
+    const personal = await createGroup({ ...a, name: "Drafts" });
+    const r = await createReport({
+      spec: spec("Q3 board pack"),
+      ownerId: ADMIN_ID,
+      authorKind: "user",
+    });
+    await assignReportToGroup({ ...a, reportId: r.id, groupId: company.id });
+    await assignReportToGroup({ ...a, reportId: r.id, groupId: personal.id });
+    await expect(
+      updateGroup({ ...a, groupId: personal.id, patch: { scope: "company" } }),
+    ).rejects.toThrow(/already in another company group/);
+    // Name clashes are checked in the new scope too.
+    const other = await createGroup({ ...a, name: "Exec" }); // personal "Exec" is fine
+    await expect(
+      updateGroup({ ...a, groupId: other.id, patch: { scope: "company" } }),
+    ).rejects.toThrow(/company group named "Exec" already exists/);
+  });
+
+  it("drops filings the owner can't open when a company group becomes personal", async () => {
+    // Give the employee manager rights so they can own a company group.
+    const { getResolvedAgent } = await import("@/lib/agents/registry");
+    const dexter = (await getResolvedAgent("dexter"))!;
+    await agentDb().insert("ai_agent_access_policies", {
+      agent_id: dexter.row.id,
+      principal_type: "user",
+      principal_value: EMPLOYEE_ID,
+      access_level: "manage",
+    });
+    const e = await c(employee);
+    const h = await c(coworker);
+    expect(e.access.canManage).toBe(true);
+    const g = await createGroup({ ...e, name: "Team", scope: "company" });
+    const theirs = await createReport({
+      spec: spec("Private to coworker"),
+      ownerId: HR_ID,
+      authorKind: "user",
+    });
+    await assignReportToGroup({ ...h, reportId: theirs.id, groupId: g.id });
+    const back = await updateGroup({ ...e, groupId: g.id, patch: { scope: "personal" } });
+    expect(back.removedOnScopeChange).toBe(1);
+    expect((await listGroupsFor(e)).groups.find((x) => x.id === g.id)!.reportCount).toBe(0);
+    expect((await listReportsFor(coworker, h.access)).some((x) => x.report.id === theirs.id)).toBe(
+      true,
+    ); // still theirs
+  });
+
   it("keeps group filing when the report is edited, renamed, or gets a new version", async () => {
     const e = await c(employee);
     const r = await createReport({

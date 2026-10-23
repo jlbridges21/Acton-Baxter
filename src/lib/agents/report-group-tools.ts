@@ -192,7 +192,7 @@ const updateGroupTool: AgentTool = {
   label: "Rename or describe a report group",
   description: "Renames a report group or changes its description (owner/manager only).",
   modelUsage:
-    'reports_group_update {"group": name or id, "name"?: string, "description"?: string} — rename or describe a group.',
+    'reports_group_update {"group": name or id, "name"?: string, "description"?: string, "scope"?: "personal"|"company"} — rename or describe a group, or change who sees it (personal = only its creator; company = everyone with Reports). Change scope only when the person asked.',
   risk: "draft",
   alwaysRequiresApproval: false,
   available: true,
@@ -200,9 +200,15 @@ const updateGroupTool: AgentTool = {
     group: z.string().trim().min(1).max(80),
     name: z.string().trim().min(1).max(60).optional(),
     description: z.string().max(300).optional(),
+    scope: z.enum(["personal", "company"]).optional(),
   }),
   async execute(ctx, raw) {
-    const a = this.args.parse(raw) as { group: string; name?: string; description?: string };
+    const a = this.args.parse(raw) as {
+      group: string;
+      name?: string;
+      description?: string;
+      scope?: "personal" | "company";
+    };
     return guarded(
       async () => {
         const g = await resolveGroup(a.group, ctx);
@@ -210,7 +216,7 @@ const updateGroupTool: AgentTool = {
         const u = await updateGroup({
           ...(await gctx(ctx)),
           groupId: g.id,
-          patch: { name: a.name, description: a.description },
+          patch: { name: a.name, description: a.description, scope: a.scope },
         });
         return { ok: true, group: { id: u.id, name: u.name } };
       },

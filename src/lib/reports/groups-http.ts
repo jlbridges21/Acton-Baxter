@@ -34,6 +34,7 @@ export const groupCommandSchema = z.discriminatedUnion("op", [
     description: z.string().max(300).optional(),
     color: z.enum(GROUP_COLORS).optional(),
     icon: z.enum(GROUP_ICONS).optional(),
+    scope: z.enum(["personal", "company"]).optional(),
   }),
   z.object({ op: z.literal("archive"), groupId: id }),
   z.object({ op: z.literal("restore"), groupId: id }),
@@ -67,9 +68,20 @@ export async function runGroupCommand(ctx: ReportsContext, raw: unknown): Promis
       const g = await updateGroup({
         ...c,
         groupId: cmd.groupId,
-        patch: { name: cmd.name, description: cmd.description, color: cmd.color, icon: cmd.icon },
+        patch: {
+          name: cmd.name,
+          description: cmd.description,
+          color: cmd.color,
+          icon: cmd.icon,
+          scope: cmd.scope,
+        },
       });
-      return { id: g.id, name: g.name };
+      return {
+        id: g.id,
+        name: g.name,
+        scope: g.scope,
+        removedOnScopeChange: g.removedOnScopeChange ?? 0,
+      };
     }
     case "archive":
       return setGroupArchived({ ...c, groupId: cmd.groupId, archived: true });

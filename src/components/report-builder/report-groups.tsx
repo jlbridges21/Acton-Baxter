@@ -216,6 +216,7 @@ export function GroupDialog({
             description,
             color,
             icon,
+            ...(scope !== group.scope ? { scope } : {}),
           })
         : await groupCommand<{ id: string }>({
             op: "create",
@@ -302,7 +303,7 @@ export function GroupDialog({
             })}
           </div>
         </fieldset>
-        {!group && canCreateCompany ? (
+        {canCreateCompany || group?.scope === "company" ? (
           <Field
             label="Who sees this group"
             htmlFor="grp-scope"
@@ -314,10 +315,26 @@ export function GroupDialog({
               value={scope}
               onChange={(e) => setScope(e.target.value as "personal" | "company")}
             >
-              <option value="personal">Only me (personal)</option>
-              <option value="company">Everyone with Reports (company)</option>
+              <option value="personal" disabled={group?.scope === "company" && !group.isMine}>
+                Only me (personal)
+              </option>
+              <option value="company" disabled={!canCreateCompany}>
+                Everyone with Reports (company)
+              </option>
             </select>
           </Field>
+        ) : null}
+        {group && group.scope === "company" && !group.isMine ? (
+          <p className="text-xs text-[var(--acton-muted)]">
+            Only the person who created this group can make it personal.
+          </p>
+        ) : null}
+        {group && scope !== group.scope ? (
+          <Notice tone="warning">
+            {scope === "personal"
+              ? "Other people will no longer see this group. Reports in it that only others can open will be taken out of it. No one loses access to any report."
+              : "Everyone with Reports access will see this group's name. Its reports stay as private as they are now — only people already allowed to open a report will see it here."}
+          </Notice>
         ) : null}
       </DialogBody>
       <DialogFooter>

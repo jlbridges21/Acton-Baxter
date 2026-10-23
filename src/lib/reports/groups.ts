@@ -232,23 +232,36 @@ export async function createGroup(
 export async function updateGroup(
   input: {
     groupId: string;
-    patch: { name?: string; description?: string; color?: GroupColor; icon?: GroupIcon };
+    patch: {
+      name?: string;
+      description?: string;
+      color?: GroupColor;
+      icon?: GroupIcon;
+      scope?: "personal" | "company";
+    };
   } & Ctx,
-): Promise<GroupRow> {
+): Promise<GroupRow & { removedOnScopeChange?: number }> {
   const g = await getGroupFor(input.groupId, input);
   if (!canManageGroup(g, input)) throw new AuthorizationError("You can't change this group.");
   const patch: Partial<GroupRow> = {};
-  if (input.patch.name !== undefined) {
-    patch.name = cleanName(input.patch.name);
+  const scope = input.patch.scope ?? g.scope;
+  const name = input.patch.name !== undefined ? cleanName(input.patch.name) : g.name;
+  if (input.patch.name !== undefined) patch.name = name;
+  if (input.patch.name !== undefined || scope !== g.scope) {
     const clash = (await visibleGroupRows(input, true)).find(
       (x) =>
         x.id !== g.id &&
-        x.scope === g.scope &&
-        x.name.toLowerCase() === patch.name!.toLowerCase() &&
-        (g.scope === "company" || x.owner_id === g.owner_id),
+        x.scope === scope &&
+        x.name.toLowerCase() === name.toLowerCase() &&
+        (scope === "company" || x.owner_id === g.owner_id),
     );
-    if (clash) throw new ValidationError(`A group named "${clash.name}" already exists.`);
+    if (clash)
+      throw new ValidationError(
+        `A ${scope === "company" ? "company" : "personal"} group named "${clash.name}" already exists.`,
+      );
   }
+  const removedOnScopeChange = scope !== g.scope ? await changeScope(g, scope, input) : 0;
+  if (scope !== g.scope) patch.scope = scope;
   if (input.patch.description !== undefined)
     patch.description = input.patch.description.trim().slice(0, 300);
   if (input.patch.color && GROUP_COLORS.includes(input.patch.color))
@@ -263,9 +276,104 @@ export async function updateGroup(
     summary:
       patch.name && patch.name !== g.name
         ? `Renamed report group "${g.name}" to "${patch.name}".`
-        : `Updated report group "${g.name}".`,
+        : patch.scope
+          ? `Changed report group "${g.name}" to ${patch.scope === "company" ? "everyone with Reports (company)" : "only its owner (personal)"}.`
+          : `Updated report group "${g.name}".`,
+    details: patch.scope
+      ? { from: g.scope, to: patch.scope, removedReports: removedOnScopeChange }
+      : undefined,
   });
-  return row!;
+  return { ...row!, removedOnScopeChange };
+}
+
+/**
+ * Switch a group between personal and company. Changing who sees a group never changes who can
+ * open its reports, so the group's contents must stay consistent with the rules for its new kind.
+ * Returns how many filings were dropped (company → personal only).
+ */
+async function changeScope(g: GroupRow, scope: "personal" | "company", c: Ctx): Promise<number> {
+  const uid = c.requester.userId;
+  const items = await agentDb().select<ItemRow>("bi_report_group_items", {
+    filters: [eq("group_id", g.id)],
+    limit: 5000,
+  });
+  if (scope === "company") {
+    if (!(c.access.isAdmin || c.access.canManage))
+      throw new AuthorizationError(
+        "Only Reports managers can share a group with everyone. Ask a Reports manager or administrator.",
+      );
+    // Company groups only hold reports their filers can edit, at most one company group each.
+    const otherCompany = (await visibleGroupRows(c, true)).filter(
+      (x) => x.scope === "company" && x.id !== g.id,
+    );
+    const inOtherCompany = new Set(
+      otherCompany.length
+        ? (
+            await agentDb().select<ItemRow>("bi_report_group_items", {
+              filters: [
+                inList(
+                  "group_id",
+                  otherCompany.map((x) => x.id),
+                ),
+              ],
+              limit: 20_000,
+            })
+          ).map((i) => i.report_id)
+        : [],
+    );
+    const problems: string[] = [];
+    for (const it of items) {
+      try {
+        const { report, permission } = await loadReportFor(it.report_id, c.requester, c.access);
+        if (!permission.canEdit) problems.push(`"${report.title}" (you can only view it)`);
+        else if (inOtherCompany.has(report.id))
+          problems.push(`"${report.title}" (already in another company group)`);
+      } catch {
+        problems.push("a report you can't open");
+      }
+    }
+    if (problems.length)
+      throw new ValidationError(
+        `Before sharing this group with everyone, move these reports out of it: ${problems.slice(0, 5).join(", ")}${problems.length > 5 ? `, and ${problems.length - 5} more` : ""}.`,
+      );
+    return 0;
+  }
+  // company → personal: it becomes the owner's private folder.
+  if (!uid || g.owner_id !== uid)
+    throw new AuthorizationError(
+      "Only the person who created this group can make it personal (it would become their private group).",
+    );
+  const visible = new Set((await listReportsFor(c.requester, c.access)).map((x) => x.report.id));
+  const otherPersonal = (await visibleGroupRows(c, true)).filter(
+    (x) => x.scope === "personal" && x.owner_id === uid && x.id !== g.id,
+  );
+  const inOtherPersonal = new Set(
+    otherPersonal.length
+      ? (
+          await agentDb().select<ItemRow>("bi_report_group_items", {
+            filters: [
+              inList(
+                "group_id",
+                otherPersonal.map((x) => x.id),
+              ),
+            ],
+            limit: 20_000,
+          })
+        ).map((i) => i.report_id)
+      : [],
+  );
+  let removed = 0;
+  for (const it of items) {
+    // Reports the owner can't open (filed by others) or already in another of their personal groups.
+    if (!visible.has(it.report_id) || inOtherPersonal.has(it.report_id)) {
+      await agentDb().remove("bi_report_group_items", [
+        eq("group_id", g.id),
+        eq("report_id", it.report_id),
+      ]);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 export async function setGroupArchived(
