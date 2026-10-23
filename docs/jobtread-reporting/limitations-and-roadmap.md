@@ -14,13 +14,19 @@
 - **Freshness:** lists and charts reflect the last sync (hourly by default when enabled);
   project pages are live within 5 minutes.
 - **Files:** names and folders only — links open the job in JobTread rather than the file.
-- **Data scope:** jobs (with job/location/customer fields) and catalog models only. Cost
-  items, invoices, daily logs, contacts, and vendors are not synced.
+- **Data scope:** jobs (with job/location/customer fields), catalog models, and financial
+  document totals (orders, invoices). Cost items, tasks (except live per project), daily logs,
+  contacts, and vendors are verified in the catalog but not synced.
 - **Grant:** the current grant has no JobTread-side restrictions (Baxter enforces read-only in
   code). It expires after 3 months without use.
-- **Chat:** one conversation per user per report; Dexter requests run inline (up to ~200 s)
+- **Chat:** one conversation per user per report; Dexter requests run inline (up to ~260 s)
   rather than in the background.
 - **Tables** show the first 1,000 matching rows (CSV export of a table matches what's shown).
+- **Commissions:** gross profit is projected (customer orders; most are drafts), not realized;
+  payment dates must be entered in Baxter because JobTread has no payments; Connor has no jobs in
+  JobTread's Sales Rep field. Tiered rates and partial-payment rules aren't implemented yet.
+- **Attachments:** images over 5 MB, scanned PDFs without a text layer, and DOCX layout aren't
+  analyzed visually.
 
 ## 19. Future enhancements
 
@@ -33,3 +39,6 @@
 - Field-level change history (phase durations, time in permitting).
 - Webhook-driven incremental sync if JobTread exposes change events.
 - Per-viewer saved filter presets and dashboard tabs.
+- Sync payments and cost items once Acton records them in JobTread; then add realized gross
+  profit and payment-triggered commissions.
+- Tiered and split-by-milestone commission rules; payroll export (with approval).

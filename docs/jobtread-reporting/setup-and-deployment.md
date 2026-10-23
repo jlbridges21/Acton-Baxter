@@ -56,18 +56,23 @@ Nothing here has been deployed. Do these in order when you're ready:
    `customer_data` / `financial_data`; adds the `jobtread_sync` job type). All tables have
    RLS enabled with no browser policies — access is only through server routes with the
    service role. The migration is additive.
-2. **Vercel (Production + Preview):** set `JOBTREAD_GRANT_KEY` (sensitive), optionally
+2. **Supabase:** apply `supabase/migrations/070_dexter_intelligence.sql` (adds `jt_documents`,
+   `jt_entity_catalog`, `jt_jobs.actual_cost`, `bi_report_sessions`, `bi_chat_attachments` + the
+   private `report-attachments` bucket, `bi_rule_sets`, `bi_commission_rates`,
+   `bi_project_assignments`, `bi_rule_changes`, and the `business_rules` access level). Additive;
+   safe to re-run.
+3. **Vercel (Production + Preview):** set `JOBTREAD_GRANT_KEY` (sensitive), optionally
    `JOBTREAD_ORGANIZATION_ID`, and `JOBTREAD_SYNC_ENABLED=true` when you want scheduled syncs.
-3. **Deploy**, then as an admin open **Reports → Data settings**:
+4. **Deploy**, then as an admin open **Reports → Data settings**:
    - **Test connection** → expect "Connected · Acton ADU".
    - **Sync now** → expect ~447 jobs and ~79 catalog groups.
    - Review **Business fields** (5 terms have no JobTread field — see limitations) and the
      **access category** of each field.
-4. Dexter and the Business Intelligence & Analytics department are created automatically on
+5. Dexter and the Business Intelligence & Analytics department are created automatically on
    first load of the AI Workspace (seed). Baxter's delegation guidelines are upgraded to
    mention Dexter only if they still equal the shipped default; customized guidelines are
    left alone (add a Dexter line yourself in AI Studio).
-5. Grant access on **AI Workspace → Agents → Dexter → Access**: by default every `user` can
+6. Grant access on **AI Workspace → Agents → Dexter → Access**: by default every `user` can
    use Reports and chat with Dexter (project information only). Add **Customer details
    (Reports)** and **Financial figures (Reports)** for the people who need them.
 

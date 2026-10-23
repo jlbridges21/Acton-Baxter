@@ -79,6 +79,7 @@ import {
   resolveDisplayType,
   type DisplayType,
 } from "./format";
+import { RuleEditorWidget } from "./rule-editors";
 
 /** Categorical slots in fixed order (validated reference palette, light surface). */
 export const SERIES_COLORS = [
@@ -114,6 +115,8 @@ export type WidgetActions = {
     row: { id: string; cells: Record<string, CellValue>; jobtreadUrl?: string },
     columns: FieldMeta[],
   ) => void;
+  /** Business-rule editors changed something; re-run the report. */
+  onRulesChanged?: () => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -271,6 +274,8 @@ export function WidgetBody({
       );
     case "text":
       return <p className="text-sm whitespace-pre-wrap text-[var(--acton-muted)]">{result.body}</p>;
+    case "rule_editor":
+      return <RuleEditorWidget result={result} onChanged={() => actions.onRulesChanged?.()} />;
   }
 }
 

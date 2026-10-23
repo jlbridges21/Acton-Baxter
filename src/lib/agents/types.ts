@@ -117,10 +117,11 @@ export const modelConfigSchema = z.object({
 export type AgentModelConfig = z.infer<typeof modelConfigSchema>;
 
 export const limitsSchema = z.object({
-  maxIterations: z.number().int().min(1).max(8).default(4),
-  maxToolCalls: z.number().int().min(0).max(12).default(6),
-  timeoutMs: z.number().int().min(5_000).max(240_000).default(90_000),
-  maxTotalTokens: z.number().int().min(2_000).max(400_000).default(80_000),
+  maxIterations: z.number().int().min(1).max(16).default(4),
+  maxToolCalls: z.number().int().min(0).max(30).default(6),
+  // Direct Reports chat runs inside a 300 s route; leave room to save the reply.
+  timeoutMs: z.number().int().min(5_000).max(270_000).default(90_000),
+  maxTotalTokens: z.number().int().min(2_000).max(800_000).default(80_000),
   maxCostUsd: z.number().min(0.01).max(10).default(1),
 });
 export type AgentLimits = z.infer<typeof limitsSchema>;
@@ -241,6 +242,7 @@ export const ACCESS_LEVELS = [
   // Reports (Dexter): data categories beyond general project information.
   "customer_data",
   "financial_data",
+  "business_rules",
 ] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
 
@@ -276,6 +278,10 @@ export const ACCESS_LEVEL_LABELS: Record<AccessLevel, { label: string; help: str
   financial_data: {
     label: "Financial figures (Reports)",
     help: "Reports may show prices, costs, budgets, and margins.",
+  },
+  business_rules: {
+    label: "Edit business rules (Reports)",
+    help: "Can set commission rates and assign projects to salespeople in Reports. Changes are audited.",
   },
 };
 

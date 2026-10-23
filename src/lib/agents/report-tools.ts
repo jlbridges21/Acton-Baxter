@@ -35,17 +35,14 @@ import {
   SOURCES,
   type ReportSpec,
 } from "@/lib/reports/spec";
-import { agentDb } from "./store";
 import type { AgentTool, ToolContext, ToolResult } from "./tools";
 import { ACTIVE_PHASES } from "@/lib/reports/templates";
-import {
-  ensureJobTreadData,
-  jobRowFromCache,
-  isProductModel,
-  modelRowFromCache,
-} from "@/lib/reports/engine";
+import { attachAttachmentsToReport } from "@/lib/reports/attachments";
+import { attachSessionToReport } from "@/lib/reports/sessions";
+import { ensureJobTreadData, loadSourceRows } from "@/lib/reports/engine";
 
-const SPEC_GUIDE = `REPORT SPEC (JSON). Fields: "job.*" built-ins, "cf:<id>" custom fields, "sem:<key>" business names, "model.*" for catalog_models. Use keys exactly as reports_list_fields returns them.
+const SPEC_GUIDE = `REPORT SPEC (JSON). Fields: "job.*" built-ins (incl. job.orderGrossProfit, job.orderPrice, job.orderCost from customer orders), "cf:<id>" custom fields, "sem:<key>" business names, "model.*" for catalog_models, "com.*" for commissions. Use keys exactly as reports_list_fields returns them.
+Commissions: dataset {"id","source":"commissions","ruleSet":<key from reports_rules>} — one row per project × salesperson with com.salesperson, com.jobName, com.grossProfit, com.ratePct, com.splitPct, com.commission, com.date, com.status. Editors: {"id","type":"rate_editor","ruleSet"} and {"id","type":"assignment_editor","ruleSet"} let authorized people set rates and assign projects in the report. A per-salesperson view is a "select" control on com.salesperson (use "default":[name] for a salesperson-specific copy).
 { "title": str, "description": str,
   "datasets": [{ "id": "active_jobs", "source": "jobs"|"catalog_models", "label": str, "filters": [Condition] }],
   "controls": [ { "id","kind":"job_picker","label","dataset" } | { "id","kind":"select","label","field","datasets":[id] } | { "id","kind":"search","label","fields":[f],"datasets":[id] } | { "id","kind":"number_range"|"date_range","label","field","datasets":[id] } ],
@@ -57,7 +54,8 @@ const SPEC_GUIDE = `REPORT SPEC (JSON). Fields: "job.*" built-ins, "cf:<id>" cus
     { "id","type":"detail","control":<job_picker id>,"style":"grid"|"long_text"|"badges","fields":[{ "field","label"? }] }
     { "id","type":"milestones","control":<job_picker id>,"show":"schedule"|"checklists"|"all","style":"timeline"|"list" }
     { "id","type":"documents","control":<job_picker id> }
-    { "id","type":"text","body":str } ] }
+    { "id","type":"text","body":str }
+    { "id","type":"rate_editor"|"assignment_editor","ruleSet":key } ] }
 Condition = { "field", "op":"eq"|"neq"|"in"|"not_in"|"contains"|"not_contains"|"starts_with"|"blank"|"not_blank"|"gt"|"gte"|"lt"|"lte", "value"? }
 Ids: lowercase letters/numbers/_/- . Detail/header/milestones/documents widgets need a job_picker control on a jobs dataset.`;
 
@@ -72,22 +70,10 @@ function reportUrl(id: string) {
   return `/reports/${id}`;
 }
 
-async function sourceRows(source: (typeof SOURCES)[number]) {
-  const catalog = await getFieldCatalog();
-  if (source === "jobs") {
-    const rows = await agentDb().select<Parameters<typeof jobRowFromCache>[0]>("jt_jobs", {
-      filters: [{ col: "removed_at", op: "is_null" }],
-      limit: 20_000,
-    });
-    return { catalog, rows: rows.map((r) => jobRowFromCache(r, catalog)) };
-  }
-  const rows = await agentDb().select<
-    Parameters<typeof modelRowFromCache>[0] & { description: string | null }
-  >("jt_catalog_models", {
-    filters: [{ col: "removed_at", op: "is_null" }],
-    limit: 5000,
-  });
-  return { catalog, rows: rows.filter(isProductModel).map(modelRowFromCache) };
+async function sourceRows(source: (typeof SOURCES)[number], ruleSet?: string) {
+  if (source === "commissions" && !ruleSet)
+    throw new Error('Commission data needs "ruleSet" (see reports_rules).');
+  return loadSourceRows(source, ruleSet);
 }
 
 /** Canonicalize conditions for the viewer; throws on unknown/restricted fields with a clear reason. */
@@ -114,15 +100,20 @@ const listFields: AgentTool = {
   available: true,
   args: z.object({
     source: z.enum(SOURCES).default("jobs"),
+    ruleSet: z.string().max(60).optional(),
     search: z.string().trim().max(80).optional(),
   }),
   async execute(ctx, raw) {
-    const { source, search } = this.args.parse(raw) as {
+    const { source, search, ruleSet } = this.args.parse(raw) as {
       source: (typeof SOURCES)[number];
       search?: string;
+      ruleSet?: string;
     };
     const access = await accessFor(ctx);
-    const { catalog, rows } = await sourceRows(source);
+    const { catalog, rows } =
+      source === "commissions" && !ruleSet
+        ? { catalog: await getFieldCatalog(), rows: [] }
+        : await sourceRows(source, ruleSet);
     const q = search?.toLowerCase();
     const fields = catalog.bySource[source]
       .filter((f) => canSeeField(access, f))
@@ -204,6 +195,7 @@ const preview: AgentTool = {
   available: true,
   args: z.object({
     source: z.enum(SOURCES),
+    ruleSet: z.string().max(60).optional(),
     filters: z.array(conditionSchema).max(10).default([]),
     fields: z.array(z.string().min(3).max(80)).min(1).max(12),
     limit: z.number().int().min(1).max(15).default(8),
@@ -211,12 +203,13 @@ const preview: AgentTool = {
   async execute(ctx, raw) {
     const input = this.args.parse(raw) as {
       source: (typeof SOURCES)[number];
+      ruleSet?: string;
       filters: z.infer<typeof conditionSchema>[];
       fields: string[];
       limit: number;
     };
     const access = await accessFor(ctx);
-    const { catalog, rows } = await sourceRows(input.source);
+    const { catalog, rows } = await sourceRows(input.source, input.ruleSet);
     const filtered = filterRows(rows, await canonical(input.filters, access));
     const cols = input.fields.map((ref) => {
       const r = resolveField(catalog, ref);
@@ -226,8 +219,9 @@ const preview: AgentTool = {
       return { ref, key: r.key, label: r.def.label };
     });
     const sample = filtered.slice(0, input.limit).map((row) =>
-      Object.fromEntries(
-        cols
+      Object.fromEntries([
+        ["id", row.id],
+        ...cols
           .filter((c) => "key" in c)
           .map((c) => {
             const v = row[(c as { key: string }).key];
@@ -237,7 +231,7 @@ const preview: AgentTool = {
               typeof s === "string" && s.length > 200 ? `${s.slice(0, 200)}…` : s,
             ];
           }),
-      ),
+      ]),
     );
     return {
       data: { total: filtered.length, columns: cols, sample },
@@ -258,6 +252,7 @@ const aggregateTool: AgentTool = {
   available: true,
   args: z.object({
     source: z.enum(SOURCES),
+    ruleSet: z.string().max(60).optional(),
     filters: z.array(conditionSchema).max(10).default([]),
     metric: metricSchema,
     groupBy: z.string().min(3).max(80).optional(),
@@ -266,13 +261,14 @@ const aggregateTool: AgentTool = {
   async execute(ctx, raw) {
     const input = this.args.parse(raw) as {
       source: (typeof SOURCES)[number];
+      ruleSet?: string;
       filters: z.infer<typeof conditionSchema>[];
       metric: z.infer<typeof metricSchema>;
       groupBy?: string;
       limit: number;
     };
     const access = await accessFor(ctx);
-    const { catalog, rows } = await sourceRows(input.source);
+    const { catalog, rows } = await sourceRows(input.source, input.ruleSet);
     const filtered = filterRows(rows, await canonical(input.filters, access));
     const resolveVisible = (ref: string) => {
       const r = resolveField(catalog, ref);
@@ -448,8 +444,12 @@ const createReportTool: AgentTool = {
       taskId: ctx.task.id,
       summary: input.summary ?? "Created by Dexter",
     });
-    if (ctx.requester.userId && !ctx.task.allowed_context?.reportId)
+    if (ctx.requester.userId && !ctx.task.allowed_context?.reportId) {
+      // The draft conversation, its plan, and its attachments now belong to the new report.
       await attachChatToReport(ctx.requester.userId, report.id);
+      await attachSessionToReport(ctx.requester.userId, report.id);
+      await attachAttachmentsToReport(ctx.requester.userId, report.id);
+    }
     return artifactResult(report, `Created report "${report.title}".`, {
       emptyWidgets: check.empty,
       notes: check.issues,

@@ -8,13 +8,14 @@ server, from that viewer's access. Sharing a report never shares data the recipi
 Access comes from the AI Workforce permission model on the **Dexter** agent
 (`src/lib/reports/access.ts`):
 
-| Data category                   | Who sees it                                               | Examples                                   |
-| ------------------------------- | --------------------------------------------------------- | ------------------------------------------ |
-| Project information (`general`) | Anyone with Ask through Baxter or Chat directly on Dexter | Phase, PM, model, sq ft, site & utilities  |
-| Customer details (`customer`)   | "Customer details (Reports)" on Dexter, or admins         | Customer contact-type fields               |
-| Financial figures (`financial`) | "Financial figures (Reports)" on Dexter, or admins        | Projected price/cost/margin, model budgets |
-| Internal notes (`internal`)     | "Manage agent" on Dexter, or admins                       | Sales strategy notes                       |
-| Excluded                        | Nobody                                                    | Vendor fields, fields an admin excludes    |
+| Data category                   | Who sees it                                                   | Examples                                   |
+| ------------------------------- | ------------------------------------------------------------- | ------------------------------------------ |
+| Project information (`general`) | Anyone with Ask through Baxter or Chat directly on Dexter     | Phase, PM, model, sq ft, site & utilities  |
+| Customer details (`customer`)   | "Customer details (Reports)" on Dexter, or admins             | Customer contact-type fields               |
+| Financial figures (`financial`) | "Financial figures (Reports)" on Dexter, or admins            | Projected price/cost/margin, model budgets |
+| Internal notes (`internal`)     | "Manage agent" on Dexter, or admins                           | Sales strategy notes                       |
+| Edit business rules             | "Edit business rules (Reports)" + financial access, or admins | Commission rates, project assignments      |
+| Excluded                        | Nobody                                                        | Vendor fields, fields an admin excludes    |
 
 Admins set each field's category in **Reports → Data settings**.
 
@@ -36,6 +37,14 @@ Admins set each field's category in **Reports → Data settings**.
 | Pin                     | Anyone who can view (pins are personal)                                                                 |
 
 Missing and forbidden reports return the same "Report not found".
+
+## Attachments & business rules
+
+- Attachments are private to the uploader (storage + API); validated by extension, size, and
+  magic bytes; extracted content is labeled user-supplied and passed to Dexter as data.
+- Commission data needs financial access to view; changes need "Edit business rules" and are
+  recorded in `bi_rule_changes` (who, when, before/after). Nothing is paid, submitted, or written
+  to JobTread.
 
 ## Platform safeguards
 

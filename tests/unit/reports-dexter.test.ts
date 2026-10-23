@@ -175,6 +175,7 @@ describe("report permissions", () => {
       "blank",
       "design_handoff",
       "product_library",
+      "sales_commissions",
     ]);
     expect(templates.every((t) => t.permission.canView && !t.permission.canEdit)).toBe(true);
     const adminList = await listReportsFor(admin, await getReportsAccess(admin));

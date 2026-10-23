@@ -498,7 +498,13 @@ export async function runDirectAgentRequest(input: {
   question: string;
   requestId: string;
   /** Extra context for the specialist (e.g. the report being viewed and recent chat turns). */
-  context?: { reportId?: string | null; conversation?: string };
+  context?: {
+    reportId?: string | null;
+    conversation?: string;
+    session?: string;
+    attachments?: string;
+    focus?: string;
+  };
 }): Promise<{ outcome: ExecutionOutcome; task: TaskRow }> {
   const { task } = await createTask({
     idempotencyKey: `direct:${input.requester.userId}:${input.requestId}`,
@@ -522,6 +528,9 @@ export async function runDirectAgentRequest(input: {
       channel: "direct",
       ...(input.context?.reportId ? { reportId: input.context.reportId } : {}),
       ...(input.context?.conversation ? { conversation: input.context.conversation } : {}),
+      ...(input.context?.session ? { session: input.context.session } : {}),
+      ...(input.context?.attachments ? { attachments: input.context.attachments } : {}),
+      ...(input.context?.focus ? { focus: input.context.focus } : {}),
     },
     sensitivity: input.agent.config.delegation.sensitivity,
   });

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "character": "baxter",
   "packVersion": "3.0.0",
-  "generatedBy": "scripts/normalize-baxter-sprites.mjs",
+  "generatedBy": "scripts/normalize-sprite-packs.mjs",
   "source": "/animations/baxter_sprite_pack/manifest.json",
   "canvases": {
     "character": {

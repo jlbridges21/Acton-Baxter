@@ -16,9 +16,18 @@ export const F = {
   priorities: "cfPrior0001",
   strategy: "cfStrat0001",
   spouse: "cfSpouse001",
+  salesRep: "cfSalesRep01",
 } as const;
 
 export const CUSTOM_FIELDS = [
+  {
+    id: F.salesRep,
+    name: "Sales Rep",
+    type: "option",
+    targetType: "job",
+    options: ["Kevin", "Connor", "Jesse"],
+    position: "0",
+  },
   {
     id: F.phase,
     name: "Phase",
@@ -107,6 +116,7 @@ function job(
     electrical?: string[];
     strategy?: string;
     spouse?: string;
+    salesRep?: string;
   } = {},
 ) {
   const jobValues: V = [[F.phase, phase]];
@@ -114,6 +124,7 @@ function job(
   if (sqft !== null) jobValues.push([F.sqft, sqft]);
   if (extra.model) jobValues.push([F.model, extra.model]);
   if (extra.budget !== undefined) jobValues.push([F.budget, extra.budget]);
+  if (extra.salesRep) jobValues.push([F.salesRep, extra.salesRep]);
   const locValues: V = (extra.electrical ?? []).map((e) => [F.electrical, e]);
   const custValues: V = [[F.priorities, `Priorities for job ${n}`]];
   if (extra.strategy) custValues.push([F.strategy, extra.strategy]);
@@ -157,9 +168,13 @@ export const JOBS = [
     cost: 300_000,
     electrical: ["Underground"],
   }),
-  job(3, "BR-Permitting", "Maxx", 998, { model: "i+ 998-B-1", electrical: ["Overhead"] }),
+  job(3, "BR-Permitting", "Maxx", 998, {
+    model: "i+ 998-B-1",
+    electrical: ["Overhead"],
+    salesRep: "Jesse",
+  }),
   job(4, "BR-Permitting", null, null),
-  job(5, "Complete", "Rebecca", 398, { model: "i 398" }),
+  job(5, "Complete", "Rebecca", 398, { model: "i 398", salesRep: "Kevin" }),
   job(6, "Canceled", "Connor", 750),
 ];
 
@@ -187,6 +202,95 @@ export const COST_GROUPS = [
     name: "Selections Library",
     description: "Finish selections",
     descendentCostItems: { count: 40, totalCost: 5, totalPrice: 9 },
+  },
+];
+
+/** Customer orders and invoices (synthetic). Job 1: approved order; job 2: draft; job 4: loss. */
+export const DOCUMENTS = [
+  {
+    id: "docOrder001",
+    type: "customerOrder",
+    status: "approved",
+    number: "1",
+    name: "Contract",
+    issueDate: "2026-04-01",
+    dueDate: null,
+    signedAt: null,
+    createdAt: "2026-04-01T00:00:00Z",
+    price: 300000,
+    cost: 210000,
+    tax: 0,
+    amountPaid: 0,
+    balance: 300000,
+    job: { id: "job00000001" },
+  },
+  {
+    id: "docOrder002",
+    type: "customerOrder",
+    status: "draft",
+    number: "2",
+    name: "Estimate",
+    issueDate: "2026-05-01",
+    dueDate: null,
+    signedAt: null,
+    createdAt: "2026-05-01T00:00:00Z",
+    price: 400000,
+    cost: 300000,
+    tax: 0,
+    amountPaid: 0,
+    balance: 400000,
+    job: { id: "job00000002" },
+  },
+  {
+    id: "docOrder003",
+    type: "customerOrder",
+    status: "draft",
+    number: "3",
+    name: "Old estimate",
+    issueDate: "2026-03-01",
+    dueDate: null,
+    signedAt: null,
+    createdAt: "2026-03-01T00:00:00Z",
+    price: 380000,
+    cost: 300000,
+    tax: 0,
+    amountPaid: 0,
+    balance: 380000,
+    job: { id: "job00000002" },
+  },
+  {
+    id: "docOrder004",
+    type: "customerOrder",
+    status: "draft",
+    number: "4",
+    name: "Estimate",
+    issueDate: "2026-06-01",
+    dueDate: null,
+    signedAt: null,
+    createdAt: "2026-06-01T00:00:00Z",
+    price: 200000,
+    cost: 215000,
+    tax: 0,
+    amountPaid: 0,
+    balance: 200000,
+    job: { id: "job00000004" },
+  },
+  {
+    id: "docInv0001",
+    type: "customerInvoice",
+    status: "draft",
+    number: "5",
+    name: "Deposit",
+    issueDate: "2026-04-15",
+    dueDate: "2026-05-15",
+    signedAt: null,
+    createdAt: "2026-04-15T00:00:00Z",
+    price: 30000,
+    cost: 0,
+    tax: 0,
+    amountPaid: 0,
+    balance: 30000,
+    job: { id: "job00000001" },
   },
 ];
 
@@ -281,19 +385,37 @@ export function createFixtureFetcher(
     }
     const org = q.organization!;
     const key = Object.keys(org).find((k) => k !== "$" && k !== "id")!;
-    const conn = org[key] as { $: { size: number; page?: string }; _?: string };
+    const conn = org[key] as {
+      $?: { size?: number; page?: string; where?: unknown };
+      _?: string;
+      count?: unknown;
+      nodes?: unknown;
+    };
     const connection = conn._ ?? key;
-    const all: unknown[] =
+    const all: Array<Record<string, unknown>> =
       connection === "customFields"
         ? CUSTOM_FIELDS
         : connection === "jobs"
           ? jobs
           : connection === "costGroups"
             ? COST_GROUPS
-            : [];
-    const size = conn.$.size;
+            : connection === "documents"
+              ? DOCUMENTS
+              : [];
+    if (conn.count && !conn.nodes) {
+      // `where: [[field], "!=", null]` → populated count; no filter → total.
+      const where = conn.$?.where as [string[], string, unknown] | undefined;
+      const n = where
+        ? all.filter((r) => r[where[0][0]!] !== null && r[where[0][0]!] !== undefined).length
+        : all.length;
+      return {
+        status: 200,
+        text: JSON.stringify({ organization: { id: "orgTest0001", [key]: { count: n } } }),
+      };
+    }
+    const size = conn.$?.size ?? 20;
     if (options.maxPageSize && size > options.maxPageSize) return { status: 413, text: "{}" };
-    const start = conn.$.page ? Number(conn.$.page) : 0;
+    const start = conn.$?.page ? Number(conn.$.page) : 0;
     const nodes = all.slice(start, start + size);
     const nextPage = start + size < all.length ? String(start + size) : null;
     return {

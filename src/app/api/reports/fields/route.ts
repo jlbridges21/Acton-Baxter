@@ -10,7 +10,7 @@ export async function GET() {
   try {
     const ctx = await requireReportsContext();
     const catalog = await getFieldCatalog();
-    const visible = (source: "jobs" | "catalog_models") =>
+    const visible = (source: "jobs" | "catalog_models" | "commissions") =>
       catalog.bySource[source]
         .filter((f) => canSeeField(ctx.access, f))
         .map((f) => ({
@@ -40,6 +40,7 @@ export async function GET() {
     return jsonOk({
       jobs: { business, all: visible("jobs") },
       catalog_models: { business: [], all: visible("catalog_models") },
+      commissions: { business: [], all: visible("commissions") },
     });
   } catch (error) {
     return jsonError(error, "GET /api/reports/fields");

@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "character": "sam",
+  "role": "HR AI bot",
+  "packVersion": "1.0.0",
+  "format": "png",
+  "colorModel": "RGBA",
+  "frameSize": { "width": 627, "height": 627 },
+  "frameOrder": "row-major: top-left, top-right, bottom-left, bottom-right",
+  "aliases": {
+    "thinking": "peopleThinking",
+    "presenting": "hrTask"
+  },
+  "animations": {
+    "idle": {
+      "loop": true,
+      "frameDurationMs": 650,
+      "frames": [
+        "sprites/idle/idle-01-neutral.png",
+        "sprites/idle/idle-02-blink.png",
+        "sprites/idle/idle-03-listen-look.png",
+        "sprites/idle/idle-04-welcome-tail.png"
+      ]
+    },
+    "walkRight": {
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "sprites/walk-right/walk-right-01.png",
+        "sprites/walk-right/walk-right-02.png",
+        "sprites/walk-right/walk-right-03.png",
+        "sprites/walk-right/walk-right-04.png"
+      ]
+    },
+    "walkLeft": {
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "sprites/walk-left/walk-left-01.png",
+        "sprites/walk-left/walk-left-02.png",
+        "sprites/walk-left/walk-left-03.png",
+        "sprites/walk-left/walk-left-04.png"
+      ]
+    },
+    "working": {
+      "loop": true,
+      "frameDurationMs": 300,
+      "frames": [
+        "sprites/work/work-01-type.png",
+        "sprites/work/work-02-review-folder.png",
+        "sprites/work/work-03-checklist.png",
+        "sprites/work/work-04-type.png"
+      ]
+    },
+    "sitDown": {
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "sprites/transitions/sit-down/sit-down-01.png",
+        "sprites/transitions/sit-down/sit-down-02.png",
+        "sprites/transitions/sit-down/sit-down-03.png"
+      ]
+    },
+    "standUp": {
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "sprites/transitions/stand-up/stand-up-01.png",
+        "sprites/transitions/stand-up/stand-up-02.png",
+        "sprites/transitions/stand-up/stand-up-03.png"
+      ]
+    },
+    "peopleThinking": {
+      "loop": false,
+      "frameDurationMs": 420,
+      "frames": [
+        "sprites/emotes/people-thinking/people-thinking-01.png",
+        "sprites/emotes/people-thinking/people-thinking-02.png",
+        "sprites/emotes/people-thinking/people-thinking-03.png"
+      ]
+    },
+    "hrTask": {
+      "loop": false,
+      "frameDurationMs": 340,
+      "frames": [
+        "sprites/emotes/hr-task/hr-task-01.png",
+        "sprites/emotes/hr-task/hr-task-02.png",
+        "sprites/emotes/hr-task/hr-task-03.png"
+      ]
+    }
+  }
+}

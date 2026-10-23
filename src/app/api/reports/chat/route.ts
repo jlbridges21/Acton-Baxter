@@ -3,7 +3,9 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { AppError } from "@/lib/errors";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { sendDexterMessage, toChatView } from "@/lib/reports/chat";
+import { attachmentView, listThreadAttachments } from "@/lib/reports/attachments";
 import { requireReportsContext } from "@/lib/reports/http";
+import { clearSession, getSession } from "@/lib/reports/sessions";
 import { clearChatMessages, listChatMessages, loadReportFor } from "@/lib/reports/repo";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +18,14 @@ export async function GET(request: Request) {
     const reportId = new URL(request.url).searchParams.get("reportId");
     if (reportId) await loadReportFor(reportId, ctx.requester, ctx.access);
     const messages = await listChatMessages(ctx.user.id, reportId || null, 60);
-    return jsonOk({ messages: messages.map(toChatView), canChat: ctx.access.canChat });
+    const session = await getSession(ctx.user.id, reportId || null);
+    const attachments = await listThreadAttachments(ctx.user.id, reportId || null);
+    return jsonOk({
+      messages: messages.map(toChatView),
+      canChat: ctx.access.canChat,
+      session,
+      attachments: attachments.map(attachmentView),
+    });
   } catch (error) {
     return jsonError(error, "GET /api/reports/chat");
   }
@@ -26,6 +35,8 @@ const bodySchema = z.object({
   reportId: z.string().uuid().nullable().optional(),
   message: z.string().trim().min(1).max(4000),
   requestId: z.string().trim().min(8).max(80),
+  attachmentIds: z.array(z.string().uuid()).max(6).optional(),
+  focusWidgetId: z.string().max(40).nullable().optional(),
 });
 
 export async function POST(request: Request) {
@@ -46,6 +57,8 @@ export async function POST(request: Request) {
       reportId: body.reportId ?? null,
       message: body.message,
       requestId: body.requestId,
+      attachmentIds: body.attachmentIds,
+      focusWidgetId: body.focusWidgetId ?? null,
     });
     return jsonOk(result);
   } catch (error) {
@@ -60,6 +73,7 @@ export async function DELETE(request: Request) {
     const reportId = new URL(request.url).searchParams.get("reportId");
     if (reportId) await loadReportFor(reportId, ctx.requester, ctx.access);
     await clearChatMessages(ctx.user.id, reportId || null);
+    await clearSession(ctx.user.id, reportId || null);
     return jsonOk({ cleared: true });
   } catch (error) {
     return jsonError(error, "DELETE /api/reports/chat");

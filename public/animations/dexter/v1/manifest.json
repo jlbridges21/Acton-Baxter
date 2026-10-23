@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "character": "dexter",
+  "role": "Business Intelligence and Analytics AI agent",
+  "packVersion": "1.0.0",
+  "generatedBy": "scripts/normalize-sprite-packs.mjs",
+  "source": "/animations/dexter_sprite_pack/manifest.json",
+  "aliases": {
+    "thinking": "dataThinking",
+    "presenting": "analyticsTask"
+  },
+  "canvases": {
+    "character": {
+      "width": 268,
+      "height": 217,
+      "anchor": {
+        "x": 134,
+        "y": 213
+      }
+    },
+    "desk": {
+      "width": 212,
+      "height": 193,
+      "anchor": {
+        "x": 205,
+        "y": 155
+      },
+      "standPoint": {
+        "x": 70,
+        "y": 28
+      }
+    }
+  },
+  "animations": {
+    "idle": {
+      "canvas": "character",
+      "loop": true,
+      "frameDurationMs": 650,
+      "frames": [
+        "/animations/dexter/v1/idle-01.webp",
+        "/animations/dexter/v1/idle-02.webp",
+        "/animations/dexter/v1/idle-03.webp",
+        "/animations/dexter/v1/idle-04.webp"
+      ]
+    },
+    "walkRight": {
+      "canvas": "character",
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "/animations/dexter/v1/walk-right-01.webp",
+        "/animations/dexter/v1/walk-right-02.webp",
+        "/animations/dexter/v1/walk-right-03.webp",
+        "/animations/dexter/v1/walk-right-04.webp"
+      ]
+    },
+    "walkLeft": {
+      "canvas": "character",
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "/animations/dexter/v1/walk-left-01.webp",
+        "/animations/dexter/v1/walk-left-02.webp",
+        "/animations/dexter/v1/walk-left-03.webp",
+        "/animations/dexter/v1/walk-left-04.webp"
+      ]
+    },
+    "sitDown": {
+      "canvas": "character",
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "/animations/dexter/v1/sit-down-01.webp",
+        "/animations/dexter/v1/sit-down-02.webp",
+        "/animations/dexter/v1/sit-down-03.webp"
+      ]
+    },
+    "standUp": {
+      "canvas": "character",
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "/animations/dexter/v1/stand-up-01.webp",
+        "/animations/dexter/v1/stand-up-02.webp",
+        "/animations/dexter/v1/stand-up-03.webp"
+      ]
+    },
+    "dataThinking": {
+      "canvas": "character",
+      "loop": false,
+      "frameDurationMs": 420,
+      "frames": [
+        "/animations/dexter/v1/data-thinking-01.webp",
+        "/animations/dexter/v1/data-thinking-02.webp",
+        "/animations/dexter/v1/data-thinking-03.webp"
+      ]
+    },
+    "analyticsTask": {
+      "canvas": "character",
+      "loop": false,
+      "frameDurationMs": 340,
+      "frames": [
+        "/animations/dexter/v1/analytics-task-01.webp",
+        "/animations/dexter/v1/analytics-task-02.webp",
+        "/animations/dexter/v1/analytics-task-03.webp"
+      ]
+    },
+    "working": {
+      "canvas": "desk",
+      "loop": true,
+      "frameDurationMs": 300,
+      "frames": [
+        "/animations/dexter/v1/working-01.webp",
+        "/animations/dexter/v1/working-02.webp",
+        "/animations/dexter/v1/working-03.webp",
+        "/animations/dexter/v1/working-04.webp"
+      ]
+    }
+  },
+  "desk": {
+    "focus": {
+      "x": 105,
+      "y": 161
+    },
+    "footprint": {
+      "x": 11,
+      "y": 151,
+      "w": 188,
+      "h": 36
+    },
+    "seatedFeet": {
+      "x": 99,
+      "y": 179
+    }
+  },
+  "deskProp": "/animations/dexter/v1/desk-empty.webp"
+}

@@ -8,9 +8,16 @@
  */
 
 import type { OfficeLayout, OfficeRoom, OfficeSeat } from "@/lib/agents/office-layout";
-import type { SpritePackDefinition, Vec } from "./sprite-pack";
+import {
+  buildRoomDecor,
+  pointKeepOut,
+  type DecorItem,
+  type Rect,
+  type RoomTheme,
+} from "./decor";
+import type { DeskMetrics, Vec } from "./sprite-pack";
 
-export type Rect = { x: number; y: number; w: number; h: number };
+export type { Rect } from "./decor";
 
 export const NAV_CELL = 8;
 /** Feet keep this far from the back wall so the sprite's head doesn't poke through it. */
@@ -29,7 +36,15 @@ export type NavGrid = {
   blocked: Uint8Array;
 };
 
-export type HotspotKind = "desk" | "stand" | "collab" | "door" | "hall" | "idle" | "meeting";
+export type HotspotKind =
+  | "desk"
+  | "stand"
+  | "exit"
+  | "collab"
+  | "door"
+  | "hall"
+  | "idle"
+  | "meeting";
 
 export type Hotspot = {
   id: string;
@@ -54,12 +69,23 @@ export type DeskGeometry = {
   footprint: Rect;
   /** Visual front edge of the desk, used for depth sorting. */
   frontY: number;
+  /** Waypoint autonomous routes pass through when leaving/returning (right-exit desks). */
+  exit: Vec | null;
+};
+
+/** What navigation needs to know about an animated agent's desk art. */
+export type NavPack = {
+  scale: number;
+  desk: DeskMetrics;
+  standPoint: Vec;
+  deskAnchor: Vec;
+  deskExit: "right" | null;
 };
 
 export type NavAgent = {
   id: string;
   seat: OfficeSeat;
-  pack: (SpritePackDefinition & { standPoint: Vec; deskAnchor: Vec }) | null;
+  pack: NavPack | null;
   handoffSide?: HandoffSide;
 };
 
@@ -69,7 +95,11 @@ export type OfficeNav = {
   desks: Map<string, DeskGeometry>;
   roomOfAgent: Map<string, string>;
   rooms: OfficeRoom[];
+  decor: DecorItem[];
 };
+
+/** How far right of the stand point the desk-exit waypoint sits. */
+const DESK_EXIT_OFFSET = 34;
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -98,28 +128,7 @@ export function staticSeatFootprint(seat: Vec): Rect {
   return { x: seat.x - 48, y: seat.y - 14, w: 96, h: 50 };
 }
 
-/** Furniture drawn by RoomDecor, in world coordinates. */
-export function roomFurniture(room: OfficeRoom): Rect[] {
-  if (room.kind === "meeting") {
-    return [
-      { x: room.x + room.w * 0.25, y: room.y + room.h * 0.4, w: room.w * 0.5, h: room.h * 0.3 },
-      { x: room.x + room.w * 0.3, y: room.y + room.h * 0.3, w: room.w * 0.3 + 16, h: 16 },
-    ];
-  }
-  if (room.kind === "department") {
-    return [
-      { x: room.x + 14, y: room.y + 40, w: 44, h: 26 }, // bookshelf
-      { x: room.x + room.w - 38, y: room.y + 40, w: 24, h: 34 }, // plant
-    ];
-  }
-  return [];
-}
-
-export function deskGeometry(
-  agentId: string,
-  seat: Vec,
-  pack: NonNullable<NavAgent["pack"]>,
-): DeskGeometry {
+export function deskGeometry(agentId: string, seat: Vec, pack: NavPack): DeskGeometry {
   const s = pack.scale;
   // Tabletop centre sits a little below the seat point the static desk used.
   const origin = { x: seat.x - pack.desk.focus.x * s, y: seat.y + 10 - pack.desk.focus.y * s };
@@ -134,6 +143,13 @@ export function deskGeometry(
     },
     footprint: { x: origin.x + fp.x * s, y: origin.y + fp.y * s, w: fp.w * s, h: fp.h * s },
     frontY: origin.y + (fp.y + fp.h) * s,
+    exit:
+      pack.deskExit === "right"
+        ? {
+            x: origin.x + (pack.deskAnchor.x + pack.standPoint.x) * s + DESK_EXIT_OFFSET,
+            y: origin.y + (pack.deskAnchor.y + pack.standPoint.y) * s,
+          }
+        : null,
   };
 }
 
@@ -394,18 +410,43 @@ class MinHeap {
  * seat gets desk + collaboration hotspots, so a newly added agent is reachable without any
  * character-specific code.
  */
-export function buildOfficeNav(layout: OfficeLayout, agents: NavAgent[]): OfficeNav {
+export function buildOfficeNav(
+  layout: OfficeLayout,
+  agents: NavAgent[],
+  options: { themes?: Map<string, RoomTheme> } = {},
+): OfficeNav {
   const desks = new Map<string, DeskGeometry>();
-  const obstacles: Rect[] = layout.rooms.flatMap(roomFurniture);
+  const obstacles: Rect[] = [];
+  const keepOut: Rect[] = [];
   for (const a of agents) {
     if (a.pack) {
       const desk = deskGeometry(a.id, a.seat, a.pack);
       desks.set(a.id, desk);
       obstacles.push(desk.footprint);
+      keepOut.push(
+        { x: desk.footprint.x - 8, y: desk.footprint.y - 30, w: desk.footprint.w + 16, h: desk.footprint.h + 38 },
+        pointKeepOut(desk.stand, 20),
+      );
+      if (desk.exit) keepOut.push(pointKeepOut(desk.exit, 22));
     } else {
       obstacles.push(staticSeatFootprint(a.seat));
+      keepOut.push(staticSeatFootprint(a.seat));
     }
+    // Leave room for a visitor on the right of every desk (hand-offs).
+    const fp = desks.get(a.id)?.footprint ?? staticSeatFootprint(a.seat);
+    keepOut.push(pointKeepOut({ x: fp.x + fp.w + 30, y: fp.y + fp.h * 0.8 }, 18));
   }
+
+  const decor: DecorItem[] = [];
+  const decorSpots: Array<{ roomKey: string; name: string; x: number; y: number }> = [];
+  for (const room of layout.rooms) {
+    const theme = options.themes?.get(room.key) ?? "generic";
+    const built = buildRoomDecor(room, theme, keepOut);
+    decor.push(...built.items);
+    decorSpots.push(...built.spots);
+  }
+  for (const item of decor) if (item.footprint) obstacles.push(item.footprint);
+
   const grid = buildNavGrid({
     width: layout.width,
     height: layout.height,
@@ -438,18 +479,10 @@ export function buildOfficeNav(layout: OfficeLayout, agents: NavAgent[]): Office
         y: room.y + room.h * 0.85,
         roomKey: room.key,
       });
-      continue;
     }
-    const spots: Array<[string, number, number]> = [
-      ["window", room.x + room.w * 0.5, room.y + INTERIOR.top + 4],
-      ["shelf", room.x + 40, room.y + 92],
-      ["plant", room.x + room.w - 30, room.y + 100],
-      ["center", room.x + room.w * 0.5, room.y + room.h * 0.62],
-      ["corner", room.x + room.w - 40, room.y + room.h - 30],
-    ];
-    for (const [name, x, y] of spots) {
-      add({ id: `idle:${room.key}:${name}`, kind: "idle", x, y, roomKey: room.key });
-    }
+  }
+  for (const spot of decorSpots) {
+    add({ id: `idle:${spot.roomKey}:${spot.name}`, kind: "idle", x: spot.x, y: spot.y, roomKey: spot.roomKey });
   }
 
   const roomOfAgent = new Map<string, string>();
@@ -479,6 +512,12 @@ export function buildOfficeNav(layout: OfficeLayout, agents: NavAgent[]): Office
         },
         false,
       );
+      if (desk.exit) {
+        // Snap onto walkable floor, and keep the geometry in sync with the hotspot.
+        add({ id: `exit:${a.id}`, kind: "exit", ...desk.exit, roomKey: a.seat.roomKey, agentId: a.id });
+        const snapped = hotspots.get(`exit:${a.id}`);
+        if (snapped) desk.exit = { x: snapped.x, y: snapped.y };
+      }
     }
     const fp = desk?.footprint ?? staticSeatFootprint(a.seat);
     const candidates: Record<Exclude<HandoffSide, "auto">, Vec> = {
@@ -520,7 +559,53 @@ export function buildOfficeNav(layout: OfficeLayout, agents: NavAgent[]): Office
     }
   }
 
-  return { grid, hotspots, desks, roomOfAgent, rooms: layout.rooms };
+  return { grid, hotspots, desks, roomOfAgent, rooms: layout.rooms, decor };
+}
+
+/**
+ * The reachable floor point closest to `target`, starting from `from`: a flood fill over
+ * walkable cells, so a click inside furniture, a wall, or an unreachable pocket still
+ * resolves to somewhere the character can actually walk to.
+ */
+export function nearestReachable(grid: NavGrid, from: Vec, target: Vec): Vec | null {
+  const start = nearestWalkable(grid, from);
+  if (!start) return null;
+  const { cols, rows, blocked } = grid;
+  const s = cellOf(grid, start);
+  const seen = new Uint8Array(cols * rows);
+  const queue = [s.r * cols + s.c];
+  seen[queue[0]!] = 1;
+  let best: number = queue[0]!;
+  let bestD = Infinity;
+  for (let qi = 0; qi < queue.length; qi++) {
+    const i = queue[qi]!;
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    const p = cellCenter(grid, c, r);
+    const d = (p.x - target.x) ** 2 + (p.y - target.y) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+    for (const [dc, dr] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const) {
+      const nc = c + dc;
+      const nr = r + dr;
+      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+      const ni = nr * cols + nc;
+      if (seen[ni] || blocked[ni]) continue;
+      seen[ni] = 1;
+      queue.push(ni);
+    }
+  }
+  // The exact point when it's on reachable floor, else the closest reachable cell centre.
+  const tc = cellOf(grid, target);
+  if (isWalkable(grid, target) && seen[tc.r * cols + tc.c]) return { ...target };
+  return cellCenter(grid, best % cols, Math.floor(best / cols));
 }
 
 /** A random walkable point inside a room's interior (for casual wandering). */

@@ -72,6 +72,19 @@ export function resetReportTemplatesForTests() {
 /** Create missing starter templates once per server instance (never overwrites edits). */
 export function ensureReportTemplates(): Promise<void> {
   templatesSeeded ??= (async () => {
+    // The commissions template needs its (empty) rule set to exist. No rates are created.
+    const { COMMISSION_RULE_SET_KEY } = await import("./templates");
+    const { createRuleSet, getRuleSet } = await import("./rules");
+    if (!(await getRuleSet(COMMISSION_RULE_SET_KEY).catch(() => null))) {
+      await createRuleSet({
+        key: COMMISSION_RULE_SET_KEY,
+        name: "Sales commissions",
+        description: "Default rule set for the Sales Commissions template.",
+        actor: { userId: null, label: "System" },
+      }).catch((error) => {
+        if (!isUniqueViolation(error)) throw error;
+      });
+    }
     for (const t of REPORT_TEMPLATES) {
       const existing = await selectOne<ReportRow>("bi_reports", {
         filters: [eq("template_key", t.key)],

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   BarChart3,
+  BookOpen,
   Database,
   FilePlus2,
   LayoutTemplate,
@@ -26,6 +27,7 @@ import {
 } from "@/components/ai/ui";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { SuggestionCard, type Suggestion } from "./data-catalog";
 import type { ReportsAccessView, ReportSummary } from "./types";
 
 const TABS = [
@@ -47,6 +49,19 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
   const [tab, setTab] = useState<TabKey>("all");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+
+  const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const res = await aiFetch<{ suggestions: Suggestion[] }>(
+        "/api/reports/catalog?view=suggestions",
+      );
+      setSuggestions(res.suggestions);
+    } catch {
+      setSuggestions([]);
+    }
+  }, []);
+  useLoad(loadSuggestions);
 
   const load = useCallback(async () => {
     try {
@@ -115,6 +130,12 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
+          <Link
+            href="/reports/catalog"
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            <BookOpen className="h-4 w-4" aria-hidden /> Data catalog
+          </Link>
           {access?.isAdmin ? (
             <Link
               href="/reports/settings"
@@ -153,6 +174,38 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
         </div>
         <span className={cn(buttonVariants({ size: "sm" }), "hidden sm:inline-flex")}>Start</span>
       </Link>
+
+      {suggestions?.length && tab === "all" && !query ? (
+        <section aria-labelledby="suggested-heading">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2
+              id="suggested-heading"
+              className="flex items-center gap-2 text-sm font-semibold text-[var(--acton-navy)]"
+            >
+              <Sparkles className="h-4 w-4" aria-hidden /> Suggested reports
+            </h2>
+            <Link
+              href="/reports/catalog"
+              className="text-xs font-semibold text-[var(--acton-navy)] hover:underline"
+            >
+              Why some aren&apos;t possible yet →
+            </Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[...suggestions]
+              .sort(
+                (a, b) =>
+                  ["ready", "ready_with_gaps", "needs_setup", "blocked"].indexOf(a.status) -
+                  ["ready", "ready_with_gaps", "needs_setup", "blocked"].indexOf(b.status),
+              )
+              .filter((s) => !s.templateKey)
+              .slice(0, 4)
+              .map((s) => (
+                <SuggestionCard key={s.key} s={s} />
+              ))}
+          </div>
+        </section>
+      ) : null}
 
       {templates.length && tab === "all" && !query ? (
         <section aria-labelledby="templates-heading">

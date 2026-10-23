@@ -24,11 +24,11 @@ export const fieldRef = z
   .string()
   .trim()
   .regex(
-    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60})$/,
+    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|com\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60})$/,
     "Unknown field reference format.",
   );
 
-export const SOURCES = ["jobs", "catalog_models"] as const;
+export const SOURCES = ["jobs", "catalog_models", "commissions"] as const;
 export type ReportSource = (typeof SOURCES)[number];
 
 export const OPERATORS = [
@@ -56,11 +56,21 @@ export const conditionSchema = z.object({
 });
 export type Condition = z.infer<typeof conditionSchema>;
 
+const ruleSetKey = z
+  .string()
+  .trim()
+  .regex(
+    /^[a-z][a-z0-9_-]{1,59}$/,
+    "Rule set keys use lowercase letters, numbers, dashes, or underscores.",
+  );
+
 export const datasetSchema = z.object({
   id,
   source: z.enum(SOURCES),
   label: z.string().max(80).optional(),
   filters: z.array(conditionSchema).max(20).default([]),
+  /** commissions only: the Baxter business-rule set (rates + assignments) to calculate with. */
+  ruleSet: ruleSetKey.optional(),
 });
 export type DatasetSpec = z.infer<typeof datasetSchema>;
 
@@ -260,6 +270,18 @@ export const widgetSchema = z.discriminatedUnion("type", [
     type: z.literal("text"),
     body: z.string().max(2000),
   }),
+  /** Edit commission rates for a rule set (authorized users only; changes are audited). */
+  z.object({
+    ...widgetBase,
+    type: z.literal("rate_editor"),
+    ruleSet: ruleSetKey,
+  }),
+  /** Assign JobTread projects to salespeople, with splits and payment dates. */
+  z.object({
+    ...widgetBase,
+    type: z.literal("assignment_editor"),
+    ruleSet: ruleSetKey,
+  }),
 ]);
 export type WidgetSpec = z.infer<typeof widgetSchema>;
 export type WidgetType = WidgetSpec["type"];
@@ -287,6 +309,14 @@ export function checkSpecReferences(spec: ReportSpec): SpecIssue[] {
     datasetIds.add(d.id);
   });
   const datasetById = new Map(spec.datasets.map((d) => [d.id, d]));
+  spec.datasets.forEach((d, i) => {
+    if (d.source === "commissions" && !d.ruleSet) {
+      issues.push({
+        path: `datasets[${i}]`,
+        message: `Commission dataset "${d.id}" needs a ruleSet.`,
+      });
+    }
+  });
   const controlIds = new Set<string>();
   spec.controls.forEach((c, i) => {
     if (controlIds.has(c.id))

@@ -106,6 +106,13 @@ export type DocumentsResult = Base & {
   jobtreadUrl: string | null;
 };
 export type TextResult = Base & { kind: "text"; body: string };
+export type RuleEditorResult = Base & {
+  kind: "rule_editor";
+  editor: "rates" | "assignments";
+  ruleSet: string;
+  ruleSetName: string | null;
+  canEdit: boolean;
+};
 
 export type WidgetResult =
   | KpiResult
@@ -115,7 +122,8 @@ export type WidgetResult =
   | HeaderResult
   | MilestonesResult
   | DocumentsResult
-  | TextResult;
+  | TextResult
+  | RuleEditorResult;
 
 export type ControlOptions =
   | {

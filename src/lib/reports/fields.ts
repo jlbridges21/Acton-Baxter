@@ -150,6 +150,198 @@ export const JOB_BUILTINS: FieldDef[] = [
   },
 ];
 
+/** Derived from JobTread documents (src/lib/reports/financials.ts). */
+const docField = (
+  key: string,
+  label: string,
+  type: FieldDef["type"],
+  category: FieldDef["category"],
+  origin: string,
+  description: string,
+): FieldDef => ({
+  key,
+  label,
+  type,
+  category,
+  source: "jobs",
+  origin,
+  description,
+});
+
+export const JOB_FINANCIAL_FIELDS: FieldDef[] = [
+  docField(
+    "job.actualCost",
+    "Actual Cost",
+    "currency",
+    "financial",
+    "JobTread job.actualCost",
+    "Costs recorded against the job in JobTread.",
+  ),
+  docField(
+    "job.orderPrice",
+    "Customer Order Price",
+    "currency",
+    "financial",
+    "JobTread customer order (approved, else latest draft) price",
+    "Total price on the job's primary customer order.",
+  ),
+  docField(
+    "job.orderCost",
+    "Customer Order Cost",
+    "currency",
+    "financial",
+    "JobTread customer order (approved, else latest draft) cost",
+    "Total cost on the job's primary customer order.",
+  ),
+  docField(
+    "job.orderGrossProfit",
+    "Projected Gross Profit",
+    "currency",
+    "financial",
+    "Derived: customer order price − cost",
+    "Projected, not realized: JobTread has no recorded payments or actual costs for most jobs.",
+  ),
+  docField(
+    "job.orderMarginPct",
+    "Projected Gross Margin %",
+    "percent",
+    "financial",
+    "Derived: (order price − cost) ÷ order price × 100",
+    "Projected margin from the primary customer order.",
+  ),
+  docField(
+    "job.orderStatus",
+    "Customer Order Status",
+    "text",
+    "general",
+    "JobTread customer order status",
+    "approved, draft, …",
+  ),
+  docField(
+    "job.orderDate",
+    "Customer Order Date",
+    "date",
+    "general",
+    "JobTread customer order issue date",
+    "Issue date of the primary customer order.",
+  ),
+  docField(
+    "job.invoicedTotal",
+    "Invoiced Total",
+    "currency",
+    "financial",
+    "Sum of JobTread customer invoice prices",
+    "Total of all customer invoices on the job.",
+  ),
+  docField(
+    "job.amountPaid",
+    "Amount Paid",
+    "currency",
+    "financial",
+    "Sum of JobTread customer invoice amount paid",
+    "Payments applied to the job's customer invoices.",
+  ),
+  docField(
+    "job.balanceDue",
+    "Balance Due",
+    "currency",
+    "financial",
+    "Sum of JobTread customer invoice balances",
+    "Amount still owed on customer invoices.",
+  ),
+  docField(
+    "job.lastInvoiceDate",
+    "Last Invoice Date",
+    "date",
+    "general",
+    "Latest JobTread customer invoice issue date",
+    "Most recent customer invoice date.",
+  ),
+];
+
+const comField = (
+  key: string,
+  label: string,
+  type: FieldDef["type"],
+  category: FieldDef["category"],
+  origin: string,
+  description?: string,
+): FieldDef => ({
+  key,
+  label,
+  type,
+  category,
+  source: "commissions",
+  origin,
+  ...(description ? { description } : {}),
+});
+
+/** One row per project × salesperson (src/lib/reports/commissions.ts). */
+export const COMMISSION_FIELDS: FieldDef[] = [
+  comField(
+    "com.salesperson",
+    "Salesperson",
+    "text",
+    "general",
+    "Baxter assignment, else JobTread Sales Rep",
+  ),
+  comField("com.jobName", "Project", "text", "general", "JobTread job.name"),
+  comField("com.jobNumber", "Job Number", "text", "general", "JobTread job.number"),
+  comField(
+    "com.assignmentSource",
+    "Assigned Via",
+    "text",
+    "general",
+    "Baxter assignment or JobTread Sales Rep field",
+  ),
+  comField(
+    "com.status",
+    "Commission Status",
+    "text",
+    "general",
+    "Derived from gross profit, rate, and date availability",
+  ),
+  comField(
+    "com.date",
+    "Commission Date",
+    "date",
+    "general",
+    "Configured date source (see the rule set)",
+  ),
+  comField("com.orderStatus", "Order Status", "text", "general", "JobTread customer order status"),
+  comField(
+    "com.grossProfit",
+    "Eligible Gross Profit",
+    "currency",
+    "financial",
+    "Configured gross-profit basis (JobTread documents)",
+  ),
+  comField("com.splitPct", "Split %", "percent", "financial", "Baxter assignment split"),
+  comField(
+    "com.ratePct",
+    "Commission Rate %",
+    "percent",
+    "financial",
+    "Baxter commission rate in effect on the commission date",
+  ),
+  comField(
+    "com.rateSource",
+    "Rate Source",
+    "text",
+    "financial",
+    "Project override or salesperson rate",
+  ),
+  comField(
+    "com.commission",
+    "Commission",
+    "currency",
+    "financial",
+    "Derived: gross profit × rate % × split %",
+    "Calculated by Baxter, not stored in JobTread. Decision support only.",
+  ),
+  comField("com.notes", "Notes", "text", "general", "Calculation notes"),
+];
+
 export const MODEL_FIELDS: FieldDef[] = [
   {
     key: "model.name",
@@ -289,8 +481,10 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
         description: f.description ?? undefined,
       };
     });
-  const jobs = [...JOB_BUILTINS, ...custom];
-  const byKey = new Map<string, FieldDef>([...jobs, ...MODEL_FIELDS].map((f) => [f.key, f]));
+  const jobs = [...JOB_BUILTINS, ...JOB_FINANCIAL_FIELDS, ...custom];
+  const byKey = new Map<string, FieldDef>(
+    [...jobs, ...MODEL_FIELDS, ...COMMISSION_FIELDS].map((f) => [f.key, f]),
+  );
   const semanticMap = new Map(
     semantic.map((s) => [
       `sem:${s.key}`,
@@ -302,7 +496,7 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
     ]),
   );
   const catalog: FieldCatalog = {
-    bySource: { jobs, catalog_models: MODEL_FIELDS },
+    bySource: { jobs, catalog_models: MODEL_FIELDS, commissions: COMMISSION_FIELDS },
     byKey,
     semantic: semanticMap,
   };

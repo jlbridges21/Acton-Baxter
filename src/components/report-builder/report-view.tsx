@@ -37,6 +37,7 @@ import {
   GripVertical,
   History,
   LayoutGrid,
+  MessageSquare,
   Pin,
   PinOff,
   Plus,
@@ -155,6 +156,7 @@ export function ReportView({
   } | null>(null);
   const [rowView, setRowView] = useState<RowState>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [focus, setFocus] = useState<{ widgetId: string; title: string } | null>(null);
   const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | null>(null);
 
   const load = useCallback(async () => {
@@ -683,6 +685,15 @@ export function ReportView({
                   onExport={() => void exportWidget(w.id)}
                   onDrill={(req) => void openDrill(req)}
                   onOpenRow={(row, columns) => setRowView({ row, columns })}
+                  onRulesChanged={() => setRefreshTick((t) => t + 1)}
+                  onAskDexter={
+                    canChat
+                      ? () => {
+                          setFocus({ widgetId: w.id, title: w.title || w.type });
+                          setChatOpen(true);
+                        }
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -762,6 +773,8 @@ export function ReportView({
         canChat={canChat}
         open={chatOpen}
         onOpenChange={setChatOpen}
+        focus={focus}
+        onClearFocus={() => setFocus(null)}
         blockedReason={
           dirty
             ? "Save or cancel your layout changes before asking Dexter to change the report."
@@ -794,6 +807,8 @@ function WidgetCard({
   onExport,
   onDrill,
   onOpenRow,
+  onRulesChanged,
+  onAskDexter,
 }: {
   widget: WidgetSpec;
   editing: boolean;
@@ -803,6 +818,8 @@ function WidgetCard({
   onExport: () => void;
   onDrill: (req: DrillRequest) => void;
   onOpenRow: (row: NonNullable<RowState>["row"], columns: FieldMeta[]) => void;
+  onRulesChanged: () => void;
+  onAskDexter?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: widget.id,
@@ -925,6 +942,17 @@ function WidgetCard({
             ) : null}
           </div>
           <div className="flex shrink-0 items-center">
+            {onAskDexter && !editing ? (
+              <button
+                type="button"
+                onClick={onAskDexter}
+                className="rounded p-1 text-[var(--acton-muted)] hover:bg-[var(--acton-gray-50)] hover:text-[var(--acton-navy)] print:hidden"
+                aria-label={`Ask Dexter about ${widget.title || "this widget"}`}
+                title="Ask Dexter about this"
+              >
+                <MessageSquare className="h-4 w-4" aria-hidden />
+              </button>
+            ) : null}
             <ProvenanceButton provenance={result?.provenance} title={widget.title} />
             {exportable && !editing ? (
               <button
@@ -951,6 +979,7 @@ function WidgetCard({
           actions={{
             onDrill: editing ? undefined : onDrill,
             onOpenRow: editing ? undefined : onOpenRow,
+            onRulesChanged,
           }}
         />
       )}

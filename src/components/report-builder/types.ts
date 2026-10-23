@@ -56,7 +56,7 @@ export type FieldOption = {
   origin: string;
 };
 export type FieldsResponse = Record<
-  "jobs" | "catalog_models",
+  "jobs" | "catalog_models" | "commissions",
   { business: FieldOption[]; all: FieldOption[] }
 >;
 
@@ -75,4 +75,5 @@ export type ChatMessage = {
   artifacts: ChatArtifact[];
   outcome: string | null;
   failed: boolean;
+  attachments?: Array<{ id: string; filename: string; kind: string; status: string }>;
 };

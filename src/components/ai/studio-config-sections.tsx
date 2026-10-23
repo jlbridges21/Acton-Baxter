@@ -339,10 +339,10 @@ export function ModelSection({ editor, data }: { editor: ConfigEditor; data: Stu
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {(
             [
-              ["maxIterations", "Max reasoning steps", 1, 8, 1],
-              ["maxToolCalls", "Max tool uses", 0, 12, 1],
-              ["timeoutMs", "Time limit (seconds)", 5, 240, 5],
-              ["maxTotalTokens", "Token budget per task", 2000, 400000, 1000],
+              ["maxIterations", "Max reasoning steps", 1, 16, 1],
+              ["maxToolCalls", "Max tool uses", 0, 30, 1],
+              ["timeoutMs", "Time limit (seconds)", 5, 270, 5],
+              ["maxTotalTokens", "Token budget per task", 2000, 800000, 1000],
               ["maxCostUsd", "Cost budget per task (USD)", 0.01, 10, 0.05],
             ] as const
           ).map(([key, label, min, max, step]) => {

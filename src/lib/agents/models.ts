@@ -263,6 +263,11 @@ export type ModelCallInput = {
   maxOutputTokens: number;
   effort: EffortLevel | null;
   timeoutMs: number;
+  /** Images attached to the final user message (vision). Anthropic only. */
+  images?: Array<{
+    mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+    base64: string;
+  }>;
 };
 
 export type ModelCallOutput = {
@@ -350,6 +355,13 @@ async function postJson(
 }
 
 async function callOpenAi(input: ModelCallInput): Promise<ModelCallOutput> {
+  if (input.images?.length) {
+    throw new ModelCallError("Image analysis uses an Anthropic (Claude) model.", {
+      code: "VISION_UNSUPPORTED",
+      provider: "openai",
+      retryable: false,
+    });
+  }
   const key = apiKey("openai");
   const started = Date.now();
   const caps = modelCapabilities("openai", input.model);
@@ -399,6 +411,25 @@ async function callOpenAi(input: ModelCallInput): Promise<ModelCallOutput> {
   };
 }
 
+/** Put image blocks before the text of the last user message (Anthropic content blocks). */
+function withImages(messages: ModelMessage[], images: NonNullable<ModelCallInput["images"]>) {
+  const last = messages.length - 1;
+  return messages.map((m, i) =>
+    i === last && m.role === "user"
+      ? {
+          role: m.role,
+          content: [
+            ...images.map((img) => ({
+              type: "image",
+              source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+            })),
+            { type: "text", text: m.content },
+          ],
+        }
+      : m,
+  );
+}
+
 async function callAnthropic(input: ModelCallInput): Promise<ModelCallOutput> {
   const key = apiKey("anthropic");
   const started = Date.now();
@@ -408,7 +439,7 @@ async function callAnthropic(input: ModelCallInput): Promise<ModelCallOutput> {
     model: input.model,
     max_tokens: input.maxOutputTokens,
     system: input.system,
-    messages: input.messages,
+    messages: input.images?.length ? withImages(input.messages, input.images) : input.messages,
   };
   if (caps.supportsEffort && input.effort) body.output_config = { effort: input.effort };
   const data = await postJson(
@@ -457,6 +488,11 @@ async function callAnthropic(input: ModelCallInput): Promise<ModelCallOutput> {
 async function callOnce(input: ModelCallInput): Promise<ModelCallOutput> {
   if (testCaller) return testCaller(input);
   return input.provider === "openai" ? callOpenAi(input) : callAnthropic(input);
+}
+
+/** A single model call (used for attachment analysis). Honors the test caller. */
+export function callModelDirect(input: ModelCallInput): Promise<ModelCallOutput> {
+  return callOnce(input);
 }
 
 /** Resolve the effective provider/model for an agent ("environment" uses Baxter's env config). */

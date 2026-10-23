@@ -100,7 +100,7 @@ test("Financial figures stay hidden from people without financial access", async
 test("Dexter's chat panel opens from a report and old routes redirect", async ({ page }) => {
   await page.goto("/reports");
   await page.getByRole("link", { name: "Open" }).first().click();
-  await page.getByRole("button", { name: "Ask Dexter" }).click();
+  await page.getByRole("button", { name: /Ask Dexter$/ }).click();
   await expect(page.getByRole("region", { name: "Chat with Dexter" })).toBeVisible();
   await expect(page.getByLabel("Message Dexter")).toBeVisible();
   await page.getByRole("button", { name: "Close chat" }).click();
@@ -138,4 +138,80 @@ test("Unknown report ids show a Reports not-found page that links back to Report
   await expect(page.getByRole("heading", { name: "Report not found" })).toBeVisible();
   await page.getByRole("link", { name: "Back to Reports" }).click();
   await expect(page).toHaveURL(/\/reports$/);
+});
+
+test("The Data Catalog shows verified JobTread entities, fields, and what's possible", async ({
+  page,
+}) => {
+  await page.goto("/reports");
+  await expect(page.getByRole("heading", { name: "Suggested reports" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.getByRole("link", { name: "Data catalog" }).click();
+  await expect(page.getByRole("heading", { name: "Data catalog", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: /Financial documents/ }).click();
+  await expect(page.getByText("Amount paid")).toBeVisible();
+  await page.getByRole("button", { name: /Payments/ }).click();
+  await expect(page.getByText(/no records in Acton/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Fields", exact: true }).click();
+  await page.getByPlaceholder("Search fields").fill("phase");
+  await expect(page.getByRole("cell", { name: /Phase/ }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "What's possible", exact: true }).click();
+  const payments = page.getByRole("row", { name: /Customer payment dates/ });
+  await expect(payments.getByText("Not in JobTread")).toBeVisible();
+  await expect(payments.getByText(/Enter the payment/)).toBeVisible();
+  // A standard user can't see financial capabilities' values.
+  await expect(
+    page.getByRole("row", { name: /Gross profit \(projected\)/ }).getByText("Restricted for you"),
+  ).toBeVisible();
+});
+
+test("Dexter chat accepts attachments and is honest when a screenshot can't be analyzed", async ({
+  page,
+}) => {
+  await page.goto("/reports/new");
+  await expect(page.getByRole("region", { name: "Chat with Dexter" })).toBeVisible();
+  const input = page.locator('input[type="file"]');
+  await input.setInputFiles([
+    {
+      name: "rates.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from("Salesperson,Rate\nKevin,5%\n"),
+    },
+    {
+      name: "dashboard.png",
+      mimeType: "image/png",
+      buffer: Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(64, 1)]),
+    },
+    { name: "notes.exe", mimeType: "application/octet-stream", buffer: Buffer.from("MZ") },
+  ]);
+  await expect(page.getByTitle("rates.csv")).toContainText(/KB/, { timeout: 30_000 });
+  await expect(page.getByTitle(/No vision model is configured/)).toBeVisible();
+  await expect(page.getByTitle(/isn't supported/)).toBeVisible();
+  await page.getByRole("button", { name: "Remove notes.exe" }).click();
+  await expect(page.getByText("notes.exe")).toHaveCount(0);
+});
+
+test("The Sales Commissions template hides compensation data from people without financial access", async ({
+  page,
+}) => {
+  await page.goto("/reports");
+  await page.getByRole("button", { name: "Templates" }).click();
+  await page.getByRole("link", { name: /Sales Commissions/ }).click();
+  await expect(page.getByRole("heading", { name: "Sales Commissions", level: 1 })).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Calculated commissions" })
+      .getByText(/Requires "Financial figures" access/),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page
+      .getByRole("region", { name: "Commission rates" })
+      .getByText(/Requires "Financial figures" access/),
+  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "About these numbers" })).toContainText(
+    "JobTread has no recorded customer payments",
+  );
 });

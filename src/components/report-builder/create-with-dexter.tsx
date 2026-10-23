@@ -12,12 +12,15 @@ const SUGGESTIONS = [
   "Build a design handoff view for one project: model, site conditions, utilities, milestones, and documents",
   "Compare the ADU models in the Product Library by base price and margin",
   "How many active projects are in permitting, and which ones?",
+  "What data do you have access to?",
 ];
 
 export function CreateWithDexter({
   canChat,
   dexterAvatarUrl,
+  initialPrompt = "",
 }: {
+  initialPrompt?: string;
   canChat: boolean;
   dexterAvatarUrl: string | null;
 }) {
@@ -40,6 +43,7 @@ export function CreateWithDexter({
       <DexterChat
         reportId={null}
         avatarUrl={dexterAvatarUrl}
+        initialDraft={initialPrompt}
         variant="inline"
         canChat={canChat}
         suggestions={SUGGESTIONS}

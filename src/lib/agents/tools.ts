@@ -14,6 +14,7 @@ import "server-only";
 import { z } from "zod";
 import { createApproval } from "./approvals";
 import { searchAgentKnowledge } from "./knowledge";
+import { REPORT_INTEL_TOOLS } from "./report-intel-tools";
 import { REPORT_TOOLS } from "./report-tools";
 import {
   getInstance,
@@ -300,6 +301,7 @@ function plannedTool(
 
 export const TOOL_REGISTRY: AgentTool[] = [
   ...REPORT_TOOLS,
+  ...REPORT_INTEL_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,

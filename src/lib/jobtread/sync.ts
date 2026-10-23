@@ -35,6 +35,7 @@ export type JobNode = {
   closedOn: string | null;
   projectedPrice?: number | null;
   projectedCost?: number | null;
+  actualCost?: number | null;
   taskSummary?: {
     startDate: string | null;
     endDate: string | null;
@@ -63,6 +64,7 @@ export const JOB_SYNC_NODES = {
   closedOn: {},
   projectedPrice: {},
   projectedCost: {},
+  actualCost: {},
   taskSummary: { startDate: {}, endDate: {}, progress: {} },
   customFieldValues: CF_NODES,
   location: {
@@ -114,6 +116,7 @@ export function normalizeJob(node: JobNode, allowed: Set<string>, syncedAt: stri
     customer_name: loc?.account?.name ?? null,
     projected_price: toNumber(node.projectedPrice),
     projected_cost: toNumber(node.projectedCost),
+    actual_cost: toNumber(node.actualCost),
     task_start: node.taskSummary?.startDate ?? null,
     task_end: node.taskSummary?.endDate ?? null,
     task_progress:
@@ -162,6 +165,72 @@ export async function syncJobs(stats: PaveStats): Promise<{ seen: number; remove
   const syncedAt = new Date().toISOString();
   const rows = nodes.map((n) => normalizeJob(n, allowed, syncedAt));
   const removed = await upsertRemovingMissing("jt_jobs", rows, syncedAt);
+  return { seen: rows.length, removed };
+}
+
+type DocumentNode = {
+  id: string;
+  type: string;
+  status: string | null;
+  number: string | null;
+  name: string | null;
+  issueDate: string | null;
+  dueDate: string | null;
+  signedAt: string | null;
+  createdAt: string | null;
+  price: number | null;
+  cost: number | null;
+  tax: number | null;
+  amountPaid: number | null;
+  balance: number | null;
+  job: { id: string } | null;
+};
+
+/** Financial documents (orders, invoices, bills): totals and dates only — no line items. */
+export async function syncDocuments(stats: PaveStats): Promise<{ seen: number; removed: number }> {
+  const nodes = await paginate<DocumentNode>({
+    connection: "documents",
+    nodes: {
+      id: {},
+      type: {},
+      status: {},
+      number: {},
+      name: {},
+      issueDate: {},
+      dueDate: {},
+      signedAt: {},
+      createdAt: {},
+      price: {},
+      cost: {},
+      tax: {},
+      amountPaid: {},
+      balance: {},
+      job: { id: {} },
+    },
+    pageSize: 100,
+    stats,
+  });
+  const syncedAt = new Date().toISOString();
+  const rows = nodes.map((n) => ({
+    id: n.id,
+    job_id: n.job?.id ?? null,
+    type: n.type,
+    status: n.status,
+    number: n.number,
+    name: n.name,
+    issue_date: n.issueDate?.slice(0, 10) ?? null,
+    due_date: n.dueDate?.slice(0, 10) ?? null,
+    signed_at: n.signedAt,
+    price: toNumber(n.price),
+    cost: toNumber(n.cost),
+    tax: toNumber(n.tax),
+    amount_paid: toNumber(n.amountPaid),
+    balance: toNumber(n.balance),
+    source_created_at: n.createdAt,
+    synced_at: syncedAt,
+    removed_at: null,
+  }));
+  const removed = await upsertRemovingMissing("jt_documents", rows, syncedAt);
   return { seen: rows.length, removed };
 }
 
@@ -363,13 +432,18 @@ export async function runFullSync(triggeredBy: string): Promise<SyncRunRow> {
     const meta = await syncCustomFieldMetadata(stats);
     const jobs = await syncJobs(stats);
     const catalog = await syncCatalogModels(stats);
+    const documents = await syncDocuments(stats);
+    // The entity catalog is metadata; refresh daily. Its failure never fails the data sync.
+    const { entityCatalogIsStale, verifyEntityCatalog } = await import("./catalog");
+    if (await entityCatalogIsStale().catch(() => false))
+      await verifyEntityCatalog(stats).catch(() => undefined);
     const [done] = await db.update<SyncRunRow>("jt_sync_runs", [eq("id", run!.id)], {
       status: "succeeded",
       finished_at: new Date().toISOString(),
       api_requests: stats.requests,
-      records_seen: meta.seen + jobs.seen + catalog.seen,
-      records_upserted: jobs.seen + catalog.seen,
-      records_removed: jobs.removed + catalog.removed + meta.removed,
+      records_seen: meta.seen + jobs.seen + catalog.seen + documents.seen,
+      records_upserted: jobs.seen + catalog.seen + documents.seen,
+      records_removed: jobs.removed + catalog.removed + meta.removed + documents.removed,
       duration_ms: Date.now() - started,
     });
     return done!;

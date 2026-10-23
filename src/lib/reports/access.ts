@@ -26,6 +26,8 @@ export type ReportsAccess = {
   canUse: boolean;
   canChat: boolean;
   canManage: boolean;
+  /** Set commission rates / project assignments (requires financial access too). */
+  canEditRules: boolean;
   isAdmin: boolean;
   categories: Set<FieldDef["category"]>;
 };
@@ -44,6 +46,7 @@ export async function getReportsAccess(requester: Requester): Promise<ReportsAcc
     canUse,
     canChat: isAdmin || levels.has("direct_chat"),
     canManage: isAdmin || levels.has("manage"),
+    canEditRules: isAdmin || (levels.has("business_rules") && levels.has("financial_data")),
     isAdmin,
     categories,
   };

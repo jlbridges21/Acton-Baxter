@@ -58,6 +58,9 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   jt_jobs: [["id"]],
   jt_catalog_models: [["id"]],
   bi_reports: [["template_key"]],
+  jt_documents: [["id"]],
+  jt_entity_catalog: [["entity"]],
+  bi_rule_sets: [["key"]],
   bi_report_revisions: [["report_id", "version"]],
   bi_report_shares: [["report_id", "principal_type", "principal_value"]],
   bi_report_views: [["report_id", "user_id"]],
@@ -70,6 +73,7 @@ const NO_ID_TABLES = new Set([
   "ai_workspace_settings",
   "jt_connection",
   "jt_semantic_fields",
+  "jt_entity_catalog",
   "bi_report_views",
   "bi_report_pins",
 ]);

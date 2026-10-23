@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "character": "dexter",
+  "role": "Business Intelligence and Analytics AI agent",
+  "packVersion": "1.0.0",
+  "format": "png",
+  "colorModel": "RGBA",
+  "frameSize": { "width": 627, "height": 627 },
+  "frameOrder": "row-major: top-left, top-right, bottom-left, bottom-right",
+  "aliases": {
+    "thinking": "dataThinking",
+    "presenting": "analyticsTask"
+  },
+  "animations": {
+    "idle": {
+      "loop": true,
+      "frameDurationMs": 650,
+      "frames": [
+        "sprites/idle/idle-01-attentive.png",
+        "sprites/idle/idle-02-blink-pant.png",
+        "sprites/idle/idle-03-data-head-tilt.png",
+        "sprites/idle/idle-04-tail-ready.png"
+      ]
+    },
+    "walkRight": {
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "sprites/walk-right/walk-right-01.png",
+        "sprites/walk-right/walk-right-02.png",
+        "sprites/walk-right/walk-right-03.png",
+        "sprites/walk-right/walk-right-04.png"
+      ]
+    },
+    "walkLeft": {
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "sprites/walk-left/walk-left-01.png",
+        "sprites/walk-left/walk-left-02.png",
+        "sprites/walk-left/walk-left-03.png",
+        "sprites/walk-left/walk-left-04.png"
+      ]
+    },
+    "working": {
+      "loop": true,
+      "frameDurationMs": 300,
+      "frames": [
+        "sprites/work/work-01-dashboard.png",
+        "sprites/work/work-02-monitor-analysis.png",
+        "sprites/work/work-03-report-review.png",
+        "sprites/work/work-04-dashboard-complete.png"
+      ]
+    },
+    "sitDown": {
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "sprites/transitions/sit-down/sit-down-01.png",
+        "sprites/transitions/sit-down/sit-down-02.png",
+        "sprites/transitions/sit-down/sit-down-03.png"
+      ]
+    },
+    "standUp": {
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "sprites/transitions/stand-up/stand-up-01.png",
+        "sprites/transitions/stand-up/stand-up-02.png",
+        "sprites/transitions/stand-up/stand-up-03.png"
+      ]
+    },
+    "dataThinking": {
+      "loop": false,
+      "frameDurationMs": 420,
+      "frames": [
+        "sprites/emotes/data-thinking/data-thinking-01.png",
+        "sprites/emotes/data-thinking/data-thinking-02.png",
+        "sprites/emotes/data-thinking/data-thinking-03.png"
+      ]
+    },
+    "analyticsTask": {
+      "loop": false,
+      "frameDurationMs": 340,
+      "frames": [
+        "sprites/emotes/analytics-task/analytics-task-01.png",
+        "sprites/emotes/analytics-task/analytics-task-02.png",
+        "sprites/emotes/analytics-task/analytics-task-03.png"
+      ]
+    }
+  }
+}

@@ -31,7 +31,8 @@ export type Action =
   | { kind: "walk"; to: Vec; speed?: "stroll" | "hurry" }
   | { kind: "idle"; ms: number | null; micro?: boolean }
   | { kind: "pose"; visual: "look_around" | "tail_flick" | "blink"; ms: number }
-  | { kind: "emote"; clip: "thinking" | "presenting"; repeat?: number; holdMs?: number }
+  /** A one-shot emote clip, by the character's own clip name (e.g. "hrTask"). */
+  | { kind: "emote"; clip: string; repeat?: number; holdMs?: number }
   | { kind: "sit" }
   | { kind: "stand" }
   | { kind: "seated"; mode: "idle" | "work"; ms: number | null; micro?: boolean }
@@ -39,6 +40,7 @@ export type Action =
 
 /** Lower number wins. Equal priority replaces (a fresher plan of the same kind). */
 export const PRIORITY = {
+  manual: 0, // the user is directing this character (click-to-move, interrupt)
   critical: 1, // collaboration hand-offs, failures
   task: 2, // the character's own active task
   completion: 3, // reviewing/presenting a finished result
@@ -52,9 +54,12 @@ export type Plan = {
   actions: Action[];
   /** Free-form label for callers (e.g. "ambient:desk", "handoff:<taskId>"). */
   tag?: string;
+  /** User-directed: walks go straight to the target (no desk-exit waypoint). */
+  manual?: boolean;
 };
 
 export type RenderState = {
+  /** Where the brain thinks this pose happens; the director may override from the clip art. */
   scene: "character" | "desk";
   clip: ClipName;
   frame: number;
@@ -70,8 +75,12 @@ export type ClipTiming = { frames: number; frameDurationMs: number; loop: boolea
 export type BrainOptions = {
   clips: Partial<Record<ClipName, ClipTiming>>;
   findPath: (from: Vec, to: Vec) => Vec[] | null;
-  /** Desk approach point; null means this character can't sit (seated actions degrade). */
-  desk: { stand: Vec } | null;
+  /**
+   * Desk approach point; null means this character can't sit (seated actions degrade).
+   * `exit`: a waypoint (right of the desk) every autonomous route to or from the desk
+   * passes through, so the character never leaves past clutter on the desk's left.
+   */
+  desk: { stand: Vec; exit?: Vec | null } | null;
   start: Vec;
   startSeated?: boolean;
   strideWorldPx: number;
@@ -95,7 +104,7 @@ type Active =
   | { kind: "walk"; path: Vec[]; seg: number; walked: number; speed: number }
   | { kind: "idle"; ms: number | null; elapsed: number; micro: boolean; pose: Pose }
   | { kind: "pose"; visual: "look_around" | "tail_flick" | "blink"; ms: number; elapsed: number }
-  | { kind: "emote"; clip: "thinking" | "presenting"; total: number; play: number; elapsed: number }
+  | { kind: "emote"; clip: string; total: number; play: number; elapsed: number }
   | { kind: "sit" | "stand"; total: number; elapsed: number }
   | {
       kind: "seated";
@@ -258,6 +267,18 @@ export class CharacterBrain {
             this.beginStand();
             return;
           }
+          const exit = this.opts.desk?.exit;
+          if (
+            exit &&
+            !this.plan?.manual &&
+            this.atDesk() &&
+            dist(action.to, exit) > 3 &&
+            dist(action.to, desk!.stand) > 3
+          ) {
+            // Leave the desk to the right first, then carry on.
+            this.queue.unshift({ kind: "walk", to: exit, speed: action.speed }, action);
+            continue;
+          }
           if (this.reduced) {
             // Reduced motion: no walking across the screen, just appear at the destination.
             this.pos = { ...action.to };
@@ -282,7 +303,13 @@ export class CharacterBrain {
         case "sit":
           if (!canSit || this.seated) continue;
           if (dist(this.pos, desk!.stand) > 3) {
-            this.queue.unshift({ kind: "walk", to: desk!.stand }, action);
+            const exit = desk!.exit;
+            // Right-exit desks are approached from their exit waypoint too.
+            if (exit && !this.plan?.manual && dist(this.pos, exit) > 3) {
+              this.queue.unshift({ kind: "walk", to: exit }, { kind: "walk", to: desk!.stand }, action);
+            } else {
+              this.queue.unshift({ kind: "walk", to: desk!.stand }, action);
+            }
             continue;
           }
           this.pos = { ...desk!.stand };
@@ -313,6 +340,12 @@ export class CharacterBrain {
           return;
       }
     }
+  }
+
+  /** Seated, or standing at the desk's approach point. */
+  private atDesk() {
+    const desk = this.opts.desk;
+    return Boolean(desk && (this.seated || dist(this.pos, desk.stand) <= 14));
   }
 
   private beginStand() {
@@ -405,7 +438,7 @@ export class CharacterBrain {
         if (a.kind === "sit") this.seated = true;
         if (a.kind === "stand") {
           this.seated = false;
-          this.facing = "left";
+          this.facing = this.opts.desk?.exit ? "right" : "left";
           if (this.opts.desk) this.pos = { ...this.opts.desk.stand };
         }
         if ((a.kind === "sit" || a.kind === "stand") && this.pending) {
@@ -546,7 +579,7 @@ export class CharacterBrain {
     }
   }
 
-  private loopFrame(name: ClipName, elapsed: number) {
+  private loopFrame(name: string, elapsed: number) {
     const clip = this.opts.clips[name];
     if (!clip || this.reduced) return 0;
     return Math.floor(elapsed / clip.frameDurationMs) % clip.frames;

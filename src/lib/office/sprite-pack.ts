@@ -1,24 +1,19 @@
 /**
  * Sprite packs for animated AI Office characters.
  *
- * A pack is a normalized manifest (see scripts/normalize-baxter-sprites.mjs) plus a little
- * hand-measured metadata about its desk artwork. Agents without a pack keep their static
- * portrait, so adding a new animated agent is: drop frames in /public, normalize them, and
- * register the pack below.
+ * A pack is a normalized manifest (see scripts/normalize-sprite-packs.mjs) plus a small
+ * character definition: scale, desk metrics, which clips are its "thinking" and "task"
+ * emotes, its idle routine, and whether it leaves its desk to the right. Clip lists and
+ * timings always come from the manifest. Agents without a pack keep their static portrait.
  */
 
-export const CLIP_NAMES = [
-  "idle",
-  "walkRight",
-  "walkLeft",
-  "working",
-  "sitDown",
-  "standUp",
-  "thinking",
-  "presenting",
-] as const;
+/** Clips every character shares; role-specific emotes (e.g. "hrTask") are extra names. */
+export const CORE_CLIPS = ["idle", "walkRight", "walkLeft", "working", "sitDown", "standUp"] as const;
 
-export type ClipName = (typeof CLIP_NAMES)[number];
+/** Baxter's original clip names, kept for the clips that have them. */
+export const CLIP_NAMES = [...CORE_CLIPS, "thinking", "presenting"] as const;
+
+export type ClipName = (typeof CLIP_NAMES)[number] | (string & {});
 
 export type Vec = { x: number; y: number };
 
@@ -31,12 +26,29 @@ export type SpriteClip = {
   frames: string[];
 };
 
+/**
+ * Desk artwork, in desk-canvas pixels: the tabletop centre, the floor footprint (blocks
+ * walking), and where the seated character's feet are (for hit-testing and bubbles).
+ */
+export type DeskMetrics = {
+  focus: Vec;
+  footprint: { x: number; y: number; w: number; h: number };
+  seatedFeet: Vec;
+};
+
 export type SpritePackManifest = {
   schemaVersion: 1;
   character: string;
   canvases: { character: SpriteCanvas; desk: SpriteCanvas };
-  animations: Partial<Record<ClipName, SpriteClip>>;
+  animations: Record<string, SpriteClip>;
+  /** Baxter-compatible names → this character's clips (e.g. thinking → peopleThinking). */
+  aliases?: Record<string, string>;
+  desk?: DeskMetrics;
+  /** The desk without the character, shown while they're away from it. */
+  deskProp?: string;
 };
+
+export type AmbientWeights = { desk: number; look: number; think: number; task: number; wander: number };
 
 export type SpritePackDefinition = {
   id: string;
@@ -44,13 +56,22 @@ export type SpritePackDefinition = {
   manifestUrl: string;
   /** World pixels per canvas pixel (keeps characters roughly the size of the office art). */
   scale: number;
-  /**
-   * Desk artwork, in desk-canvas pixels: the tabletop centre, the floor footprint (blocks
-   * walking), and where the seated character's feet are (for hit-testing and bubbles).
-   */
-  desk: { focus: Vec; footprint: { x: number; y: number; w: number; h: number }; seatedFeet: Vec };
+  /** Desk metrics; when omitted they come from the manifest. */
+  desk?: DeskMetrics;
   /** World pixels moved per walk frame, so paws match the ground speed. */
   strideWorldPx: number;
+  /** Role emotes: `think` for analysis/receiving, `task` for the character's work gesture. */
+  emotes: { think: string; present: string; task: string | null };
+  /**
+   * "right": autonomous routes from the desk start at a waypoint to its right, and returns
+   * approach from there. null: no rule (Baxter, whose sit/stand art is beside the desk).
+   */
+  deskExit: "right" | null;
+  /** Idle routine: activity weights and which room hotspots suit each activity. */
+  ambient: {
+    weights?: Partial<AmbientWeights>;
+    spots: { look: string[]; think: string[]; task: string[] };
+  };
 };
 
 export const SPRITE_PACKS: Record<string, SpritePackDefinition> = {
@@ -65,13 +86,62 @@ export const SPRITE_PACKS: Record<string, SpritePackDefinition> = {
       seatedFeet: { x: 145, y: 222 },
     },
     strideWorldPx: 8,
+    // Presenting is reserved for real results, so Baxter has no idle "task" gesture.
+    emotes: { think: "thinking", present: "presenting", task: null },
+    deskExit: null,
+    ambient: {
+      spots: {
+        look: ["bookcase", "model", "window"],
+        think: ["strategy", "visitors", "center"],
+        task: [],
+      },
+    },
+  },
+  "sam-v1": {
+    id: "sam-v1",
+    label: "Sam tuxedo cat (HR)",
+    manifestUrl: "/animations/sam/v1/manifest.json",
+    scale: 0.32,
+    strideWorldPx: 8,
+    emotes: { think: "peopleThinking", present: "hrTask", task: "hrTask" },
+    deskExit: "right",
+    ambient: {
+      weights: { desk: 3, look: 2, think: 2, task: 3, wander: 1 },
+      spots: {
+        look: ["tree", "policy", "files"],
+        think: ["conversation", "center"],
+        task: ["onboarding", "files", "policy"],
+      },
+    },
+  },
+  "dexter-v1": {
+    id: "dexter-v1",
+    label: "Dexter voxel dog (analytics)",
+    manifestUrl: "/animations/dexter/v1/manifest.json",
+    scale: 0.32,
+    strideWorldPx: 9,
+    emotes: { think: "dataThinking", present: "analyticsTask", task: "analyticsTask" },
+    deskExit: "right",
+    ambient: {
+      weights: { desk: 3, look: 2, think: 3, task: 3, wander: 2 },
+      spots: {
+        look: ["dashboard", "datacab", "printer"],
+        think: ["whiteboard", "dashboard"],
+        task: ["reports", "whiteboard", "printer"],
+      },
+    },
   },
 };
+
+/** Default pack per agent slug (admins can override per agent). */
+export const DEFAULT_PACK_BY_SLUG: Record<string, string> = { sam: "sam-v1", dexter: "dexter-v1" };
 
 export const STATIC_PACK_ID = "none";
 
 /** Clips a pack must have before we animate with it (everything else degrades gracefully). */
 export const REQUIRED_CLIPS: ClipName[] = ["idle", "walkRight", "walkLeft"];
+
+const CLIP_NAME_RE = /^[A-Za-z][A-Za-z0-9]{0,39}$/;
 
 export class SpritePackError extends Error {}
 
@@ -121,10 +191,11 @@ export function parseSpritePackManifest(raw: unknown): {
   };
   const dropped: string[] = [];
   const animations = (m.animations ?? {}) as Record<string, unknown>;
-  for (const name of CLIP_NAMES) {
+  for (const name of Object.keys(animations)) {
     const clip = animations[name] as SpriteClip | undefined;
     if (!clip) continue;
     const ok =
+      CLIP_NAME_RE.test(name) &&
       (clip.canvas === "character" || clip.canvas === "desk") &&
       typeof clip.loop === "boolean" &&
       clip.frameDurationMs > 0 &&
@@ -144,6 +215,18 @@ export function parseSpritePackManifest(raw: unknown): {
   }
   const missing = REQUIRED_CLIPS.filter((c) => !parsed.animations[c]);
   if (missing.length) throw new SpritePackError(`missing required clips: ${missing.join(", ")}`);
+  if (m.aliases && typeof m.aliases === "object") {
+    parsed.aliases = Object.fromEntries(
+      Object.entries(m.aliases as Record<string, unknown>).filter(
+        (e): e is [string, string] => typeof e[1] === "string" && CLIP_NAME_RE.test(e[0]),
+      ),
+    );
+  }
+  const desk = m.desk as DeskMetrics | undefined;
+  if (desk && isVec(desk.focus) && isVec(desk.seatedFeet) && desk.footprint?.w > 0) {
+    parsed.desk = desk;
+  }
+  if (typeof m.deskProp === "string" && m.deskProp.startsWith("/")) parsed.deskProp = m.deskProp;
   return { manifest: parsed, dropped };
 }
 
@@ -153,15 +236,35 @@ export function withoutBrokenFrames(
   broken: Set<string>,
 ): SpritePackManifest | null {
   const animations: SpritePackManifest["animations"] = {};
-  for (const [name, clip] of Object.entries(manifest.animations) as Array<[ClipName, SpriteClip]>) {
+  for (const [name, clip] of Object.entries(manifest.animations)) {
     if (!clip.frames.some((f) => broken.has(f))) animations[name] = clip;
   }
   if (REQUIRED_CLIPS.some((c) => !animations[c])) return null;
-  return { ...manifest, animations };
+  const deskProp = manifest.deskProp && broken.has(manifest.deskProp) ? undefined : manifest.deskProp;
+  return { ...manifest, animations, deskProp };
 }
 
 export function allFrameUrls(manifest: SpritePackManifest): string[] {
-  return [...new Set(Object.values(manifest.animations).flatMap((c) => c?.frames ?? []))];
+  const urls = Object.values(manifest.animations).flatMap((c) => c?.frames ?? []);
+  if (manifest.deskProp) urls.push(manifest.deskProp);
+  return [...new Set(urls)];
+}
+
+/** A clip by its own name or a Baxter-compatible alias (thinking → dataThinking). */
+export function resolveClip(
+  manifest: Pick<SpritePackManifest, "animations" | "aliases">,
+  name: string,
+): { name: string; clip: SpriteClip } | null {
+  const direct = manifest.animations[name];
+  if (direct) return { name, clip: direct };
+  const alias = manifest.aliases?.[name];
+  const aliased = alias ? manifest.animations[alias] : undefined;
+  return alias && aliased ? { name: alias, clip: aliased } : null;
+}
+
+/** Desk metrics for a pack: its definition first, then what the manifest measured. */
+export function deskMetrics(def: SpritePackDefinition, manifest: SpritePackManifest): DeskMetrics | null {
+  return def.desk ?? manifest.desk ?? null;
 }
 
 /** Total one-shot duration of a clip. */
@@ -179,13 +282,14 @@ export function frameAt(
   return clip.loop ? raw % n : Math.min(raw, n - 1);
 }
 
-/** Which pack an agent uses: an explicit admin choice, else Baxter gets his own pack. */
+/** Which pack an agent uses: an explicit admin choice, else the character's own pack. */
 export function resolvePackId(
-  agent: { id: string; kind: "orchestrator" | "specialist" },
+  agent: { id: string; kind: "orchestrator" | "specialist"; slug?: string },
   assignments: Record<string, { sprite_pack?: string } | undefined>,
 ): string | null {
   const chosen = assignments[agent.id]?.sprite_pack;
   if (chosen === STATIC_PACK_ID) return null;
   if (chosen && SPRITE_PACKS[chosen]) return chosen;
-  return agent.kind === "orchestrator" ? "baxter-v3" : null;
+  if (agent.kind === "orchestrator") return "baxter-v3";
+  return (agent.slug && DEFAULT_PACK_BY_SLUG[agent.slug]) || null;
 }

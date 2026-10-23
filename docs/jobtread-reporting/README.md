@@ -28,6 +28,9 @@ Baxter. Reports live at **`/reports`**. Property Research moved to **`/property-
 | 18  | Known limitations                        | [limitations-and-roadmap.md](limitations-and-roadmap.md#18-known-limitations)                 |
 | 19  | Future enhancements                      | [limitations-and-roadmap.md](limitations-and-roadmap.md#19-future-enhancements)               |
 
+**Intelligence layer** (data catalog, feasibility, planning memory, attachments, business rules
+and commissions): [intelligence.md](intelligence.md).
+
 ## 1. Architecture overview
 
 ```

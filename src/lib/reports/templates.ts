@@ -380,6 +380,158 @@ export const ACTIVE_PROJECTS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
   ],
 });
 
+/** Default rule set for the Sales Commissions template (created empty — no rates). */
+export const COMMISSION_RULE_SET_KEY = "sales_commissions";
+
+export const SALES_COMMISSIONS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
+  title: "Sales Commissions",
+  description:
+    "Commissions per salesperson from JobTread projected gross profit × rates set in Baxter. Decision support only — nothing is paid or changed in JobTread.",
+  datasets: [
+    {
+      id: "commissions",
+      source: "commissions",
+      label: "Commissions",
+      ruleSet: COMMISSION_RULE_SET_KEY,
+    },
+  ],
+  controls: [
+    {
+      id: "salesperson",
+      kind: "select",
+      label: "Salesperson",
+      field: "com.salesperson",
+      datasets: ["commissions"],
+    },
+    {
+      id: "status",
+      kind: "select",
+      label: "Status",
+      field: "com.status",
+      datasets: ["commissions"],
+    },
+    {
+      id: "period",
+      kind: "date_range",
+      label: "Commission date",
+      field: "com.date",
+      datasets: ["commissions"],
+    },
+  ],
+  widgets: [
+    {
+      id: "eligible_gp",
+      type: "kpi",
+      title: "Eligible gross profit",
+      span: 3,
+      dataset: "commissions",
+      metric: { op: "sum", field: "com.grossProfit" },
+      format: "currency",
+    },
+    {
+      id: "total_commission",
+      type: "kpi",
+      title: "Calculated commissions",
+      span: 3,
+      dataset: "commissions",
+      metric: { op: "sum", field: "com.commission" },
+      format: "currency",
+    },
+    {
+      id: "payable",
+      type: "kpi",
+      title: "Payable now",
+      span: 3,
+      dataset: "commissions",
+      metric: { op: "sum", field: "com.commission" },
+      format: "currency",
+      filters: [{ field: "com.status", op: "eq", value: "Payable" }],
+    },
+    {
+      id: "projects",
+      type: "kpi",
+      title: "Projects",
+      span: 3,
+      dataset: "commissions",
+      metric: { op: "count_distinct", field: "com.jobName" },
+    },
+    {
+      id: "by_salesperson",
+      type: "chart",
+      title: "Commission by salesperson",
+      span: 6,
+      dataset: "commissions",
+      chart: "bar",
+      groupBy: "com.salesperson",
+      metric: { op: "sum", field: "com.commission" },
+      format: "currency",
+    },
+    {
+      id: "by_status",
+      type: "chart",
+      title: "Projects by commission status",
+      span: 6,
+      dataset: "commissions",
+      chart: "donut",
+      groupBy: "com.status",
+      metric: { op: "count" },
+    },
+    {
+      id: "details",
+      type: "table",
+      title: "Commission details",
+      span: 12,
+      dataset: "commissions",
+      rowDrilldown: true,
+      columns: [
+        { field: "com.salesperson" },
+        { field: "com.jobNumber" },
+        { field: "com.jobName" },
+        { field: "com.orderStatus" },
+        { field: "com.grossProfit", format: "currency" },
+        { field: "com.ratePct", format: "percent" },
+        { field: "com.splitPct", format: "percent" },
+        { field: "com.commission", format: "currency" },
+        { field: "com.date" },
+        { field: "com.status" },
+        { field: "com.assignmentSource" },
+        { field: "com.notes", wrap: true },
+      ],
+      sort: [{ field: "com.salesperson", dir: "asc" }],
+      highlight: [
+        { field: "com.status", op: "eq", value: "Payable", tone: "green" },
+        {
+          field: "com.status",
+          op: "in",
+          value: ["No rate set", "No gross profit in JobTread"],
+          tone: "amber",
+        },
+      ],
+    },
+    {
+      id: "rates",
+      type: "rate_editor",
+      title: "Commission rates",
+      span: 6,
+      ruleSet: COMMISSION_RULE_SET_KEY,
+    },
+    {
+      id: "assignments",
+      type: "assignment_editor",
+      title: "Project assignments & payment dates",
+      span: 6,
+      ruleSet: COMMISSION_RULE_SET_KEY,
+    },
+    {
+      id: "about",
+      type: "text",
+      title: "About these numbers",
+      span: 12,
+      body: "Gross profit is projected: customer order price − cost from JobTread (the approved order, otherwise the latest draft). JobTread has no recorded customer payments, so the commission date is the payment date entered here for each project. Rates are set in Baxter and apply from their effective date. Ask Dexter to change the formula, the date source, or which salespeople appear.",
+    },
+  ],
+});
+
 export const BLANK_TEMPLATE: ReportSpec = reportSpecSchema.parse({
   title: "Blank report",
   description: "Start from scratch — add widgets yourself or describe what you need to Dexter.",
@@ -403,6 +555,11 @@ export const REPORT_TEMPLATES: Array<{ key: string; spec: ReportSpec; summary: s
     key: "active_projects",
     spec: ACTIVE_PROJECTS_TEMPLATE,
     summary: "Active projects by phase, PM, model, and permit status.",
+  },
+  {
+    key: "sales_commissions",
+    spec: SALES_COMMISSIONS_TEMPLATE,
+    summary: "Commissions by salesperson with editable rates and project assignments.",
   },
   { key: "blank", spec: BLANK_TEMPLATE, summary: "An empty canvas." },
 ];

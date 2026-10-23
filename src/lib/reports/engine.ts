@@ -18,6 +18,9 @@ import { isJobTreadConfigured, jobTreadJobUrl } from "@/lib/jobtread/client";
 import { isJobTreadFixtureEnabled } from "@/lib/jobtread/fixture";
 import { lastSuccessfulSync, runFullSync } from "@/lib/jobtread/sync";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
+import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
+import { groupDocumentsByJob, jobFinancials, type DocumentRow } from "./financials";
+import { getRuleSet, listAssignments, listRates } from "./rules";
 import {
   aggregate,
   asList,
@@ -64,6 +67,7 @@ type JobCacheRow = {
   customer_name: string | null;
   projected_price: number | string | null;
   projected_cost: number | string | null;
+  actual_cost?: number | string | null;
   task_start: string | null;
   task_end: string | null;
   task_progress: number | string | null;
@@ -106,7 +110,12 @@ const num = (v: number | string | null) =>
 /** Percent values are 0–100 (one decimal), matching how JobTread percent fields are entered. */
 const pct = (part: number, whole: number) => Math.round((part / whole) * 1000) / 10;
 
-export function jobRowFromCache(r: JobCacheRow, catalog: FieldCatalog): Row {
+export function jobRowFromCache(
+  r: JobCacheRow,
+  catalog: FieldCatalog,
+  docs: DocumentRow[] = [],
+): Row {
+  const fin = jobFinancials(docs);
   const price = num(r.projected_price);
   const cost = num(r.projected_cost);
   const row: Row = {
@@ -128,6 +137,17 @@ export function jobRowFromCache(r: JobCacheRow, catalog: FieldCatalog): Row {
         ? Math.round((price - cost) * 100) / 100
         : null,
     "job.projectedMarginPct": price && cost !== null ? pct(price - cost, price) : null,
+    "job.actualCost": num(r.actual_cost ?? null),
+    "job.orderPrice": fin.orderPrice,
+    "job.orderCost": fin.orderCost,
+    "job.orderGrossProfit": fin.orderGrossProfit,
+    "job.orderMarginPct": fin.orderMarginPct,
+    "job.orderStatus": fin.orderStatus,
+    "job.orderDate": fin.orderDate,
+    "job.invoicedTotal": fin.invoicedTotal,
+    "job.amountPaid": fin.amountPaid,
+    "job.balanceDue": fin.balanceDue,
+    "job.lastInvoiceDate": fin.lastInvoiceDate,
   };
   for (const def of catalog.bySource.jobs) {
     if (!def.customFieldId) continue;
@@ -166,23 +186,104 @@ export function isProductModel(r: Pick<ModelCacheRow, "description" | "name">): 
   return /product library/i.test(r.description ?? "");
 }
 
-type DataCache = { jobs?: Row[]; models?: Row[]; syncedAt: string | null };
+type DataCache = {
+  jobs?: Row[];
+  jobRaw?: JobCacheRow[];
+  docs?: Map<string, DocumentRow[]>;
+  models?: Row[];
+  commissions?: Map<string, Row[]>;
+  syncedAt: string | null;
+};
 
-async function loadSource(
-  source: DatasetSpec["source"],
+async function loadDocs(cache: DataCache): Promise<Map<string, DocumentRow[]>> {
+  if (!cache.docs) {
+    const docs = await agentDb().select<DocumentRow>("jt_documents", {
+      filters: [{ col: "removed_at", op: "is_null" }],
+      limit: 20_000,
+    });
+    cache.docs = groupDocumentsByJob(docs);
+  }
+  return cache.docs;
+}
+
+async function loadJobs(catalog: FieldCatalog, cache: DataCache): Promise<Row[]> {
+  if (!cache.jobs) {
+    cache.jobRaw = await agentDb().select<JobCacheRow>("jt_jobs", {
+      filters: [{ col: "removed_at", op: "is_null" }],
+      limit: 20_000,
+    });
+    const docs = await loadDocs(cache);
+    cache.jobs = cache.jobRaw.map((r) => jobRowFromCache(r, catalog, docs.get(r.id) ?? []));
+  }
+  return cache.jobs;
+}
+
+/** Commission rows for a rule set: JobTread jobs + documents × Baxter rates/assignments. */
+async function loadCommissions(
+  ruleSetKey: string,
   catalog: FieldCatalog,
   cache: DataCache,
 ): Promise<Row[]> {
-  if (source === "jobs") {
-    if (!cache.jobs) {
-      const rows = await agentDb().select<JobCacheRow>("jt_jobs", {
-        filters: [{ col: "removed_at", op: "is_null" }],
-        limit: 20_000,
-      });
-      cache.jobs = rows.map((r) => jobRowFromCache(r, catalog));
-    }
-    return cache.jobs;
-  }
+  cache.commissions ??= new Map();
+  const hit = cache.commissions.get(ruleSetKey);
+  if (hit) return hit;
+  const ruleSet = await getRuleSet(ruleSetKey);
+  if (!ruleSet)
+    throw new RefError(
+      `The business rules "${ruleSetKey}" don't exist yet. Ask Dexter to set them up.`,
+      false,
+    );
+  const jobRows = await loadJobs(catalog, cache);
+  const docs = await loadDocs(cache);
+  const rep = resolveField(catalog, "sem:sales_rep");
+  const repKey = rep.ok ? rep.key : null;
+  const [rates, assignments] = await Promise.all([
+    listRates(ruleSet.id),
+    listAssignments(ruleSet.id),
+  ]);
+  const jobs: CommissionJob[] = (cache.jobRaw ?? []).map((r, i) => ({
+    id: r.id,
+    name: r.name,
+    number: r.number,
+    salesReps: repKey ? asList(jobRows[i]?.[repKey]) : [],
+    projectedPrice: num(r.projected_price),
+    projectedCost: num(r.projected_cost),
+    financials: jobFinancials(docs.get(r.id) ?? []),
+  }));
+  const rows = computeCommissions({
+    config: { ...DEFAULT_COMMISSION_CONFIG, ...ruleSet.config },
+    jobs,
+    rates,
+    assignments,
+    today: new Date().toISOString().slice(0, 10),
+  }).map((c): Row => ({
+    id: c.id,
+    "com.salesperson": c.salesperson,
+    "com.jobName": c.jobName,
+    "com.jobNumber": c.jobNumber,
+    "com.assignmentSource": c.assignmentSource,
+    "com.status": c.statusLabel,
+    "com.date": c.commissionDate,
+    "com.orderStatus": c.orderStatus,
+    "com.grossProfit": c.grossProfit,
+    "com.splitPct": c.splitPct,
+    "com.ratePct": c.ratePct,
+    "com.rateSource": c.rateSource,
+    "com.commission": c.commission,
+    "com.notes": c.notes.join(" "),
+    "com.jobId": c.jobId,
+  }));
+  cache.commissions.set(ruleSetKey, rows);
+  return rows;
+}
+
+async function loadSource(
+  ds: Pick<DatasetSpec, "source" | "ruleSet">,
+  catalog: FieldCatalog,
+  cache: DataCache,
+): Promise<Row[]> {
+  if (ds.source === "jobs") return loadJobs(catalog, cache);
+  if (ds.source === "commissions") return loadCommissions(ds.ruleSet ?? "", catalog, cache);
   if (!cache.models) {
     const rows = await agentDb().select<ModelCacheRow>("jt_catalog_models", {
       filters: [{ col: "removed_at", op: "is_null" }],
@@ -191,6 +292,13 @@ async function loadSource(
     cache.models = rows.filter(isProductModel).map(modelRowFromCache);
   }
   return cache.models;
+}
+
+/** Authorized-agnostic source rows (callers apply field access). Used by Dexter's tools. */
+export async function loadSourceRows(source: DatasetSpec["source"], ruleSet?: string) {
+  const catalog = await getFieldCatalog();
+  const rows = await loadSource({ source, ruleSet }, catalog, { syncedAt: null });
+  return { catalog, rows };
 }
 
 class RefError extends Error {
@@ -253,7 +361,7 @@ function describeCondition(ctx: Ctx, c: Condition): string {
 async function datasetRows(ctx: Ctx, datasetId: string, applied: string[]): Promise<Row[]> {
   const ds = ctx.spec.datasets.find((d) => d.id === datasetId);
   if (!ds) throw new RefError(`Unknown dataset "${datasetId}".`, false);
-  let rows = await loadSource(ds.source, ctx.catalog, ctx.data);
+  let rows = await loadSource(ds, ctx.catalog, ctx.data);
   rows = filterRows(rows, canonicalConditions(ctx, ds.filters));
   ds.filters.forEach((f) => applied.push(describeCondition(ctx, f)));
   for (const control of ctx.spec.controls) {
@@ -385,6 +493,23 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
   switch (w.type) {
     case "text":
       return { id: w.id, kind: "text", status: "ok", body: w.body };
+    case "rate_editor":
+    case "assignment_editor": {
+      // Rates and assignments are compensation data: financial access required to see them.
+      if (!ctx.access.categories.has("financial"))
+        throw new RefError(`Requires "${CATEGORY_LABELS.financial}" access.`, true);
+      const ruleSet = await getRuleSet(w.ruleSet);
+      return {
+        id: w.id,
+        kind: "rule_editor",
+        status: ruleSet ? "ok" : "error",
+        message: ruleSet ? undefined : `The business rules "${w.ruleSet}" don't exist yet.`,
+        editor: w.type === "rate_editor" ? "rates" : "assignments",
+        ruleSet: w.ruleSet,
+        ruleSetName: ruleSet?.name ?? null,
+        canEdit: ctx.access.canEditRules,
+      };
+    }
     case "kpi": {
       if (w.metric.field) requireField(ctx, w.metric.field);
       const rows = filterRows(
@@ -781,6 +906,16 @@ function failed(w: WidgetSpec, error: unknown): WidgetResult {
       return { ...base, kind: "documents", jobId: null, files: [], jobtreadUrl: null };
     case "text":
       return { ...base, kind: "text", body: "" };
+    case "rate_editor":
+    case "assignment_editor":
+      return {
+        ...base,
+        kind: "rule_editor",
+        editor: w.type === "rate_editor" ? "rates" : "assignments",
+        ruleSet: w.ruleSet,
+        ruleSetName: null,
+        canEdit: false,
+      };
   }
 }
 
@@ -805,7 +940,7 @@ async function controlOptions(ctx: Ctx, control: ControlSpec): Promise<ControlOp
       for (const dsId of control.datasets.slice(0, 1)) {
         const ds = ctx.spec.datasets.find((d) => d.id === dsId)!;
         const base = filterRows(
-          await loadSource(ds.source, ctx.catalog, ctx.data),
+          await loadSource(ds, ctx.catalog, ctx.data),
           canonicalConditions(ctx, ds.filters),
         );
         for (const r of base)
@@ -838,7 +973,7 @@ async function controlOptions(ctx: Ctx, control: ControlSpec): Promise<ControlOp
     try {
       const { key } = requireField(ctx, control.field);
       const ds = ctx.spec.datasets.find((d) => d.id === control.datasets[0])!;
-      for (const r of await loadSource(ds.source, ctx.catalog, ctx.data)) {
+      for (const r of await loadSource(ds, ctx.catalog, ctx.data)) {
         const n = asNumber(r[key]);
         if (n === null) continue;
         min = min === null ? n : Math.min(min, n);
@@ -989,7 +1124,17 @@ export async function drilldown(input: {
           "sem:model",
           "sem:total_sqft",
         ]
-      : ["model.name", "model.series", "model.budgetStatus", "model.basePrice"];
+      : source === "commissions"
+        ? [
+            "com.salesperson",
+            "com.jobName",
+            "com.status",
+            "com.date",
+            "com.grossProfit",
+            "com.ratePct",
+            "com.commission",
+          ]
+        : ["model.name", "model.series", "model.budgetStatus", "model.basePrice"];
   if (w.type === "kpi" && w.metric.field) wanted.push(w.metric.field);
   if (w.type === "chart" && w.metric.field) wanted.push(w.metric.field);
   const cols: FieldMeta[] = [];
@@ -1005,7 +1150,17 @@ export async function drilldown(input: {
       });
     }
   }
-  rows = sortRows(rows, [{ field: source === "jobs" ? "job.name" : "model.name", dir: "asc" }]);
+  rows = sortRows(rows, [
+    {
+      field:
+        source === "jobs"
+          ? "job.name"
+          : source === "commissions"
+            ? "com.salesperson"
+            : "model.name",
+      dir: "asc",
+    },
+  ]);
   return {
     title,
     columns: cols,
@@ -1013,7 +1168,12 @@ export async function drilldown(input: {
     rows: rows.slice(0, 500).map((r) => ({
       id: r.id,
       cells: Object.fromEntries(cols.map((c) => [c.key, r[c.key] ?? null])),
-      jobtreadUrl: source === "jobs" ? jobTreadJobUrl(r.id) : undefined,
+      jobtreadUrl:
+        source === "jobs"
+          ? jobTreadJobUrl(r.id)
+          : source === "commissions" && typeof r["com.jobId"] === "string"
+            ? jobTreadJobUrl(r["com.jobId"])
+            : undefined,
     })),
   };
 }

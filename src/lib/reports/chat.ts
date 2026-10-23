@@ -14,7 +14,16 @@ import { listTaskEvents } from "@/lib/agents/tasks";
 import { agentDb, eq } from "@/lib/agents/store";
 import type { SpecialistResult, TaskRow } from "@/lib/agents/types";
 import { DEXTER_SLUG, type ReportsAccess } from "./access";
+import {
+  describeAttachments,
+  getAttachmentFor,
+  listThreadAttachments,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+} from "./attachments";
 import { appendChatMessage, listChatMessages, loadReportFor, type ChatMessageRow } from "./repo";
+import { describeSession, getSession, type SessionRow } from "./sessions";
+
+export type ChatAttachmentRef = { id: string; filename: string; kind: string; status: string };
 
 export type ChatMessageView = {
   id: string;
@@ -24,6 +33,7 @@ export type ChatMessageView = {
   artifacts: SpecialistResult["artifacts"];
   outcome: string | null;
   failed: boolean;
+  attachments: ChatAttachmentRef[];
 };
 
 export function toChatView(m: ChatMessageRow): ChatMessageView {
@@ -38,6 +48,7 @@ export function toChatView(m: ChatMessageRow): ChatMessageView {
       : [],
     outcome: typeof meta.outcome === "string" ? meta.outcome : null,
     failed: meta.failed === true,
+    attachments: Array.isArray(meta.attachments) ? (meta.attachments as ChatAttachmentRef[]) : [],
   };
 }
 
@@ -66,7 +77,15 @@ export async function sendDexterMessage(input: {
   reportId: string | null;
   message: string;
   requestId: string;
-}): Promise<{ user: ChatMessageView; reply: ChatMessageView; taskId: string }> {
+  attachmentIds?: string[];
+  /** The widget the user pointed at ("this chart"). */
+  focusWidgetId?: string | null;
+}): Promise<{
+  user: ChatMessageView;
+  reply: ChatMessageView;
+  taskId: string;
+  session: SessionRow | null;
+}> {
   if (!input.access.canChat) {
     throw new AuthorizationError(
       "You can view reports, but chatting with Dexter needs “Chat directly” access. An administrator can grant it on Dexter's Access tab.",
@@ -74,10 +93,17 @@ export async function sendDexterMessage(input: {
   }
   const userId = input.ctx.user.id;
   let reportTitle: string | null = null;
+  let focus: string | undefined;
   if (input.reportId) {
     const { report } = await loadReportFor(input.reportId, input.ctx.requester, input.access);
     reportTitle = report.title;
+    const w = input.focusWidgetId
+      ? report.spec.widgets.find((x) => x.id === input.focusWidgetId)
+      : null;
+    if (w) focus = `${w.type} widget "${w.title || w.id}" (id ${w.id})`;
   }
+  const ids = [...new Set(input.attachmentIds ?? [])].slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
+  const attached = await Promise.all(ids.map((id) => getAttachmentFor(id, userId)));
   const agent = await requireAgentAccess(input.ctx, DEXTER_SLUG, "direct_chat");
   const history = await listChatMessages(userId, input.reportId, 20);
   const userMessage = await appendChatMessage({
@@ -86,8 +112,18 @@ export async function sendDexterMessage(input: {
     role: "user",
     content: input.message,
     task_id: null,
-    metadata: { requestId: input.requestId },
+    metadata: {
+      requestId: input.requestId,
+      attachments: attached.map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        kind: a.kind,
+        status: a.status,
+      })),
+    },
   });
+  const thread = await listThreadAttachments(userId, input.reportId);
+  const session = await getSession(userId, input.reportId);
   const question = reportTitle
     ? `[Viewing report "${reportTitle}"]\n${input.message}`
     : input.message;
@@ -96,7 +132,18 @@ export async function sendDexterMessage(input: {
     requester: input.ctx.requester,
     question,
     requestId: input.requestId,
-    context: { reportId: input.reportId, conversation: conversationFrom(history) },
+    context: {
+      reportId: input.reportId,
+      conversation: conversationFrom(history),
+      session: describeSession(session) ?? undefined,
+      attachments:
+        describeAttachments(thread)?.concat(
+          attached.length
+            ? `\nAttached to this message: ${attached.map((a) => a.filename).join(", ")}`
+            : "",
+        ) ?? undefined,
+      focus,
+    },
   });
   const reply = await appendChatMessage({
     // A report Dexter just created owns the conversation from here on.
@@ -120,7 +167,14 @@ export async function sendDexterMessage(input: {
       report_id: outcome.result.artifacts[0].id,
     });
   }
-  return { user: toChatView(userMessage), reply: toChatView(reply), taskId: task.id };
+  const finalReportId =
+    input.reportId ?? (outcome.ok ? (outcome.result.artifacts[0]?.id ?? null) : null);
+  return {
+    user: toChatView(userMessage),
+    reply: toChatView(reply),
+    taskId: task.id,
+    session: await getSession(userId, finalReportId),
+  };
 }
 
 function friendlyFailure(code: string, message: string): string {
