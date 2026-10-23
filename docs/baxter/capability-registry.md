@@ -4,13 +4,13 @@ Baxter’s self-knowledge comes from a **machine-readable capability catalog**, 
 
 ## Source of truth
 
-| Layer           | Path                                       | Role                                                                |
-| --------------- | ------------------------------------------ | ------------------------------------------------------------------- |
-| Dashboard tools | `src/lib/baxter/tools.ts` (`BAXTER_TOOLS`) | Employee tools + routes (`/pem-neats`, `/dashboard`, create routes) |
-| Admin nav       | `src/lib/baxter/admin-nav.ts`              | Admin-only routes (Knowledge, Integrations, Users, Rulebook, …)     |
-| Catalog         | `src/lib/baxter/capability-registry.ts`    | Unified `BaxterCapability[]` with status, limits, synonyms          |
-| Help answers    | `src/lib/baxter/capability-help.ts`        | Deterministic “what can you do / how do I / can you…” answers       |
-| Prompt block    | `buildCapabilityPromptBlock()`             | Injected only for identity/capability questions                     |
+| Layer           | Path                                       | Role                                                                        |
+| --------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
+| Dashboard tools | `src/lib/baxter/tools.ts` (`BAXTER_TOOLS`) | Employee tools + routes (`/pem-neats`, `/property-research`, create routes) |
+| Admin nav       | `src/lib/baxter/admin-nav.ts`              | Admin-only routes (Knowledge, Integrations, Users, Rulebook, …)             |
+| Catalog         | `src/lib/baxter/capability-registry.ts`    | Unified `BaxterCapability[]` with status, limits, synonyms                  |
+| Help answers    | `src/lib/baxter/capability-help.ts`        | Deterministic “what can you do / how do I / can you…” answers               |
+| Prompt block    | `buildCapabilityPromptBlock()`             | Injected only for identity/capability questions                             |
 
 ## Dynamic status
 

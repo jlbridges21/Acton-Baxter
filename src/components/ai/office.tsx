@@ -11,10 +11,17 @@ import {
   LayoutList,
   Map as MapIcon,
   Mail,
+  MessageCircle,
   Minus,
+  Pause,
+  Play,
   Plus,
   X,
 } from "lucide-react";
+import {
+  BaxterChatPanel,
+  type BaxterRequestLifecycle,
+} from "@/components/baxter-chat/baxter-chat-panel";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -24,6 +31,11 @@ import {
 } from "@/lib/agents/office-layout";
 import type { AgentCard } from "@/lib/agents/views";
 import type { TaskSummary } from "@/lib/agents/task-format";
+import type { AmbientIntensity } from "@/lib/office/ambient";
+import type { OfficeAnimationSettings } from "@/lib/office/animation-settings";
+import { centerOn as centerCamera, zoomAround } from "@/lib/office/camera";
+import { roomDoor, roomHasDoor } from "@/lib/office/navigation";
+import { activeDelegations, type DelegationSnapshot } from "@/lib/office/task-coordinator";
 import { cn } from "@/lib/utils";
 import {
   AgentAvatar,
@@ -34,6 +46,9 @@ import {
   aiFetch,
   formatRelative,
 } from "./ui";
+import { AnimatedAgent } from "./office/animated-agent";
+import type { OfficeDirector } from "./office/director";
+import { useOfficeAnimation } from "./office/use-office-animation";
 
 export type OfficeSettings = {
   layout_preset: LayoutPreset;
@@ -51,10 +66,24 @@ type StatusRow = {
   updatedAt: string;
 };
 
-type StatusPayload = { statuses: StatusRow[]; recent: TaskSummary[]; serverTime: string };
+type StatusPayload = {
+  statuses: StatusRow[];
+  recent: TaskSummary[];
+  /** Delegation pairs (ids/status/timestamps only) that drive the hand-off animation. */
+  delegations?: DelegationSnapshot[];
+  serverTime: string;
+};
 
 const JUST_FINISHED_MS = 45_000;
 const MOTION_KEY = "baxter.aiOffice.reducedMotion";
+const ACTIVITY_KEY = "baxter.aiOffice.activity";
+const PAUSE_KEY = "baxter.aiOffice.ambientPaused";
+
+const DELEGATION_STATUS: Record<string, string> = {
+  queued: "Assigned",
+  running: "Working on it",
+  awaiting_approval: "Needs approval",
+};
 
 /** Display state: the persisted runtime state, plus "completed" briefly after a real completion. */
 export function displayState(status: StatusRow | undefined, now: number): string {
@@ -130,7 +159,7 @@ function AgentSprite({
       aria-pressed={selected}
       aria-label={`${agent.name}, ${agent.title}. ${label}.`}
       className="group absolute flex flex-col items-center focus-visible:outline-none"
-      style={{ left: x, top: y, transform: "translate(-50%, -50%)" }}
+      style={{ left: x, top: y, transform: "translate(-50%, -50%)", zIndex: Math.round(y + 36) }}
     >
       <span className="relative flex flex-col items-center">
         <StateBubble state={state} />
@@ -233,10 +262,48 @@ function RoomDecor({ kind, w, h }: { kind: string; w: number; h: number }) {
   );
 }
 
+/** Dashed line from the delegating agent to the specialist while a real task is in flight. */
+function CollabLink({
+  director,
+  from,
+  to,
+  fromPoint,
+  toPoint,
+}: {
+  director: OfficeDirector | null;
+  from: string;
+  to: string;
+  fromPoint: { x: number; y: number };
+  toPoint: { x: number; y: number };
+}) {
+  const ref = useRef<SVGLineElement>(null);
+  useEffect(() => {
+    if (!director || !ref.current || !director.has(from)) return;
+    return director.registerLink(ref.current, from, to);
+  }, [director, from, to]);
+  return (
+    <line
+      ref={ref}
+      x1={fromPoint.x}
+      y1={fromPoint.y - 30}
+      x2={toPoint.x}
+      y2={toPoint.y - 30}
+      className="ai-office-link"
+      stroke="#2b2118"
+      strokeWidth={3}
+      strokeDasharray="6 6"
+      strokeLinecap="round"
+      opacity={0.55}
+    />
+  );
+}
+
 export function AiOffice(props: {
   initialAgents: AgentCard[];
   departments: OfficeDepartment[];
   settings: OfficeSettings;
+  animation: OfficeAnimationSettings;
+  chatEnabled: boolean;
   initialStatus: StatusPayload;
   canAdminister: boolean;
 }) {
@@ -249,6 +316,11 @@ export function AiOffice(props: {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [now, setNow] = useState(() => Date.now());
   const [live, setLive] = useState<"realtime" | "polling">("polling");
+  /** Per-viewer override of the admin's ambient activity level ("default" = admin's). */
+  const [activity, setActivity] = useState<AmbientIntensity | "default">("default");
+  const [ambientPaused, setAmbientPaused] = useState(false);
+  const [following, setFollowing] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
@@ -269,6 +341,29 @@ export function AiOffice(props: {
 
   const statusById = useMemo(() => new Map(status.statuses.map((s) => [s.agentId, s])), [status]);
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const baxter = useMemo(() => agents.find((a) => a.kind === "orchestrator") ?? null, [agents]);
+
+  const animatedAgents = useMemo(
+    () =>
+      agents
+        .filter((a) => a.status !== "archived")
+        .map((a) => ({ id: a.id, name: a.name, kind: a.kind, department: a.department })),
+    [agents],
+  );
+  const intensity: AmbientIntensity =
+    activity === "default" ? props.animation.ambient_intensity : activity;
+  const animation = useOfficeAnimation({
+    layout,
+    agents: animatedAgents,
+    settings: props.animation,
+    status,
+    initialStatus: props.initialStatus,
+    reducedMotion,
+    intensity,
+    ambientPaused,
+  });
+  const director = animation.director;
+  const links = useMemo(() => activeDelegations(status.delegations ?? []), [status.delegations]);
 
   useEffect(() => {
     try {
@@ -276,6 +371,11 @@ export function AiOffice(props: {
       const prefers = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate a per-viewer preference
       setReducedMotion(stored ? stored === "true" : Boolean(prefers));
+      const storedActivity = window.localStorage.getItem(ACTIVITY_KEY);
+      if (storedActivity && ["default", "off", "low", "normal", "high"].includes(storedActivity)) {
+        setActivity(storedActivity as AmbientIntensity | "default");
+      }
+      setAmbientPaused(window.localStorage.getItem(PAUSE_KEY) === "true");
     } catch {
       /* storage unavailable */
     }
@@ -331,20 +431,47 @@ export function AiOffice(props: {
     };
   }, [refresh, live]);
 
-  function setMotion(value: boolean) {
-    setReducedMotion(value);
+  function remember(key: string, value: string) {
     try {
-      window.localStorage.setItem(MOTION_KEY, String(value));
+      window.localStorage.setItem(key, value);
     } catch {
       /* ignore */
     }
   }
 
+  function setMotion(value: boolean) {
+    setReducedMotion(value);
+    remember(MOTION_KEY, String(value));
+  }
+
+  function chooseActivity(value: AmbientIntensity | "default") {
+    setActivity(value);
+    remember(ACTIVITY_KEY, value);
+  }
+
+  function togglePause() {
+    setAmbientPaused((p) => {
+      remember(PAUSE_KEY, String(!p));
+      return !p;
+    });
+  }
+
+  const onChatRequest = useCallback(
+    (event: BaxterRequestLifecycle) => {
+      if (!baxter || !director) return;
+      if (event.phase === "start") director.chatRequest(baxter.id, "start");
+      else director.chatRequest(baxter.id, "end", { ok: event.ok, delegated: event.delegated });
+      // The chat answer may have created or finished delegated tasks; pick them up now.
+      if (event.phase === "end") void refresh();
+    },
+    [baxter, director, refresh],
+  );
+
   const centerOn = useCallback(
     (x: number, y: number, z = zoom) => {
       const vp = viewportRef.current;
       if (!vp) return;
-      setPan({ x: vp.clientWidth / 2 - x * z, y: vp.clientHeight / 2 - y * z });
+      setPan(centerCamera({ x, y }, z, { width: vp.clientWidth, height: vp.clientHeight }));
     },
     [zoom],
   );
@@ -367,23 +494,43 @@ export function AiOffice(props: {
     if (view === "office") fit();
   }, [fit, view]);
 
+  /** Baxter's live position when animated, else his seat. */
+  const baxterPoint = useCallback(() => {
+    if (!baxter) return null;
+    const p = director?.positionOf(baxter.id);
+    if (p) return { x: p.x, y: p.y - 30 };
+    const seat = layout.seats.find((s) => s.agentId === baxter.id);
+    return seat ? { x: seat.x, y: seat.y } : null;
+  }, [baxter, director, layout.seats]);
+
   function goToBaxter() {
-    const baxter = agents.find((a) => a.kind === "orchestrator");
-    const seat = layout.seats.find((s) => s.agentId === baxter?.id);
-    if (!baxter || !seat) return;
+    const p = baxterPoint();
+    if (!baxter || !p) return;
     const z = Math.max(zoom, 1);
     setZoom(z);
-    centerOn(seat.x, seat.y, z);
+    centerOn(p.x, p.y, z);
     setSelectedId(baxter.id);
   }
+
+  // Follow Baxter: re-centre a few times a second (with a matching CSS transition) rather
+  // than every frame, so following doesn't re-render the office 60 times a second.
+  useEffect(() => {
+    if (!following || view !== "office") return;
+    const step = () => {
+      const p = baxterPoint();
+      if (p) centerOn(p.x, p.y);
+    };
+    step();
+    const id = window.setInterval(step, 250);
+    return () => window.clearInterval(id);
+  }, [following, view, baxterPoint, centerOn]);
 
   function zoomBy(factor: number) {
     const vp = viewportRef.current;
     const next = Math.max(0.4, Math.min(2, zoom * factor));
     if (vp) {
-      const cx = vp.clientWidth / 2;
-      const cy = vp.clientHeight / 2;
-      setPan((p) => ({ x: cx - ((cx - p.x) / zoom) * next, y: cy - ((cy - p.y) / zoom) * next }));
+      const focus = { x: vp.clientWidth / 2, y: vp.clientHeight / 2 };
+      setPan((p) => zoomAround({ ...p, zoom }, next, focus));
     }
     setZoom(next);
   }
@@ -442,6 +589,35 @@ export function AiOffice(props: {
             {live === "realtime" ? "Live updates on" : "Updating every 15 seconds"}
           </span>
           <label className="inline-flex items-center gap-1.5 font-medium text-[var(--acton-navy)]">
+            Office life
+            <select
+              className="rounded border border-[var(--acton-border)] bg-white px-1.5 py-1 text-xs"
+              value={activity}
+              onChange={(e) => chooseActivity(e.target.value as AmbientIntensity | "default")}
+              title="How much Baxter moves around when he has no real work. Only affects your view."
+            >
+              <option value="default">Default ({props.animation.ambient_intensity})</option>
+              <option value="off">Off</option>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={togglePause}
+            aria-pressed={ambientPaused}
+            className="inline-flex items-center gap-1 rounded border border-[var(--acton-border)] bg-white px-2 py-1 font-medium text-[var(--acton-navy)]"
+            title="Pause idle wandering. Real task activity still animates."
+          >
+            {ambientPaused ? (
+              <Play className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Pause className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {ambientPaused ? "Resume idle animation" : "Pause idle animation"}
+          </button>
+          <label className="inline-flex items-center gap-1.5 font-medium text-[var(--acton-navy)]">
             <input
               type="checkbox"
               checked={reducedMotion}
@@ -463,6 +639,7 @@ export function AiOffice(props: {
               tabIndex={0}
               onKeyDown={onKeyDown}
               onPointerDown={(e) => {
+                setFollowing(false);
                 (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
                 dragRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
               }}
@@ -488,6 +665,7 @@ export function AiOffice(props: {
                   width: layout.width,
                   height: layout.height,
                   transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transition: following ? "transform 250ms linear" : undefined,
                 }}
               >
                 {layout.rooms.map((room) => (
@@ -517,6 +695,18 @@ export function AiOffice(props: {
                     >
                       {room.label}
                     </span>
+                    {roomHasDoor(room) ? (
+                      <span
+                        aria-hidden
+                        className="ai-office-floor absolute"
+                        style={{
+                          left: roomDoor(room).x - room.x - 6,
+                          bottom: -6,
+                          width: roomDoor(room).w,
+                          height: 6,
+                        }}
+                      />
+                    ) : null}
                     {room.kind === "future" ? (
                       <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-sm font-semibold text-[#4b5058]">
                         Room for new departments
@@ -535,14 +725,68 @@ export function AiOffice(props: {
                     )}
                   </div>
                 ))}
+                <svg
+                  aria-hidden
+                  className="pointer-events-none absolute top-0 left-0"
+                  width={layout.width}
+                  height={layout.height}
+                  style={{ zIndex: 1 }}
+                >
+                  {links.map((d) => {
+                    const fromSeat = layout.seats.find((s) => s.agentId === d.fromAgentId);
+                    const toSeat = layout.seats.find((s) => s.agentId === d.toAgentId);
+                    if (!fromSeat || !toSeat) return null;
+                    return (
+                      <CollabLink
+                        key={d.id}
+                        director={director}
+                        from={d.fromAgentId}
+                        to={d.toAgentId}
+                        fromPoint={fromSeat}
+                        toPoint={toSeat}
+                      />
+                    );
+                  })}
+                </svg>
+                {links.map((d) => {
+                  const toSeat = layout.seats.find((s) => s.agentId === d.toAgentId);
+                  const from = agentById.get(d.fromAgentId);
+                  if (!toSeat || !from) return null;
+                  return (
+                    <span
+                      key={`chip-${d.id}`}
+                      className="pointer-events-none absolute -translate-x-1/2 border-2 border-[#2b2118] bg-[#fff6d6] px-1.5 py-px text-[10px] font-bold whitespace-nowrap text-[#2b2118]"
+                      style={{ left: toSeat.x, top: toSeat.y - 104, zIndex: 9000 }}
+                    >
+                      From {from.name} · {DELEGATION_STATUS[d.status] ?? d.status}
+                    </span>
+                  );
+                })}
                 {layout.seats.map((seat) => {
                   const agent = agentById.get(seat.agentId);
                   if (!agent) return null;
+                  const spec = animation.specs.get(agent.id);
+                  const state = displayState(statusById.get(agent.id), now);
+                  if (spec && director) {
+                    return (
+                      <AnimatedAgent
+                        key={seat.agentId}
+                        spec={spec}
+                        director={director}
+                        name={agent.name}
+                        ariaLabel={`${agent.name}, ${agent.title}. ${RUNTIME_STATE_LABELS[state]?.label ?? state}.`}
+                        selected={selectedId === agent.id}
+                        onSelect={() => setSelectedId(agent.id)}
+                        bubble={<StateBubble state={state} />}
+                        cue={animation.cues[agent.id]}
+                      />
+                    );
+                  }
                   return (
                     <AgentSprite
                       key={seat.agentId}
                       agent={agent}
-                      state={displayState(statusById.get(agent.id), now)}
+                      state={state}
                       x={seat.x}
                       y={seat.y}
                       selected={selectedId === agent.id}
@@ -552,6 +796,12 @@ export function AiOffice(props: {
                 })}
               </div>
             </div>
+            <p className="sr-only" aria-live="polite">
+              {Object.entries(animation.cues)
+                .filter(([, c]) => c.caption)
+                .map(([id, c]) => `${agentById.get(id)?.name ?? "Agent"}: ${c.caption}`)
+                .join(". ")}
+            </p>
             <div className="absolute right-3 bottom-3 flex gap-1.5">
               <Button
                 size="sm"
@@ -569,9 +819,28 @@ export function AiOffice(props: {
               >
                 <Minus className="h-4 w-4" />
               </Button>
-              <Button size="sm" variant="secondary" onClick={fit}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setFollowing(false);
+                  fit();
+                }}
+                title="Reset camera"
+              >
                 Fit
               </Button>
+              {baxter ? (
+                <Button
+                  size="sm"
+                  variant={following ? "primary" : "secondary"}
+                  onClick={() => setFollowing((f) => !f)}
+                  aria-pressed={following}
+                  title="Keep the camera on Baxter"
+                >
+                  Follow
+                </Button>
+              ) : null}
               <Button size="sm" variant="accent" onClick={goToBaxter}>
                 <Crosshair className="h-4 w-4" /> Baxter
               </Button>
@@ -690,6 +959,15 @@ export function AiOffice(props: {
                 </div>
               </dl>
               <p className="mt-3 text-sm text-[var(--acton-navy)]">{selected.description}</p>
+              {selected.kind === "orchestrator" ? (
+                <BaxterActivity
+                  baxterId={selected.id}
+                  delegations={status.delegations ?? []}
+                  recent={status.recent}
+                  agentById={agentById}
+                  cue={animation.cues[selected.id]?.caption ?? null}
+                />
+              ) : null}
               {selectedTasks.length ? (
                 <div className="mt-4">
                   <h3 className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
@@ -711,6 +989,24 @@ export function AiOffice(props: {
                 </div>
               ) : null}
               <div className="mt-4 flex flex-wrap gap-2">
+                {selected.kind === "orchestrator" && props.chatEnabled ? (
+                  <button
+                    type="button"
+                    onClick={() => setChatOpen(true)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[var(--acton-yellow)] px-3 text-xs font-semibold text-[var(--acton-navy)]"
+                  >
+                    <MessageCircle className="h-3.5 w-3.5" aria-hidden /> Ask Baxter
+                  </button>
+                ) : null}
+                {selected.kind === "orchestrator" && view === "office" ? (
+                  <button
+                    type="button"
+                    onClick={goToBaxter}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[var(--acton-border)] px-3 text-xs font-semibold text-[var(--acton-navy)]"
+                  >
+                    <Crosshair className="h-3.5 w-3.5" aria-hidden /> Locate
+                  </button>
+                ) : null}
                 <Link
                   href={`/ai/agents/${selected.slug}`}
                   className="inline-flex h-8 items-center rounded-md bg-[var(--acton-navy)] px-3 text-xs font-semibold text-white"
@@ -729,8 +1025,9 @@ export function AiOffice(props: {
             </section>
           ) : (
             <section className="rounded-lg border border-[var(--acton-border)] bg-white p-4 text-sm text-[var(--acton-muted)] shadow-sm">
-              Select an agent to see who they are and what they&apos;re doing. Agents only animate
-              when they have real work — an agent at rest is available, not busy.
+              Select an agent to see who they are and what they&apos;re doing. Baxter strolls around
+              his office while he&apos;s free; status badges, hand-off lines, and captions only
+              appear for real tasks.
             </section>
           )}
 
@@ -774,6 +1071,88 @@ export function AiOffice(props: {
           </section>
         </aside>
       </div>
+      {props.chatEnabled && chatOpen ? (
+        <div className="fixed right-4 bottom-4 z-40 sm:right-6 sm:bottom-6">
+          <BaxterChatPanel onClose={() => setChatOpen(false)} onRequestLifecycle={onChatRequest} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** What Baxter is coordinating right now, from real delegation records. */
+function BaxterActivity({
+  baxterId,
+  delegations,
+  recent,
+  agentById,
+  cue,
+}: {
+  baxterId: string;
+  delegations: DelegationSnapshot[];
+  recent: TaskSummary[];
+  agentById: Map<string, AgentCard>;
+  cue: string | null;
+}) {
+  const active = activeDelegations(delegations).filter((d) => d.fromAgentId === baxterId);
+  const visible = new Map(recent.map((t) => [t.id, t]));
+  const history = recent.filter((t) => t.assigningAgentId === baxterId).slice(0, 4);
+  return (
+    <div className="mt-4 space-y-3">
+      {cue ? (
+        <p className="rounded bg-[var(--acton-gray-50)] px-2 py-1 text-xs text-[var(--acton-navy)]">
+          {cue}
+        </p>
+      ) : null}
+      <div>
+        <h3 className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+          Current assignments
+        </h3>
+        {active.length === 0 ? (
+          <p className="mt-1 text-sm text-[var(--acton-muted)]">Nothing handed off right now.</p>
+        ) : (
+          <ul className="mt-1 space-y-1">
+            {active.map((d) => {
+              const to = agentById.get(d.toAgentId);
+              const task = visible.get(d.id);
+              const label = `${to?.name ?? "Specialist"} · ${DELEGATION_STATUS[d.status] ?? d.status}`;
+              return (
+                <li key={d.id} className="text-sm text-[var(--acton-navy)]">
+                  {task ? (
+                    <Link href={`/ai/tasks/${d.id}`} className="hover:underline">
+                      {label}
+                    </Link>
+                  ) : (
+                    label
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      {history.length ? (
+        <div>
+          <h3 className="text-xs font-semibold tracking-wide text-[var(--acton-muted)] uppercase">
+            Recent delegations
+          </h3>
+          <ul className="mt-1 space-y-1.5">
+            {history.map((t) => (
+              <li key={t.id}>
+                <Link
+                  href={`/ai/tasks/${t.id}`}
+                  className="flex items-center justify-between gap-2 text-sm hover:underline"
+                >
+                  <span className="truncate">
+                    {agentById.get(t.assignedAgentId)?.name ?? "Agent"}: {t.title || "Task"}
+                  </span>
+                  <TaskStatusPill status={t.status} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

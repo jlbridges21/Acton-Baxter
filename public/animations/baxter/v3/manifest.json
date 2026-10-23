@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "character": "baxter",
+  "packVersion": "3.0.0",
+  "generatedBy": "scripts/normalize-baxter-sprites.mjs",
+  "source": "/animations/baxter_sprite_pack/manifest.json",
+  "canvases": {
+    "character": {
+      "width": 274,
+      "height": 225,
+      "anchor": {
+        "x": 137,
+        "y": 221
+      }
+    },
+    "desk": {
+      "width": 275,
+      "height": 236,
+      "anchor": {
+        "x": 247,
+        "y": 132
+      },
+      "standPoint": {
+        "x": -180,
+        "y": 84
+      }
+    }
+  },
+  "animations": {
+    "idle": {
+      "canvas": "character",
+      "loop": true,
+      "frameDurationMs": 650,
+      "frames": [
+        "/animations/baxter/v3/idle-01.webp",
+        "/animations/baxter/v3/idle-02.webp",
+        "/animations/baxter/v3/idle-03.webp",
+        "/animations/baxter/v3/idle-04.webp"
+      ]
+    },
+    "walkRight": {
+      "canvas": "character",
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "/animations/baxter/v3/walk-right-01.webp",
+        "/animations/baxter/v3/walk-right-02.webp",
+        "/animations/baxter/v3/walk-right-03.webp",
+        "/animations/baxter/v3/walk-right-04.webp"
+      ]
+    },
+    "walkLeft": {
+      "canvas": "character",
+      "loop": true,
+      "frameDurationMs": 160,
+      "frames": [
+        "/animations/baxter/v3/walk-left-01.webp",
+        "/animations/baxter/v3/walk-left-02.webp",
+        "/animations/baxter/v3/walk-left-03.webp",
+        "/animations/baxter/v3/walk-left-04.webp"
+      ]
+    },
+    "thinking": {
+      "canvas": "character",
+      "loop": false,
+      "frameDurationMs": 420,
+      "frames": [
+        "/animations/baxter/v3/thinking-01.webp",
+        "/animations/baxter/v3/thinking-02.webp",
+        "/animations/baxter/v3/thinking-03.webp"
+      ]
+    },
+    "presenting": {
+      "canvas": "character",
+      "loop": false,
+      "frameDurationMs": 300,
+      "frames": [
+        "/animations/baxter/v3/presenting-01.webp",
+        "/animations/baxter/v3/presenting-02.webp",
+        "/animations/baxter/v3/presenting-03.webp"
+      ]
+    },
+    "working": {
+      "canvas": "desk",
+      "loop": true,
+      "frameDurationMs": 280,
+      "frames": [
+        "/animations/baxter/v3/working-01.webp",
+        "/animations/baxter/v3/working-02.webp",
+        "/animations/baxter/v3/working-03.webp",
+        "/animations/baxter/v3/working-04.webp"
+      ]
+    },
+    "sitDown": {
+      "canvas": "desk",
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "/animations/baxter/v3/sit-down-01.webp",
+        "/animations/baxter/v3/sit-down-02.webp",
+        "/animations/baxter/v3/sit-down-03.webp"
+      ]
+    },
+    "standUp": {
+      "canvas": "desk",
+      "loop": false,
+      "frameDurationMs": 180,
+      "frames": [
+        "/animations/baxter/v3/stand-up-01.webp",
+        "/animations/baxter/v3/stand-up-02.webp",
+        "/animations/baxter/v3/stand-up-03.webp"
+      ]
+    }
+  }
+}

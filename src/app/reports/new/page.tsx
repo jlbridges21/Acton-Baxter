@@ -1,19 +1,15 @@
 import { AppShell } from "@/components/layout/app-shell";
-import { NewReportForm } from "@/components/reports/new-report-form";
-import { requireActiveUser } from "@/lib/auth/session";
+import { CreateWithDexter } from "@/components/report-builder/create-with-dexter";
+import { ReportsNoAccess } from "@/components/report-builder/no-access";
+import { loadReportsPageContext } from "@/lib/reports/page-access";
+
+export const dynamic = "force-dynamic";
 
 export default async function NewReportPage() {
-  const user = await requireActiveUser();
+  const { user, access } = await loadReportsPageContext();
   return (
     <AppShell user={user}>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[var(--acton-navy)]">New property research</h1>
-        <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Enter a property address to research public property, parcel, zoning, and planning
-          information.
-        </p>
-      </div>
-      <NewReportForm />
+      {access?.canUse ? <CreateWithDexter canChat={access.canChat} /> : <ReportsNoAccess />}
     </AppShell>
   );
 }

@@ -5,27 +5,32 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ai/ui";
 import { requireActiveUser } from "@/lib/auth/session";
 import { getWorkspaceSettings } from "@/lib/agents/admin";
+import { listOfficeDelegations } from "@/lib/agents/office-activity";
 import { canAdministerWorkspace, requesterFromAuthUser } from "@/lib/agents/permissions";
 import { getDepartmentRows } from "@/lib/agents/registry";
 import { listRuntimeStatuses } from "@/lib/agents/tasks";
 import { taskSummary } from "@/lib/agents/task-format";
 import { listAgentCards, listVisibleTasks } from "@/lib/agents/views";
+import { getEnv } from "@/lib/env";
+import { normalizeAnimationSettings } from "@/lib/office/animation-settings";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "AI Office" };
 
 async function load(requester: ReturnType<typeof requesterFromAuthUser>) {
-  const [agents, departments, settings, statuses, recent] = await Promise.all([
+  const [agents, departments, settings, statuses, recent, delegations] = await Promise.all([
     listAgentCards(requester),
     getDepartmentRows(),
     getWorkspaceSettings(),
     listRuntimeStatuses(),
     listVisibleTasks(requester, { limit: 12 }),
+    listOfficeDelegations().catch(() => []),
   ]);
   return {
     agents,
     departments,
     settings,
+    animation: normalizeAnimationSettings(settings.animation_settings),
     status: {
       statuses: statuses.map((s) => ({
         agentId: s.agent_id,
@@ -35,6 +40,7 @@ async function load(requester: ReturnType<typeof requesterFromAuthUser>) {
         updatedAt: s.updated_at,
       })),
       recent: recent.map(taskSummary),
+      delegations,
       serverTime: new Date().toISOString(),
     },
   };
@@ -71,6 +77,8 @@ export default async function AiOfficePage() {
           initialAgents={data.agents}
           departments={data.departments}
           settings={data.settings}
+          animation={data.animation}
+          chatEnabled={getEnv().BAXTER_CHAT_ENABLED}
           canAdminister={canAdministerWorkspace(requester)}
           initialStatus={data.status}
         />

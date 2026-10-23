@@ -26,7 +26,7 @@ function NewReportFormInner() {
     setSubmitting(true);
     setServerError(null);
     try {
-      const response = await fetch("/api/reports", {
+      const response = await fetch("/api/property-research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address }),
@@ -38,7 +38,7 @@ function NewReportFormInner() {
       if (!response.ok || !payload.reportId) {
         throw new Error(payload.error?.message ?? "Unable to create report");
       }
-      router.push(`/reports/${payload.reportId}/processing`);
+      router.push(`/property-research/${payload.reportId}/processing`);
     } catch (err) {
       setServerError(err instanceof Error ? err.message : "Unable to create report");
       setSubmitting(false);

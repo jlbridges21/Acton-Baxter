@@ -1,0 +1,19 @@
+Baxter V3 Sprite Pack Verification
+==================================
+
+Source archive: baxter_v2_sprite_pack.zip
+Extraction order:
+- 2x2 sheets: row-major (top-left, top-right, bottom-left, bottom-right)
+- 3x1 sheets: left-to-right
+
+Verified results:
+- Individual frames: 28
+- 627x627 RGBA PNG frames: 16
+- 724x724 RGBA PNG frames: 12
+- Frames with an alpha channel and both transparent and opaque pixels: 28
+- Manifest frame references: 28
+- Missing manifest references: 0
+- Original source files preserved byte-for-byte: yes
+- Source-file mismatches: 0
+
+The final ZIP was also tested for archive integrity after creation.

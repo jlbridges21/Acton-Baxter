@@ -101,7 +101,7 @@ describe("other capability how-to phrasings", () => {
     expect(classifyCapabilityQuestion(q).reason).toBe("baxter_meta_howto");
     const help = answerCapabilityHelp({ question: q, role: "user" });
     expect(help?.answer).toMatch(/Property Research/i);
-    expect(help?.links.some((l) => l.href.includes("report"))).toBe(true);
+    expect(help?.links.some((l) => l.href.startsWith("/property-research"))).toBe(true);
   });
 
   it("routes Customer Center how-to away from GHL", () => {

@@ -268,3 +268,26 @@ body {
     transition: none !important;
   }
 }
+
+/* Animated office characters (sprite frames are swapped by the office director). */
+.ai-office .ai-office-sprite {
+  image-rendering: auto;
+  user-select: none;
+}
+.ai-office .ai-office-fade {
+  transition: opacity 140ms linear;
+}
+.ai-office .ai-office-actor[data-scene="desk"] .ai-office-shadow {
+  opacity: 0;
+}
+.ai-office .ai-office-caption {
+  animation: ai-office-bubble 1.6s steps(4) infinite;
+}
+.ai-office .ai-office-link {
+  animation: ai-office-link 1.2s linear infinite;
+}
+@keyframes ai-office-link {
+  to {
+    stroke-dashoffset: -24;
+  }
+}

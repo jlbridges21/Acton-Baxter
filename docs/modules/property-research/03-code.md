@@ -117,7 +117,7 @@ Internal Baxter modules: `@/lib/auth/session`, `@/lib/errors`, `@/lib/jobs/*`, `
 | `reports/[reportId]/imagery/route.ts` | GET         | Imagery                           |
 | `slack/commands/property/route.ts`    | POST        | The `/property` Slack command     |
 
-### Pages — `src/app/reports/`
+### Pages — `src/app/property-research/`
 
 | Page                             | Responsibility                        |
 | -------------------------------- | ------------------------------------- |
@@ -1828,13 +1828,13 @@ export function formatMaxSizeDisplay(maxSize: MaxSizeRuleSlice): string {
            src/lib/connectors/*/*.ts \
            src/lib/connectors/*/*/*.ts \
            src/lib/jurisdictions/*.ts \
-           src/app/api/reports/route.ts \
-           src/app/api/reports/*/route.ts \
-           src/app/api/reports/*/*/route.ts \
+           src/app/api/property-research/route.ts \
+           src/app/api/property-research/*/route.ts \
+           src/app/api/property-research/*/*/route.ts \
            src/app/api/slack/commands/property/route.ts \
-           src/app/reports/page.tsx \
-           src/app/reports/*/page.tsx \
-           src/app/reports/*/*/page.tsx \
+           src/app/property-research/page.tsx \
+           src/app/property-research/*/page.tsx \
+           src/app/property-research/*/*/page.tsx \
            src/components/reports/*.tsx \
            supabase/migrations/001_initial_schema.sql \
            supabase/migrations/002_live_research_metadata.sql \

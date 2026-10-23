@@ -128,7 +128,7 @@ async function aiRoute(input: {
   specialistRequest: string | null;
   remainder: string | null;
 }> {
-  const system = `You route requests inside Acton ADU's AI organization. ${input.orchestrator.row.display_name} (the manager) answers general questions, company knowledge, CRM, JobTread, projects, and sales. Specialists handle only what their card covers.
+  const system = `You route requests inside Acton ADU's AI organization. ${input.orchestrator.row.display_name} (the manager) answers general questions, company knowledge, CRM, quick lookups about a single project, and sales. Specialists handle only what their card covers (for example, reports or analysis across many JobTread projects).
 Guidelines from the manager:
 ${input.orchestrator.config.instructions.delegationGuidelines || "(none)"}
 

@@ -212,12 +212,23 @@ describe("specialist output handling", () => {
         proposedActions: [],
         missingInformation: [],
         requiresHumanReview: false,
+        artifacts: [
+          {
+            type: "report",
+            id: "fake",
+            title: "Model-claimed report",
+            url: "/reports/fake",
+            version: 1,
+          },
+        ],
       },
       new Map([["real", { documentId: "real", title: "Real SOP", excerpt: "text" }]]),
       ["approval-1"],
     );
     expect(result.sources).toEqual([{ documentId: "real", title: "Real SOP", excerpt: "text" }]);
     expect(result.proposedActions[0]?.approvalId).toBe("approval-1");
+    // Reports the model merely claims are discarded; only tool-verified artifacts survive.
+    expect(result.artifacts).toEqual([]);
   });
 });
 

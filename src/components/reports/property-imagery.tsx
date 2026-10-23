@@ -68,7 +68,7 @@ export function PropertyImagerySection({ report }: { report: FullReport }) {
                 Satellite
               </p>
               <MapsImage
-                src={`/api/reports/${report.id}/imagery?view=satellite`}
+                src={`/api/property-research/${report.id}/imagery?view=satellite`}
                 alt={`Satellite view of ${report.standardized_address ?? report.input_address}`}
                 fallbackLabel="Satellite imagery unavailable (enable Maps Static API or check coordinates)."
               />
@@ -78,7 +78,7 @@ export function PropertyImagerySection({ report }: { report: FullReport }) {
                 Street View
               </p>
               <MapsImage
-                src={`/api/reports/${report.id}/imagery?view=street`}
+                src={`/api/property-research/${report.id}/imagery?view=street`}
                 alt={`Street view of ${report.standardized_address ?? report.input_address}`}
                 fallbackLabel="Street View unavailable for this location."
               />

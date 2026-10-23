@@ -27,7 +27,17 @@ const SUGGESTIONS = [
   "What approved Acton knowledge can you access?",
 ];
 
-export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
+/** Lifecycle of a real chat request, for surfaces that visualize Baxter (the AI Office). */
+export type BaxterRequestLifecycle =
+  { phase: "start" } | { phase: "end"; ok: boolean; delegated: boolean };
+
+export function BaxterChatPanel({
+  onClose,
+  onRequestLifecycle,
+}: {
+  onClose: () => void;
+  onRequestLifecycle?: (event: BaxterRequestLifecycle) => void;
+}) {
   const [messages, setMessages] = useState<ChatUiMessage[]>([GREETING]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -61,6 +71,8 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
       setMessages((prev) => [...prev, userMessage]);
     });
     setPending(true);
+    const outcome = { ok: false, delegated: false };
+    if (!isClear) onRequestLifecycle?.({ phase: "start" });
 
     try {
       const response = await fetch("/api/baxter/chat", {
@@ -121,6 +133,8 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
       if (payload.conversationId) {
         setConversationId(payload.conversationId);
       }
+      outcome.ok = true;
+      outcome.delegated = Boolean(payload.message?.delegation);
 
       setMessages((prev) => [
         ...prev,
@@ -148,6 +162,7 @@ export function BaxterChatPanel({ onClose }: { onClose: () => void }) {
     } finally {
       setPending(false);
       inFlightRef.current = false;
+      if (!isClear) onRequestLifecycle?.({ phase: "end", ...outcome });
     }
   }
 

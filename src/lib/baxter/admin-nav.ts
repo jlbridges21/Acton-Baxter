@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  BarChart3,
   Bell,
   BookOpen,
   Bot,
@@ -60,10 +61,10 @@ export function getAdminNavSections(): AdminNavSection[] {
       match: (pathname) => pathname.startsWith("/admin/knowledge") || pathname === "/knowledge",
     },
     {
-      href: "/dashboard",
+      href: "/property-research",
       label: "Property Research",
       icon: Search,
-      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+      match: (pathname) => pathname.startsWith("/property-research") || pathname === "/dashboard",
     },
     {
       href: "/pem-neats",
@@ -76,6 +77,12 @@ export function getAdminNavSections(): AdminNavSection[] {
       label: "Customer Center",
       icon: UsersRound,
       match: (pathname) => pathname.startsWith("/customers"),
+    },
+    {
+      href: "/reports",
+      label: "Reports",
+      icon: BarChart3,
+      match: (pathname) => pathname === "/reports" || pathname.startsWith("/reports/"),
     },
     {
       href: "/admin/jurisdictions",

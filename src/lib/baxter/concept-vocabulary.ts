@@ -163,8 +163,8 @@ export const BAXTER_CONCEPT_CATALOG: ConceptDefinition[] = [
     aliases: ["property research", "property research tool", "parcel research"],
     category: "property_research",
     knowledgeSearchTerms: ["Property Research"],
-    route: "/dashboard",
-    createRoute: "/reports/new",
+    route: "/property-research",
+    createRoute: "/property-research/new",
   },
   {
     key: "knowledge_center",

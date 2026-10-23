@@ -152,7 +152,7 @@ describe("Baxter AI grounding and citations", () => {
       "utf8",
     );
     const reportsNew = readFileSync(
-      path.join(process.cwd(), "src/app/reports/new/page.tsx"),
+      path.join(process.cwd(), "src/app/property-research/new/page.tsx"),
       "utf8",
     );
     const adminKnowledge = readFileSync(

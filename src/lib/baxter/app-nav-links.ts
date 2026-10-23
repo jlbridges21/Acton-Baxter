@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   BookOpen,
   Bot,
   ClipboardCheck,
@@ -57,6 +58,12 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       match: (pathname) => pathname === "/ai" || pathname.startsWith("/ai/"),
     },
     {
+      href: "/reports",
+      label: "Reports",
+      icon: BarChart3,
+      match: (pathname) => pathname === "/reports" || pathname.startsWith("/reports/"),
+    },
+    {
       href: "/pem-neats",
       label: "PEM NEAT",
       icon: ClipboardList,
@@ -87,10 +94,10 @@ export function getEmployeeNavLinks(): AppNavLink[] {
       match: (pathname) => pathname === "/inventory" || pathname.startsWith("/inventory/"),
     },
     {
-      href: "/dashboard",
+      href: "/property-research",
       label: "Property Research",
       icon: Search,
-      match: (pathname) => pathname.startsWith("/reports") || pathname === "/dashboard",
+      match: (pathname) => pathname.startsWith("/property-research") || pathname === "/dashboard",
     },
     {
       href: "/customers/lookup",

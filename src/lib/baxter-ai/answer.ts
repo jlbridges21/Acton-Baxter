@@ -324,6 +324,7 @@ export async function answerBaxterQuestion(input: BaxterQuestionInput): Promise<
     slackIsDirectMessage: input.slackIsDirectMessage ?? false,
     slackChannelId: input.slackChannelId ?? null,
     slackThreadTs: input.slackReplyThreadTs ?? null,
+    history: historyForRouting,
   });
   if (delegated.handled) {
     const message = await appendAssistantMessage({

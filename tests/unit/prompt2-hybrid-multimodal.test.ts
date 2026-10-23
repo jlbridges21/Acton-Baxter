@@ -311,7 +311,7 @@ describe("Prompt 2 — providers", () => {
 
 describe("Prompt 2 — navigation", () => {
   it("Property Research tool opens dashboard", () => {
-    expect(getEnabledBaxterTools()[0]?.href).toBe("/dashboard");
+    expect(getEnabledBaxterTools()[0]?.href).toBe("/property-research");
   });
 });
 

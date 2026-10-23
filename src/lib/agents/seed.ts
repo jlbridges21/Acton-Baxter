@@ -1,5 +1,5 @@
 /**
- * Idempotent bootstrap for the Phase 1 AI organization (Baxter + Sam).
+ * Idempotent bootstrap for the AI organization (Baxter, Sam, Dexter).
  *
  * Only creates what is missing; never overwrites admin edits. Safe to call from any
  * request path — the first call per server instance does the work.
@@ -10,14 +10,25 @@ import "server-only";
 import {
   BAXTER_AVATAR_PATH,
   BAXTER_DEFAULT_CONFIG,
+  BAXTER_DELEGATION_GUIDELINES,
+  BAXTER_DELEGATION_GUIDELINES_V1,
   BAXTER_SLUG,
   DEFAULT_DEPARTMENTS,
+  DEXTER_DEFAULT_CONFIG,
+  DEXTER_SLUG,
   PLACEHOLDER_ONBOARDING_TEMPLATE,
   SAM_DEFAULT_CONFIG,
   SAM_SLUG,
 } from "./defaults";
-import { agentDb, eq, isUniqueViolation, selectOne } from "./store";
-import type { AccessLevel, AgentConfig, AgentRow, DepartmentRow } from "./types";
+import { agentDb, callRpc, eq, isUniqueViolation, selectOne, usesAgentMemoryStore } from "./store";
+import {
+  agentConfigSchema,
+  type AccessLevel,
+  type AgentConfig,
+  type AgentRow,
+  type ConfigVersionRow,
+  type DepartmentRow,
+} from "./types";
 
 let seedPromise: Promise<void> | null = null;
 
@@ -178,5 +189,85 @@ async function runSeed(): Promise<void> {
     // Restricted by default: admins (implicit) only. Admins grant HR staff access in the Access tab.
     policies: [],
   });
+  await ensureAgent({
+    slug: DEXTER_SLUG,
+    row: {
+      display_name: "Dexter",
+      title: "AI Reporting & Data Analytics Specialist",
+      description:
+        "Turns authorized Acton ADU business data — JobTread first — into accurate, interactive reports and dashboards. Reports to Baxter.",
+      kind: "specialist",
+      department_id: departments.get("business-intelligence")?.id ?? null,
+      manager_agent_id: baxter.id,
+      status: "active",
+      avatar_url: null,
+      desk: { area: "business-intelligence", slot: 0 },
+    },
+    config: DEXTER_DEFAULT_CONFIG,
+    // Every approved employee can use Reports with project information; customer and
+    // financial fields need the extra grants on Dexter's Access tab.
+    policies: [
+      { principal_type: "role", principal_value: "user", access_level: "use_via_baxter" },
+      { principal_type: "role", principal_value: "user", access_level: "direct_chat" },
+    ],
+  });
+  await upgradeBaxterGuidelines(baxter.id);
   await ensurePlaceholderOnboardingTemplate();
+}
+
+/**
+ * Baxter's shipped delegation guidelines said "handle JobTread yourself", which would steer
+ * reporting requests away from Dexter. Publish an updated version only if the live text is
+ * still exactly the original default — any admin edit is left alone.
+ */
+async function upgradeBaxterGuidelines(baxterId: string) {
+  const db = agentDb();
+  const versions = await db.select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", baxterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (
+    !parsed.success ||
+    parsed.data.instructions.delegationGuidelines !== BAXTER_DELEGATION_GUIDELINES_V1
+  )
+    return;
+  const config = {
+    ...parsed.data,
+    instructions: {
+      ...parsed.data.instructions,
+      delegationGuidelines: BAXTER_DELEGATION_GUIDELINES,
+    },
+  };
+  const nextVersion = Math.max(...versions.map((v) => v.version_number)) + 1;
+  try {
+    const [created] = await db.insert<ConfigVersionRow>("ai_agent_config_versions", {
+      agent_id: baxterId,
+      version_number: nextVersion,
+      status: "draft",
+      config,
+      change_summary: "System: added Dexter to Baxter's delegation guidelines",
+      published_by: null,
+      published_at: null,
+    });
+    if (usesAgentMemoryStore()) {
+      await db.update("ai_agent_config_versions", [eq("id", published.id)], {
+        status: "superseded",
+      });
+      await db.update("ai_agent_config_versions", [eq("id", created!.id)], {
+        status: "published",
+        published_at: new Date().toISOString(),
+      });
+      await db.update("ai_agents", [eq("id", baxterId)], { published_version_id: created!.id });
+    } else {
+      await callRpc("publish_ai_agent_config", {
+        p_agent_id: baxterId,
+        p_version_id: created!.id,
+        p_published_by: null,
+      });
+    }
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
 }

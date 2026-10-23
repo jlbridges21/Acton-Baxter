@@ -29,6 +29,7 @@ export function sanitizeSourceUrl(url: string | null | undefined): string | null
     trimmed.startsWith("/pem-neats") ||
     trimmed.startsWith("/dashboard") ||
     trimmed.startsWith("/reports") ||
+    trimmed.startsWith("/property-research") ||
     trimmed.startsWith("/admin/") ||
     trimmed === "/"
   ) {

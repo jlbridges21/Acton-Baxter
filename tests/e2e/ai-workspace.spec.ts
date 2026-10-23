@@ -34,6 +34,49 @@ test("AI Office shows Baxter and Sam with real (idle) status and an accessible l
   await expect(page.getByRole("table")).toContainText("Executive Office");
 });
 
+test("AI Office animates Baxter from his sprite pack without breaking the map", async ({
+  page,
+  context,
+}) => {
+  await asRole(context, "admin");
+  const tasksBefore = await (await context.request.get("/api/ai/status")).json();
+  await page.goto("/ai");
+  const actor = page.locator(".ai-office-actor");
+  await expect(actor).toHaveCount(1);
+  await expect(actor).toHaveAttribute("data-visual", /^[a-z_]+$/);
+  // Every sprite frame on the page decoded (no broken images).
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll<HTMLImageElement>(".ai-office-sprite")].filter(
+            (img) => !img.complete || img.naturalWidth === 0,
+          ).length,
+      ),
+    )
+    .toBe(0);
+
+  // Zoom and pan still work while Baxter moves.
+  const world = page.locator(".ai-office > div").first();
+  const before = (await world.getAttribute("style")) ?? "";
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(world).not.toHaveAttribute("style", before);
+  await page.locator(".ai-office").press("ArrowLeft");
+
+  // A moving button isn't "stable" for Playwright's click; dispatch the click directly.
+  await page.getByRole("button", { name: /^Baxter, AI CEO/ }).dispatchEvent("click");
+  await expect(page.getByRole("heading", { name: "Baxter" })).toBeVisible();
+  await expect(page.getByText("Current assignments")).toBeVisible();
+
+  await page.getByLabel("Reduce motion").check();
+  await expect(page.locator(".ai-office")).toHaveAttribute("data-reduced-motion", "true");
+
+  // Ten seconds of idle wandering creates no tasks.
+  await page.waitForTimeout(10_000);
+  const tasksAfter = await (await context.request.get("/api/ai/status")).json();
+  expect(tasksAfter.recent.length).toBe(tasksBefore.recent.length);
+});
+
 test("Baxter delegates an HR question to Sam and reports failures honestly", async ({
   request,
   context,

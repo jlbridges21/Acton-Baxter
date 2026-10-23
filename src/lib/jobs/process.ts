@@ -238,6 +238,12 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
     } else if (job.jobType === "inventory_order_import") {
       const { runInventoryOrderImportJob } = await import("@/lib/inventory/import-order");
       await runInventoryOrderImportJob(job);
+    } else if (job.jobType === "jobtread_sync") {
+      const { runFullSync } = await import("@/lib/jobtread/sync");
+      const run = await runFullSync(
+        typeof job.metadata.source === "string" ? job.metadata.source : "job",
+      );
+      if (run.status === "failed") throw new Error(run.error ?? "JobTread sync failed");
     } else if (job.jobType === "ai_agent_task") {
       const { processAgentTaskJob } = await import("@/lib/agents/jobs");
       await processAgentTaskJob(job);

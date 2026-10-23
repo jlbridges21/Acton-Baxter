@@ -18,7 +18,7 @@ Outside those sources, Property Research still uses ATTOM and RentCast when conf
 ## What Property Research does
 
 1. Salesperson signs in to Baxter.
-2. Opens **Property Research Tool** from the Baxter Dashboard (or goes to `/reports/new`).
+2. Opens **Property Research Tool** from the Baxter Dashboard (or goes to `/property-research/new`).
 3. Selects a standardized property address (Google Places autocomplete when configured).
 4. App researches licensed + public sources, detects meaningful conflicts, and prepares a concise report.
 5. Optional Slack `/property` command creates the same report and returns a login-protected link.
@@ -204,7 +204,7 @@ Test at `/admin/provider-test` (admin, non-production).
    - Server key → `GOOGLE_MAPS_SERVER_API_KEY` (IP / server restricted; Places, Geocoding, Maps Static, Street View Static)
 3. Restart the app
 
-Reports use Google for address autocomplete plus satellite / Street View imagery (proxied through `/api/reports/[id]/imagery`) and deep links to Google Maps.
+Reports use Google for address autocomplete plus satellite / Street View imagery (proxied through `/api/property-research/[id]/imagery`) and deep links to Google Maps.
 
 Without Google keys, manual address entry still works in mock mode; live mode should use autocomplete/resolve for confidence.
 
@@ -328,7 +328,7 @@ RUN_LIVE_INTEGRATION_TESTS=true npm run test:integration
 
 | Who      | Path                                                                                                              |
 | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| Everyone | `/login`, `/dashboard`, `/reports/new`, `/reports/[id]`                                                           |
+| Everyone | `/login`, `/property-research`, `/property-research/new`, `/property-research/[id]`, `/reports`                   |
 | Admin    | `/admin/knowledge`, `/admin/users`, `/admin/branding`, `/admin/baxter/launch-readiness`, `/admin/baxter/feedback` |
 
 ---

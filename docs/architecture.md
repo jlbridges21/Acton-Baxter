@@ -11,8 +11,8 @@ Live mode queries RentCast and (when `ATTOM_API_KEY` is set) ATTOM concurrently,
 ## Request flow
 
 1. Authenticated user selects a structured address
-2. `POST /api/reports` creates a queued report
-3. Processing page calls `POST /api/reports/[id]/run`
+2. `POST /api/property-research` creates a queued report
+3. Processing page calls `POST /api/property-research/[id]/run`
 4. Run/refresh/retry **enqueue** a durable `property_research` job (same job type as Slack `/property`), then process inline via `after()` using `claimJobById` → `processJob` so cron cannot double-run an active job
 5. `runPropertyResearch` chooses mock or live mode
 6. Live mode queries RentCast and optional ATTOM concurrently, then GIS using confirmed coordinates
@@ -45,7 +45,7 @@ Parcel FeatureServer queries explicitly request `outSR=4326`; the ArcGIS polygon
 - computes a bounds-derived center and zoom with surrounding context
 - simplifies detailed rings with Douglas-Peucker only when the Static Maps URL budget requires it
 
-`GET /api/reports/[reportId]/imagery?view=parcel` loads the stored geometry, builds the server-keyed Google Static Maps request, and proxies the image bytes. The Parcel and public records card uses this as its primary visual; its existing standalone SVG remains the no-key/no-image fallback. The separate plain satellite and Street View requests are unchanged.
+`GET /api/property-research/[reportId]/imagery?view=parcel` loads the stored geometry, builds the server-keyed Google Static Maps request, and proxies the image bytes. The Parcel and public records card uses this as its primary visual; its existing standalone SVG remains the no-key/no-image fallback. The separate plain satellite and Street View requests are unchanged.
 
 ## Recorded easement workflow
 

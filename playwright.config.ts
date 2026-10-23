@@ -35,6 +35,12 @@ export default defineConfig({
       GOOGLE_MAPS_API_KEY: "",
       // Never call Anthropic from E2E (AI Workforce specialists default to Claude).
       ANTHROPIC_API_KEY: "",
+      // Never call JobTread from E2E: .env.local may hold a real grant key. Reports read the
+      // synthetic fixture in src/lib/jobtread/fixture.ts instead.
+      JOBTREAD_GRANT_KEY: "test-grant-key-never-real-0123456789",
+      JOBTREAD_ORGANIZATION_ID: "orgTest0001",
+      JOBTREAD_E2E_FIXTURE: "true",
+      JOBTREAD_SYNC_ENABLED: "false",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
       SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",

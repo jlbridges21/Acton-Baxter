@@ -104,7 +104,7 @@ If Baxter says it could not find an approved Acton source for a company-specific
 
 ## Property Research (web)
 
-From the Baxter Dashboard → **Property Research Tool** (or `/reports/new`):
+From the Baxter Dashboard → **Property Research Tool** (or `/property-research/new`):
 
 1. Enter a California property address.
 2. Baxter researches public and licensed sources.

@@ -144,6 +144,7 @@ export function isSafeHttpUrl(value: string | null | undefined): boolean {
   if (
     value.startsWith("/dashboard") ||
     value.startsWith("/reports") ||
+    value.startsWith("/property-research") ||
     value.startsWith("/admin/") ||
     value === "/"
   ) {

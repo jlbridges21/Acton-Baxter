@@ -35,6 +35,8 @@ export type DelegationTrace = {
   method: RoutingDecision["method"];
   explanation: string;
   pendingApprovals: number;
+  /** Reports Dexter created or changed for this request (verified by the tools). */
+  reports: Array<{ id: string; title: string; url: string }>;
 };
 
 export type DelegationResult =
@@ -68,7 +70,26 @@ export type DelegationRequest = {
   /** Where to post a follow-up if the work finishes in the background. */
   slackChannelId?: string | null;
   slackThreadTs?: string | null;
+  /** Recent turns of the conversation, so a specialist can resolve follow-ups. */
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
 };
+
+/** Bounded transcript excerpt handed to a specialist (most recent turns, trimmed). */
+export function conversationExcerpt(
+  history: Array<{ role: "user" | "assistant"; content: string }> | undefined,
+  maxChars = 4000,
+): string | undefined {
+  if (!history?.length) return undefined;
+  const lines: string[] = [];
+  let used = 0;
+  for (const turn of [...history].reverse().slice(0, 8)) {
+    const line = `${turn.role === "user" ? "User" : "Assistant"}: ${turn.content.replace(/\s+/g, " ").slice(0, 800)}`;
+    if (used + line.length > maxChars) break;
+    lines.unshift(line);
+    used += line.length;
+  }
+  return lines.length ? lines.join("\n") : undefined;
+}
 
 const REGISTRY_BACKOFF_MS = 60_000;
 let registryUnavailableUntil = 0;
@@ -150,6 +171,7 @@ function trace(
     method: routing.method,
     explanation: routing.explanation,
     pendingApprovals: result?.proposedActions.filter((a) => a.approvalId).length ?? 0,
+    reports: (result?.artifacts ?? []).map((a) => ({ id: a.id, title: a.title, url: a.url })),
   };
 }
 
@@ -180,6 +202,9 @@ export function composeBaxterReply(input: {
       ...result.missingInformation.slice(0, 5).map((m) => `• ${m}`),
     );
   }
+  for (const artifact of result.artifacts) {
+    lines.push("", `Open the report "${artifact.title}": ${appUrl(artifact.url, input.channel)}`);
+  }
   const approvals = result.proposedActions.filter((a) => a.approvalId).length;
   if (approvals > 0) {
     lines.push(
@@ -200,21 +225,37 @@ export function composeBaxterReply(input: {
 }
 
 function sourcesFrom(result: SpecialistResult, channel: "web" | "slack"): BaxterSourceReference[] {
-  return result.sources.map((s, index) => ({
-    title: s.title,
-    sourceName: "AI Knowledge Hub",
-    category: "Approved HR / admin document",
-    sourceUrl: s.documentId
-      ? appUrl(`/ai/knowledge?document=${s.documentId}`, channel)
-      : appUrl("/ai/onboarding", channel),
-    citationLabel: s.title,
-    sourceKind: "agent_knowledge" as const,
-    openLabel: "Open in AI Workspace",
+  const reports: BaxterSourceReference[] = result.artifacts.map((a, index) => ({
+    title: a.title,
+    sourceName: "Reports",
+    category: "Saved report",
+    sourceUrl: appUrl(a.url, channel),
+    citationLabel: a.title,
+    sourceKind: "capability" as const,
+    openLabel: "Open report",
     lastUpdated: null,
     relevanceScore: 100 - index,
     availability: "available" as const,
-    knowledgeEntryId: s.documentId ? `agent-doc-${s.documentId}` : `agent-source-${index}`,
+    knowledgeEntryId: `report-${a.id}`,
   }));
+  return [
+    ...reports,
+    ...result.sources.map((s, index) => ({
+      title: s.title,
+      sourceName: "AI Knowledge Hub",
+      category: "Approved HR / admin document",
+      sourceUrl: s.documentId
+        ? appUrl(`/ai/knowledge?document=${s.documentId}`, channel)
+        : appUrl("/ai/onboarding", channel),
+      citationLabel: s.title,
+      sourceKind: "agent_knowledge" as const,
+      openLabel: "Open in AI Workspace",
+      lastUpdated: null,
+      relevanceScore: 100 - index,
+      availability: "available" as const,
+      knowledgeEntryId: s.documentId ? `agent-doc-${s.documentId}` : `agent-source-${index}`,
+    })),
+  ];
 }
 
 function failureReply(
@@ -377,6 +418,9 @@ async function delegateToTarget(
       },
       channel: input.channel,
       slackDirectMessage: Boolean(input.slackIsDirectMessage),
+      ...(conversationExcerpt(input.history)
+        ? { conversation: conversationExcerpt(input.history) }
+        : {}),
     },
     sensitivity: agent.config.delegation.sensitivity,
     maxAttempts: 3,
@@ -453,6 +497,8 @@ export async function runDirectAgentRequest(input: {
   requester: Requester;
   question: string;
   requestId: string;
+  /** Extra context for the specialist (e.g. the report being viewed and recent chat turns). */
+  context?: { reportId?: string | null; conversation?: string };
 }): Promise<{ outcome: ExecutionOutcome; task: TaskRow }> {
   const { task } = await createTask({
     idempotencyKey: `direct:${input.requester.userId}:${input.requestId}`,
@@ -474,6 +520,8 @@ export async function runDirectAgentRequest(input: {
         verifiedVia: input.requester.verifiedVia,
       },
       channel: "direct",
+      ...(input.context?.reportId ? { reportId: input.context.reportId } : {}),
+      ...(input.context?.conversation ? { conversation: input.context.conversation } : {}),
     },
     sensitivity: input.agent.config.delegation.sensitivity,
   });

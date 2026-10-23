@@ -77,7 +77,7 @@ The **sprinkler distance indicator** reads `fire_sprinkler_hydrant_distance_max_
 
 ## Research reliability (web + Slack)
 
-Web-triggered research (`/api/reports/[id]/run`, refresh, and retry) enqueues the same durable `property_research` job type Slack `/property` uses, then processes it via `after()` with queue claim/complete bookkeeping. Cron reclaim is the crash-recovery backup — a mid-run deploy or platform kill no longer leaves a report stuck in “researching” without a recoverable job.
+Web-triggered research (`/api/property-research/[id]/run`, refresh, and retry) enqueues the same durable `property_research` job type Slack `/property` uses, then processes it via `after()` with queue claim/complete bookkeeping. Cron reclaim is the crash-recovery backup — a mid-run deploy or platform kill no longer leaves a report stuck in “researching” without a recoverable job.
 
 Reports left in **researching** for more than **30 minutes** with no queued/running `property_research` job are flipped to **failed** with a retryable message (status poll and cron sweep). Use Retry research on the processing page.
 

@@ -25,8 +25,8 @@ function statusTone(status: string) {
 
 function reportHref(report: ReportListItem) {
   return report.status === "complete"
-    ? `/reports/${report.id}`
-    : `/reports/${report.id}/processing`;
+    ? `/property-research/${report.id}`
+    : `/property-research/${report.id}/processing`;
 }
 
 export function DashboardClient({
@@ -95,7 +95,7 @@ export function DashboardClient({
           </p>
         </div>
         <Link
-          href="/reports/new"
+          href="/property-research/new"
           className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--acton-yellow)] px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-yellow-dark)]"
         >
           <PlusCircle className="h-4 w-4" />
@@ -170,7 +170,7 @@ export function DashboardClient({
               Start with a California property address to generate your first research package.
             </p>
             <Link
-              href="/reports/new"
+              href="/property-research/new"
               className="mt-4 inline-flex h-10 items-center justify-center rounded-md bg-[var(--acton-navy)] px-4 text-sm font-semibold text-white"
             >
               Create first report

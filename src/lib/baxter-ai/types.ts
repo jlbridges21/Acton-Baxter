@@ -87,6 +87,7 @@ export type BaxterDelegationSummary = {
   method: string;
   explanation: string;
   pendingApprovals: number;
+  reports?: Array<{ id: string; title: string; url: string }>;
 };
 
 export type BaxterContextItem = {

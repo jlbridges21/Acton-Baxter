@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "character": "baxter",
+  "packVersion": "3.0.0",
+  "sourcePack": "baxter_v2_sprite_pack",
+  "format": "png",
+  "colorModel": "RGBA",
+  "frameOrder": {
+    "2x2": "row-major: top-left, top-right, bottom-left, bottom-right",
+    "3x1": "left-to-right"
+  },
+  "animations": {
+    "idle": {
+      "loop": true,
+      "frameDurationMs": 650,
+      "frameSize": { "width": 627, "height": 627 },
+      "frames": [
+        "sprites/idle/idle-01-neutral.png",
+        "sprites/idle/idle-02-blink.png",
+        "sprites/idle/idle-03-look-around.png",
+        "sprites/idle/idle-04-tail-flick.png"
+      ]
+    },
+    "walkRight": {
+      "loop": true,
+      "frameDurationMs": 160,
+      "frameSize": { "width": 627, "height": 627 },
+      "frames": [
+        "sprites/walk-right/walk-right-01.png",
+        "sprites/walk-right/walk-right-02.png",
+        "sprites/walk-right/walk-right-03.png",
+        "sprites/walk-right/walk-right-04.png"
+      ]
+    },
+    "walkLeft": {
+      "loop": true,
+      "frameDurationMs": 160,
+      "frameSize": { "width": 627, "height": 627 },
+      "frames": [
+        "sprites/walk-left/walk-left-01.png",
+        "sprites/walk-left/walk-left-02.png",
+        "sprites/walk-left/walk-left-03.png",
+        "sprites/walk-left/walk-left-04.png"
+      ]
+    },
+    "working": {
+      "loop": true,
+      "frameDurationMs": 280,
+      "frameSize": { "width": 627, "height": 627 },
+      "frames": [
+        "sprites/work/work-01.png",
+        "sprites/work/work-02.png",
+        "sprites/work/work-03.png",
+        "sprites/work/work-04.png"
+      ]
+    },
+    "sitDown": {
+      "loop": false,
+      "frameDurationMs": 180,
+      "frameSize": { "width": 724, "height": 724 },
+      "frames": [
+        "sprites/transitions/sit-down/sit-down-01.png",
+        "sprites/transitions/sit-down/sit-down-02.png",
+        "sprites/transitions/sit-down/sit-down-03.png"
+      ]
+    },
+    "standUp": {
+      "loop": false,
+      "frameDurationMs": 180,
+      "frameSize": { "width": 724, "height": 724 },
+      "frames": [
+        "sprites/transitions/stand-up/stand-up-01.png",
+        "sprites/transitions/stand-up/stand-up-02.png",
+        "sprites/transitions/stand-up/stand-up-03.png"
+      ]
+    },
+    "thinking": {
+      "loop": false,
+      "frameDurationMs": 420,
+      "frameSize": { "width": 724, "height": 724 },
+      "frames": [
+        "sprites/emotes/thinking/thinking-01.png",
+        "sprites/emotes/thinking/thinking-02.png",
+        "sprites/emotes/thinking/thinking-03.png"
+      ]
+    },
+    "presenting": {
+      "loop": false,
+      "frameDurationMs": 300,
+      "frameSize": { "width": 724, "height": 724 },
+      "frames": [
+        "sprites/emotes/presenting/presenting-01.png",
+        "sprites/emotes/presenting/presenting-02.png",
+        "sprites/emotes/presenting/presenting-03.png"
+      ]
+    }
+  }
+}

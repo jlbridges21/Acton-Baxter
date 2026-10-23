@@ -22,7 +22,7 @@ export function buildSlackCompletionMessage(input: SlackCompletionMessageInput):
   blocks: unknown[];
 } {
   const env = getEnv();
-  const reportUrl = `${env.APP_BASE_URL.replace(/\/$/, "")}/reports/${input.reportId}`;
+  const reportUrl = `${env.APP_BASE_URL.replace(/\/$/, "")}/property-research/${input.reportId}`;
   const conflictNote =
     (input.conflictCount ?? 0) > 0
       ? ` ${input.conflictCount} material inconsistenc${input.conflictCount === 1 ? "y" : "ies"} should be verified.`
@@ -89,7 +89,7 @@ export function buildSlackFailureMessage(input: SlackFailureMessageInput): {
   blocks: unknown[];
 } {
   const env = getEnv();
-  const reportUrl = `${env.APP_BASE_URL.replace(/\/$/, "")}/reports/${input.reportId}`;
+  const reportUrl = `${env.APP_BASE_URL.replace(/\/$/, "")}/property-research/${input.reportId}`;
   const detail =
     input.errorMessage?.trim() || "Research failed. Open the report in the app to retry.";
 

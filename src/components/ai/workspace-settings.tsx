@@ -7,16 +7,26 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { WorkspaceSettings } from "@/lib/agents/admin";
 import type { DepartmentRow } from "@/lib/agents/types";
+import type { OfficeAnimationSettings } from "@/lib/office/animation-settings";
+import { SPRITE_PACKS, STATIC_PACK_ID, resolvePackId } from "@/lib/office/sprite-pack";
 import { Field, Notice, aiFetch, errorMessage, selectClass } from "./ui";
+
+type AgentOption = { id: string; name: string; title: string; kind: "orchestrator" | "specialist" };
 
 export function WorkspaceSettingsForm({
   initialSettings,
   initialDepartments,
+  initialAnimation,
+  agents,
 }: {
   initialSettings: WorkspaceSettings;
   initialDepartments: DepartmentRow[];
+  initialAnimation: OfficeAnimationSettings;
+  agents: AgentOption[];
 }) {
   const [settings, setSettings] = useState(initialSettings);
+  const [animation, setAnimation] = useState(initialAnimation);
+  const [animationBusy, setAnimationBusy] = useState(false);
   const [departments, setDepartments] = useState(initialDepartments);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -46,6 +56,28 @@ export function WorkspaceSettingsForm({
       setBusy(false);
     }
   }
+
+  async function saveAnimation() {
+    setAnimationBusy(true);
+    setNotice(null);
+    try {
+      await aiFetch<{ settings: WorkspaceSettings }>("/api/ai/workspace", {
+        method: "PATCH",
+        body: JSON.stringify({ animation_settings: animation }),
+      });
+      setNotice({ tone: "success", text: "Office animation settings saved." });
+    } catch (e) {
+      setNotice({ tone: "error", text: errorMessage(e) });
+    } finally {
+      setAnimationBusy(false);
+    }
+  }
+
+  const setAgentAnimation = (agentId: string, patch: OfficeAnimationSettings["agents"][string]) =>
+    setAnimation((a) => ({
+      ...a,
+      agents: { ...a.agents, [agentId]: { ...a.agents[agentId], ...patch } },
+    }));
 
   async function saveDepartment(d: Partial<DepartmentRow> & { name: string }) {
     setNotice(null);
@@ -156,6 +188,129 @@ export function WorkspaceSettingsForm({
         </div>
         <Button type="button" onClick={saveSettings} disabled={busy}>
           {busy ? "Saving…" : "Save office settings"}
+        </Button>
+      </Card>
+
+      <Card className="space-y-4">
+        <CardTitle>Office animation</CardTitle>
+        <CardDescription>
+          How animated characters behave when they have no real work. Task activity (hand-offs,
+          working, results) always animates and always reflects real task records. Viewers can still
+          turn animation down for themselves.
+        </CardDescription>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Idle activity" help="How often Baxter walks around, sits, and looks about.">
+            <select
+              className={selectClass}
+              value={animation.ambient_intensity}
+              onChange={(e) =>
+                setAnimation({
+                  ...animation,
+                  ambient_intensity: e.target.value as OfficeAnimationSettings["ambient_intensity"],
+                })
+              }
+            >
+              <option value="off">Off — stay put</option>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+          </Field>
+          <Field label="Walking speed">
+            <select
+              className={selectClass}
+              value={animation.speed}
+              onChange={(e) =>
+                setAnimation({
+                  ...animation,
+                  speed: e.target.value as OfficeAnimationSettings["speed"],
+                })
+              }
+            >
+              <option value="relaxed">Relaxed</option>
+              <option value="normal">Normal</option>
+              <option value="brisk">Brisk</option>
+            </select>
+          </Field>
+          <Field
+            label="Resting spot"
+            help="Where characters return to when idle activity is off or after a hand-off."
+          >
+            <select
+              className={selectClass}
+              value={animation.home_spot}
+              onChange={(e) =>
+                setAnimation({
+                  ...animation,
+                  home_spot: e.target.value as OfficeAnimationSettings["home_spot"],
+                })
+              }
+            >
+              <option value="desk">At their desk</option>
+              <option value="window">By the window</option>
+              <option value="center">Middle of the office</option>
+            </select>
+          </Field>
+        </div>
+        {agents.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs text-[var(--acton-muted)] uppercase">
+                <tr>
+                  <th className="py-2 pr-3">Agent</th>
+                  <th className="py-2 pr-3">Appearance</th>
+                  <th className="py-2">Where visitors stand</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((agent) => (
+                  <tr key={agent.id} className="border-t border-[var(--acton-border)]">
+                    <td className="py-2 pr-3">
+                      <span className="font-medium text-[var(--acton-navy)]">{agent.name}</span>
+                      <span className="block text-xs text-[var(--acton-muted)]">{agent.title}</span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <select
+                        className={selectClass}
+                        aria-label={`Appearance for ${agent.name}`}
+                        value={resolvePackId(agent, animation.agents) ?? STATIC_PACK_ID}
+                        onChange={(e) =>
+                          setAgentAnimation(agent.id, { sprite_pack: e.target.value })
+                        }
+                      >
+                        <option value={STATIC_PACK_ID}>Portrait at a desk (no animation)</option>
+                        {Object.values(SPRITE_PACKS).map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-2">
+                      <select
+                        className={selectClass}
+                        aria-label={`Hand-off spot for ${agent.name}`}
+                        value={animation.agents[agent.id]?.handoff_side ?? "auto"}
+                        onChange={(e) =>
+                          setAgentAnimation(agent.id, {
+                            handoff_side: e.target.value as "auto" | "left" | "right" | "front",
+                          })
+                        }
+                      >
+                        <option value="auto">Automatic</option>
+                        <option value="right">Right of their desk</option>
+                        <option value="left">Left of their desk</option>
+                        <option value="front">In front of their desk</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        <Button type="button" onClick={saveAnimation} disabled={animationBusy}>
+          {animationBusy ? "Saving…" : "Save animation settings"}
         </Button>
       </Card>
 

@@ -1,0 +1,408 @@
+/**
+ * Starter templates. They reference business vocabulary (sem:*) so an admin remapping a
+ * field in Data settings updates every report built from them. Templates are stored as
+ * ordinary reports (is_template = true), so admins edit them in the UI — this file only
+ * seeds them the first time.
+ *
+ * Field choices reflect the JobTread discovery of 2026-10-22: active work is identified
+ * by the Phase custom field (the Status field is almost always blank), and Product
+ * Library models are top-level catalog cost groups.
+ */
+
+import { reportSpecSchema, type ReportSpec } from "./spec";
+
+export const ACTIVE_PHASES = [
+  "BR-Estimating",
+  "BR-Design",
+  "BR-Permitting",
+  "BR-Production",
+  "Custom-Estimating",
+  "Custom-Design",
+  "Custom-Permitting",
+  "Custom-Production",
+];
+
+export const DESIGN_HANDOFF_TEMPLATE: ReportSpec = reportSpecSchema.parse({
+  title: "Design Handoff",
+  description:
+    "Pick an active project to see everything design needs: model, requirements, site conditions, utilities, schedule, and documents.",
+  datasets: [
+    {
+      id: "active_jobs",
+      source: "jobs",
+      label: "Active projects",
+      filters: [{ field: "sem:phase", op: "in", value: ACTIVE_PHASES }],
+    },
+  ],
+  controls: [
+    {
+      id: "project",
+      kind: "job_picker",
+      label: "Project",
+      dataset: "active_jobs",
+      default: "first",
+    },
+  ],
+  widgets: [
+    {
+      id: "header",
+      type: "project_header",
+      span: 12,
+      control: "project",
+      fields: [
+        "sem:phase",
+        "sem:job_type",
+        "sem:project_manager",
+        "sem:design_coordinator",
+        "sem:drafter",
+        "sem:permit_status",
+      ],
+    },
+    {
+      id: "model_specs",
+      type: "detail",
+      title: "Model & specifications",
+      span: 6,
+      control: "project",
+      style: "grid",
+      fields: [
+        { field: "sem:model" },
+        { field: "sem:recommended_br_model" },
+        { field: "sem:total_sqft", format: "sqft" },
+        { field: "sem:bed_bath" },
+        { field: "sem:exterior_package" },
+        { field: "sem:interior_package" },
+        { field: "sem:vault_height" },
+        { field: "sem:floorplan" },
+      ],
+    },
+    {
+      id: "team",
+      type: "detail",
+      title: "Team & schedule",
+      span: 6,
+      control: "project",
+      style: "grid",
+      fields: [
+        { field: "sem:sales_rep" },
+        { field: "sem:feasibility_pm" },
+        { field: "sem:project_manager" },
+        { field: "sem:design_coordinator" },
+        { field: "sem:drafter" },
+        { field: "sem:site_supervisor" },
+        { field: "job.scheduleStart" },
+        { field: "job.scheduleEnd" },
+      ],
+    },
+    {
+      id: "requirements",
+      type: "detail",
+      title: "Design handoff requirements",
+      span: 12,
+      control: "project",
+      style: "long_text",
+      fields: [
+        { field: "sem:must_have_features" },
+        { field: "sem:accessibility_requirements" },
+        { field: "sem:site_constraints" },
+        { field: "sem:city_zoning_feedback" },
+        { field: "sem:special_permit_requirements" },
+        { field: "sem:design_handoff" },
+        { field: "sem:soil_utility_notes" },
+      ],
+    },
+    {
+      id: "site",
+      type: "detail",
+      title: "Site, utilities & conditions",
+      span: 12,
+      control: "project",
+      style: "grid",
+      fields: [
+        { field: "sem:main_home_foundation" },
+        { field: "sem:adu_foundation" },
+        { field: "sem:electrical" },
+        { field: "sem:main_panel_size" },
+        { field: "sem:sewer" },
+        { field: "sem:water_line_size" },
+        { field: "sem:water_meter_size" },
+        { field: "sem:zoning" },
+        { field: "sem:climate_zone" },
+        { field: "sem:wui_zone" },
+        { field: "sem:soils_report" },
+        { field: "sem:sprinklers_required" },
+        { field: "sem:trench_length" },
+        { field: "sem:main_home_eave_projection" },
+        { field: "sem:apn" },
+      ],
+    },
+    {
+      id: "schedule",
+      type: "milestones",
+      title: "Project milestones",
+      span: 8,
+      control: "project",
+      show: "schedule",
+      style: "timeline",
+    },
+    { id: "documents", type: "documents", title: "Documents", span: 4, control: "project" },
+    {
+      id: "checklists",
+      type: "milestones",
+      title: "Checklists",
+      span: 12,
+      control: "project",
+      show: "checklists",
+      style: "list",
+    },
+  ],
+});
+
+export const PRODUCT_LIBRARY_TEMPLATE: ReportSpec = reportSpecSchema.parse({
+  title: "Product Library",
+  description:
+    "Acton ADU models from the JobTread catalog with budget totals where they have been imported.",
+  datasets: [{ id: "models", source: "catalog_models", label: "ADU models" }],
+  controls: [
+    {
+      id: "search",
+      kind: "search",
+      label: "Search models",
+      fields: ["model.name"],
+      datasets: ["models"],
+    },
+    { id: "series", kind: "select", label: "Series", field: "model.series", datasets: ["models"] },
+    {
+      id: "budget",
+      kind: "select",
+      label: "Budget status",
+      field: "model.budgetStatus",
+      datasets: ["models"],
+    },
+  ],
+  widgets: [
+    {
+      id: "model_count",
+      type: "kpi",
+      title: "Models",
+      span: 3,
+      dataset: "models",
+      metric: { op: "count" },
+    },
+    {
+      id: "with_budget",
+      type: "kpi",
+      title: "Budgets imported",
+      span: 3,
+      dataset: "models",
+      metric: { op: "count" },
+      filters: [{ field: "model.budgetStatus", op: "eq", value: "Budget imported" }],
+    },
+    {
+      id: "avg_price",
+      type: "kpi",
+      title: "Average base price",
+      span: 3,
+      dataset: "models",
+      metric: { op: "avg", field: "model.basePrice" },
+      format: "currency",
+    },
+    {
+      id: "avg_margin",
+      type: "kpi",
+      title: "Average margin",
+      span: 3,
+      dataset: "models",
+      metric: { op: "avg", field: "model.marginPct" },
+      format: "percent",
+    },
+    {
+      id: "by_series",
+      type: "chart",
+      title: "Models by series",
+      span: 6,
+      dataset: "models",
+      chart: "bar",
+      groupBy: "model.series",
+      metric: { op: "count" },
+    },
+    {
+      id: "budget_status",
+      type: "chart",
+      title: "Budget import status",
+      span: 6,
+      dataset: "models",
+      chart: "donut",
+      groupBy: "model.budgetStatus",
+      metric: { op: "count" },
+    },
+    {
+      id: "library",
+      type: "table",
+      title: "Model library",
+      span: 12,
+      dataset: "models",
+      comparable: true,
+      rowDrilldown: false,
+      columns: [
+        { field: "model.name" },
+        { field: "model.series" },
+        { field: "model.code" },
+        { field: "model.budgetStatus" },
+        { field: "model.itemCount" },
+        { field: "model.baseCost", format: "currency" },
+        { field: "model.basePrice", format: "currency" },
+        { field: "model.profit", format: "currency" },
+        { field: "model.marginPct", format: "percent" },
+      ],
+      sort: [{ field: "model.name", dir: "asc" }],
+      pageSize: 25,
+      highlight: [
+        { field: "model.budgetStatus", op: "eq", value: "Pending import", tone: "amber" },
+      ],
+    },
+    {
+      id: "gaps",
+      type: "text",
+      span: 12,
+      title: "About this data",
+      body: "Model specifications from the Domo Product Library (bedrooms, bathrooms, dimensions, appliances, alternate pricing) are not stored in JobTread, so they can't be shown here yet. Most models' budgets are marked \"pending import\" in JobTread; their prices appear automatically once imported.",
+    },
+  ],
+});
+
+export const ACTIVE_PROJECTS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
+  title: "Active Projects",
+  description: "Every active project by phase, project manager, model, and permit status.",
+  datasets: [
+    {
+      id: "active_jobs",
+      source: "jobs",
+      label: "Active projects",
+      filters: [{ field: "sem:phase", op: "in", value: ACTIVE_PHASES }],
+    },
+  ],
+  controls: [
+    { id: "phase", kind: "select", label: "Phase", field: "sem:phase", datasets: ["active_jobs"] },
+    {
+      id: "pm",
+      kind: "select",
+      label: "Project manager",
+      field: "sem:project_manager",
+      datasets: ["active_jobs"],
+    },
+    {
+      id: "search",
+      kind: "search",
+      label: "Search",
+      fields: ["job.name", "job.number", "job.city"],
+      datasets: ["active_jobs"],
+    },
+  ],
+  widgets: [
+    {
+      id: "active_count",
+      type: "kpi",
+      title: "Active projects",
+      span: 3,
+      dataset: "active_jobs",
+      metric: { op: "count" },
+    },
+    {
+      id: "in_design",
+      type: "kpi",
+      title: "In design",
+      span: 3,
+      dataset: "active_jobs",
+      metric: { op: "count" },
+      filters: [{ field: "sem:phase", op: "in", value: ["BR-Design", "Custom-Design"] }],
+    },
+    {
+      id: "in_permitting",
+      type: "kpi",
+      title: "In permitting",
+      span: 3,
+      dataset: "active_jobs",
+      metric: { op: "count" },
+      filters: [{ field: "sem:phase", op: "in", value: ["BR-Permitting", "Custom-Permitting"] }],
+    },
+    {
+      id: "avg_sqft",
+      type: "kpi",
+      title: "Average square footage",
+      span: 3,
+      dataset: "active_jobs",
+      metric: { op: "avg", field: "sem:total_sqft" },
+      format: "sqft",
+    },
+    {
+      id: "by_phase",
+      type: "chart",
+      title: "Projects by phase",
+      span: 6,
+      dataset: "active_jobs",
+      chart: "horizontal_bar",
+      groupBy: "sem:phase",
+      metric: { op: "count" },
+      sort: "value_desc",
+    },
+    {
+      id: "by_pm",
+      type: "chart",
+      title: "Projects by project manager",
+      span: 6,
+      dataset: "active_jobs",
+      chart: "donut",
+      groupBy: "sem:project_manager",
+      metric: { op: "count" },
+    },
+    {
+      id: "projects",
+      type: "table",
+      title: "Active projects",
+      span: 12,
+      dataset: "active_jobs",
+      columns: [
+        { field: "job.number" },
+        { field: "job.name" },
+        { field: "sem:phase" },
+        { field: "sem:project_manager" },
+        { field: "sem:model" },
+        { field: "sem:total_sqft", format: "sqft" },
+        { field: "sem:permit_status" },
+        { field: "job.city" },
+      ],
+      sort: [{ field: "job.name", dir: "asc" }],
+      highlight: [
+        { field: "sem:permit_status", op: "eq", value: "Comments Received", tone: "amber" },
+      ],
+    },
+  ],
+});
+
+export const BLANK_TEMPLATE: ReportSpec = reportSpecSchema.parse({
+  title: "Blank report",
+  description: "Start from scratch — add widgets yourself or describe what you need to Dexter.",
+  datasets: [{ id: "jobs", source: "jobs", label: "All jobs" }],
+  widgets: [],
+});
+
+export const REPORT_TEMPLATES: Array<{ key: string; spec: ReportSpec; summary: string }> = [
+  {
+    key: "design_handoff",
+    spec: DESIGN_HANDOFF_TEMPLATE,
+    summary:
+      "Per-project design handoff with requirements, site & utilities, milestones, and documents.",
+  },
+  {
+    key: "product_library",
+    spec: PRODUCT_LIBRARY_TEMPLATE,
+    summary: "Browse and compare ADU models and their budget pricing.",
+  },
+  {
+    key: "active_projects",
+    spec: ACTIVE_PROJECTS_TEMPLATE,
+    summary: "Active projects by phase, PM, model, and permit status.",
+  },
+  { key: "blank", spec: BLANK_TEMPLATE, summary: "An empty canvas." },
+];

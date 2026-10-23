@@ -30,7 +30,7 @@ export function ReportHistoryClient({ reports }: { reports: ReportListItem[] }) 
   async function handleRetry(reportId: string) {
     setRetryingId(reportId);
     try {
-      const response = await fetch(`/api/reports/${reportId}/retry`, { method: "POST" });
+      const response = await fetch(`/api/property-research/${reportId}/retry`, { method: "POST" });
       if (!response.ok) {
         throw new Error("Retry failed");
       }
@@ -39,7 +39,7 @@ export function ReportHistoryClient({ reports }: { reports: ReportListItem[] }) 
           item.id === reportId ? { ...item, status: "queued", error_message: null } : item,
         ),
       );
-      router.push(`/reports/${reportId}/processing`);
+      router.push(`/property-research/${reportId}/processing`);
     } catch {
       setRetryingId(null);
     }
@@ -99,8 +99,8 @@ export function ReportHistoryClient({ reports }: { reports: ReportListItem[] }) 
                         <Link
                           href={
                             report.status === "complete"
-                              ? `/reports/${report.id}`
-                              : `/reports/${report.id}/processing`
+                              ? `/property-research/${report.id}`
+                              : `/property-research/${report.id}/processing`
                           }
                           className="font-semibold text-[var(--acton-navy)] underline"
                         >

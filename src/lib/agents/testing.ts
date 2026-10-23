@@ -114,10 +114,16 @@ export async function runRoutingRegression(options: {
     );
   }
   const cases = targets.flatMap((t) => [
-    ...t.config.delegation.positiveExamples.map((q) => ({ question: q, expected: t.row.slug })),
+    ...t.config.delegation.positiveExamples.map((q) => ({
+      question: q,
+      expected: t.row.slug,
+      not: null as string | null,
+    })),
+    // A negative example means "not this specialist" — Baxter or another specialist may take it.
     ...t.config.delegation.negativeExamples.map((q) => ({
       question: q,
-      expected: orchestrator.row.slug,
+      expected: `not ${t.row.slug}`,
+      not: t.row.slug as string | null,
     })),
   ]);
   const results: RoutingTestResult[] = [];
@@ -133,7 +139,7 @@ export async function runRoutingRegression(options: {
       question: c.question,
       expected: c.expected,
       actual,
-      passed: actual === c.expected,
+      passed: c.not ? actual !== c.not : actual === c.expected,
       method: routing.method,
       explanation: routing.explanation,
       scores: routing.scores,

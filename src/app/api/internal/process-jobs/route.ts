@@ -28,9 +28,22 @@ export async function POST(request: Request) {
     const { maybeEnqueueStreetViewCoverBackfill } =
       await import("@/lib/inspections/street-view-backfill");
     const streetViewBackfill = await maybeEnqueueStreetViewCoverBackfill();
+    // JobTread reporting cache (no-op until JOBTREAD_GRANT_KEY is set). Never blocks other jobs.
+    const jobtreadSync = await import("@/lib/jobtread/sync")
+      .then((m) => m.maybeEnqueueScheduledJobTreadSync())
+      .catch((error: unknown) => ({
+        enqueued: false,
+        reason: error instanceof Error ? error.message : "error",
+      }));
     const result = await processQueuedJobs({ limit: 10 });
     recordCronInvocation({ ok: true, code: null });
-    return jsonOk({ ...result, googleSync: scheduled, monitoring, streetViewBackfill });
+    return jsonOk({
+      ...result,
+      googleSync: scheduled,
+      monitoring,
+      streetViewBackfill,
+      jobtreadSync,
+    });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");
   }

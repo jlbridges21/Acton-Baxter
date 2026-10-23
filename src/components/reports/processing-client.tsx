@@ -47,17 +47,17 @@ export function ProcessingClient({
       if (payload.status === "queued" && !runStarted.current) {
         runStarted.current = true;
         // Do not await completion — research continues if the user leaves this page.
-        void fetch(`/api/reports/${reportId}/run`, { method: "POST" });
+        void fetch(`/api/property-research/${reportId}/run`, { method: "POST" });
       }
       if (payload.status === "complete") {
-        router.replace(`/reports/${reportId}`);
+        router.replace(`/property-research/${reportId}`);
       }
     },
     [reportId, router],
   );
 
   const { data, error, isTimedOut, refresh, resumePolling } = useAsyncRunStatus<StatusPayload>({
-    url: `/api/reports/${reportId}/status`,
+    url: `/api/property-research/${reportId}/status`,
     isTerminal: (p) => p.status === "complete" || p.status === "failed",
     onData,
   });
@@ -67,7 +67,7 @@ export function ProcessingClient({
     setRetryError(null);
     runStarted.current = false;
     try {
-      const response = await fetch(`/api/reports/${reportId}/retry`, { method: "POST" });
+      const response = await fetch(`/api/property-research/${reportId}/retry`, { method: "POST" });
       const payload = (await response.json()) as { error?: { message?: string } };
       if (!response.ok) {
         throw new Error(payload.error?.message ?? "Retry failed");
@@ -139,19 +139,19 @@ export function ProcessingClient({
         !failed ? (
           <div className="flex flex-wrap gap-2">
             <Link
-              href="/dashboard"
+              href="/property-research"
               className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
             >
               Go to dashboard
             </Link>
             <Link
-              href="/dashboard"
+              href="/property-research"
               className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
             >
               Report history
             </Link>
             <Link
-              href="/reports/new"
+              href="/property-research/new"
               className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--acton-border)] bg-white px-4 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
             >
               Start another report

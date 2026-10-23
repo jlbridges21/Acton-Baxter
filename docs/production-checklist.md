@@ -135,7 +135,7 @@ Additional database tasks:
 - [ ] Slack 👍 on a Baxter answer appears on `/admin/baxter/feedback` (no modal)
 - [ ] Slack 👎 opens ephemeral → modal; comment lands on the same feedback row
 - [ ] Admin feedback review at `/admin/baxter/feedback` (All / Positive / Negative)
-- [ ] Property Research: `/reports/new` with live keys when ready
+- [ ] Property Research: `/property-research/new` with live keys when ready
 - [ ] `ENABLE_MOCK_RESEARCH=false` and `ALLOW_MOCK_FALLBACK=false` for live research
 - [ ] ATTOM / RentCast tested at `/admin/provider-test` (when using live research)
 - [ ] San Jose + Santa Clara GIS paths verified for supported addresses

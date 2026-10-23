@@ -1,0 +1,54 @@
+import { z } from "zod";
+import { jsonError, jsonOk } from "@/lib/api";
+import { AppError } from "@/lib/errors";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { sendDexterMessage, toChatView } from "@/lib/reports/chat";
+import { requireReportsContext } from "@/lib/reports/http";
+import { listChatMessages, loadReportFor } from "@/lib/reports/repo";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+/** The signed-in user's conversation with Dexter about one report (or the unsaved draft). */
+export async function GET(request: Request) {
+  try {
+    const ctx = await requireReportsContext();
+    const reportId = new URL(request.url).searchParams.get("reportId");
+    if (reportId) await loadReportFor(reportId, ctx.requester, ctx.access);
+    const messages = await listChatMessages(ctx.user.id, reportId || null, 60);
+    return jsonOk({ messages: messages.map(toChatView), canChat: ctx.access.canChat });
+  } catch (error) {
+    return jsonError(error, "GET /api/reports/chat");
+  }
+}
+
+const bodySchema = z.object({
+  reportId: z.string().uuid().nullable().optional(),
+  message: z.string().trim().min(1).max(4000),
+  requestId: z.string().trim().min(8).max(80),
+});
+
+export async function POST(request: Request) {
+  try {
+    const ctx = await requireReportsContext();
+    const rate = checkRateLimit(`dexter-chat:${ctx.user.id}`, { limit: 12, windowMs: 60_000 });
+    if (!rate.allowed) {
+      throw new AppError("Too many requests. Please wait a moment.", {
+        code: "RATE_LIMITED",
+        statusCode: 429,
+        expose: true,
+      });
+    }
+    const body = bodySchema.parse(await request.json());
+    const result = await sendDexterMessage({
+      ctx,
+      access: ctx.access,
+      reportId: body.reportId ?? null,
+      message: body.message,
+      requestId: body.requestId,
+    });
+    return jsonOk(result);
+  } catch (error) {
+    return jsonError(error, "POST /api/reports/chat");
+  }
+}

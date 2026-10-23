@@ -51,12 +51,27 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   ai_agent_runtime_status: [["agent_id"]],
   ai_knowledge_document_agents: [["document_id", "agent_id"]],
   ai_workspace_settings: [["id"]],
+  // Phase 2 (068_jobtread_reports.sql)
+  jt_connection: [["id"]],
+  jt_custom_fields: [["id"]],
+  jt_semantic_fields: [["key"]],
+  jt_jobs: [["id"]],
+  jt_catalog_models: [["id"]],
+  reports: [["template_key"]],
+  report_revisions: [["report_id", "version"]],
+  report_shares: [["report_id", "principal_type", "principal_value"]],
+  report_views: [["report_id", "user_id"]],
+  report_pins: [["report_id", "user_id"]],
 };
 
 const NO_ID_TABLES = new Set([
   "ai_agent_runtime_status",
   "ai_knowledge_document_agents",
   "ai_workspace_settings",
+  "jt_connection",
+  "jt_semantic_fields",
+  "report_views",
+  "report_pins",
 ]);
 const NO_UPDATED_AT = new Set([
   "ai_agent_config_versions",
@@ -227,6 +242,7 @@ type PgBuilder = {
   not: (c: string, op: string, v: null) => PgBuilder;
   order: (c: string, o: { ascending: boolean }) => PgBuilder;
   limit: (n: number) => PgBuilder;
+  range: (from: number, to: number) => PgBuilder;
 } & PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 
 function applyFilters(builder: PgBuilder, filters: Filter[] = []): PgBuilder {
@@ -253,6 +269,8 @@ function raise(name: string, error: { message: string; code?: string }): never {
   throw new StoreError(`${name}: ${error.message}`, error.code ?? "DB_ERROR");
 }
 
+const SUPABASE_PAGE = 1000;
+
 const supabaseDb = {
   async select<T>(name: string, q: Query = {}): Promise<T[]> {
     const client = createServiceClient();
@@ -261,6 +279,20 @@ const supabaseDb = {
       q.filters,
     );
     if (q.order) b = b.order(q.order.col, { ascending: q.order.ascending ?? true });
+    // PostgREST caps a response at 1000 rows; page through larger reads with a stable order.
+    if (q.limit != null && q.limit > SUPABASE_PAGE) {
+      if (!q.order) b = b.order(NO_ID_TABLES.has(name) ? "created_at" : "id", { ascending: true });
+      const out: T[] = [];
+      for (let from = 0; from < q.limit; from += SUPABASE_PAGE) {
+        const to = Math.min(from + SUPABASE_PAGE, q.limit) - 1;
+        const { data, error } = await b.range(from, to);
+        if (error) raise(name, error);
+        const page = (data ?? []) as T[];
+        out.push(...page);
+        if (page.length < to - from + 1) break;
+      }
+      return out;
+    }
     if (q.limit != null) b = b.limit(q.limit);
     const { data, error } = await b;
     if (error) raise(name, error);

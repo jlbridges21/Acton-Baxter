@@ -14,6 +14,7 @@ import "server-only";
 import { z } from "zod";
 import { createApproval } from "./approvals";
 import { searchAgentKnowledge } from "./knowledge";
+import { REPORT_TOOLS } from "./report-tools";
 import {
   getInstance,
   getTemplate,
@@ -41,6 +42,8 @@ export type ToolResult = {
   logSummary: string;
   sources?: ToolSource[];
   approvalId?: string;
+  /** A saved output the tool created or changed (verified by the tool, not the model). */
+  artifact?: { type: "report"; id: string; title: string; url: string; version: number };
 };
 
 export type AgentTool = {
@@ -296,6 +299,7 @@ function plannedTool(
 }
 
 export const TOOL_REGISTRY: AgentTool[] = [
+  ...REPORT_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,

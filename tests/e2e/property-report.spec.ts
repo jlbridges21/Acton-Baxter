@@ -23,7 +23,7 @@ test("create mock property report and open completed report", async ({ page }) =
   await expect(page.getByRole("link", { name: "Open Property Research" })).toBeVisible();
 
   await page.getByRole("link", { name: "Open Property Research" }).click();
-  await expect(page).toHaveURL(/\/dashboard/);
+  await expect(page).toHaveURL(/\/property-research$/);
 
   await page.getByRole("link", { name: "New Property Research" }).click();
   await expect(page.getByLabel("Property address")).toBeVisible();
@@ -37,10 +37,10 @@ test("create mock property report and open completed report", async ({ page }) =
   await page.getByRole("button", { name: "Confirm address" }).click();
   await page.getByRole("button", { name: "Research Property" }).click();
 
-  await expect(page).toHaveURL(/\/reports\/[0-9a-f-]+\/processing/);
+  await expect(page).toHaveURL(/\/property-research\/[0-9a-f-]+\/processing/);
   await expect(page.getByText("Researching property")).toBeVisible();
 
-  await page.waitForURL(/\/reports\/[0-9a-f-]+$/, { timeout: 30_000 });
+  await page.waitForURL(/\/property-research\/[0-9a-f-]+$/, { timeout: 30_000 });
   await expect(page.getByRole("heading", { name: /655 13th St, San Jose, CA/ })).toBeVisible();
   await expect(page.getByText("47222019").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "PEM preparation" })).toBeVisible();

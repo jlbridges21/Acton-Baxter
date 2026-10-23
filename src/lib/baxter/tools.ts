@@ -49,8 +49,8 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     key: "property-research",
     name: "Property Research Tool",
     description: "Research property, parcel, zoning, and planning information for PEM preparation.",
-    href: "/dashboard",
-    createHref: "/reports/new",
+    href: "/property-research",
+    createHref: "/property-research/new",
     enabled: true,
     icon: House,
     ctaLabel: "Open Property Research",
@@ -246,7 +246,7 @@ export function getNavContext(pathname: string): NavContext {
     return "knowledge";
   }
   if (pathname.startsWith("/admin")) return "platform-admin";
-  if (pathname === "/dashboard" || pathname.startsWith("/reports")) {
+  if (pathname === "/dashboard" || pathname.startsWith("/property-research")) {
     return "property-research";
   }
   if (pathname.startsWith("/pem-neats")) {

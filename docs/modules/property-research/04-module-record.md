@@ -41,8 +41,8 @@ Acton sales advisors and project staff. Any signed-in Baxter user with app acces
 | Providers                      | `src/lib/providers/`                                             |
 | Jurisdiction connectors        | `src/lib/connectors/california/`, `src/lib/connectors/fallback/` |
 | Jurisdiction rules             | `src/lib/jurisdictions/`                                         |
-| Pages                          | `src/app/reports/`                                               |
-| API routes                     | `src/app/api/reports/`                                           |
+| Pages                          | `src/app/property-research/`                                     |
+| API routes                     | `src/app/api/property-research/`                                 |
 | Components                     | `src/components/reports/`                                        |
 | Migrations                     | 001, 002, 003, 041                                               |
 | **Live setback and ADU rules** | **Database table `jurisdiction_rules` — not in version control** |

@@ -427,8 +427,8 @@ function answerSpecificCapability(
     return {
       answer: "Yes. Open Property Research to start a new report or revisit previous ones.",
       links: [
-        { label: "Property Research", href: "/dashboard" },
-        { label: "New Property Research", href: "/reports/new" },
+        { label: "Property Research", href: "/property-research" },
+        { label: "New Property Research", href: "/property-research/new" },
       ],
     };
   }

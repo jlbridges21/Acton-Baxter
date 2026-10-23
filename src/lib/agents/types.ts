@@ -238,6 +238,9 @@ export const ACCESS_LEVELS = [
   "view_activity",
   "approve",
   "manage",
+  // Reports (Dexter): data categories beyond general project information.
+  "customer_data",
+  "financial_data",
 ] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
 
@@ -265,6 +268,14 @@ export const ACCESS_LEVEL_LABELS: Record<AccessLevel, { label: string; help: str
   manage: {
     label: "Manage agent",
     help: "Can edit instructions, knowledge, and settings (includes everything above).",
+  },
+  customer_data: {
+    label: "Customer details (Reports)",
+    help: "Reports may show customer-profile fields such as lead source, customer type, and customer story.",
+  },
+  financial_data: {
+    label: "Financial figures (Reports)",
+    help: "Reports may show prices, costs, budgets, and margins.",
   },
 };
 
@@ -425,6 +436,19 @@ export const specialistResultSchema = z.object({
     .default([]),
   missingInformation: z.array(z.string().max(600)).max(10).default([]),
   requiresHumanReview: z.boolean().default(false),
+  /** Saved outputs (e.g. reports). Filled by the platform from tool results — model-supplied values are discarded. */
+  artifacts: z
+    .array(
+      z.object({
+        type: z.literal("report"),
+        id: z.string(),
+        title: z.string(),
+        url: z.string(),
+        version: z.number(),
+      }),
+    )
+    .max(5)
+    .default([]),
 });
 export type SpecialistResult = z.infer<typeof specialistResultSchema>;
 

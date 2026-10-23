@@ -398,6 +398,8 @@ export type WorkspaceSettings = {
   show_meeting_area: boolean;
   show_future_space: boolean;
   area_labels: Record<string, string>;
+  /** AI Office animation settings (migration 069); read via normalizeAnimationSettings. */
+  animation_settings?: unknown;
   updated_by: string | null;
   updated_at: string;
 };

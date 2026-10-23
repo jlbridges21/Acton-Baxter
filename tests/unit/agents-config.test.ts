@@ -41,7 +41,10 @@ describe("seeded organization", () => {
     expect(baxter.config.model.source).toBe("environment");
     expect(sam.row.manager_agent_id).toBe(baxter.row.id);
     expect(sam.config.model.provider).toBe("anthropic");
-    expect((await listDelegationTargets(baxter.row.id)).map((a) => a.row.slug)).toEqual(["sam"]);
+    expect((await listDelegationTargets(baxter.row.id)).map((a) => a.row.slug)).toEqual([
+      "sam",
+      "dexter",
+    ]);
   });
 });
 

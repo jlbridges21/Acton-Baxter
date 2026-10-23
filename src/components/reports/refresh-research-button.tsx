@@ -15,7 +15,9 @@ export function RefreshResearchButton({ reportId }: { reportId: string }) {
     setPending(true);
     setMessage(null);
     try {
-      const response = await fetch(`/api/reports/${reportId}/refresh`, { method: "POST" });
+      const response = await fetch(`/api/property-research/${reportId}/refresh`, {
+        method: "POST",
+      });
       const payload = (await response.json()) as {
         reportId?: string;
         error?: { message?: string };
@@ -23,7 +25,7 @@ export function RefreshResearchButton({ reportId }: { reportId: string }) {
       if (!response.ok || !payload.reportId) {
         throw new Error(payload.error?.message ?? "Refresh failed");
       }
-      window.location.href = `/reports/${payload.reportId}/processing`;
+      window.location.href = `/property-research/${payload.reportId}/processing`;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Refresh failed");
       setPending(false);

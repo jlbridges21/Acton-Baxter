@@ -1,9 +1,11 @@
-import { redirect } from "next/navigation";
+import { AppShell } from "@/components/layout/app-shell";
+import { ReportsNoAccess } from "@/components/report-builder/no-access";
+import { ReportsHub } from "@/components/report-builder/reports-hub";
+import { loadReportsPageContext } from "@/lib/reports/page-access";
 
-/**
- * Reports list was removed as redundant with the Property Research dashboard
- * Recent reports section. Keep a redirect for old bookmarks and Slack links.
- */
-export default function ReportsIndexPage() {
-  redirect("/dashboard");
+export const dynamic = "force-dynamic";
+
+export default async function ReportsPage() {
+  const { user, access } = await loadReportsPageContext();
+  return <AppShell user={user}>{access?.canUse ? <ReportsHub /> : <ReportsNoAccess />}</AppShell>;
 }

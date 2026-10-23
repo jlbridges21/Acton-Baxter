@@ -4,6 +4,10 @@ import { getWorkspaceSettings, updateWorkspaceSettings } from "@/lib/agents/admi
 import { actorOf, requireAiContext } from "@/lib/agents/http";
 import { assertCanAdministerWorkspace } from "@/lib/agents/permissions";
 import { getDepartmentRows } from "@/lib/agents/registry";
+import {
+  animationSettingsSchema,
+  normalizeAnimationSettings,
+} from "@/lib/office/animation-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -25,13 +29,17 @@ const patchSchema = z.object({
   show_meeting_area: z.boolean().optional(),
   show_future_space: z.boolean().optional(),
   area_labels: z.record(z.string().max(80), z.string().trim().max(60)).optional(),
+  animation_settings: animationSettingsSchema.optional(),
 });
 
 export async function PATCH(request: Request) {
   try {
     const ctx = await requireAiContext();
     assertCanAdministerWorkspace(ctx.requester);
-    const patch = patchSchema.parse(await request.json());
+    const { animation_settings, ...rest } = patchSchema.parse(await request.json());
+    const patch = animation_settings
+      ? { ...rest, animation_settings: normalizeAnimationSettings(animation_settings) }
+      : rest;
     return jsonOk({ settings: await updateWorkspaceSettings(patch, actorOf(ctx)) });
   } catch (error) {
     return jsonError(error, "PATCH /api/ai/workspace");

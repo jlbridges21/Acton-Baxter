@@ -32,14 +32,16 @@ describe("Baxter platform shell", () => {
   it("registers Property Research and PEM NEAT as enabled Baxter tools", () => {
     const tools = getEnabledBaxterTools();
     expect(tools.length).toBeGreaterThanOrEqual(2);
-    expect(tools.some((t) => t.key === "property-research" && t.href === "/dashboard")).toBe(true);
+    expect(
+      tools.some((t) => t.key === "property-research" && t.href === "/property-research"),
+    ).toBe(true);
     expect(tools.some((t) => t.key === "pem-neat" && t.href === "/pem-neats")).toBe(true);
   });
 
   it("uses tool-scoped navigation contexts", async () => {
     const { getNavContext } = await import("@/lib/baxter/tools");
     expect(getNavContext("/")).toBe("platform");
-    expect(getNavContext("/reports/new")).toBe("property-research");
+    expect(getNavContext("/property-research/new")).toBe("property-research");
     expect(getNavContext("/pem-neats")).toBe("pem-neat");
     expect(getNavContext("/admin/knowledge")).toBe("knowledge");
     expect(getNavContext("/knowledge")).toBe("knowledge");
@@ -48,12 +50,15 @@ describe("Baxter platform shell", () => {
 
   it("preserves Property Research routes", () => {
     const reportsNew = readFileSync(
-      path.join(process.cwd(), "src/app/reports/new/page.tsx"),
+      path.join(process.cwd(), "src/app/property-research/new/page.tsx"),
       "utf8",
     );
     expect(reportsNew).toMatch(/requireActiveUser|requireUser/);
-    const reportsList = readFileSync(path.join(process.cwd(), "src/app/reports/page.tsx"), "utf8");
-    expect(reportsList).toMatch(/redirect\("\/dashboard"\)/);
+    const legacyDashboard = readFileSync(
+      path.join(process.cwd(), "src/app/dashboard/page.tsx"),
+      "utf8",
+    );
+    expect(legacyDashboard).toMatch(/redirect\("\/property-research"\)/);
   });
 
   it("defaults branding fallback title to Baxter", () => {

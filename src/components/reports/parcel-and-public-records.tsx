@@ -199,7 +199,7 @@ function ParcelMapVisual({
     <>
       {/* eslint-disable-next-line @next/next/no-img-element -- authenticated proxy returns Google Static Maps bytes */}
       <img
-        src={`/api/reports/${report.id}/imagery?view=parcel`}
+        src={`/api/property-research/${report.id}/imagery?view=parcel`}
         alt={`Satellite parcel boundary for ${report.standardized_address ?? report.input_address}`}
         className="aspect-[8/5] w-full object-cover sm:aspect-auto sm:h-64 print:aspect-auto print:h-48"
         loading="eager"
