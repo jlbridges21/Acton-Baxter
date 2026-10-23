@@ -1,6 +1,7 @@
 -- Phase 2: JobTread data platform + Dexter + Reports.
 --
--- Additive only. Existing objects touched:
+-- Additive only. Report-builder tables use a bi_ prefix because public.reports already
+-- belongs to Property Research. Existing objects touched:
 --   * report_jobs.job_type check gains 'jobtread_sync'
 --   * ai_agent_access_policies.access_level check gains 'customer_data' and 'financial_data'
 --
@@ -125,7 +126,7 @@ create table if not exists public.jt_catalog_models (
 -- ---------------------------------------------------------------------------
 -- Reports
 -- ---------------------------------------------------------------------------
-create table if not exists public.reports (
+create table if not exists public.bi_reports (
   id uuid primary key default gen_random_uuid(),
   title text not null check (char_length(title) between 1 and 160),
   description text not null default '',
@@ -142,18 +143,18 @@ create table if not exists public.reports (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
-create unique index if not exists reports_template_key_unique on public.reports (template_key) where template_key is not null;
-create index if not exists reports_owner_idx on public.reports (owner_id, updated_at desc);
-create index if not exists reports_visibility_idx on public.reports (visibility, status);
+create unique index if not exists bi_reports_template_key_unique on public.bi_reports (template_key) where template_key is not null;
+create index if not exists bi_reports_owner_idx on public.bi_reports (owner_id, updated_at desc);
+create index if not exists bi_reports_visibility_idx on public.bi_reports (visibility, status);
 
-drop trigger if exists reports_set_updated_at on public.reports;
-create trigger reports_set_updated_at
-  before update on public.reports
+drop trigger if exists bi_reports_set_updated_at on public.bi_reports;
+create trigger bi_reports_set_updated_at
+  before update on public.bi_reports
   for each row execute function public.set_updated_at();
 
-create table if not exists public.report_revisions (
+create table if not exists public.bi_report_revisions (
   id uuid primary key default gen_random_uuid(),
-  report_id uuid not null references public.reports (id) on delete cascade,
+  report_id uuid not null references public.bi_reports (id) on delete cascade,
   version integer not null,
   spec jsonb not null,
   title text not null,
@@ -162,38 +163,38 @@ create table if not exists public.report_revisions (
   author_kind text not null default 'user' check (author_kind in ('user', 'dexter', 'system')),
   task_id uuid references public.ai_tasks (id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
-  constraint report_revisions_unique unique (report_id, version)
+  constraint bi_report_revisions_unique unique (report_id, version)
 );
 
-create table if not exists public.report_shares (
+create table if not exists public.bi_report_shares (
   id uuid primary key default gen_random_uuid(),
-  report_id uuid not null references public.reports (id) on delete cascade,
+  report_id uuid not null references public.bi_reports (id) on delete cascade,
   principal_type text not null check (principal_type in ('user', 'department', 'role')),
   principal_value text not null,
   permission text not null check (permission in ('view', 'edit')),
   created_by uuid references public.profiles (id) on delete set null,
   created_at timestamptz not null default timezone('utc', now()),
-  constraint report_shares_unique unique (report_id, principal_type, principal_value)
+  constraint bi_report_shares_unique unique (report_id, principal_type, principal_value)
 );
 
-create table if not exists public.report_views (
-  report_id uuid not null references public.reports (id) on delete cascade,
+create table if not exists public.bi_report_views (
+  report_id uuid not null references public.bi_reports (id) on delete cascade,
   user_id uuid not null references public.profiles (id) on delete cascade,
   viewed_at timestamptz not null default timezone('utc', now()),
   primary key (report_id, user_id)
 );
 
 -- Personal pins (each user pins their own reports).
-create table if not exists public.report_pins (
-  report_id uuid not null references public.reports (id) on delete cascade,
+create table if not exists public.bi_report_pins (
+  report_id uuid not null references public.bi_reports (id) on delete cascade,
   user_id uuid not null references public.profiles (id) on delete cascade,
   created_at timestamptz not null default timezone('utc', now()),
   primary key (report_id, user_id)
 );
 
-create table if not exists public.report_chat_messages (
+create table if not exists public.bi_report_chat_messages (
   id uuid primary key default gen_random_uuid(),
-  report_id uuid references public.reports (id) on delete cascade,
+  report_id uuid references public.bi_reports (id) on delete cascade,
   user_id uuid not null references public.profiles (id) on delete cascade,
   role text not null check (role in ('user', 'dexter')),
   content text not null,
@@ -202,12 +203,12 @@ create table if not exists public.report_chat_messages (
   created_at timestamptz not null default timezone('utc', now())
 );
 
-create index if not exists report_chat_messages_thread_idx
-  on public.report_chat_messages (user_id, report_id, created_at);
+create index if not exists bi_report_chat_messages_thread_idx
+  on public.bi_report_chat_messages (user_id, report_id, created_at);
 
-create table if not exists public.report_executions (
+create table if not exists public.bi_report_executions (
   id uuid primary key default gen_random_uuid(),
-  report_id uuid references public.reports (id) on delete cascade,
+  report_id uuid references public.bi_reports (id) on delete cascade,
   user_id uuid references public.profiles (id) on delete set null,
   kind text not null default 'view' check (kind in ('view', 'drilldown', 'export', 'dexter_tool')),
   rows_scanned integer not null default 0,
@@ -217,7 +218,7 @@ create table if not exists public.report_executions (
   created_at timestamptz not null default timezone('utc', now())
 );
 
-create index if not exists report_executions_created_idx on public.report_executions (created_at desc);
+create index if not exists bi_report_executions_created_idx on public.bi_report_executions (created_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Extend existing checks (additive)
@@ -264,10 +265,10 @@ alter table public.jt_custom_fields enable row level security;
 alter table public.jt_semantic_fields enable row level security;
 alter table public.jt_jobs enable row level security;
 alter table public.jt_catalog_models enable row level security;
-alter table public.reports enable row level security;
-alter table public.report_revisions enable row level security;
-alter table public.report_shares enable row level security;
-alter table public.report_views enable row level security;
-alter table public.report_pins enable row level security;
-alter table public.report_chat_messages enable row level security;
-alter table public.report_executions enable row level security;
+alter table public.bi_reports enable row level security;
+alter table public.bi_report_revisions enable row level security;
+alter table public.bi_report_shares enable row level security;
+alter table public.bi_report_views enable row level security;
+alter table public.bi_report_pins enable row level security;
+alter table public.bi_report_chat_messages enable row level security;
+alter table public.bi_report_executions enable row level security;

@@ -51,8 +51,8 @@ Guarantees in code:
 Nothing here has been deployed. Do these in order when you're ready:
 
 1. **Supabase:** apply `supabase/migrations/068_jobtread_reports.sql` (adds the `jt_*` cache
-   tables, `reports`, `report_revisions`, `report_shares`, `report_views`, `report_pins`,
-   `report_chat_messages`, `report_executions`; extends the agent access-level check with
+   tables, `bi_reports`, `bi_report_revisions`, `bi_report_shares`, `bi_report_views`, `bi_report_pins`,
+   `bi_report_chat_messages`, `bi_report_executions`; extends the agent access-level check with
    `customer_data` / `financial_data`; adds the `jobtread_sync` job type). All tables have
    RLS enabled with no browser policies — access is only through server routes with the
    service role. The migration is additive.
@@ -80,7 +80,7 @@ Nothing here has been deployed. Do these in order when you're ready:
   Hourly ≈ 530 requests/day. Project pages add 1 request per project view (5-min cache).
   Dexter runs on Claude Opus 5.5 (budget per request: ≤300k tokens / $2, configurable) —
   monitor in **AI Workspace → Mission Control** (tasks, tokens, cost per agent).
-- Usage telemetry: `report_executions` (views, drilldowns, exports, durations) and
+- Usage telemetry: `bi_report_executions` (views, drilldowns, exports, durations) and
   `jt_sync_runs` (requests, records, duration, errors).
 
 ### Rollback

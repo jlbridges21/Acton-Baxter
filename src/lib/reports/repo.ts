@@ -73,12 +73,12 @@ export function resetReportTemplatesForTests() {
 export function ensureReportTemplates(): Promise<void> {
   templatesSeeded ??= (async () => {
     for (const t of REPORT_TEMPLATES) {
-      const existing = await selectOne<ReportRow>("reports", {
+      const existing = await selectOne<ReportRow>("bi_reports", {
         filters: [eq("template_key", t.key)],
       });
       if (existing) continue;
       try {
-        const [row] = await agentDb().insert<ReportRow>("reports", {
+        const [row] = await agentDb().insert<ReportRow>("bi_reports", {
           title: t.spec.title,
           description: t.spec.description,
           owner_id: null,
@@ -90,7 +90,7 @@ export function ensureReportTemplates(): Promise<void> {
           version: 1,
           created_by_agent: false,
         });
-        await agentDb().insert("report_revisions", {
+        await agentDb().insert("bi_report_revisions", {
           report_id: row!.id,
           version: 1,
           spec: t.spec,
@@ -112,7 +112,7 @@ export function ensureReportTemplates(): Promise<void> {
 }
 
 export async function listShares(reportId: string): Promise<ShareRow[]> {
-  return agentDb().select<ShareRow>("report_shares", {
+  return agentDb().select<ShareRow>("bi_report_shares", {
     filters: [eq("report_id", reportId)],
     order: { col: "created_at" },
   });
@@ -154,7 +154,7 @@ export function permissionFor(
 
 export async function getReport(id: string): Promise<ReportRow | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-  return selectOne<ReportRow>("reports", { filters: [eq("id", id)] });
+  return selectOne<ReportRow>("bi_reports", { filters: [eq("id", id)] });
 }
 
 /** Load a report the requester may view, or throw NotFound (same error for missing/forbidden). */
@@ -171,11 +171,11 @@ export async function loadReportFor(id: string, requester: Requester, access: Re
 export async function listReportsFor(requester: Requester, access: ReportsAccess) {
   await ensureReportTemplates();
   const db = agentDb();
-  const all = await db.select<ReportRow>("reports", {
+  const all = await db.select<ReportRow>("bi_reports", {
     order: { col: "updated_at", ascending: false },
     limit: 1000,
   });
-  const shares = await db.select<ShareRow>("report_shares", {
+  const shares = await db.select<ShareRow>("bi_report_shares", {
     filters: all.length
       ? [
           inList(
@@ -189,13 +189,13 @@ export async function listReportsFor(requester: Requester, access: ReportsAccess
   const sharesBy = new Map<string, ShareRow[]>();
   for (const s of shares) sharesBy.set(s.report_id, [...(sharesBy.get(s.report_id) ?? []), s]);
   const views = requester.userId
-    ? await db.select<{ report_id: string; viewed_at: string }>("report_views", {
+    ? await db.select<{ report_id: string; viewed_at: string }>("bi_report_views", {
         filters: [eq("user_id", requester.userId)],
       })
     : [];
   const viewedAt = new Map(views.map((v) => [v.report_id, v.viewed_at]));
   const pins = requester.userId
-    ? await db.select<{ report_id: string }>("report_pins", {
+    ? await db.select<{ report_id: string }>("bi_report_pins", {
         filters: [eq("user_id", requester.userId)],
       })
     : [];
@@ -229,7 +229,7 @@ export async function createReport(input: {
   summary?: string;
 }): Promise<ReportRow> {
   const spec = assertValid(input.spec);
-  const [row] = await agentDb().insert<ReportRow>("reports", {
+  const [row] = await agentDb().insert<ReportRow>("bi_reports", {
     title: spec.title,
     description: spec.description,
     owner_id: input.ownerId,
@@ -241,7 +241,7 @@ export async function createReport(input: {
     version: 1,
     created_by_agent: input.authorKind === "dexter",
   });
-  await agentDb().insert("report_revisions", {
+  await agentDb().insert("bi_report_revisions", {
     report_id: row!.id,
     version: 1,
     spec,
@@ -277,7 +277,7 @@ export async function saveReportVersion(input: {
   if (changes.length === 0) return { report: input.report, changes };
   const nextVersion = input.report.version + 1;
   const [updated] = await agentDb().update<ReportRow>(
-    "reports",
+    "bi_reports",
     [eq("id", input.report.id), eq("version", input.report.version)],
     { spec, title: spec.title, description: spec.description, version: nextVersion },
   );
@@ -285,7 +285,7 @@ export async function saveReportVersion(input: {
     throw new ValidationError(
       "This report was just changed by someone else. Reload and try again.",
     );
-  await agentDb().insert("report_revisions", {
+  await agentDb().insert("bi_report_revisions", {
     report_id: input.report.id,
     version: nextVersion,
     spec,
@@ -299,7 +299,7 @@ export async function saveReportVersion(input: {
 }
 
 export async function listRevisions(reportId: string): Promise<RevisionRow[]> {
-  return agentDb().select<RevisionRow>("report_revisions", {
+  return agentDb().select<RevisionRow>("bi_report_revisions", {
     filters: [eq("report_id", reportId)],
     order: { col: "version", ascending: false },
     limit: 200,
@@ -308,7 +308,7 @@ export async function listRevisions(reportId: string): Promise<RevisionRow[]> {
 
 /** Restore = copy an old version forward as a new version (history is never rewritten). */
 export async function restoreRevision(report: ReportRow, version: number, authorId: string | null) {
-  const [rev] = await agentDb().select<RevisionRow>("report_revisions", {
+  const [rev] = await agentDb().select<RevisionRow>("bi_report_revisions", {
     filters: [eq("report_id", report.id), eq("version", version)],
   });
   if (!rev) throw new NotFoundError("Version not found");
@@ -340,28 +340,28 @@ export async function updateReportMeta(
   report: ReportRow,
   patch: Partial<Pick<ReportRow, "visibility" | "status" | "owner_id" | "last_data_refresh_at">>,
 ) {
-  const [updated] = await agentDb().update<ReportRow>("reports", [eq("id", report.id)], patch);
+  const [updated] = await agentDb().update<ReportRow>("bi_reports", [eq("id", report.id)], patch);
   return updated!;
 }
 
 export async function deleteReport(report: ReportRow) {
   if (report.is_template)
     throw new AuthorizationError("Templates can be archived but not deleted.");
-  await agentDb().remove("reports", [eq("id", report.id)]);
+  await agentDb().remove("bi_reports", [eq("id", report.id)]);
   // Memory store has no cascades; Supabase cascades revisions/shares/views/messages.
   for (const t of [
-    "report_revisions",
-    "report_shares",
-    "report_views",
-    "report_pins",
-    "report_chat_messages",
+    "bi_report_revisions",
+    "bi_report_shares",
+    "bi_report_views",
+    "bi_report_pins",
+    "bi_report_chat_messages",
   ]) {
     await agentDb().remove(t, [eq("report_id", report.id)]);
   }
 }
 
 export async function addShare(input: Omit<ShareRow, "id" | "created_at">): Promise<void> {
-  await agentDb().upsert("report_shares", input, [
+  await agentDb().upsert("bi_report_shares", input, [
     "report_id",
     "principal_type",
     "principal_value",
@@ -369,13 +369,13 @@ export async function addShare(input: Omit<ShareRow, "id" | "created_at">): Prom
 }
 
 export async function removeShare(reportId: string, shareId: string): Promise<void> {
-  await agentDb().remove("report_shares", [eq("id", shareId), eq("report_id", reportId)]);
+  await agentDb().remove("bi_report_shares", [eq("id", shareId), eq("report_id", reportId)]);
 }
 
 export async function recordView(reportId: string, userId: string | null): Promise<void> {
   if (!userId) return;
   await agentDb().upsert(
-    "report_views",
+    "bi_report_views",
     { report_id: reportId, user_id: userId, viewed_at: new Date().toISOString() },
     ["report_id", "user_id"],
   );
@@ -384,17 +384,19 @@ export async function recordView(reportId: string, userId: string | null): Promi
 export async function isPinned(reportId: string, userId: string | null): Promise<boolean> {
   if (!userId) return false;
   return Boolean(
-    await selectOne("report_pins", { filters: [eq("report_id", reportId), eq("user_id", userId)] }),
+    await selectOne("bi_report_pins", {
+      filters: [eq("report_id", reportId), eq("user_id", userId)],
+    }),
   );
 }
 
 export async function setPinned(reportId: string, userId: string, pinned: boolean): Promise<void> {
   if (pinned)
-    await agentDb().upsert("report_pins", { report_id: reportId, user_id: userId }, [
+    await agentDb().upsert("bi_report_pins", { report_id: reportId, user_id: userId }, [
       "report_id",
       "user_id",
     ]);
-  else await agentDb().remove("report_pins", [eq("report_id", reportId), eq("user_id", userId)]);
+  else await agentDb().remove("bi_report_pins", [eq("report_id", reportId), eq("user_id", userId)]);
 }
 
 export async function recordExecution(input: {
@@ -406,7 +408,7 @@ export async function recordExecution(input: {
   liveRequests?: number;
 }): Promise<void> {
   try {
-    await agentDb().insert("report_executions", {
+    await agentDb().insert("bi_report_executions", {
       report_id: input.reportId,
       user_id: input.userId,
       kind: input.kind,
@@ -436,7 +438,7 @@ export async function listChatMessages(
   reportId: string | null,
   limit = 40,
 ): Promise<ChatMessageRow[]> {
-  const rows = await agentDb().select<ChatMessageRow>("report_chat_messages", {
+  const rows = await agentDb().select<ChatMessageRow>("bi_report_chat_messages", {
     filters: [
       eq("user_id", userId),
       reportId ? eq("report_id", reportId) : { col: "report_id", op: "is_null" },
@@ -450,14 +452,14 @@ export async function listChatMessages(
 export async function appendChatMessage(
   input: Omit<ChatMessageRow, "id" | "created_at">,
 ): Promise<ChatMessageRow> {
-  const [row] = await agentDb().insert<ChatMessageRow>("report_chat_messages", input);
+  const [row] = await agentDb().insert<ChatMessageRow>("bi_report_chat_messages", input);
   return row!;
 }
 
 /** Move an unsaved conversation (report_id null) onto the report Dexter just created. */
 export async function attachChatToReport(userId: string, reportId: string): Promise<void> {
   await agentDb().update(
-    "report_chat_messages",
+    "bi_report_chat_messages",
     [eq("user_id", userId), { col: "report_id", op: "is_null" }],
     { report_id: reportId },
   );

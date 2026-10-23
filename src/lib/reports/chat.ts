@@ -116,7 +116,7 @@ export async function sendDexterMessage(input: {
       : { failed: true, code: outcome.code, requestId: input.requestId },
   });
   if (!input.reportId && outcome.ok && outcome.result.artifacts[0]) {
-    await agentDb().update("report_chat_messages", [eq("id", userMessage.id)], {
+    await agentDb().update("bi_report_chat_messages", [eq("id", userMessage.id)], {
       report_id: outcome.result.artifacts[0].id,
     });
   }
