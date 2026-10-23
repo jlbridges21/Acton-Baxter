@@ -25,3 +25,20 @@ export function zoomAround(cam: Camera, nextZoom: number, focus: Vec): Vec {
   const world = screenToWorld(focus, cam);
   return { x: focus.x - world.x * nextZoom, y: focus.y - world.y * nextZoom };
 }
+
+/**
+ * Pointer → world. `client` is the event's clientX/Y; `rect` the viewport's bounding client
+ * rect (already accounts for page scroll and CSS layout); `border` the viewport's
+ * clientLeft/clientTop, since the world is positioned inside the border box.
+ */
+export function clientToWorld(
+  client: Vec,
+  rect: { left: number; top: number },
+  border: { left: number; top: number },
+  cam: Camera,
+): Vec {
+  return screenToWorld(
+    { x: client.x - rect.left - border.left, y: client.y - rect.top - border.top },
+    cam,
+  );
+}

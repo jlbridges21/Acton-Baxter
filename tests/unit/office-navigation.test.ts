@@ -6,31 +6,57 @@ import {
   type LayoutPreset,
   type OfficeAgent,
 } from "@/lib/agents/office-layout";
-import { centerOn, screenToWorld, worldToScreen, zoomAround } from "@/lib/office/camera";
+import {
+  centerOn,
+  clientToWorld,
+  screenToWorld,
+  worldToScreen,
+  zoomAround,
+} from "@/lib/office/camera";
+import { doorwayKeepOut, intersects, roomTheme, type RoomTheme } from "@/lib/office/decor";
 import {
   buildOfficeNav,
   findPath,
   hasLineOfSight,
   isWalkable,
+  nearestReachable,
   roomDoor,
-  roomFurniture,
   roomInterior,
   staticSeatFootprint,
   type NavAgent,
+  type NavPack,
   type Rect,
 } from "@/lib/office/navigation";
-import { SPRITE_PACKS, type Vec } from "@/lib/office/sprite-pack";
+import {
+  SPRITE_PACKS,
+  deskMetrics,
+  parseSpritePackManifest,
+  type Vec,
+} from "@/lib/office/sprite-pack";
 
-const manifest = JSON.parse(
-  fs.readFileSync(
-    path.resolve(__dirname, "../../public/animations/baxter/v3/manifest.json"),
-    "utf8",
-  ),
-);
-const PACK = {
-  ...SPRITE_PACKS["baxter-v3"]!,
-  standPoint: manifest.canvases.desk.standPoint as Vec,
-  deskAnchor: manifest.canvases.desk.anchor as Vec,
+function navPack(packId: string, dir: string): NavPack {
+  const def = SPRITE_PACKS[packId]!;
+  const { manifest } = parseSpritePackManifest(
+    JSON.parse(
+      fs.readFileSync(
+        path.resolve(__dirname, `../../public/animations/${dir}/manifest.json`),
+        "utf8",
+      ),
+    ),
+  );
+  return {
+    scale: def.scale,
+    desk: deskMetrics(def, manifest)!,
+    standPoint: manifest.canvases.desk.standPoint!,
+    deskAnchor: manifest.canvases.desk.anchor,
+    deskExit: def.deskExit,
+  };
+}
+
+const PACKS: Record<string, NavPack> = {
+  baxter: navPack("baxter-v3", "baxter/v3"),
+  sam: navPack("sam-v1", "sam/v1"),
+  dexter: navPack("dexter-v1", "dexter/v1"),
 };
 
 const departments = [
@@ -44,7 +70,7 @@ const departments = [
   },
   {
     id: "hr",
-    slug: "hr",
+    slug: "hr-admin-legal",
     name: "HR, Administration & Legal",
     color: "#5b3f8c",
     is_visible: true,
@@ -52,13 +78,14 @@ const departments = [
   },
   {
     id: "bi",
-    slug: "bi",
-    name: "Business Intelligence",
+    slug: "business-intelligence",
+    name: "Business Intelligence & Analytics",
     color: "#2f6f5e",
     is_visible: true,
     sort_order: 2,
   },
 ];
+const THEMES = new Map<string, RoomTheme>(departments.map((d) => [d.id, roomTheme(d)]));
 const agents: OfficeAgent[] = [
   { id: "baxter", kind: "orchestrator", departmentId: "exec", desk: {} },
   { id: "sam", kind: "specialist", departmentId: "hr", desk: {} },
@@ -69,6 +96,7 @@ function setup(
   preset: LayoutPreset = "studio",
   extraAgents: OfficeAgent[] = [],
   extraDepts = departments,
+  animated = true,
 ) {
   const layout = computeOfficeLayout({
     preset,
@@ -81,9 +109,9 @@ function setup(
   const navAgents: NavAgent[] = layout.seats.map((seat) => ({
     id: seat.agentId,
     seat,
-    pack: seat.agentId === "baxter" ? PACK : null,
+    pack: animated ? (PACKS[seat.agentId] ?? null) : null,
   }));
-  return { layout, nav: buildOfficeNav(layout, navAgents) };
+  return { layout, nav: buildOfficeNav(layout, navAgents, { themes: THEMES }) };
 }
 
 const inside = (r: Rect, p: Vec) => p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
@@ -102,7 +130,7 @@ function samples(path: Vec[]): Vec[] {
 }
 
 describe("office navigation", () => {
-  it("defines Baxter's desk, door, idle spots, and a hand-off spot for every agent", () => {
+  it("defines desks, doors, department hotspots, and a hand-off spot for every agent", () => {
     const { nav } = setup();
     for (const id of [
       "stand:baxter",
@@ -112,32 +140,128 @@ describe("office navigation", () => {
       "collab:sam",
       "collab:dexter",
       "door:hr",
+      "exit:sam",
+      "exit:dexter",
+      "idle:exec:strategy",
+      "idle:exec:model",
+      "idle:exec:bookcase",
+      "idle:exec:visitors",
+      "idle:hr:files",
+      "idle:hr:onboarding",
+      "idle:hr:policy",
+      "idle:hr:conversation",
+      "idle:hr:tree",
+      "idle:bi:whiteboard",
+      "idle:bi:dashboard",
+      "idle:bi:reports",
+      "idle:bi:datacab",
+      "idle:bi:printer",
     ]) {
       expect(nav.hotspots.has(id), id).toBe(true);
     }
-    const idle = [...nav.hotspots.values()].filter(
-      (h) => h.kind === "idle" && h.roomKey === "exec",
-    );
-    expect(idle.length).toBeGreaterThanOrEqual(2);
-    for (const h of idle) expect(isWalkable(nav.grid, h), h.id).toBe(true);
-    expect(nav.hotspots.get("meeting:meeting")).toBeDefined();
-  });
-
-  it("Baxter can reach his desk and every idle spot without leaving walkable ground", () => {
-    const { nav } = setup();
-    const start = nav.hotspots.get("idle:exec:window")!;
-    for (const target of [...nav.hotspots.values()].filter((h) => h.roomKey === "exec")) {
-      const p = findPath(nav.grid, start, target);
-      expect(p, target.id).not.toBeNull();
-      // Interior hops stay on walkable cells; endpoints may be a snapped desk approach point.
-      for (let i = 2; i < p!.length - 1; i++)
-        expect(hasLineOfSight(nav.grid, p![i - 1]!, p![i]!)).toBe(true);
+    for (const h of nav.hotspots.values()) {
+      if (h.kind === "idle" || h.kind === "exit") expect(isWalkable(nav.grid, h), h.id).toBe(true);
     }
-    expect(findPath(nav.grid, start, nav.hotspots.get("stand:baxter")!)).not.toBeNull();
+    expect(nav.hotspots.get("meeting:meeting")).toBeDefined();
+    // Baxter's sit/stand art is beside his desk, so he has no exit rule.
+    expect(nav.hotspots.has("exit:baxter")).toBe(false);
   });
 
   it.each(["studio", "campus", "compact"] as const)(
-    "%s layout: Baxter walks to Sam's office through doors, never through walls or furniture",
+    "%s: Sam's and Dexter's desk exits are clear floor to the RIGHT of their desks",
+    (preset) => {
+      const { nav } = setup(preset);
+      for (const id of ["sam", "dexter"]) {
+        const desk = nav.desks.get(id)!;
+        expect(desk.exit, id).not.toBeNull();
+        expect(desk.exit!.x, id).toBeGreaterThan(desk.footprint.x + desk.footprint.w);
+        expect(desk.exit!.x, id).toBeGreaterThan(desk.stand.x);
+        expect(isWalkable(nav.grid, desk.exit!), id).toBe(true);
+        expect(findPath(nav.grid, desk.stand, desk.exit!), id).not.toBeNull();
+      }
+    },
+  );
+
+  it.each(["studio", "campus", "compact"] as const)(
+    "%s: every agent can reach every hotspot in its office from its desk",
+    (preset) => {
+      const { nav } = setup(preset);
+      for (const [agentId, desk] of nav.desks) {
+        const room = nav.roomOfAgent.get(agentId)!;
+        for (const h of [...nav.hotspots.values()].filter(
+          (h) => h.roomKey === room && h.kind === "idle",
+        )) {
+          expect(
+            findPath(nav.grid, desk.exit ?? desk.stand, h),
+            `${agentId} → ${h.id}`,
+          ).not.toBeNull();
+        }
+      }
+    },
+  );
+
+  it.each(["studio", "campus", "compact"] as const)(
+    "%s: decorations never block desks, desk approaches, or the doorway",
+    (preset) => {
+      const { layout, nav } = setup(preset);
+      const floor = nav.decor.filter((d) => d.footprint);
+      for (const d of floor) {
+        for (const desk of nav.desks.values()) {
+          expect(intersects(d.footprint!, desk.footprint), `${d.id} vs desk`).toBe(false);
+          expect(inside(d.footprint!, desk.stand), `${d.id} vs stand`).toBe(false);
+          if (desk.exit) expect(inside(d.footprint!, desk.exit), `${d.id} vs exit`).toBe(false);
+        }
+        const room = layout.rooms.find((r) => r.key === d.roomKey)!;
+        if (room.kind !== "meeting") {
+          expect(intersects(d.footprint!, doorwayKeepOut(room)), `${d.id} vs door`).toBe(false);
+        }
+      }
+      // Wall art and rugs never block walking.
+      for (const d of nav.decor.filter((d) => d.layer !== "floor")) expect(d.footprint).toBeNull();
+    },
+  );
+
+  it("each department gets its own themed decorations", () => {
+    const { nav } = setup();
+    const arts = (room: string) =>
+      new Set(nav.decor.filter((d) => d.roomKey === room).map((d) => d.art));
+    for (const a of [
+      "strategyBoard",
+      "framedPlan",
+      "credenza",
+      "bookcase",
+      "roundTable",
+      "blueprintTubes",
+    ]) {
+      expect(arts("exec").has(a as never), a).toBe(true);
+    }
+    for (const a of [
+      "fileCabinet",
+      "lockedCabinet",
+      "policyShelf",
+      "onboardingTable",
+      "bulletinBoard",
+      "calendarBoard",
+      "checklistBoard",
+    ]) {
+      expect(arts("hr").has(a as never), a).toBe(true);
+    }
+    for (const a of [
+      "whiteboard",
+      "kpiDisplay",
+      "serverRack",
+      "printerTable",
+      "reviewTable",
+      "chartEasel",
+      "dataShelf",
+    ]) {
+      expect(arts("bi").has(a as never), a).toBe(true);
+    }
+    expect(roomTheme({ slug: "finance", name: "Finance" })).toBe("generic");
+  });
+
+  it.each(["studio", "campus", "compact"] as const)(
+    "%s: Baxter walks to Sam's office through doors, never through walls or furniture",
     (preset) => {
       const { layout, nav } = setup(preset);
       const from = nav.desks.get("baxter")!.stand;
@@ -146,9 +270,8 @@ describe("office navigation", () => {
       expect(path).not.toBeNull();
       const pts = samples(path!.slice(1, -1));
       const furniture = [
-        ...layout.rooms.flatMap(roomFurniture),
-        ...layout.seats.filter((s) => s.agentId !== "baxter").map(staticSeatFootprint),
-        nav.desks.get("baxter")!.footprint,
+        ...nav.decor.flatMap((d) => (d.footprint ? [d.footprint] : [])),
+        ...[...nav.desks.values()].map((d) => d.footprint),
       ];
       for (const p of pts) {
         expect(isWalkable(nav.grid, p)).toBe(true);
@@ -170,19 +293,26 @@ describe("office navigation", () => {
     },
   );
 
-  it("walls block straight lines between rooms", () => {
-    const { nav } = setup();
-    const a = nav.hotspots.get("idle:exec:center")!;
-    const b = nav.hotspots.get("collab:sam")!;
-    expect(hasLineOfSight(nav.grid, a, b)).toBe(false);
-  });
-
-  it("the future-departments area is not walkable", () => {
+  it("walls block straight lines between rooms; the future area is not walkable", () => {
     const { layout, nav } = setup();
+    expect(
+      hasLineOfSight(
+        nav.grid,
+        nav.hotspots.get("idle:exec:center")!,
+        nav.hotspots.get("collab:sam")!,
+      ),
+    ).toBe(false);
     const future = layout.rooms.find((r) => r.kind === "future")!;
     expect(isWalkable(nav.grid, { x: future.x + future.w / 2, y: future.y + future.h / 2 })).toBe(
       false,
     );
+  });
+
+  it("static agents still block their portrait desk", () => {
+    const { layout, nav } = setup("studio", [], departments, false);
+    const sam = layout.seats.find((s) => s.agentId === "sam")!;
+    const fp = staticSeatFootprint(sam);
+    expect(isWalkable(nav.grid, { x: fp.x + fp.w / 2, y: fp.y + fp.h / 2 })).toBe(false);
   });
 
   it("a newly added agent gets a reachable hand-off spot with no Baxter-specific code", () => {
@@ -211,11 +341,42 @@ describe("office navigation", () => {
     const navAgents: NavAgent[] = layout.seats.map((seat) => ({
       id: seat.agentId,
       seat,
-      pack: seat.agentId === "baxter" ? PACK : null,
+      pack: PACKS[seat.agentId] ?? null,
       handoffSide: seat.agentId === "sam" ? "left" : undefined,
     }));
-    const nav = buildOfficeNav(layout, navAgents);
+    const nav = buildOfficeNav(layout, navAgents, { themes: THEMES });
     expect(nav.hotspots.get("collab:sam")!.side).toBe("left");
+  });
+});
+
+describe("click destinations (collision handling)", () => {
+  it("a click on open floor is used exactly", () => {
+    const { nav } = setup();
+    const from = nav.desks.get("sam")!.exit!;
+    const target = nav.hotspots.get("idle:hr:center")!;
+    expect(nearestReachable(nav.grid, from, target)).toEqual({ x: target.x, y: target.y });
+  });
+
+  it("clicks inside furniture, desks, walls, or outside the office resolve to reachable floor", () => {
+    const { layout, nav } = setup();
+    const from = nav.desks.get("sam")!.exit!;
+    const cabinet = nav.decor.find((d) => d.art === "fileCabinet")!.footprint!;
+    const hr = layout.rooms.find((r) => r.key === "hr")!;
+    const targets: Vec[] = [
+      { x: cabinet.x + cabinet.w / 2, y: cabinet.y + cabinet.h / 2 }, // inside a cabinet
+      { x: nav.desks.get("sam")!.footprint.x + 10, y: nav.desks.get("sam")!.footprint.y + 10 }, // inside the desk
+      { x: hr.x + hr.w / 2, y: hr.y + 2 }, // inside the back wall
+      { x: hr.x + hr.w / 3, y: hr.y + hr.h - 1 }, // inside the front wall (not the door)
+      { x: -500, y: -500 }, // outside the office entirely
+      { x: 5000, y: 5000 },
+    ];
+    for (const t of targets) {
+      const dest = nearestReachable(nav.grid, from, t);
+      expect(dest, JSON.stringify(t)).not.toBeNull();
+      expect(isWalkable(nav.grid, dest!)).toBe(true);
+      expect(findPath(nav.grid, from, dest!)).not.toBeNull();
+      expect(inside(cabinet, dest!)).toBe(false);
+    }
   });
 });
 
@@ -244,5 +405,19 @@ describe("office camera", () => {
     const after = worldToScreen(world, { ...next, zoom: 1.6 });
     expect(after.x).toBeCloseTo(focus.x);
     expect(after.y).toBeCloseTo(focus.y);
+  });
+
+  it.each([
+    { rect: { left: 16, top: 300 }, cam: { x: -13.7, y: 25.4, zoom: 0.4466 } }, // phone width
+    { rect: { left: 220, top: 180 }, cam: { x: -179.3, y: -202.2, zoom: 1.1112 } }, // desktop, zoomed
+    { rect: { left: 40, top: -120 }, cam: { x: 8, y: 8, zoom: 2 } }, // page scrolled past the top
+  ])("pointer → world conversion is exact (%#)", ({ rect, cam }) => {
+    const border = { left: 4, top: 4 };
+    const world = { x: 337.5, y: 313.25 };
+    const screen = worldToScreen(world, cam);
+    const client = { x: screen.x + rect.left + border.left, y: screen.y + rect.top + border.top };
+    const back = clientToWorld(client, rect, border, cam);
+    expect(back.x).toBeCloseTo(world.x, 6);
+    expect(back.y).toBeCloseTo(world.y, 6);
   });
 });

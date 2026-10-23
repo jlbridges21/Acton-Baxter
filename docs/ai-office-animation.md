@@ -1,8 +1,10 @@
-# AI Office animation (Baxter V3 sprites)
+# AI Office animation (Baxter, Sam, Dexter)
 
-Baxter is an animated voxel cat in the AI Office (`/ai`). He wanders, sits at his desk, thinks,
-and walks to a specialist's office when he hands off real work. Agents without a sprite pack
-keep their portrait-at-a-desk look.
+The AI Office (`/ai`) is a small animated workplace. Baxter (voxel cat, executive), Sam (tuxedo
+cat, HR/admin/legal), and Dexter (voxel dog, business intelligence) each live in a decorated
+office, follow their own idle routine, react to real task state, and can be directed by the
+user. Agents without a sprite pack keep their portrait-at-a-desk look. All characters share
+one engine; what differs is their sprite pack and its definition.
 
 Two kinds of motion, kept strictly apart:
 
@@ -16,10 +18,27 @@ during an idle desk visit is decorative and never changes the "Available" status
 
 ## Assets
 
-- Source pack (never modified): `public/animations/baxter_sprite_pack/` — 28 PNGs, 8 clips.
-  `SHA256SUMS.txt` lists an `originals/` folder that is not in the repo; nothing uses it.
-- Normalized frames: `public/animations/baxter/v3/*.webp` + `manifest.json` (≈540 KB total).
-- Regenerate: `node scripts/normalize-baxter-sprites.mjs` (uses the `sharp` that ships with Next).
+| Character | Source pack (never modified)            | Normalized output              |
+| --------- | --------------------------------------- | ------------------------------ |
+| Baxter    | `public/animations/baxter_sprite_pack/` | `public/animations/baxter/v3/` |
+| Sam       | `public/animations/sam_sprite_pack/`    | `public/animations/sam/v1/`    |
+| Dexter    | `public/animations/dexter_sprite_pack/` | `public/animations/dexter/v1/` |
+
+Regenerate with `node scripts/normalize-sprite-packs.mjs [baxter|sam|dexter]` (uses the `sharp`
+that ships with Next). Clip names, order, timing, looping, and aliases come from each source
+manifest. The source manifests' `originals/` folders (listed in their checksums) are not in the
+repo; nothing uses them.
+
+Sam and Dexter clips (role emotes are mapped through the packs' own aliases):
+
+| Clip            | Sam                                  | Dexter                                       | Used for                                                           |
+| --------------- | ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------ |
+| idle (4)        | neutral, blink, listen, welcome-tail | attentive, blink-pant, head tilt, tail-ready | standing; micro-poses (blink/look/tail)                            |
+| walkLeft/Right  | 4-frame cat walk                     | 4-frame dog gait                             | movement, frame per 8–9 world px                                   |
+| working (4)     | type, review folder, checklist, type | dashboard, monitor, report, done             | seated work loop (real or decorative)                              |
+| sitDown/standUp | floor sit beside the desk            | floor sit / play-bow stretch                 | one-shot transitions at the desk's right                           |
+| think emote     | `peopleThinking`                     | `dataThinking`                               | receiving work; idle thinking spots                                |
+| task emote      | `hrTask`                             | `analyticsTask`                              | idle routine at the onboarding/report stations; presenting results |
 
 What normalization fixes (the source frames came from AI-generated sheets):
 
@@ -34,6 +53,11 @@ What normalization fixes (the source frames came from AI-generated sheets):
 - **Sheet bleed**: stray specks from neighbouring sheet cells were removed (work 03/04,
   walk-right 02/04, a 190px desk-leg sliver in sit-down 02).
 - Two fixed canvases: character (feet anchor, bottom-centre) and desk (mug anchor).
+- **Sam/Dexter**: desk frames are aligned on the tabletop's top-right corner (Sam has no mug),
+  with a ±6% width correction because Dexter's sheet draws the desk at different sizes. Their
+  close-up emote sheets are scaled down to match idle (Sam's HR task ×0.8). The script also
+  derives a `desk-empty.webp` prop (desk without the character) from explicit keep/clear
+  rectangles in a work frame, shown while they're away from their desk.
 
 Known limitations of the art:
 
@@ -46,29 +70,36 @@ Known limitations of the art:
   clear (the hand-off spot to the right of a desk, and result delivery).
 - There is no desk-only artwork. While Baxter is away from his desk, an SVG desk drawn in the
   same canvas space (`DeskArt`) stands in for it; the sprite desk replaces it while he sits.
+- Sam's and Dexter's sit/stand frames have no desk (they sit on the floor beside it), so
+  sitting plays at the desk's right, then crossfades into the seated-at-desk work art.
+- Dexter's empty desk is reconstructed where his laptop was (wood stretched from beside it);
+  a small step in the desk's back edge is visible next to the plant at high zoom.
 
 ## Code map
 
-| Piece                        | File                                               |
-| ---------------------------- | -------------------------------------------------- |
-| Pack registry + validation   | `src/lib/office/sprite-pack.ts`                    |
-| Walkable grid, A*, hotspots  | `src/lib/office/navigation.ts`                     |
-| Camera (world ↔ screen)      | `src/lib/office/camera.ts`                         |
-| Visual state machine         | `src/lib/office/character-brain.ts`                |
-| Ambient planner              | `src/lib/office/ambient.ts`                        |
-| Task → animation cues        | `src/lib/office/task-coordinator.ts`               |
-| Admin settings schema        | `src/lib/office/animation-settings.ts`             |
-| Delegation snapshot (server) | `src/lib/agents/office-activity.ts`                |
-| rAF loop + plan scheduling   | `src/components/ai/office/director.ts`             |
-| React glue                   | `src/components/ai/office/use-office-animation.ts` |
-| Character + desk DOM         | `src/components/ai/office/animated-agent.tsx`      |
-| Frame preloading             | `src/components/ai/office/sprite-loader.ts`        |
+| Piece                        | File                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| Pack registry + validation   | `src/lib/office/sprite-pack.ts`                                                     |
+| Department decorations       | `src/lib/office/decor.ts` (data), `src/components/ai/office/office-decor.tsx` (art) |
+| Scene depth                  | `src/lib/office/depth.ts`                                                           |
+| Walkable grid, A*, hotspots  | `src/lib/office/navigation.ts`                                                      |
+| Camera (world ↔ screen)      | `src/lib/office/camera.ts`                                                          |
+| Visual state machine         | `src/lib/office/character-brain.ts`                                                 |
+| Ambient planner              | `src/lib/office/ambient.ts`                                                         |
+| Task → animation cues        | `src/lib/office/task-coordinator.ts`                                                |
+| Admin settings schema        | `src/lib/office/animation-settings.ts`                                              |
+| Delegation snapshot (server) | `src/lib/agents/office-activity.ts`                                                 |
+| rAF loop + plan scheduling   | `src/components/ai/office/director.ts`                                              |
+| React glue                   | `src/components/ai/office/use-office-animation.ts`                                  |
+| Character + desk DOM         | `src/components/ai/office/animated-agent.tsx`                                       |
+| Frame preloading             | `src/components/ai/office/sprite-loader.ts`                                         |
 
 ### Visual states
 
 `idle`, `blink`, `look_around`, `tail_flick` (idle clip frames 1–4), `walking_left`,
 `walking_right`, `sitting_down`, `seated_idle` (work frame 1, blinking on frame 4), `working`,
-`standing_up`, `thinking`, `presenting`.
+`standing_up`, `thinking`, `presenting`, `emoting` (role emotes; the clip name is exposed as
+`data-emote`, e.g. `hrTask`).
 
 Loops: idle (as occasional micro-poses, not a 4-frame twitch), walk (frame advances every 8
 world px so paws match ground speed), work. One-shots: sit-down, stand-up, thinking (holds the
@@ -76,6 +107,7 @@ light-bulb frame), presenting.
 
 ### Priorities
 
+0. Manual — the user is directing this agent (click-to-move, interrupt)
 1. Critical — hand-off walks, failed results
 2. Active task — Baxter's own running task, a chat request in flight
 3. Completion — reviewing/presenting a finished result
@@ -93,10 +125,49 @@ top. The grid (8px cells) blocks room walls except a door gap in each room's bot
 (also drawn), furniture (bookshelf, plant, meeting table/chairs, every desk), and the
 "future departments" area. Paths are A* + string-pulled into straight segments.
 
-Hotspots per room: `door:`, `hall:`, `idle:<room>:{window,shelf,plant,center,corner}`; per
-agent: `desk:`, `stand:` (animated desks), `collab:` (hand-off spot: right, left, or front of
-the desk — first one that's walkable, or the admin's choice). New agents get these from their
-seat automatically.
+Hotspots per room come from its decorations: executive `strategy`, `model`, `bookcase`,
+`visitors`; HR `files`, `onboarding`, `policy`, `conversation`, `tree`; analytics `whiteboard`,
+`dashboard`, `reports`, `printer`, `datacab`; every room also has `door:`, `hall:`, `center`,
+`window`, `corner`. Per agent: `desk:`, `stand:`, `exit:` (right-exit desks), `collab:` (hand-off
+spot: right, left, or front of the desk). New agents get these from their seat automatically.
+
+**Desk exit rule (Sam, Dexter):** `deskExit: "right"` in the pack definition puts the sit/stand
+point on the desk's right and an exit waypoint 34px further right. Every autonomous route that
+starts at the desk walks to the exit first, and returning to sit goes exit → stand point → sit,
+so they never leave past the clutter on the desk's left. User-directed moves skip the rule.
+
+## Decorations and depth
+
+`decor.ts` defines each department theme (picked from the department slug/name) as items with an
+art rectangle, a layer, and — for furniture — a floor footprint. Items that would overlap a
+desk, a desk approach/exit point, a hand-off spot, or the doorway path are dropped, so
+decoration never blocks a required route (tested on every layout preset). Footprints become
+navigation obstacles; the art is small pixel-style SVG in the office palette, with symbols
+instead of text.
+
+Depth (`depth.ts`) has four bands: background (rugs), wall (boards, frames, wall displays —
+always behind characters), world (characters, desks, furniture, sorted by floor baseline:
+feet for characters, footprint bottom for furniture, front edge for desks; ties go decor <
+desk < character), and UI (names, bubbles, captions, click rings, hand-off chips). It's the
+same `depthZ()` everywhere: decor sets it once, the animation loop sets it per frame for moving
+characters. A seated character sorts with its desk's front edge. Selection rings sit inside the
+character's world element, so furniture in front of an agent also covers its ring.
+
+## User control
+
+- **Click an agent**: stops its routine (typing, emotes, walking), stands it up if seated, and
+  leaves it idle. The click is consumed by the agent, so it never also creates a destination.
+- **Click/tap the floor** with an animated agent selected: an expanding ring appears at the
+  clicked world point (650ms, non-blocking), and the agent walks there, facing left/right by
+  travel direction (vertical legs keep the last facing), then idles. Points inside furniture,
+  walls, desks, or outside the office resolve to the nearest reachable floor
+  (flood fill from the agent). A press that moves more than 6px is a pan, not a click.
+  Pointer → world uses the viewport rect, its border, pan, and zoom (`clientToWorld`).
+- **10-second window**: either action puts the agent in manual mode; each further click resets
+  the timer. After 10s without input the agent resumes its routine from where it is (no
+  teleport). Timing uses the animation loop's clock, so there are no timers to leak; rapid
+  clicks just replace the one manual plan. Real hand-offs that arrive meanwhile wait and play
+  once manual mode ends; status badges update immediately.
 
 ### Real task wiring
 
@@ -127,7 +198,8 @@ Admins (Customize office → **Office animation**), stored in
 - Idle activity: off / low / normal / high
 - Walking speed: relaxed / normal / brisk
 - Resting spot: desk / window / middle of the office
-- Per agent: appearance (portrait or a sprite pack) and where visitors stand
+- Per agent: appearance (portrait or a sprite pack; Sam and Dexter default to theirs) and where
+  visitors stand
 
 Until 069 is applied the office uses defaults; saving animation settings will fail with a
 database error, other office settings keep working.
@@ -138,11 +210,13 @@ Follow Baxter, Locate, Fit (reset camera).
 
 ## Adding an animated agent
 
-1. Put frames in `public/animations/<agent>/…` and normalize them (copy
-   `normalize-baxter-sprites.mjs`; the manifest format is `SpritePackManifest`).
-2. Register the pack in `SPRITE_PACKS` (`sprite-pack.ts`) with its scale, desk focus/footprint,
-   seated-feet point, and stride.
-3. Assign it to the agent under Customize office → Office animation.
+1. Put the pack in `public/animations/<agent>_sprite_pack/` and add an entry to `PACKS` in
+   `scripts/normalize-sprite-packs.mjs` (fur colours for the paw anchor, desk anchor, per-clip
+   scale, empty-desk rectangles). Run it.
+2. Register the pack in `SPRITE_PACKS` (`sprite-pack.ts`): scale, stride, `emotes` (think /
+   present / task clip names), `deskExit`, and ambient weights + preferred hotspots. Map the
+   agent's slug in `DEFAULT_PACK_BY_SLUG`, or assign it under Customize office.
+3. Optionally add a decoration theme in `decor.ts` and match it in `roomTheme()`.
 
 The agent then gets its own desk, ambient routine in its own room, and modes from its own
 runtime status. Hand-off walks happen for whichever agent _delegates_ (today only Baxter).

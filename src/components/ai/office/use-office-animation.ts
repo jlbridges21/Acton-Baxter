@@ -4,8 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { OfficeLayout } from "@/lib/agents/office-layout";
 import type { AmbientIntensity } from "@/lib/office/ambient";
 import { SPEED_MULTIPLIER, type OfficeAnimationSettings } from "@/lib/office/animation-settings";
+import type { RoomTheme } from "@/lib/office/decor";
 import { buildOfficeNav, type NavAgent, type OfficeNav } from "@/lib/office/navigation";
-import { SPRITE_PACKS, resolvePackId, type SpritePackManifest } from "@/lib/office/sprite-pack";
+import {
+  SPRITE_PACKS,
+  deskMetrics,
+  resolvePackId,
+  type SpritePackManifest,
+} from "@/lib/office/sprite-pack";
 import {
   modeFromRuntime,
   reconcile,
@@ -13,11 +19,18 @@ import {
   type DelegationSnapshot,
   type OfficeEvent,
 } from "@/lib/office/task-coordinator";
-import { OfficeDirector, type AnimatedAgentSpec, type AgentNames, type Cue } from "./director";
+import {
+  OfficeDirector,
+  type AnimatedAgentSpec,
+  type AgentNames,
+  type ControlMode,
+  type Cue,
+} from "./director";
 import { loadSpritePack } from "./sprite-loader";
 
 type AgentLite = {
   id: string;
+  slug: string;
   name: string;
   kind: "orchestrator" | "specialist";
   department: string | null;
@@ -35,6 +48,8 @@ export type OfficeStatusSnapshot = {
  */
 export function useOfficeAnimation(input: {
   layout: OfficeLayout;
+  /** Decoration theme per room key (executive, hr, analytics, …). */
+  themes: Map<string, RoomTheme>;
   agents: AgentLite[];
   settings: OfficeAnimationSettings;
   status: OfficeStatusSnapshot;
@@ -46,6 +61,7 @@ export function useOfficeAnimation(input: {
   const { layout, agents, settings } = input;
   const [packs, setPacks] = useState<Record<string, SpritePackManifest>>({});
   const [cues, setCues] = useState<Record<string, Cue>>({});
+  const [control, setControl] = useState<Record<string, ControlMode>>({});
   const [director, setDirector] = useState<OfficeDirector | null>(null);
 
   const packOf = useMemo(() => {
@@ -82,12 +98,19 @@ export function useOfficeAnimation(input: {
       const manifest = packId ? packs[packId] : undefined;
       const def = packId ? SPRITE_PACKS[packId] : undefined;
       const standPoint = manifest?.canvases.desk.standPoint;
-      if (def && manifest && standPoint && manifest.animations.working) {
+      const metrics = def && manifest ? deskMetrics(def, manifest) : null;
+      if (def && manifest && standPoint && metrics && manifest.animations.working) {
         ready.set(seat.agentId, { packId: def.id, manifest });
         navAgents.push({
           id: seat.agentId,
           seat,
-          pack: { ...def, standPoint, deskAnchor: manifest.canvases.desk.anchor },
+          pack: {
+            scale: def.scale,
+            desk: metrics,
+            standPoint,
+            deskAnchor: manifest.canvases.desk.anchor,
+            deskExit: def.deskExit,
+          },
           handoffSide: settings.agents[seat.agentId]?.handoff_side,
         });
       } else {
@@ -99,7 +122,7 @@ export function useOfficeAnimation(input: {
         });
       }
     }
-    const built: OfficeNav = buildOfficeNav(layout, navAgents);
+    const built: OfficeNav = buildOfficeNav(layout, navAgents, { themes: input.themes });
     const out = new Map<string, AnimatedAgentSpec>();
     for (const [agentId, { packId, manifest }] of ready) {
       const desk = built.desks.get(agentId);
@@ -113,10 +136,11 @@ export function useOfficeAnimation(input: {
         pack: SPRITE_PACKS[packId]!,
         manifest,
         desk,
+        deskMetrics: deskMetrics(SPRITE_PACKS[packId]!, manifest)!,
       });
     }
     return { nav: built, specs: out };
-  }, [layout, packOf, packs, agents, settings.agents]);
+  }, [layout, packOf, packs, agents, settings.agents, input.themes]);
 
   const names: AgentNames = useMemo(
     () => new Map(agents.map((a) => [a.id, { name: a.name, department: a.department }])),
@@ -149,6 +173,7 @@ export function useOfficeAnimation(input: {
       reducedMotion: live.current.reducedMotion,
       ambientPaused: live.current.ambientPaused,
       onCue: (agentId, cue) => setCues((c) => ({ ...c, [agentId]: cue })),
+      onControlChange: (agentId, mode) => setControl((c) => ({ ...c, [agentId]: mode })),
     });
     d.start();
     setDirector(d);
@@ -190,5 +215,5 @@ export function useOfficeAnimation(input: {
     }
   }, [director, input.status]);
 
-  return { nav, specs, director, cues };
+  return { nav, specs, director, cues, control };
 }

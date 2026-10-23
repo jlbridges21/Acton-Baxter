@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CLIP_NAMES,
   SPRITE_PACKS,
   allFrameUrls,
   clipDurationMs,
+  deskMetrics,
   frameAt,
+  resolveClip,
   parseSpritePackManifest,
   resolvePackId,
   withoutBrokenFrames,
@@ -136,5 +138,107 @@ describe("sprite pack parsing and fallbacks", () => {
         agents: { abc: { handoff_side: "left" } },
       }),
     ).toMatchObject({ ambient_intensity: "low", agents: { abc: { handoff_side: "left" } } });
+  });
+});
+
+describe.each([
+  {
+    who: "sam",
+    packId: "sam-v1",
+    src: "animations/sam_sprite_pack",
+    out: "animations/sam/v1",
+    think: "peopleThinking",
+    task: "hrTask",
+  },
+  {
+    who: "dexter",
+    packId: "dexter-v1",
+    src: "animations/dexter_sprite_pack",
+    out: "animations/dexter/v1",
+    think: "dataThinking",
+    task: "analyticsTask",
+  },
+])("$who sprite pack", ({ who, packId, src, out, think, task }) => {
+  const source = readJson(path.join(PUBLIC, src, "manifest.json"));
+  const { manifest } = parseSpritePackManifest(readJson(path.join(PUBLIC, out, "manifest.json")));
+
+  it("loads from the supplied pack: every source frame exists, untouched", () => {
+    expect(source.character).toBe(who);
+    const frames = Object.values(source.animations).flatMap(
+      (a) => (a as { frames: string[] }).frames,
+    );
+    expect(frames).toHaveLength(28);
+    for (const f of frames) expect(fs.existsSync(path.join(PUBLIC, src, f)), f).toBe(true);
+  });
+
+  it("normalized clips mirror the source manifest's names, order, timing, and looping", () => {
+    expect(Object.keys(manifest.animations).sort()).toEqual(Object.keys(source.animations).sort());
+    for (const [name, clip] of Object.entries(manifest.animations)) {
+      const s = source.animations[name];
+      expect(clip.frames, name).toHaveLength(s.frames.length);
+      expect(clip.loop, name).toBe(s.loop);
+      expect(clip.frameDurationMs, name).toBe(s.frameDurationMs);
+      for (const url of clip.frames) expect(fs.existsSync(path.join(PUBLIC, url)), url).toBe(true);
+    }
+    // Sit/stand happen on the floor beside the desk; only the work loop includes the desk.
+    expect(manifest.animations.working!.canvas).toBe("desk");
+    expect(manifest.animations.sitDown!.canvas).toBe("character");
+    expect(manifest.animations.standUp!.canvas).toBe("character");
+  });
+
+  it("keeps the pack's Baxter-compatible aliases and role emotes", () => {
+    expect(manifest.aliases).toEqual(source.aliases);
+    expect(resolveClip(manifest, "thinking")?.name).toBe(think);
+    expect(resolveClip(manifest, "presenting")?.name).toBe(task);
+    const def = SPRITE_PACKS[packId]!;
+    expect(def.emotes.think).toBe(think);
+    expect(def.emotes.task).toBe(task);
+    expect(def.deskExit).toBe("right");
+  });
+
+  it("has an empty-desk prop and desk metrics for when the character is away", () => {
+    expect(manifest.deskProp).toBeDefined();
+    expect(fs.existsSync(path.join(PUBLIC, manifest.deskProp!))).toBe(true);
+    const metrics = deskMetrics(SPRITE_PACKS[packId]!, manifest)!;
+    expect(metrics.footprint.w).toBeGreaterThan(100);
+    // The stand point is to the right of the desk.
+    expect(manifest.canvases.desk.standPoint!.x).toBeGreaterThan(0);
+  });
+
+  it("is the default appearance for the agent with that slug", () => {
+    expect(resolvePackId({ id: "x", kind: "specialist", slug: who }, {})).toBe(packId);
+    expect(
+      resolvePackId({ id: "x", kind: "specialist", slug: who }, { x: { sprite_pack: "none" } }),
+    ).toBeNull();
+  });
+});
+
+describe("sprite loader", () => {
+  it("warns clearly when frames are missing, and drops only the affected clip", async () => {
+    const raw = readJson(path.join(PUBLIC, "animations/sam/v1/manifest.json"));
+    raw.animations.hrTask.frames[1] = "/animations/sam/v1/does-not-exist.webp";
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(raw), { status: 200 }));
+    class FakeImage {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      decoding = "";
+      set src(url: string) {
+        queueMicrotask(() => (url.includes("does-not-exist") ? this.onerror?.() : this.onload?.()));
+      }
+      decode() {
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal("Image", FakeImage);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { loadSpritePack } = await import("@/components/ai/office/sprite-loader");
+    const manifest = await loadSpritePack({ ...SPRITE_PACKS["sam-v1"]!, id: "sam-missing-test" });
+    expect(manifest.animations.hrTask).toBeUndefined();
+    expect(manifest.animations.idle).toBeDefined();
+    expect(warn).toHaveBeenCalledWith("[ai-office] sprite frames missing", "sam-missing-test", [
+      "/animations/sam/v1/does-not-exist.webp",
+    ]);
+    vi.unstubAllGlobals();
+    warn.mockRestore();
   });
 });

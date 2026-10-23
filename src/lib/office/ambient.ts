@@ -9,7 +9,7 @@ import type { Hotspot } from "./navigation";
 import type { Vec } from "./sprite-pack";
 
 export type AmbientIntensity = "off" | "low" | "normal" | "high";
-export type AmbientActivity = "desk" | "look" | "think" | "wander" | "rest";
+export type AmbientActivity = "desk" | "look" | "think" | "task" | "wander" | "rest";
 
 export type AmbientMemory = {
   last: AmbientActivity | null;
@@ -36,19 +36,19 @@ export const AMBIENT_PROFILES: Record<Exclude<AmbientIntensity, "off">, Profile>
     pause: [7000, 14000],
     seated: [26000, 48000],
     deskCooldown: 60000,
-    weights: { desk: 4, look: 2, think: 1, wander: 1 },
+    weights: { desk: 4, look: 2, think: 1, task: 1, wander: 1 },
   },
   normal: {
     pause: [3500, 8000],
     seated: [14000, 28000],
     deskCooldown: 40000,
-    weights: { desk: 3, look: 3, think: 2, wander: 3 },
+    weights: { desk: 3, look: 3, think: 2, task: 2, wander: 3 },
   },
   high: {
     pause: [2000, 4500],
     seated: [8000, 15000],
     deskCooldown: 25000,
-    weights: { desk: 2, look: 3, think: 2, wander: 4 },
+    weights: { desk: 2, look: 3, think: 2, task: 2, wander: 4 },
   },
 };
 
@@ -63,6 +63,12 @@ export type AmbientContext = {
   spots: Hotspot[];
   randomPoint: () => Vec | null;
   memory: AmbientMemory;
+  /** The character's own emotes (e.g. Sam: peopleThinking / hrTask). No task → no task activity. */
+  emotes?: { think: string | null; task: string | null };
+  /** Preferred hotspot names per activity (e.g. Dexter thinks at the "whiteboard"). */
+  prefer?: { look?: string[]; think?: string[]; task?: string[] };
+  /** Character-specific relative weights; multiplied into the intensity profile. */
+  weights?: Partial<Record<Exclude<AmbientActivity, "rest">, number>>;
 };
 
 export type AmbientPlan = { activity: AmbientActivity; actions: Action[]; memory: AmbientMemory };
@@ -100,17 +106,21 @@ export function planAmbient(ctx: AmbientContext): AmbientPlan {
     };
   }
 
+  const emotes = ctx.emotes ?? { think: "thinking", task: null };
+  const weightOf = (a: keyof Profile["weights"]) => profile.weights[a] * (ctx.weights?.[a] ?? 1);
   const spots = ctx.spots.filter((s) => s.id !== memory.lastSpot && far(s, ctx.position, 40));
   const options = (Object.keys(profile.weights) as Array<keyof Profile["weights"]>).filter((a) => {
-    if (a === memory.last) return false; // no immediate repeats
+    if (a === memory.last || weightOf(a) <= 0) return false; // no immediate repeats
     if (a === "desk") return ctx.canSit && ctx.now - memory.lastDeskAt >= profile.deskCooldown;
-    if (a === "look" || a === "think") return spots.length > 0;
+    if (a === "task") return Boolean(emotes.task) && spots.length > 0;
+    if (a === "think") return Boolean(emotes.think) && spots.length > 0;
+    if (a === "look") return spots.length > 0;
     return true;
   });
   const pool = options.length ? options : (["wander"] as const);
-  const total = pool.reduce((s, a) => s + profile.weights[a], 0);
+  const total = pool.reduce((s, a) => s + weightOf(a), 0);
   let roll = rng() * total;
-  const activity = pool.find((a) => (roll -= profile.weights[a]) < 0) ?? pool[0]!;
+  const activity = pool.find((a) => (roll -= weightOf(a)) < 0) ?? pool[0]!;
   const pause = between(rng, profile.pause);
 
   switch (activity) {
@@ -132,7 +142,7 @@ export function planAmbient(ctx: AmbientContext): AmbientPlan {
       };
     }
     case "look": {
-      const spot = pickSpot(spots, rng, ["window", "shelf", "plant"]);
+      const spot = pickSpot(spots, rng, ctx.prefer?.look ?? ["window", "shelf", "plant"]);
       return {
         activity,
         actions: [
@@ -147,14 +157,29 @@ export function planAmbient(ctx: AmbientContext): AmbientPlan {
       };
     }
     case "think": {
-      const spot = pickSpot(spots, rng, ["center", "corner", "window"]);
+      const spot = pickSpot(spots, rng, ctx.prefer?.think ?? ["center", "corner", "window"]);
       return {
         activity,
         actions: [
           { kind: "walk", to: spot },
           { kind: "idle", ms: 500, micro: false },
-          { kind: "emote", clip: "thinking", holdMs: 700 },
+          { kind: "emote", clip: emotes.think!, holdMs: 700 },
           { kind: "idle", ms: pause },
+        ],
+        memory: { ...memory, last: activity, lastSpot: spot.id },
+      };
+    }
+    case "task": {
+      // The character's own work gesture at a relevant station (Sam's onboarding kit,
+      // Dexter's report station) — decorative, so nothing about it implies a real task.
+      const spot = pickSpot(spots, rng, ctx.prefer?.task ?? []);
+      return {
+        activity,
+        actions: [
+          { kind: "walk", to: spot },
+          { kind: "idle", ms: 400, micro: false },
+          { kind: "emote", clip: emotes.task!, holdMs: 500 },
+          { kind: "idle", ms: Math.round(pause * 0.8) },
         ],
         memory: { ...memory, last: activity, lastSpot: spot.id },
       };

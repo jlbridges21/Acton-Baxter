@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, type ReactNode } from "react";
+import { DEPTH_RANK, depthZ } from "@/lib/office/depth";
 import { cn } from "@/lib/utils";
 import type { AnimatedAgentSpec, Cue, OfficeDirector } from "./director";
 
@@ -70,6 +71,10 @@ export function AnimatedAgent({
     (el: HTMLButtonElement | null) => director.bind(spec.id, { root: el }),
     [director, spec.id],
   );
+  const overlayRef = useCallback(
+    (el: HTMLSpanElement | null) => director.bind(spec.id, { overlay: el }),
+    [director, spec.id],
+  );
   const charRef = useCallback(
     (el: HTMLImageElement | null) => director.bind(spec.id, { charImg: el }),
     [director, spec.id],
@@ -82,9 +87,11 @@ export function AnimatedAgent({
     (el: HTMLSpanElement | null) => director.bind(spec.id, { deskProp: el }),
     [director, spec.id],
   );
+  const initial = `translate3d(${spec.desk.stand.x}px, ${spec.desk.stand.y}px, 0)`;
 
   return (
     <>
+      {/* Desk: floor furniture, depth-sorted on its front edge. */}
       <span
         aria-hidden
         className="pointer-events-none absolute"
@@ -93,11 +100,21 @@ export function AnimatedAgent({
           top: spec.desk.origin.y,
           width: deskCanvas.width * s,
           height: deskCanvas.height * s,
-          zIndex: Math.round(spec.desk.frontY),
+          zIndex: depthZ("world", spec.desk.frontY, DEPTH_RANK.desk),
         }}
       >
         <span ref={propRef} className="ai-office-fade absolute inset-0">
-          <DeskArt />
+          {spec.manifest.deskProp ? (
+            // eslint-disable-next-line @next/next/no-img-element -- preloaded sprite art
+            <img
+              src={spec.manifest.deskProp}
+              alt=""
+              draggable={false}
+              className="ai-office-sprite h-full w-full"
+            />
+          ) : (
+            <DeskArt />
+          )}
         </span>
         {/* eslint-disable-next-line @next/next/no-img-element -- frames are swapped imperatively */}
         <img
@@ -109,6 +126,7 @@ export function AnimatedAgent({
           style={{ opacity: 0 }}
         />
       </span>
+      {/* The character: world layer, z-index from its feet (set by the director). */}
       <button
         ref={rootRef}
         type="button"
@@ -116,10 +134,11 @@ export function AnimatedAgent({
         onPointerDown={(e) => e.stopPropagation()}
         aria-pressed={selected}
         aria-label={ariaLabel}
+        data-agent-id={spec.id}
         className="group ai-office-actor absolute top-0 left-0 focus-visible:outline-none"
-        style={{ transform: `translate3d(${spec.desk.stand.x}px, ${spec.desk.stand.y}px, 0)` }}
+        style={{ transform: initial }}
       >
-        {/* floor shadow + selection ring */}
+        {/* floor shadow + selection ring (stays on the floor under the feet) */}
         <span
           aria-hidden
           className={cn(
@@ -151,6 +170,14 @@ export function AnimatedAgent({
             opacity: 0,
           }}
         />
+      </button>
+      {/* UI layer: name, status bubble, and caption always draw above the scene. */}
+      <span
+        ref={overlayRef}
+        aria-hidden
+        className="pointer-events-none absolute top-0 left-0 block w-0"
+        style={{ transform: initial, zIndex: depthZ("ui") }}
+      >
         <span className="absolute left-0 block w-0" style={{ top: -66 }}>
           {bubble}
         </span>
@@ -175,7 +202,7 @@ export function AnimatedAgent({
         >
           {name}
         </span>
-      </button>
+      </span>
     </>
   );
 }

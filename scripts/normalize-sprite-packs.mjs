@@ -87,7 +87,7 @@ const PACKS = {
         [472, 355, 80, 95],
         [35, 412, 555, 215],
       ],
-      clear: [[212, 462, 236, 165]],
+      clear: [[212, 488, 236, 139]],
     },
     clips: {
       idle: { kind: "character", relScale: 1 },
@@ -112,14 +112,18 @@ const PACKS = {
     emptyDesk: {
       frame: 0,
       keep: [
-        [75, 385, 140, 125],
+        [75, 398, 140, 112],
         [475, 165, 150, 215],
+        [566, 362, 18, 58],
         [500, 415, 105, 95],
         [40, 488, 580, 139],
         [40, 455, 205, 35],
         [500, 455, 120, 35],
       ],
       clear: [],
+      // Fill the bare desk under the laptop by stretching a clean wood column from beside it:
+      // [srcX, srcY, w, h, dstX, dstY].
+      patch: Array.from({ length: 258 }, (_, i) => [236, 446, 1, 44, 243 + i, 446]),
     },
     clips: {
       idle: { kind: "character", relScale: 1 },
@@ -300,14 +304,24 @@ function standingPawPoint(img, isBody) {
 }
 
 /** Keeps only the listed source rectangles of a work frame (minus `clear`): the empty desk. */
-function emptyDesk(img, keep, clear) {
+function emptyDesk(img, keep, clear, patch = []) {
   const { data, width: W, height: H } = img;
-  const inAny = (rects, x, y) => rects.some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
+  const inAny = (rects, x, y) =>
+    rects.some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
   const copy = Buffer.from(data);
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
       if (!inAny(keep, x, y) || inAny(clear, x, y)) copy[(y * W + x) * 4 + 3] = 0;
     }
+  for (const [sx, sy, w, h, dx, dy] of patch)
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++)
+        data.copy(
+          copy,
+          ((dy + y) * W + dx + x) * 4,
+          ((sy + y) * W + sx + x) * 4,
+          ((sy + y) * W + sx + x) * 4 + 4,
+        );
   return { ...img, data: copy };
 }
 
@@ -493,7 +507,12 @@ async function normalize(character, pack) {
       seatedFeet: { x: Math.round((left + ax) / 2 - 6), y: ay + 24 },
     };
     const empty = frames.find((f) => f.name === "working" && f.index === pack.emptyDesk.frame);
-    const stripped = emptyDesk(empty.img, pack.emptyDesk.keep, pack.emptyDesk.clear);
+    const stripped = emptyDesk(
+      empty.img,
+      pack.emptyDesk.keep,
+      pack.emptyDesk.clear,
+      pack.emptyDesk.patch,
+    );
     totalBytes += await writeFrame(
       stripped,
       empty.scale,

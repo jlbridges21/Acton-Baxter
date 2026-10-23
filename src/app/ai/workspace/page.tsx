@@ -25,7 +25,7 @@ async function load(requester: ReturnType<typeof requesterFromAuthUser>) {
     animation: normalizeAnimationSettings(settings.animation_settings),
     agents: agents
       .filter((a) => a.status !== "archived")
-      .map((a) => ({ id: a.id, name: a.name, title: a.title, kind: a.kind })),
+      .map((a) => ({ id: a.id, slug: a.slug, name: a.name, title: a.title, kind: a.kind })),
   };
 }
 

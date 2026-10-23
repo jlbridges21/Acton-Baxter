@@ -23,7 +23,8 @@ export type VisualState =
   | "working"
   | "standing_up"
   | "thinking"
-  | "presenting";
+  | "presenting"
+  | "emoting";
 
 export type Facing = "left" | "right";
 
@@ -68,6 +69,8 @@ export type RenderState = {
   y: number;
   facing: Facing;
   visual: VisualState;
+  /** The emote clip being played, when visual is an emote. */
+  emote?: string;
 };
 
 export type ClipTiming = { frames: number; frameDurationMs: number; loop: boolean };
@@ -306,7 +309,11 @@ export class CharacterBrain {
             const exit = desk!.exit;
             // Right-exit desks are approached from their exit waypoint too.
             if (exit && !this.plan?.manual && dist(this.pos, exit) > 3) {
-              this.queue.unshift({ kind: "walk", to: exit }, { kind: "walk", to: desk!.stand }, action);
+              this.queue.unshift(
+                { kind: "walk", to: exit },
+                { kind: "walk", to: desk!.stand },
+                action,
+              );
             } else {
               this.queue.unshift({ kind: "walk", to: desk!.stand }, action);
             }
@@ -538,7 +545,9 @@ export class CharacterBrain {
             a.elapsed < a.play
               ? this.loopFrame(a.clip, a.elapsed)
               : (this.opts.clips[a.clip]?.frames ?? 1) - 1,
-          visual: a.clip,
+          // Baxter's emotes keep their names; role emotes (hrTask, dataThinking…) are "emoting".
+          visual: a.clip === "thinking" || a.clip === "presenting" ? a.clip : "emoting",
+          emote: a.clip,
         };
       case "sit":
         return {

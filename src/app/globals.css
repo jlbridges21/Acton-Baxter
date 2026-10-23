@@ -291,3 +291,27 @@ body {
     stroke-dashoffset: -24;
   }
 }
+
+/* Click-to-move confirmation ring (expands and fades; static briefly under reduced motion). */
+.ai-office .ai-office-click {
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  animation: ai-office-click 650ms ease-out forwards;
+}
+@keyframes ai-office-click {
+  from {
+    transform: scale(0.35);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+.ai-office .ai-office-led {
+  animation: ai-office-screen 1.6s steps(2) infinite;
+}
+.ai-office img {
+  -webkit-user-drag: none;
+}

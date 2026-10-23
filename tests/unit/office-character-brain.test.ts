@@ -216,3 +216,82 @@ describe("CharacterBrain", () => {
     expect(frames.some((f) => f.visual === "look_around")).toBe(true);
   });
 });
+
+describe("CharacterBrain desk-exit rule (Sam, Dexter)", () => {
+  const STAND = { x: 100, y: 100 };
+  const EXIT = { x: 134, y: 100 };
+  const exitBrain = () =>
+    brain({ desk: { stand: STAND, exit: EXIT }, startSeated: true, start: STAND });
+
+  function trailOf(b: CharacterBrain, ms: number) {
+    const pts: Array<{ x: number; y: number; visual: string }> = [];
+    for (let t = 0; t < ms; t += 16) {
+      const r = b.update(16);
+      pts.push({ x: r.x, y: r.y, visual: r.visual });
+    }
+    return pts;
+  }
+
+  it("autonomous routes from the desk stand up, face right, and pass the right-hand exit first", () => {
+    const { b } = exitBrain();
+    b.setPlan(plan("ambient:look", PRIORITY.ambient, [{ kind: "walk", to: { x: 20, y: 160 } }]));
+    const pts = trailOf(b, 8000);
+    const walking = pts.filter((p) => p.visual.startsWith("walking"));
+    expect(walking[0]!.visual).toBe("walking_right");
+    const atExit = pts.findIndex((p) => Math.hypot(p.x - EXIT.x, p.y - EXIT.y) < 1);
+    expect(atExit).toBeGreaterThan(0);
+    // Nothing moves left of the stand point before the exit is reached.
+    for (const p of pts.slice(0, atExit)) expect(p.x).toBeGreaterThanOrEqual(STAND.x - 0.01);
+    expect(b.position).toEqual({ x: 20, y: 160 });
+  });
+
+  it("returning to sit also approaches through the exit", () => {
+    const { b } = brain({ desk: { stand: STAND, exit: EXIT }, start: { x: 40, y: 200 } });
+    b.setPlan(plan("ambient:desk", PRIORITY.ambient, [{ kind: "sit" }]));
+    const pts = trailOf(b, 10_000);
+    const atExit = pts.findIndex((p) => Math.hypot(p.x - EXIT.x, p.y - EXIT.y) < 1);
+    const atStand = pts.findIndex((p) => Math.hypot(p.x - STAND.x, p.y - STAND.y) < 1);
+    expect(atExit).toBeGreaterThan(0);
+    expect(atStand).toBeGreaterThan(atExit);
+    expect(b.isSeated).toBe(true);
+  });
+
+  it("user-directed (manual) moves go straight to the target", () => {
+    const { b } = exitBrain();
+    b.setPlan({
+      ...plan("manual:walk", PRIORITY.manual, [{ kind: "walk", to: { x: 20, y: 100 } }]),
+      manual: true,
+    });
+    const pts = trailOf(b, 4000);
+    expect(pts.some((p) => p.x > STAND.x + 1)).toBe(false);
+    expect(
+      pts.filter((p) => p.visual.startsWith("walking")).every((p) => p.visual === "walking_left"),
+    ).toBe(true);
+  });
+
+  it("manual plans outrank every task and ambient plan", () => {
+    const { b } = exitBrain();
+    b.setPlan({
+      ...plan("manual:idle", PRIORITY.manual, [{ kind: "idle", ms: null }]),
+      manual: true,
+    });
+    expect(b.setPlan(plan("handoff", PRIORITY.critical, [{ kind: "idle", ms: 10 }]))).toBe(false);
+    expect(
+      b.setPlan(plan("mode:working", PRIORITY.task, [{ kind: "seated", mode: "work", ms: null }])),
+    ).toBe(false);
+  });
+
+  it("role emotes play once and report their clip name", () => {
+    const { b } = brain({
+      clips: { ...CLIPS, hrTask: { frames: 3, frameDurationMs: 340, loop: false } },
+    });
+    b.setPlan(
+      plan("ambient:task", PRIORITY.ambient, [{ kind: "emote", clip: "hrTask", holdMs: 100 }]),
+    );
+    const frames = run(b, 2000);
+    const task = frames.filter((f) => f.emote === "hrTask");
+    expect(task.length).toBeGreaterThan(0);
+    expect(task.every((f) => f.visual === "emoting" && f.clip === "hrTask")).toBe(true);
+    expect(task.map((f) => f.frame)).toEqual([...task.map((f) => f.frame)].sort());
+  });
+});

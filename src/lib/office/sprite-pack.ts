@@ -8,7 +8,14 @@
  */
 
 /** Clips every character shares; role-specific emotes (e.g. "hrTask") are extra names. */
-export const CORE_CLIPS = ["idle", "walkRight", "walkLeft", "working", "sitDown", "standUp"] as const;
+export const CORE_CLIPS = [
+  "idle",
+  "walkRight",
+  "walkLeft",
+  "working",
+  "sitDown",
+  "standUp",
+] as const;
 
 /** Baxter's original clip names, kept for the clips that have them. */
 export const CLIP_NAMES = [...CORE_CLIPS, "thinking", "presenting"] as const;
@@ -48,7 +55,13 @@ export type SpritePackManifest = {
   deskProp?: string;
 };
 
-export type AmbientWeights = { desk: number; look: number; think: number; task: number; wander: number };
+export type AmbientWeights = {
+  desk: number;
+  look: number;
+  think: number;
+  task: number;
+  wander: number;
+};
 
 export type SpritePackDefinition = {
   id: string;
@@ -240,7 +253,8 @@ export function withoutBrokenFrames(
     if (!clip.frames.some((f) => broken.has(f))) animations[name] = clip;
   }
   if (REQUIRED_CLIPS.some((c) => !animations[c])) return null;
-  const deskProp = manifest.deskProp && broken.has(manifest.deskProp) ? undefined : manifest.deskProp;
+  const deskProp =
+    manifest.deskProp && broken.has(manifest.deskProp) ? undefined : manifest.deskProp;
   return { ...manifest, animations, deskProp };
 }
 
@@ -263,7 +277,10 @@ export function resolveClip(
 }
 
 /** Desk metrics for a pack: its definition first, then what the manifest measured. */
-export function deskMetrics(def: SpritePackDefinition, manifest: SpritePackManifest): DeskMetrics | null {
+export function deskMetrics(
+  def: SpritePackDefinition,
+  manifest: SpritePackManifest,
+): DeskMetrics | null {
   return def.desk ?? manifest.desk ?? null;
 }
 

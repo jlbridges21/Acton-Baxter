@@ -1,10 +1,19 @@
 /**
  * Office animation director: owns one CharacterBrain per animated agent, a single
- * requestAnimationFrame loop, and the mapping from real task cues to character plans.
+ * requestAnimationFrame loop, and the mapping from real task cues and user commands to
+ * character plans. Every character (Baxter, Sam, Dexter, future agents) runs through the same
+ * code; what differs comes from its sprite pack definition (emotes, routine, desk exit).
  *
- * DOM nodes are written directly (transform, img src, opacity) so a walking character never
- * re-renders React; React is only told about caption changes. The director never fetches,
- * writes, or calls a model — it consumes the snapshots the office page already loads.
+ * DOM nodes are written directly (transform, img src, opacity, z-index) so a walking character
+ * never re-renders React; React is only told about caption changes. The director never
+ * fetches, writes, or calls a model — it consumes the snapshots the office page loads.
+ *
+ * Control modes per agent:
+ *   autonomous — ambient routine, or the mode/events from real task state;
+ *   manual     — the user clicked the agent or the floor; autonomous behaviour is suspended
+ *                until MANUAL_TIMEOUT_MS pass with no interaction, then resumes from wherever
+ *                the agent is (no teleporting). Timing uses the loop's own clock, so there are
+ *                no timers to leak or race.
  */
 
 import {
@@ -17,21 +26,25 @@ import {
   CharacterBrain,
   PRIORITY,
   type Action,
+  type ClipTiming,
   type Plan,
   type RenderState,
 } from "@/lib/office/character-brain";
+import { DEPTH_RANK, depthZ } from "@/lib/office/depth";
 import {
   findPath,
+  nearestReachable,
   randomPointInRoom,
   type DeskGeometry,
   type Hotspot,
   type OfficeNav,
 } from "@/lib/office/navigation";
-import type {
-  ClipName,
-  SpritePackDefinition,
-  SpritePackManifest,
-  Vec,
+import {
+  resolveClip,
+  type DeskMetrics,
+  type SpritePackDefinition,
+  type SpritePackManifest,
+  type Vec,
 } from "@/lib/office/sprite-pack";
 import type { AgentMode, OfficeEvent } from "@/lib/office/task-coordinator";
 import type { HomeSpot } from "@/lib/office/animation-settings";
@@ -43,11 +56,14 @@ export type AnimatedAgentSpec = {
   pack: SpritePackDefinition;
   manifest: SpritePackManifest;
   desk: DeskGeometry;
+  deskMetrics: DeskMetrics;
 };
 
 export type AgentNames = Map<string, { name: string; department: string | null }>;
 
 export type Cue = { caption: string | null; tone: "info" | "error" | "success" };
+
+export type ControlMode = "autonomous" | "manual";
 
 export type DirectorOptions = {
   nav: OfficeNav;
@@ -60,10 +76,12 @@ export type DirectorOptions = {
   ambientPaused: boolean;
   rng?: () => number;
   onCue?: (agentId: string, cue: Cue) => void;
+  onControlChange?: (agentId: string, mode: ControlMode) => void;
 };
 
 type Binding = {
   root: HTMLElement | null;
+  overlay: HTMLElement | null;
   charImg: HTMLImageElement | null;
   deskImg: HTMLImageElement | null;
   deskProp: HTMLElement | null;
@@ -80,15 +98,26 @@ type Agent = {
   lastResultAt: number;
   captionPlanId: string | null;
   cue: Cue;
+  /** Director clock time at which manual control lapses; null when autonomous. */
+  manualUntil: number | null;
   dom: Binding;
-  last: { transform: string; z: string; charSrc: string; deskSrc: string; scene: string };
+  last: {
+    transform: string;
+    z: string;
+    charSrc: string;
+    deskSrc: string;
+    scene: string;
+    visual: string;
+  };
 };
 
 type Link = { el: SVGLineElement; from: string; to: string };
 
+export const MANUAL_TIMEOUT_MS = 10_000;
 const PRESENT_COOLDOWN_MS = 3 * 60_000;
 let planSeq = 0;
 const nextId = (p: string) => `${p}-${++planSeq}`;
+const freshLast = () => ({ transform: "", z: "", charSrc: "", deskSrc: "", scene: "", visual: "" });
 
 export class OfficeDirector {
   private opts: DirectorOptions;
@@ -103,18 +132,14 @@ export class OfficeDirector {
     this.opts = opts;
     this.rng = opts.rng ?? Math.random;
     for (const spec of opts.agents) {
-      const clips: Partial<
-        Record<ClipName, { frames: number; frameDurationMs: number; loop: boolean }>
-      > = {};
+      const clips: Record<string, ClipTiming> = {};
       for (const [name, clip] of Object.entries(spec.manifest.animations)) {
-        if (clip)
-          clips[name as ClipName] = {
-            frames: clip.frames.length,
-            frameDurationMs: clip.frameDurationMs,
-            loop: clip.loop,
-          };
+        clips[name] = {
+          frames: clip.frames.length,
+          frameDurationMs: clip.frameDurationMs,
+          loop: clip.loop,
+        };
       }
-      const home = this.homePoint(spec);
       const agent: Agent = {
         spec,
         mode: "ambient",
@@ -125,15 +150,16 @@ export class OfficeDirector {
         lastResultAt: -Infinity,
         captionPlanId: null,
         cue: { caption: null, tone: "info" },
-        dom: { root: null, charImg: null, deskImg: null, deskProp: null },
-        last: { transform: "", z: "", charSrc: "", deskSrc: "", scene: "" },
+        manualUntil: null,
+        dom: { root: null, overlay: null, charImg: null, deskImg: null, deskProp: null },
+        last: freshLast(),
         brain: null as unknown as CharacterBrain,
       };
       agent.brain = new CharacterBrain({
         clips,
         findPath: (from, to) => findPath(opts.nav.grid, from, to),
-        desk: { stand: spec.desk.stand },
-        start: home,
+        desk: { stand: spec.desk.stand, exit: spec.desk.exit },
+        start: this.homePoint(spec),
         // Start at the desk: on refresh the character is simply "at work", not mid-walk.
         startSeated: true,
         strideWorldPx: spec.pack.strideWorldPx,
@@ -170,7 +196,7 @@ export class OfficeDirector {
     const a = this.agents.get(agentId);
     if (!a) return;
     a.dom = { ...a.dom, ...dom };
-    a.last = { transform: "", z: "", charSrc: "", deskSrc: "", scene: "" };
+    a.last = freshLast();
     this.render(a, a.brain.update(0));
   }
 
@@ -197,6 +223,12 @@ export class OfficeDirector {
     return this.agents.get(agentId)?.brain.update(0).visual ?? null;
   }
 
+  controlOf(agentId: string): ControlMode | null {
+    const a = this.agents.get(agentId);
+    if (!a) return null;
+    return a.manualUntil === null ? "autonomous" : "manual";
+  }
+
   // -- settings ------------------------------------------------------------------
 
   setReducedMotion(value: boolean) {
@@ -211,6 +243,7 @@ export class OfficeDirector {
     if (!changed) return;
     for (const a of this.agents.values()) {
       if (
+        a.manualUntil === null &&
         a.mode === "ambient" &&
         (!a.brain.currentPlan || a.brain.currentPlan.tag?.startsWith("ambient:"))
       ) {
@@ -220,6 +253,80 @@ export class OfficeDirector {
     }
   }
 
+  // -- user control ----------------------------------------------------------------
+
+  /**
+   * The user clicked this agent: stop whatever it's doing (routine, emote, typing), stand up
+   * if seated, and wait idle for commands. Starts/extends the manual-control window.
+   */
+  interrupt(agentId: string) {
+    const a = this.agents.get(agentId);
+    if (!a) return false;
+    this.enterManual(a);
+    a.brain.setPlan(
+      {
+        id: nextId("manual"),
+        priority: PRIORITY.manual,
+        tag: "manual:idle",
+        manual: true,
+        actions: [{ kind: "idle", ms: null }],
+      },
+      { force: true },
+    );
+    return true;
+  }
+
+  /**
+   * Walk the agent to a clicked world point. Obstructed or unreachable points resolve to the
+   * nearest reachable floor; returns where the agent will actually stop (null if it can't).
+   */
+  moveTo(agentId: string, target: Vec): Vec | null {
+    const a = this.agents.get(agentId);
+    if (!a) return null;
+    const from = a.brain.isSeated ? a.spec.desk.stand : a.brain.position;
+    const dest = nearestReachable(this.opts.nav.grid, from, target);
+    this.enterManual(a);
+    if (!dest) return null;
+    a.brain.setPlan(
+      {
+        id: nextId("manual"),
+        priority: PRIORITY.manual,
+        tag: "manual:walk",
+        manual: true,
+        actions: [
+          { kind: "walk", to: dest },
+          { kind: "idle", ms: null },
+        ],
+      },
+      { force: true },
+    );
+    return dest;
+  }
+
+  /** Ends manual control now (e.g. the agent was deselected); the routine picks up from here. */
+  release(agentId: string) {
+    const a = this.agents.get(agentId);
+    if (a && a.manualUntil !== null) this.exitManual(a);
+  }
+
+  private enterManual(a: Agent) {
+    const was = a.manualUntil;
+    a.manualUntil = this.clock + MANUAL_TIMEOUT_MS;
+    if (a.captionPlanId) {
+      a.captionPlanId = null;
+      this.setCue(a, { caption: null, tone: "info" });
+    }
+    if (was === null) this.opts.onControlChange?.(a.spec.id, "manual");
+  }
+
+  private exitManual(a: Agent) {
+    a.manualUntil = null;
+    this.opts.onControlChange?.(a.spec.id, "autonomous");
+    // Resume from the current position: queued real events first, then mode/ambient.
+    a.brain.cancel();
+    a.needsSchedule = true;
+  }
+
   // -- real cues ----------------------------------------------------------------
 
   /** Persistent mode from ai_agent_runtime_status. */
@@ -227,6 +334,7 @@ export class OfficeDirector {
     const a = this.agents.get(agentId);
     if (!a || a.mode === mode) return;
     a.mode = mode;
+    if (a.manualUntil !== null) return; // applied when manual control ends
     const tag = a.brain.currentPlan?.tag ?? a.brain.pendingPlan?.tag ?? "";
     // Mode and ambient plans yield to the new mode; event plans finish first.
     if (!tag || tag.startsWith("mode:") || tag.startsWith("ambient:")) {
@@ -262,6 +370,12 @@ export class OfficeDirector {
   ) {
     const a = this.agents.get(agentId);
     if (!a) return;
+    // Asking the agent something hands control back to it.
+    if (a.manualUntil !== null) {
+      a.manualUntil = null;
+      this.opts.onControlChange?.(a.spec.id, "autonomous");
+    }
+    const think = this.emote(a, "think");
     if (phase === "start") {
       this.trySet(a, {
         id: nextId("chat"),
@@ -269,7 +383,7 @@ export class OfficeDirector {
         tag: "chat",
         actions: [
           { kind: "mark", id: "caption:Reading your question" },
-          { kind: "emote", clip: "thinking", holdMs: 200 },
+          ...(think ? [{ kind: "emote", clip: think, holdMs: 200 } as Action] : []),
           { kind: "mark", id: "caption:Working on an answer" },
           { kind: "seated", mode: "work", ms: null },
         ],
@@ -291,7 +405,7 @@ export class OfficeDirector {
         ]
       : [
           { kind: "mark", id: "caption!:Couldn't answer that one" },
-          { kind: "emote", clip: "thinking", holdMs: 400 },
+          ...(think ? [{ kind: "emote", clip: think, holdMs: 400 } as Action] : []),
           { kind: "idle", ms: 1200 },
         ];
     this.trySet(a, {
@@ -311,6 +425,7 @@ export class OfficeDirector {
 
   private schedule(a: Agent) {
     a.needsSchedule = false;
+    if (a.manualUntil !== null) return; // events wait until the user is done
     const current = a.brain.pendingPlan ?? a.brain.currentPlan;
     const event = a.events[0];
     if (event) {
@@ -333,8 +448,15 @@ export class OfficeDirector {
     this.trySet(a, plan, force);
   }
 
+  /** The character's clip for a semantic emote ("think", "present", "task"), if it has one. */
+  private emote(a: Agent, kind: "think" | "present" | "task"): string | null {
+    const name = a.spec.pack.emotes[kind];
+    return name && resolveClip(a.spec.manifest, name) ? name : null;
+  }
+
   private modePlan(a: Agent): Plan {
     const seatedWork: Action = { kind: "seated", mode: "work", ms: null };
+    const think = this.emote(a, "think");
     switch (a.mode) {
       case "working":
         return {
@@ -348,7 +470,10 @@ export class OfficeDirector {
           id: nextId("mode"),
           priority: PRIORITY.task,
           tag: "mode:receiving",
-          actions: [{ kind: "emote", clip: "thinking", holdMs: 300 }, seatedWork],
+          actions: [
+            ...(think ? [{ kind: "emote", clip: think, holdMs: 300 } as Action] : []),
+            seatedWork,
+          ],
         };
       case "waiting":
         // Delegated work is out with a specialist: wait at the desk, not "working".
@@ -412,6 +537,9 @@ export class OfficeDirector {
       spots,
       randomPoint: () => randomPointInRoom(this.opts.nav, a.spec.roomKey, this.rng),
       memory: a.memory,
+      emotes: { think: this.emote(a, "think"), task: this.emote(a, "task") },
+      prefer: a.spec.pack.ambient.spots,
+      weights: a.spec.pack.ambient.weights,
     });
     a.memory = result.memory;
     return {
@@ -425,9 +553,12 @@ export class OfficeDirector {
   private planForEvent(a: Agent, e: OfficeEvent): Plan {
     const target = this.opts.names.get(e.toAgentId);
     const who = target?.name ?? "a specialist";
+    const think = this.emote(a, "think");
+    const thinkAction: Action[] = think ? [{ kind: "emote", clip: think, holdMs: 300 }] : [];
     if (e.type === "handoff") {
       const spot = this.opts.nav.hotspots.get(`collab:${e.toAgentId}`);
       const dept = shortDepartment(target?.department);
+      const present = this.emote(a, "present");
       const actions: Action[] = [{ kind: "mark", id: `caption:Heading to ${who}` }];
       if (spot) {
         actions.push({ kind: "walk", to: spot, speed: "hurry" });
@@ -435,10 +566,10 @@ export class OfficeDirector {
           kind: "mark",
           id: `caption:Assigned ${dept ? `${article(dept)} ${dept}` : "a"} task to ${who}`,
         });
-        // The presenting art includes an easel to Baxter's left; only use it when that
-        // side is clear of the colleague's desk.
-        if (spot.side === "right") {
-          actions.push({ kind: "emote", clip: "presenting", repeat: 2, holdMs: 300 });
+        // Baxter's presenting art includes an easel to his left; only use it when that side
+        // is clear of the colleague's desk.
+        if (present && spot.side === "right") {
+          actions.push({ kind: "emote", clip: present, repeat: 2, holdMs: 300 });
         } else {
           actions.push(
             { kind: "pose", visual: "look_around", ms: 1400 },
@@ -463,7 +594,7 @@ export class OfficeDirector {
         tag: `result:${e.taskId}`,
         actions: [
           { kind: "mark", id: `caption~:Reviewing ${who}'s result` },
-          { kind: "emote", clip: "thinking", holdMs: 300 },
+          ...thinkAction,
           ...this.presentOrNod(a),
           { kind: "idle", ms: 900 },
         ],
@@ -478,7 +609,7 @@ export class OfficeDirector {
           kind: "mark",
           id: `caption!:${who}'s task ${e.outcome === "cancelled" ? "was cancelled" : "failed"}`,
         },
-        { kind: "emote", clip: "thinking", holdMs: 600 },
+        ...thinkAction,
         { kind: "idle", ms: 1800 },
       ],
     };
@@ -486,9 +617,10 @@ export class OfficeDirector {
 
   /** Presenting a result is reserved for real results, at most once every few minutes. */
   private presentOrNod(a: Agent): Action[] {
-    if (this.clock - a.lastPresentAt >= PRESENT_COOLDOWN_MS) {
+    const present = this.emote(a, "present");
+    if (present && this.clock - a.lastPresentAt >= PRESENT_COOLDOWN_MS) {
       a.lastPresentAt = this.clock;
-      return [{ kind: "emote", clip: "presenting", holdMs: 400 }];
+      return [{ kind: "emote", clip: present, holdMs: 400 }];
     }
     return [
       { kind: "pose", visual: "blink", ms: 300 },
@@ -507,8 +639,8 @@ export class OfficeDirector {
 
   private seatedPoint(spec: AnimatedAgentSpec): Vec {
     return {
-      x: spec.desk.origin.x + spec.pack.desk.seatedFeet.x * spec.desk.scale,
-      y: spec.desk.origin.y + spec.pack.desk.seatedFeet.y * spec.desk.scale,
+      x: spec.desk.origin.x + spec.deskMetrics.seatedFeet.x * spec.desk.scale,
+      y: spec.desk.origin.y + spec.deskMetrics.seatedFeet.y * spec.desk.scale,
     };
   }
 
@@ -547,6 +679,7 @@ export class OfficeDirector {
   tick(dt: number) {
     this.clock += Math.min(dt, 250);
     for (const a of this.agents.values()) {
+      if (a.manualUntil !== null && this.clock >= a.manualUntil) this.exitManual(a);
       if (a.needsSchedule && !a.brain.currentPlan) this.schedule(a);
       else if (a.needsSchedule) a.needsSchedule = false;
       this.render(a, a.brain.update(dt));
@@ -555,21 +688,36 @@ export class OfficeDirector {
   }
 
   private render(a: Agent, r: RenderState) {
-    const { root, charImg, deskImg, deskProp } = a.dom;
+    const { root, overlay, charImg, deskImg, deskProp } = a.dom;
     const spec = a.spec;
-    const atDesk = r.scene === "desk";
+    const resolved = resolveClip(spec.manifest, r.clip);
+    // The clip's own art decides the scene: Baxter sits down at his desk, Sam and Dexter on
+    // the floor beside it.
+    const scene = resolved?.clip.canvas ?? r.scene;
+    const atDesk = scene === "desk";
     const feet = atDesk ? this.seatedPoint(spec) : { x: r.x, y: r.y };
     const transform = `translate3d(${feet.x.toFixed(1)}px, ${feet.y.toFixed(1)}px, 0)`;
-    const z = String(atDesk ? Math.round(spec.desk.frontY) + 2 : Math.round(r.y));
-    if (root) {
-      if (transform !== a.last.transform) root.style.transform = transform;
-      if (z !== a.last.z) root.style.zIndex = z;
+    // Seated, the character is part of the desk art: sort with the desk's front edge.
+    const z = String(
+      atDesk
+        ? depthZ("world", spec.desk.frontY, DEPTH_RANK.character)
+        : depthZ("world", r.y, DEPTH_RANK.character),
+    );
+    if (transform !== a.last.transform) {
+      if (root) root.style.transform = transform;
+      if (overlay) overlay.style.transform = transform;
+    }
+    if (root && z !== a.last.z) root.style.zIndex = z;
+    const visualKey = `${r.visual}:${r.emote ?? ""}`;
+    if (root && visualKey !== a.last.visual) {
       root.dataset.visual = r.visual;
-      root.dataset.scene = r.scene;
+      if (r.emote) root.dataset.emote = r.emote;
+      else delete root.dataset.emote;
+      a.last.visual = visualKey;
     }
     a.last.transform = transform;
     a.last.z = z;
-    const clip = spec.manifest.animations[r.clip];
+    const clip = resolved?.clip;
     const src = clip?.frames[r.frame] ?? clip?.frames[0] ?? "";
     if (atDesk) {
       if (deskImg && src && src !== a.last.deskSrc) deskImg.src = src;
@@ -579,11 +727,12 @@ export class OfficeDirector {
       if (charImg && src && src !== a.last.charSrc) charImg.src = src;
       a.last.charSrc = src;
     }
-    if (r.scene !== a.last.scene) {
+    if (scene !== a.last.scene) {
       if (charImg) charImg.style.opacity = atDesk ? "0" : "1";
       if (deskImg) deskImg.style.opacity = atDesk ? "1" : "0";
       if (deskProp) deskProp.style.opacity = atDesk ? "0" : "1";
-      a.last.scene = r.scene;
+      if (root) root.dataset.scene = scene;
+      a.last.scene = scene;
     }
   }
 

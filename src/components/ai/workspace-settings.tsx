@@ -11,7 +11,13 @@ import type { OfficeAnimationSettings } from "@/lib/office/animation-settings";
 import { SPRITE_PACKS, STATIC_PACK_ID, resolvePackId } from "@/lib/office/sprite-pack";
 import { Field, Notice, aiFetch, errorMessage, selectClass } from "./ui";
 
-type AgentOption = { id: string; name: string; title: string; kind: "orchestrator" | "specialist" };
+type AgentOption = {
+  id: string;
+  slug: string;
+  name: string;
+  title: string;
+  kind: "orchestrator" | "specialist";
+};
 
 export function WorkspaceSettingsForm({
   initialSettings,

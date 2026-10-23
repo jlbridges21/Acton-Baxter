@@ -33,7 +33,9 @@ import type { AgentCard } from "@/lib/agents/views";
 import type { TaskSummary } from "@/lib/agents/task-format";
 import type { AmbientIntensity } from "@/lib/office/ambient";
 import type { OfficeAnimationSettings } from "@/lib/office/animation-settings";
-import { centerOn as centerCamera, zoomAround } from "@/lib/office/camera";
+import { centerOn as centerCamera, clientToWorld, zoomAround } from "@/lib/office/camera";
+import { roomTheme, type RoomTheme } from "@/lib/office/decor";
+import { DEPTH_RANK, depthZ } from "@/lib/office/depth";
 import { roomDoor, roomHasDoor } from "@/lib/office/navigation";
 import { activeDelegations, type DelegationSnapshot } from "@/lib/office/task-coordinator";
 import { cn } from "@/lib/utils";
@@ -47,6 +49,7 @@ import {
   formatRelative,
 } from "./ui";
 import { AnimatedAgent } from "./office/animated-agent";
+import { OfficeDecor } from "./office/office-decor";
 import type { OfficeDirector } from "./office/director";
 import { useOfficeAnimation } from "./office/use-office-animation";
 
@@ -78,6 +81,12 @@ const JUST_FINISHED_MS = 45_000;
 const MOTION_KEY = "baxter.aiOffice.reducedMotion";
 const ACTIVITY_KEY = "baxter.aiOffice.activity";
 const PAUSE_KEY = "baxter.aiOffice.ambientPaused";
+
+/** Pointer travel (px) below which a press counts as a click rather than a pan. */
+const CLICK_SLOP_PX = 6;
+const CLICK_MAX_MS = 600;
+const CLICK_MARK_MS = 650;
+let clickSeq = 0;
 
 const DELEGATION_STATUS: Record<string, string> = {
   queued: "Assigned",
@@ -159,7 +168,13 @@ function AgentSprite({
       aria-pressed={selected}
       aria-label={`${agent.name}, ${agent.title}. ${label}.`}
       className="group absolute flex flex-col items-center focus-visible:outline-none"
-      style={{ left: x, top: y, transform: "translate(-50%, -50%)", zIndex: Math.round(y + 36) }}
+      style={{
+        left: x,
+        top: y,
+        transform: "translate(-50%, -50%)",
+        // Portrait-at-a-desk agents sort on their desk's front edge like any floor object.
+        zIndex: depthZ("world", y + 36, DEPTH_RANK.desk),
+      }}
     >
       <span className="relative flex flex-col items-center">
         <StateBubble state={state} />
@@ -208,57 +223,6 @@ function AgentSprite({
         {agent.name}
       </span>
     </button>
-  );
-}
-
-function RoomDecor({ kind, w, h }: { kind: string; w: number; h: number }) {
-  if (kind === "meeting") {
-    return (
-      <span aria-hidden>
-        <span
-          className="absolute border-[3px] border-[#2b2118]"
-          style={{
-            left: w * 0.25,
-            top: h * 0.4,
-            width: w * 0.5,
-            height: h * 0.3,
-            background: "var(--office-desk)",
-            boxShadow: "inset 0 5px 0 var(--office-desk-top)",
-          }}
-        />
-        {[0.3, 0.45, 0.6].map((f) => (
-          <span
-            key={f}
-            className="absolute h-4 w-4 border-[3px] border-[#2b2118] bg-[#7a8b99]"
-            style={{ left: w * f, top: h * 0.3 }}
-          />
-        ))}
-      </span>
-    );
-  }
-  return (
-    <span aria-hidden>
-      {/* Plant + bookshelf */}
-      <span
-        className="absolute h-6 w-6 rounded-full border-[3px] border-[#2b2118] bg-[#3f8f4f]"
-        style={{ right: 14, top: 40 }}
-      />
-      <span
-        className="absolute h-4 w-4 border-[3px] border-[#2b2118] bg-[#a0522d]"
-        style={{ right: 18, top: 58 }}
-      />
-      <span
-        className="absolute border-[3px] border-[#2b2118]"
-        style={{
-          left: 14,
-          top: 40,
-          width: 44,
-          height: 26,
-          background:
-            "repeating-linear-gradient(90deg,#b5523b 0 6px,#3c6e9f 6px 12px,#d9a441 12px 18px)",
-        }}
-      />
-    </span>
   );
 }
 
@@ -322,7 +286,16 @@ export function AiOffice(props: {
   const [following, setFollowing] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const dragRef = useRef<{
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+    at: number;
+    moved: boolean;
+  } | null>(null);
+  const [clickMarks, setClickMarks] = useState<Array<{ id: number; x: number; y: number }>>([]);
+  const markTimers = useRef(new Set<number>());
 
   const layout = useMemo(
     () =>
@@ -347,13 +320,24 @@ export function AiOffice(props: {
     () =>
       agents
         .filter((a) => a.status !== "archived")
-        .map((a) => ({ id: a.id, name: a.name, kind: a.kind, department: a.department })),
+        .map((a) => ({
+          id: a.id,
+          slug: a.slug,
+          name: a.name,
+          kind: a.kind,
+          department: a.department,
+        })),
     [agents],
   );
   const intensity: AmbientIntensity =
     activity === "default" ? props.animation.ambient_intensity : activity;
+  const themes = useMemo(
+    () => new Map<string, RoomTheme>(props.departments.map((d) => [d.id, roomTheme(d)])),
+    [props.departments],
+  );
   const animation = useOfficeAnimation({
     layout,
+    themes,
     agents: animatedAgents,
     settings: props.animation,
     status,
@@ -455,6 +439,40 @@ export function AiOffice(props: {
       return !p;
     });
   }
+
+  /**
+   * Click/tap on the office floor with an animated agent selected: show an expanding ring at
+   * the clicked world point right away, then walk the agent there (or to the nearest
+   * reachable spot if the point is inside furniture, a wall, or outside the rooms).
+   */
+  function onWorldClick(e: React.PointerEvent<HTMLDivElement>) {
+    const target = e.target as Element;
+    if (target.closest("button, a, input, select, textarea, [role='dialog']")) return;
+    const vp = viewportRef.current;
+    if (!vp || !director || !selectedId || !director.has(selectedId)) return;
+    const world = clientToWorld(
+      { x: e.clientX, y: e.clientY },
+      vp.getBoundingClientRect(),
+      { left: vp.clientLeft, top: vp.clientTop },
+      { x: pan.x, y: pan.y, zoom },
+    );
+    const id = ++clickSeq;
+    setClickMarks((marks) => [...marks.slice(-4), { id, x: world.x, y: world.y }]);
+    const timer = window.setTimeout(() => {
+      markTimers.current.delete(timer);
+      setClickMarks((marks) => marks.filter((m) => m.id !== id));
+    }, CLICK_MARK_MS);
+    markTimers.current.add(timer);
+    director.moveTo(selectedId, world);
+  }
+
+  useEffect(() => {
+    const timers = markTimers.current;
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
 
   const onChatRequest = useCallback(
     (event: BaxterRequestLifecycle) => {
@@ -639,15 +657,34 @@ export function AiOffice(props: {
               tabIndex={0}
               onKeyDown={onKeyDown}
               onPointerDown={(e) => {
+                if (e.button !== 0) return;
                 setFollowing(false);
-                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                dragRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+                try {
+                  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                } catch {
+                  /* pointer already released (or synthetic); dragging still works */
+                }
+                dragRef.current = {
+                  x: e.clientX,
+                  y: e.clientY,
+                  panX: pan.x,
+                  panY: pan.y,
+                  at: performance.now(),
+                  moved: false,
+                };
               }}
               onPointerMove={(e) => {
                 const d = dragRef.current;
-                if (d) setPan({ x: d.panX + e.clientX - d.x, y: d.panY + e.clientY - d.y });
+                if (!d) return;
+                if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > CLICK_SLOP_PX) d.moved = true;
+                if (d.moved) setPan({ x: d.panX + e.clientX - d.x, y: d.panY + e.clientY - d.y });
               }}
-              onPointerUp={() => (dragRef.current = null)}
+              onPointerUp={(e) => {
+                const d = dragRef.current;
+                dragRef.current = null;
+                // A tap/click (not a drag) on the floor: walk the selected agent there.
+                if (d && !d.moved && performance.now() - d.at < CLICK_MAX_MS) onWorldClick(e);
+              }}
               onPointerCancel={() => (dragRef.current = null)}
               onWheel={(e) => {
                 if (!e.ctrlKey && !e.metaKey) return;
@@ -691,7 +728,7 @@ export function AiOffice(props: {
                   >
                     <span
                       className="absolute -top-4 left-3 border-2 border-[#2b2118] px-2 py-0.5 text-xs font-bold text-white"
-                      style={{ background: room.color }}
+                      style={{ background: room.color, zIndex: depthZ("wall") + 2 }}
                     >
                       {room.label}
                     </span>
@@ -720,17 +757,24 @@ export function AiOffice(props: {
                           </Link>
                         ) : null}
                       </span>
-                    ) : (
-                      <RoomDecor kind={room.kind} w={room.w} h={room.h} />
-                    )}
+                    ) : null}
                   </div>
+                ))}
+                <OfficeDecor items={animation.nav.decor} />
+                {clickMarks.map((m) => (
+                  <span
+                    key={m.id}
+                    aria-hidden
+                    className="ai-office-click pointer-events-none absolute block rounded-full border-[3px] border-[var(--acton-yellow)]"
+                    style={{ left: m.x, top: m.y, zIndex: depthZ("ui") + 1 }}
+                  />
                 ))}
                 <svg
                   aria-hidden
                   className="pointer-events-none absolute top-0 left-0"
                   width={layout.width}
                   height={layout.height}
-                  style={{ zIndex: 1 }}
+                  style={{ zIndex: depthZ("wall") + 1 }}
                 >
                   {links.map((d) => {
                     const fromSeat = layout.seats.find((s) => s.agentId === d.fromAgentId);
@@ -756,7 +800,7 @@ export function AiOffice(props: {
                     <span
                       key={`chip-${d.id}`}
                       className="pointer-events-none absolute -translate-x-1/2 border-2 border-[#2b2118] bg-[#fff6d6] px-1.5 py-px text-[10px] font-bold whitespace-nowrap text-[#2b2118]"
-                      style={{ left: toSeat.x, top: toSeat.y - 104, zIndex: 9000 }}
+                      style={{ left: toSeat.x, top: toSeat.y - 104, zIndex: depthZ("ui") }}
                     >
                       From {from.name} · {DELEGATION_STATUS[d.status] ?? d.status}
                     </span>
@@ -776,7 +820,12 @@ export function AiOffice(props: {
                         name={agent.name}
                         ariaLabel={`${agent.name}, ${agent.title}. ${RUNTIME_STATE_LABELS[state]?.label ?? state}.`}
                         selected={selectedId === agent.id}
-                        onSelect={() => setSelectedId(agent.id)}
+                        onSelect={() => {
+                          setSelectedId(agent.id);
+                          // Clicking an animated agent stops its routine and hands control
+                          // to the user (it resumes on its own after 10s of inactivity).
+                          director.interrupt(agent.id);
+                        }}
                         bubble={<StateBubble state={state} />}
                         cue={animation.cues[agent.id]}
                       />
@@ -959,6 +1008,13 @@ export function AiOffice(props: {
                 </div>
               </dl>
               <p className="mt-3 text-sm text-[var(--acton-navy)]">{selected.description}</p>
+              {view === "office" && animation.specs.has(selected.id) ? (
+                <p className="mt-2 rounded bg-[var(--acton-gray-50)] px-2 py-1 text-xs text-[var(--acton-muted)]">
+                  {animation.control[selected.id] === "manual"
+                    ? `You're directing ${selected.name}. Click the floor to move them; they return to their routine after 10 seconds without input.`
+                    : `Click ${selected.name} to take control, then click the floor to move them.`}
+                </p>
+              ) : null}
               {selected.kind === "orchestrator" ? (
                 <BaxterActivity
                   baxterId={selected.id}

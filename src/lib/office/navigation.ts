@@ -8,13 +8,7 @@
  */
 
 import type { OfficeLayout, OfficeRoom, OfficeSeat } from "@/lib/agents/office-layout";
-import {
-  buildRoomDecor,
-  pointKeepOut,
-  type DecorItem,
-  type Rect,
-  type RoomTheme,
-} from "./decor";
+import { buildRoomDecor, pointKeepOut, type DecorItem, type Rect, type RoomTheme } from "./decor";
 import type { DeskMetrics, Vec } from "./sprite-pack";
 
 export type { Rect } from "./decor";
@@ -37,14 +31,7 @@ export type NavGrid = {
 };
 
 export type HotspotKind =
-  | "desk"
-  | "stand"
-  | "exit"
-  | "collab"
-  | "door"
-  | "hall"
-  | "idle"
-  | "meeting";
+  "desk" | "stand" | "exit" | "collab" | "door" | "hall" | "idle" | "meeting";
 
 export type Hotspot = {
   id: string;
@@ -424,7 +411,12 @@ export function buildOfficeNav(
       desks.set(a.id, desk);
       obstacles.push(desk.footprint);
       keepOut.push(
-        { x: desk.footprint.x - 8, y: desk.footprint.y - 30, w: desk.footprint.w + 16, h: desk.footprint.h + 38 },
+        {
+          x: desk.footprint.x - 8,
+          y: desk.footprint.y - 30,
+          w: desk.footprint.w + 16,
+          h: desk.footprint.h + 38,
+        },
         pointKeepOut(desk.stand, 20),
       );
       if (desk.exit) keepOut.push(pointKeepOut(desk.exit, 22));
@@ -482,7 +474,13 @@ export function buildOfficeNav(
     }
   }
   for (const spot of decorSpots) {
-    add({ id: `idle:${spot.roomKey}:${spot.name}`, kind: "idle", x: spot.x, y: spot.y, roomKey: spot.roomKey });
+    add({
+      id: `idle:${spot.roomKey}:${spot.name}`,
+      kind: "idle",
+      x: spot.x,
+      y: spot.y,
+      roomKey: spot.roomKey,
+    });
   }
 
   const roomOfAgent = new Map<string, string>();
@@ -514,7 +512,13 @@ export function buildOfficeNav(
       );
       if (desk.exit) {
         // Snap onto walkable floor, and keep the geometry in sync with the hotspot.
-        add({ id: `exit:${a.id}`, kind: "exit", ...desk.exit, roomKey: a.seat.roomKey, agentId: a.id });
+        add({
+          id: `exit:${a.id}`,
+          kind: "exit",
+          ...desk.exit,
+          roomKey: a.seat.roomKey,
+          agentId: a.id,
+        });
         const snapped = hotspots.get(`exit:${a.id}`);
         if (snapped) desk.exit = { x: snapped.x, y: snapped.y };
       }
@@ -604,7 +608,7 @@ export function nearestReachable(grid: NavGrid, from: Vec, target: Vec): Vec | n
   }
   // The exact point when it's on reachable floor, else the closest reachable cell centre.
   const tc = cellOf(grid, target);
-  if (isWalkable(grid, target) && seen[tc.r * cols + tc.c]) return { ...target };
+  if (isWalkable(grid, target) && seen[tc.r * cols + tc.c]) return { x: target.x, y: target.y };
   return cellCenter(grid, best % cols, Math.floor(best / cols));
 }
 

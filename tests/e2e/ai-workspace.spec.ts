@@ -27,23 +27,30 @@ test("AI Office shows Baxter and Sam with real (idle) status and an accessible l
   await expect(page.getByRole("button", { name: /Baxter, AI CEO\. Available\./ })).toBeVisible();
   const sam = page.getByRole("button", { name: /^Sam, HR, Administration & Legal Specialist/ });
   await expect(sam).toBeVisible();
-  await sam.click();
+  // Sam is animated (may be walking), so Playwright's "stable" wait never settles.
+  await sam.dispatchEvent("click");
   await expect(page.getByRole("heading", { name: "Sam" })).toBeVisible();
   await expect(page.getByText("Reports to", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "List", exact: true }).click();
   await expect(page.getByRole("table")).toContainText("Executive Office");
 });
 
-test("AI Office animates Baxter from his sprite pack without breaking the map", async ({
+test("AI Office animates Baxter, Sam, and Dexter without breaking the map", async ({
   page,
   context,
 }) => {
   await asRole(context, "admin");
   const tasksBefore = await (await context.request.get("/api/ai/status")).json();
   await page.goto("/ai");
-  const actor = page.locator(".ai-office-actor");
-  await expect(actor).toHaveCount(1);
-  await expect(actor).toHaveAttribute("data-visual", /^[a-z_]+$/);
+  const actors = page.locator(".ai-office-actor");
+  await expect(actors).toHaveCount(3, { timeout: 30_000 });
+  for (const actor of await actors.all()) {
+    await expect(actor).toHaveAttribute("data-visual", /^[a-z_]+$/);
+  }
+  // Each office is decorated for its department.
+  await expect(page.locator('[data-decor="strategyBoard"]')).toHaveCount(1);
+  await expect(page.locator('[data-decor="onboardingTable"]')).toHaveCount(1);
+  await expect(page.locator('[data-decor="whiteboard"]')).toHaveCount(1);
   // Every sprite frame on the page decoded (no broken images).
   await expect
     .poll(() =>
@@ -75,6 +82,32 @@ test("AI Office animates Baxter from his sprite pack without breaking the map", 
   await page.waitForTimeout(10_000);
   const tasksAfter = await (await context.request.get("/api/ai/status")).json();
   expect(tasksAfter.recent.length).toBe(tasksBefore.recent.length);
+});
+
+test("Clicking an agent takes control; clicking the floor shows a ring and walks it there", async ({
+  page,
+  context,
+}) => {
+  await asRole(context, "admin");
+  await page.goto("/ai");
+  await expect(page.locator(".ai-office-actor")).toHaveCount(3, { timeout: 30_000 });
+  const sam = page.getByRole("button", { name: /^Sam, / });
+  await sam.dispatchEvent("click");
+  await expect(page.getByText(/You're directing Sam/)).toBeVisible();
+  // Interrupting doesn't count as a floor click.
+  await expect(page.locator(".ai-office-click")).toHaveCount(0);
+
+  const transformOf = () => sam.evaluate((el) => (el as HTMLElement).style.transform);
+  await page.waitForTimeout(1500); // stand-up transition
+  const before = await transformOf();
+  const box = (await sam.boundingBox())!;
+  // A spot on the floor below and to the right of Sam.
+  await page.mouse.click(box.x + box.width / 2 + 60, box.y + box.height + 40);
+  await expect(page.locator(".ai-office-click")).toHaveCount(1);
+  await expect.poll(transformOf, { timeout: 8000 }).not.toBe(before);
+  await expect(sam).toHaveAttribute("data-visual", /walking_right|walking_left|idle/);
+  // The ring is brief.
+  await expect(page.locator(".ai-office-click")).toHaveCount(0, { timeout: 2000 });
 });
 
 test("Baxter delegates an HR question to Sam and reports failures honestly", async ({
