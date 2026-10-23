@@ -138,7 +138,7 @@ export const contactSearchBodySchema = z
     phone: z.string().trim().optional(),
     page: z.number().int().positive().optional(),
     pageLimit: z.number().int().positive().max(100).optional(),
-    /** Advanced GHL filters (e.g. address1/city/state/postalCode contains). */
+    /** Advanced GHL filters (e.g. address/city/state/postalCode contains). */
     filters: z.array(z.record(z.string(), z.unknown())).optional(),
   })
   .strict();

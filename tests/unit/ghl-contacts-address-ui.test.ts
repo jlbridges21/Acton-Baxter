@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
+  buildGhlAddressFreeTextQuery,
   buildGhlAddressSearchFilters,
   contactAddressFromGhl,
   contactMatchesAddressQuery,
@@ -18,18 +19,30 @@ describe("GHL contacts UI — address search helpers", () => {
     expect(isLikelyAddressSearchQuery("rachel@example.com")).toBe(false);
   });
 
-  it("builds GHL filters using real contact field names", () => {
+  it("builds GHL filters using documented search filter field names", () => {
     const filters = buildGhlAddressSearchFilters("95125");
     expect(filters).toHaveLength(1);
     const group = filters[0] as { group: string; filters: Array<{ field: string }> };
     expect(group.group).toBe("OR");
-    expect(group.filters.map((f) => f.field)).toEqual([
-      "address1",
-      "city",
-      "state",
-      "postalCode",
-      "country",
-    ]);
+    // `address1` is rejected (400 "Invalid field address1"); `country` has no `contains`.
+    expect(group.filters.map((f) => f.field)).toEqual(["address", "city", "state", "postalCode"]);
+  });
+
+  it("strips special characters and caps filter values at 75 chars", () => {
+    const [group] = buildGhlAddressSearchFilters("123 Main St., #4") as Array<{
+      filters: Array<{ value: string }>;
+    }>;
+    expect(group!.filters[0]!.value).toBe("123 Main St 4");
+    const [long] = buildGhlAddressSearchFilters("9".repeat(100)) as Array<{
+      filters: Array<{ value: string }>;
+    }>;
+    expect(long!.filters[0]!.value).toHaveLength(75);
+    expect(buildGhlAddressSearchFilters("#,.")).toEqual([]);
+  });
+
+  it("builds a street-only free-text query", () => {
+    expect(buildGhlAddressFreeTextQuery("123 Main St, San Jose, CA 95125")).toBe("123 Main St");
+    expect(buildGhlAddressFreeTextQuery("  95125 ")).toBe("95125");
   });
 
   it("includes filters in contact search body contract", () => {
@@ -173,5 +186,101 @@ describe("hydrateContactRows address column", () => {
     const rows = await hydrateContactRows([fullEnough]);
     expect(getContactsByIds).not.toHaveBeenCalled();
     expect(rows[0]!.addressFormatted).toBe("9 Oak Rd, Oakland, CA 94601");
+  });
+});
+
+describe("searchContactsForAdminBrowse address search", () => {
+  type Body = { query?: string; filters?: unknown[] };
+
+  function rawContact(id: string, address1: string | null, extra: Record<string, unknown> = {}) {
+    return {
+      id,
+      firstName: `First${id}`,
+      lastName: "Last",
+      address1,
+      city: address1 ? "San Jose" : null,
+      state: address1 ? "CA" : null,
+      postalCode: address1 ? "95125" : null,
+      country: "US",
+      ...extra,
+    };
+  }
+
+  async function loadWithGhlPost(ghlPost: (path: string, body: Body) => Promise<unknown>) {
+    vi.resetModules();
+    vi.doUnmock("@/lib/connectors/ghl/resources/contacts");
+    const post = vi.fn(ghlPost);
+    vi.doMock("@/lib/connectors/ghl/client", () => ({
+      ghlGet: vi.fn(async () => {
+        throw new Error("ghlGet should not be called");
+      }),
+      ghlPost: post,
+    }));
+    vi.doMock("@/lib/connectors/ghl/config", () => ({
+      requireGhlLocationId: () => "loc-1",
+    }));
+    const mod = await import("@/lib/connectors/ghl/resources/contacts");
+    return { ...mod, post };
+  }
+
+  const invalidField = () =>
+    Promise.reject(Object.assign(new Error("Invalid field address1"), { status: 400 }));
+
+  it("returns street matches from the free-text query when address filters are rejected", async () => {
+    const { searchContactsForAdminBrowse, post } = await loadWithGhlPost(async (_path, body) => {
+      if (body.filters) return invalidField();
+      return {
+        contacts: [rawContact("other", null), rawContact("match", "123 Main St")],
+        meta: { total: 2 },
+      };
+    });
+
+    const result = await searchContactsForAdminBrowse({
+      query: "123 Main St, San Jose",
+      limit: 25,
+    });
+
+    expect(result.contacts.map((c) => c.id)).toEqual(["match", "other"]);
+    const queryBody = post.mock.calls.find(([, b]) => !b.filters)![1];
+    expect(queryBody.query).toBe("123 Main St");
+  });
+
+  it("sends only documented filter fields and merges filter hits ahead of query hits", async () => {
+    const { searchContactsForAdminBrowse, post } = await loadWithGhlPost(async (_path, body) => {
+      if (body.filters) {
+        return { contacts: [rawContact("zip", "9 Oak Rd")], meta: { total: 1 } };
+      }
+      return { contacts: [rawContact("street", "95125 Elm Ave")], meta: { total: 1 } };
+    });
+
+    const result = await searchContactsForAdminBrowse({ query: "95125", limit: 25 });
+
+    expect(result.contacts.map((c) => c.id)).toEqual(["zip", "street"]);
+    const filterBody = post.mock.calls.find(([, b]) => b.filters)![1];
+    const fields = (
+      filterBody.filters as Array<{ filters: Array<{ field: string }> }>
+    )[0]!.filters.map((f) => f.field);
+    expect(fields).not.toContain("address1");
+    expect(fields).not.toContain("country");
+    expect(fields).toContain("address");
+  });
+
+  it("returns an empty result when both GHL calls fail", async () => {
+    const { searchContactsForAdminBrowse } = await loadWithGhlPost(async () => invalidField());
+    const result = await searchContactsForAdminBrowse({ query: "123 Main", limit: 10 });
+    expect(result.contacts).toEqual([]);
+    expect(result.total).toBe(0);
+  });
+
+  it("keeps name search results when address filters fail on a name-like query", async () => {
+    const { searchContactsForAdminBrowse } = await loadWithGhlPost(async (_path, body) => {
+      if (body.filters) return invalidField();
+      return {
+        contacts: [rawContact("rachel", null, { firstName: "Rachel" })],
+        meta: { total: 1 },
+      };
+    });
+    const result = await searchContactsForAdminBrowse({ query: "rachel@", limit: 10 });
+    expect(result.contacts.map((c) => c.id)).toEqual(["rachel"]);
   });
 });

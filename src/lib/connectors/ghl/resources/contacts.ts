@@ -13,7 +13,7 @@ export type ContactSearchOptions = {
   /** Mapped to HighLevel pageLimit — never sent as "limit". */
   limit?: number;
   page?: number;
-  /** Advanced GHL filters (address1/city/state/postalCode/country, etc.). */
+  /** Advanced GHL filters (documented search fields: address/city/state/postalCode, etc.). */
   filters?: Array<Record<string, unknown>>;
 };
 
@@ -76,13 +76,18 @@ export async function searchContacts(
 
 /**
  * Admin contacts browse search: keeps existing name/email/phone `query` behavior and
- * adds live address-field filters (address1, city, state, postalCode, country) when useful.
+ * adds live address-field filters (address, city, state, postalCode) when useful.
  * Merges unique contacts; prefers query pagination when name search returns rows.
  */
 export async function searchContactsForAdminBrowse(
   options: ContactSearchOptions = {},
 ): Promise<ContactSearchResult> {
-  const { buildGhlAddressSearchFilters, isLikelyAddressSearchQuery } = await import("../address");
+  const {
+    buildGhlAddressFreeTextQuery,
+    buildGhlAddressSearchFilters,
+    contactMatchesAddressQuery,
+    isLikelyAddressSearchQuery,
+  } = await import("../address");
 
   const trimmed = options.query?.trim() || "";
   const page = options.page && options.page > 0 ? options.page : 1;
@@ -96,24 +101,40 @@ export async function searchContactsForAdminBrowse(
   const addressLikely = isLikelyAddressSearchQuery(trimmed);
 
   if (addressLikely) {
-    // Prefer address filters for ZIP/street/city-style queries; still OR with free-text query.
+    // Address filters and the free-text street query run together: either can fail
+    // (filters 400 on unsupported fields), and free text also matches street addresses.
+    const streetQuery = buildGhlAddressFreeTextQuery(trimmed);
     const [byAddress, byQuery] = await Promise.all([
+      addressFilters.length
+        ? searchContacts({
+            page,
+            limit,
+            filters: addressFilters,
+          }).catch(() => null)
+        : Promise.resolve(null),
       searchContacts({
-        page,
-        limit,
-        filters: addressFilters,
-      }).catch(() => null),
-      searchContacts({
-        query: trimmed,
+        query: streetQuery,
         page,
         limit,
       }).catch(() => null),
     ]);
 
-    if (byAddress && byAddress.contacts.length > 0) {
-      return mergeContactSearchResults(byAddress, byQuery, limit);
+    if (byQuery) {
+      // Rank contacts whose address matches locally ahead of other free-text hits
+      // (search rows can be thin, so non-matching rows are kept, not dropped).
+      const addressMatches = byQuery.contacts.filter(
+        (c) => contactMatchesAddressQuery(c, trimmed) || contactMatchesAddressQuery(c, streetQuery),
+      );
+      const matched = new Set(addressMatches.map((c) => c.id));
+      const ranked: ContactSearchResult = {
+        ...byQuery,
+        contacts: [...addressMatches, ...byQuery.contacts.filter((c) => !matched.has(c.id))],
+      };
+      if (byAddress && byAddress.contacts.length > 0) {
+        return mergeContactSearchResults(byAddress, ranked, limit);
+      }
+      return ranked;
     }
-    if (byQuery) return byQuery;
     return (
       byAddress ?? {
         contacts: [],
@@ -128,11 +149,13 @@ export async function searchContactsForAdminBrowse(
   // Name-forward search, but also surface address matches (e.g. city name equal to a person name).
   const [byQuery, byAddress] = await Promise.all([
     searchContacts({ query: trimmed, page, limit }),
-    searchContacts({
-      page: 1,
-      limit: Math.min(limit * 2, 50),
-      filters: addressFilters,
-    }).catch(() => null),
+    addressFilters.length
+      ? searchContacts({
+          page: 1,
+          limit: Math.min(limit * 2, 50),
+          filters: addressFilters,
+        }).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   if (!byAddress || byAddress.contacts.length === 0) return byQuery;
