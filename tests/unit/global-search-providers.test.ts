@@ -401,7 +401,7 @@ describe("knowledge, inventory, inspections (indexed internal data)", () => {
     const draft = await createKnowledgeEntry(
       {
         title: "Confidential layoff plan",
-        content: "body text never indexed",
+        content: "body text only its readers can match",
         category: "HR",
         tags: [],
         status: "draft",
@@ -429,8 +429,13 @@ describe("knowledge, inventory, inspections (indexed internal data)", () => {
     expect((await search(employee(), "permit checklist", "knowledge")).results[0]?.url).toBe(
       `/knowledge/${approved.id}`,
     );
-    // Body text is not searchable.
-    expect((await search(coworker(), "never indexed", "knowledge")).results).toHaveLength(0);
+    // Body text is searchable only by those who can open the entry.
+    expect((await search(coworker(), "readers can match", "knowledge")).results[0]?.recordId).toBe(
+      draft.id,
+    );
+    expect(JSON.stringify((await search(employee(), "readers can match")).results)).not.toMatch(
+      /layoff|readers can match/i,
+    );
   });
 
   it("removing access (archiving) hides an entry immediately, before any reindex", async () => {
@@ -540,7 +545,10 @@ describe("GoHighLevel (live) and BambooHR (live, HR-only)", () => {
     expect(run.results).toHaveLength(1); // invalid id dropped, never guessed
     const r = run.results[0]!;
     expect(r.url).toBe("/customers/lookup?contactId=ghlContact001");
-    expect(r.actions.map((a) => a.label)).toEqual(["Copy email", "Copy phone"]);
+    expect(r.actions.map((a) => [a.label, a.kind === "copy" ? a.field : null])).toEqual([
+      ["Copy phone number", "phone"],
+      ["Copy email address", "email"],
+    ]);
     expect(JSON.stringify(r)).not.toMatch(/SSN|000-00/);
     expect(r.sourceLabel).toBe("GoHighLevel");
     expect(r.freshness.kind).toBe("live");

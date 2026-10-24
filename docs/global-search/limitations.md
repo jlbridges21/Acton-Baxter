@@ -1,11 +1,30 @@
 # Limitations
 
+- **Migration 074 is not applied in the configured Supabase project** (checked 2026-10-23:
+  `global_search_index`, `global_search_providers`, `global_search_synonyms`, and the
+  `global_search_query` function are missing). Until it is applied, Inventory, Site
+  Inspections, JobTread, and Knowledge Center search their sources directly: each provider's
+  documents are read from the source, cached for 60 seconds per server instance, and ranked
+  in TypeScript under the same ACL rules, then re-read through `lookup()`. This is fine at
+  current volumes (about 450 jobs, 150 inventory items, 20 inspections, 20 knowledge entries).
+  Applying 074 switches back to the indexed path automatically (the probe re-checks every
+  minute); admin search settings and synonyms also need 074 to be saved.
+- **JobTread coverage is what Baxter syncs:** jobs (name, number, customer, location,
+  address, mapped custom fields) and documents (estimates, orders, invoices, bills: name,
+  number, type, status, totals). Tasks, cost items, daily logs, files, and customer contact
+  details (phone, email) are not synced into Baxter, so they are not searchable. Adding them
+  means extending `src/lib/jobtread/sync.ts`, never per-keystroke JobTread API calls.
+- **JobTread documents** need Reports financial access and open the parent job in JobTread
+  (no verified per-document JobTread URL). The production `jt_documents` table was empty on
+  2026-10-23; it fills on the next JobTread sync.
+
 - **Latency metrics are per instance.** They're held in memory, so each serverless instance
   keeps its own samples, and they reset on deploy. Nothing is extrapolated.
 - **Rate limits are in memory** (`src/lib/rate-limit.ts`), so they apply per instance, not
   globally. Move to a shared store (e.g. Redis) if abuse becomes a concern.
-- **Index freshness.** New knowledge, inventory, and inspection records become discoverable
-  after the next refresh (5–10 min) or a manual reindex. Edits and deletions are reflected
+- **Index freshness.** With the index installed, new knowledge, inventory, and inspection
+  records become discoverable after the next refresh (5–10 min) or a manual reindex; without
+  it, within 60 seconds. Edits and deletions are reflected
   immediately, because results are re-read from the source. New JobTread jobs need the
   JobTread sync, then the index refresh.
 - **JobTread customer-category fields** are matched only after the per-viewer re-read, not

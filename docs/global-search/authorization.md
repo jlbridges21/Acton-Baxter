@@ -31,7 +31,7 @@
 | JobTread jobs           | Reports `general` category; customer-category fields need `customer`; financial and internal fields never                                                                                                       |
 | BambooHR                | `BambooAccess.canViewAll` (CEO, COO, HR admins); audited                                                                                                                                                        |
 | Knowledge               | `canUserReadKnowledgeEntry` (approved+internal for all; drafts for the author; admins all)                                                                                                                      |
-| Inventory / Inspections | Approved employees, as on their pages; costs and notes never searchable                                                                                                                                         |
+| Inventory / Inspections | Approved employees, as on their pages; costs never searchable; notes searchable (visible on those pages)                                                                                                        |
 | AI tasks                | `listVisibleTasks` / `canViewTask`; confidential tasks only for the person who started them                                                                                                                     |
 
 ## Permission changes

@@ -82,7 +82,13 @@ export type Freshness =
   | { kind: "cached"; syncedAt: string | null; label: string };
 
 export type SearchResultAction =
-  | { kind: "copy"; label: string; value: string }
+  | {
+      kind: "copy";
+      label: string;
+      value: string;
+      /** What is copied, so the UI can use a distinct icon (phone vs email vs generic). */
+      field?: "phone" | "email";
+    }
   | { kind: "open"; label: string; href: string; external?: boolean }
   | { kind: "pin_report"; label: string; reportId: string; pinned: boolean };
 

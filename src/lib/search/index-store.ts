@@ -42,6 +42,121 @@ export type IndexRow = {
 const LOCK_MS = 5 * 60_000;
 const CHUNK = 200;
 
+// ---------------------------------------------------------------------------
+// Is the index installed? (migration 074 applied)
+// ---------------------------------------------------------------------------
+
+/** PostgREST / Postgres codes for "this table or function doesn't exist". */
+const MISSING_SCHEMA_CODES = new Set(["PGRST202", "PGRST205", "42P01", "42883"]);
+const READY_TTL_MS = 5 * 60_000;
+const NOT_READY_TTL_MS = 60_000;
+
+export type IndexStatus = { ready: boolean; reason: string | null };
+
+let indexStatusCache: { at: number; status: IndexStatus } | null = null;
+let indexProbe: Promise<IndexStatus> | null = null;
+
+export function isMissingSchemaError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    MISSING_SCHEMA_CODES.has(error.code)
+  );
+}
+
+const NOT_INSTALLED: IndexStatus = {
+  ready: false,
+  reason:
+    "The search index isn't installed in this database (apply migration 074_global_search.sql). Searching sources directly.",
+};
+
+/** Record that an index call just failed because the schema is missing. */
+export function markIndexMissing() {
+  indexStatusCache = { at: Date.now(), status: NOT_INSTALLED };
+}
+
+export function resetIndexStatusForTests() {
+  indexStatusCache = null;
+  indexProbe = null;
+}
+
+/**
+ * Whether global_search_index and global_search_query exist. Probed once and cached, so a
+ * database without migration 074 falls back to searching each source directly instead of
+ * failing every indexed provider.
+ */
+export async function indexStatus(): Promise<IndexStatus> {
+  if (usesAgentMemoryStore()) return { ready: true, reason: null };
+  const cached = indexStatusCache;
+  if (cached && Date.now() - cached.at < (cached.status.ready ? READY_TTL_MS : NOT_READY_TTL_MS)) {
+    return cached.status;
+  }
+  // Providers start together; they share one probe.
+  indexProbe ??= probeIndex().finally(() => {
+    indexProbe = null;
+  });
+  return indexProbe;
+}
+
+async function probeIndex(): Promise<IndexStatus> {
+  let status: IndexStatus;
+  try {
+    await agentDb().select("global_search_index", { columns: "id", limit: 1 });
+    await callRpc("global_search_query", {
+      p_query: "",
+      p_norm: "",
+      p_addr: "",
+      p_ident: "",
+      p_providers: [],
+      p_role: "probe",
+      p_user: "00000000-0000-0000-0000-000000000000",
+      p_capabilities: [],
+      p_limit: 1,
+    });
+    status = { ready: true, reason: null };
+  } catch (error) {
+    status = isMissingSchemaError(error)
+      ? NOT_INSTALLED
+      : {
+          ready: false,
+          reason: `The search index couldn't be checked (${error instanceof Error ? error.message.slice(0, 160) : "unknown error"}). Searching sources directly.`,
+        };
+    console.warn("[search.index.unavailable]", { reason: status.reason });
+  }
+  indexStatusCache = { at: Date.now(), status };
+  return status;
+}
+
+/**
+ * Rank index rows for a query with the TypeScript ranker after the ACL filter. Used in memory
+ * mode and when searching sources directly (index not installed).
+ */
+export function rankIndexRows(
+  rows: IndexRow[],
+  query: string,
+  viewer: { role: string; id: string },
+  caps: string[],
+  limit: number,
+): string[] {
+  return rows
+    .filter((r) => rowVisible(r, viewer.role, viewer.id, caps))
+    .map((r) => ({
+      id: r.record_id,
+      m: matchDocument(query, {
+        title: r.title,
+        subtitle: r.subtitle,
+        identifiers: r.identifiers,
+        addresses: [r.address_norm],
+        fields: [r.search_text],
+      }),
+    }))
+    .filter((x): x is { id: string; m: NonNullable<typeof x.m> } => x.m !== null)
+    .sort((a, b) => tierIndex(a.m.tier) - tierIndex(b.m.tier) || b.m.score - a.m.score)
+    .slice(0, limit)
+    .map((x) => x.id);
+}
+
 export function toIndexRow(provider: SearchProvider, doc: IndexDoc, indexedAt: string): IndexRow {
   return {
     provider: provider.id,
@@ -92,22 +207,7 @@ export async function indexCandidates(
       filters: [eq("provider", provider.id)],
       limit: 20_000,
     });
-    return rows
-      .filter((r) => rowVisible(r, ctx.user.role, ctx.user.id, caps))
-      .map((r) => ({
-        id: r.record_id,
-        m: matchDocument(query, {
-          title: r.title,
-          subtitle: r.subtitle,
-          identifiers: r.identifiers,
-          addresses: [r.address_norm],
-          fields: [r.search_text],
-        }),
-      }))
-      .filter((x): x is { id: string; m: NonNullable<typeof x.m> } => x.m !== null)
-      .sort((a, b) => tierIndex(a.m.tier) - tierIndex(b.m.tier) || b.m.score - a.m.score)
-      .slice(0, limit)
-      .map((x) => x.id);
+    return rankIndexRows(rows, query, ctx.user, caps, limit);
   }
   const rows = await callRpc<Array<{ record_id: string }>>("global_search_query", {
     p_query: query.slice(0, 120),
@@ -178,6 +278,10 @@ export async function reindexProvider(
   const base = { provider: provider.id, upserted: 0, removed: 0, durationMs: 0 };
   if (provider.indexing !== "index" || !provider.indexer) {
     return { ...base, status: "skipped", message: "This provider isn't indexed." };
+  }
+  const installed = await indexStatus();
+  if (!installed.ready) {
+    return { ...base, status: "unavailable", message: installed.reason };
   }
   const state = await getProviderState(provider.id);
   if (

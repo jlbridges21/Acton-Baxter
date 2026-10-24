@@ -4,12 +4,13 @@
 Baxter-internal and already-synced records. The owning provider re-reads every candidate
 from its source table and re-checks permission before returning it.
 
-| Provider        | Stored in `title` / `subtitle` | Stored in `search_text`                                                                                                                                                     | Identifiers             | ACL                                                                              |
-| --------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------- |
-| `jobtread-jobs` | Job name / customer name       | Customer, formatted address, values of **general-category** custom fields mapped through Reports semantic fields (Phase, Status, PM, Model, Job Type, Sales Rep by default) | Job number, JobTread id | `aclCapabilities: ["reports:general"]`                                           |
-| `knowledge`     | Title / category               | Category, tags, source name, summary (≤ 400 chars). **Never the document body.**                                                                                            | —                       | Approved+internal: everyone. Draft: author (admins pass). Otherwise: admin roles |
-| `inventory`     | Item name / vendor             | Project, category, status, storage, description (≤ 300 chars). **Never costs.**                                                                                             | SKU, order number       | Any approved role                                                                |
-| `inspections`   | Project name / address         | Address, status                                                                                                                                                             | —                       | Any approved role                                                                |
+| Provider             | Stored in `title` / `subtitle` | Stored in `search_text`                                                                                                                                                                    | Identifiers             | ACL                                                                              |
+| -------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- | -------------------------------------------------------------------------------- |
+| `jobtread-jobs`      | Job name / customer name       | Customer, location name, formatted address, values of **general-category** custom fields mapped through Reports semantic fields (Phase, Status, PM, Model, Job Type, Sales Rep by default) | Job number, JobTread id | `aclCapabilities: ["reports:general"]`                                           |
+| `knowledge`          | Title / category               | Category, tags, source name (if enabled), summary (≤ 400 chars), article text (≤ 3,000 chars, if enabled). The row carries the entry's ACL, so body text only reaches readers.             | —                       | Approved+internal: everyone. Draft: author (admins pass). Otherwise: admin roles |
+| `inventory`          | Item name / vendor             | Project, category, status, storage, description and notes (≤ 300 chars each). **Never costs.**                                                                                             | SKU, order number       | Any approved role                                                                |
+| `inspections`        | Project name / template name   | Address, status, job (expense job label), inspector, creator, item notes (≤ 2,000 chars, if enabled). Never media or transcripts.                                                          | Project number          | Any approved role                                                                |
+| `jobtread-documents` | Document name / type           | Status, job name and number, customer. **Never prices, costs, or line items.**                                                                                                             | Document number, id     | `aclCapabilities: ["reports:financial"]`                                         |
 
 ## Never indexed
 
@@ -21,7 +22,11 @@ from its source table and re-checks permission before returning it.
 - JobTread financial fields (prices, costs, margins), internal sales notes, and
   customer-category custom fields. Customer-category values are matched only after the
   per-viewer re-read, for viewers with Customer details access.
-- Knowledge document bodies, inventory costs, and inspection notes and media.
+- Inventory costs, inspection media and transcripts, JobTread document amounts and line items.
+
+When the index isn't installed (migration 074 not applied), the same documents are built
+from the source on demand and held in memory for 60 seconds instead; the ACL rules and the
+`lookup()` re-read are identical.
 
 ## Columns
 

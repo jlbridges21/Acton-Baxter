@@ -45,6 +45,7 @@ type JobRow = {
   state: string | null;
   postal_code: string | null;
   customer_name: string | null;
+  location_name?: string | null;
   job_fields: Record<string, string[]>;
   location_fields: Record<string, string[]>;
   customer_fields: Record<string, string[]>;
@@ -146,7 +147,7 @@ function jobHit(
       subtitle: customer,
       identifiers: [row.number, row.id],
       addresses: [display],
-      fields: [customer, ...values.map((x) => x.value)],
+      fields: [customer, row.location_name, ...values.map((x) => x.value)],
     },
   };
 }
@@ -256,7 +257,12 @@ export const jobtreadJobsProvider: SearchProvider = {
             recordId: r.id,
             title: r.name,
             subtitle: r.customer_name,
-            searchText: [r.customer_name, address, ...general.map((m) => fieldValue(r, m.cfId))]
+            searchText: [
+              r.customer_name,
+              r.location_name,
+              address,
+              ...general.map((m) => fieldValue(r, m.cfId)),
+            ]
               .filter(Boolean)
               .join(" "),
             identifiers: [r.number ?? "", r.id],
@@ -264,6 +270,168 @@ export const jobtreadJobsProvider: SearchProvider = {
             url: `https://app.jobtread.com/jobs/${encodeURIComponent(r.id)}`,
             aclCapabilities: ["reports:general"],
             recordUpdatedAt: r.synced_at,
+          };
+        });
+    },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Documents (estimates, orders, invoices, bills) from jt_documents
+// ---------------------------------------------------------------------------
+
+type DocRow = {
+  id: string;
+  job_id: string | null;
+  type: string;
+  status: string | null;
+  number: string | null;
+  name: string | null;
+  issue_date: string | null;
+  price: number | string | null;
+  balance: number | string | null;
+  synced_at: string;
+  removed_at: string | null;
+};
+
+type DocJob = Pick<JobRow, "id" | "name" | "number" | "customer_name">;
+
+/** Documents are financial records, so they follow the Reports "financial" category. */
+async function canSeeDocuments(ctx: SearchContext) {
+  return Boolean((await ctx.reportsAccess())?.categories.has("financial"));
+}
+
+function words(value: string | null | undefined) {
+  if (!value) return null;
+  const s = value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+  return s ? s[0]!.toUpperCase() + s.slice(1).toLowerCase() : null;
+}
+
+function money(value: number | string | null) {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n)
+    ? n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })
+    : null;
+}
+
+function documentHit(doc: DocRow, job: DocJob | undefined): ProviderHit | null {
+  const id = safeId(doc.id, JT_ID);
+  const jobId = doc.job_id ? safeId(doc.job_id, JT_ID) : null;
+  if (!id || !jobId || doc.removed_at) return null;
+  const type = words(doc.type) ?? "Document";
+  const title = doc.name?.trim() || `${type}${doc.number ? ` #${doc.number}` : ""}`;
+  const url = `https://app.jobtread.com/jobs/${encodeURIComponent(jobId)}`;
+  return {
+    recordId: id,
+    title,
+    subtitle: [type, doc.number ? `#${doc.number}` : null, words(doc.status)]
+      .filter(Boolean)
+      .join(" · "),
+    description: job ? [job.name, job.customer_name].filter(Boolean).join(" · ") : null,
+    breadcrumb: ["JobTread", "Documents"],
+    url,
+    icon: "receipt",
+    updatedAt: doc.synced_at,
+    freshness: { kind: "cached", syncedAt: doc.synced_at, label: "Last synced" },
+    preview: [
+      { label: "Issued", value: doc.issue_date },
+      { label: "Total", value: money(doc.price) },
+      { label: "Balance", value: money(doc.balance) },
+    ],
+    auth: "role",
+    actions: [{ kind: "open", label: "Open job in JobTread", href: url, external: true }],
+    match: {
+      title,
+      subtitle: type,
+      identifiers: [doc.number, doc.id],
+      fields: [words(doc.status), job?.name, job?.number, job?.customer_name],
+    },
+  };
+}
+
+async function loadDocJobs(jobIds: string[]): Promise<Map<string, DocJob>> {
+  const ids = [...new Set(jobIds.filter((id) => JT_ID.test(id)))];
+  if (!ids.length) return new Map();
+  const rows = await agentDb().select<DocJob>("jt_jobs", {
+    columns: "id, name, number, customer_name",
+    filters: [inList("id", ids)],
+    limit: 50_000,
+  });
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+export const jobtreadDocumentsProvider: SearchProvider = {
+  id: "jobtread-documents",
+  category: "jobs",
+  name: "JobTread documents",
+  icon: "receipt",
+  sourceSystem: "jobtread",
+  description:
+    "Estimates, orders, invoices, and bills from Baxter's JobTread sync: name, number, type, status, and job.",
+  searchableFields: [
+    {
+      key: "document",
+      label: "Name, number, type, status & job",
+      sensitivity: "standard",
+      defaultEnabled: true,
+    },
+    {
+      key: "line_items",
+      label: "Line items",
+      sensitivity: "restricted",
+      defaultEnabled: false,
+    },
+  ],
+  optional: true,
+  indexing: "index",
+  permissionSummary:
+    "Requires Reports financial access (documents carry totals and balances). Line items are never synced or searched.",
+  minQueryLength: 2,
+  timeoutMs: 2500,
+  canUse: canSeeDocuments,
+  availability: jobtreadJobsProvider.availability,
+  search(ctx, input) {
+    return indexedSearch(jobtreadDocumentsProvider, ctx, input);
+  },
+  async lookup(ctx: SearchContext, ids: string[]) {
+    if (!(await canSeeDocuments(ctx))) return [];
+    const valid = ids.filter((id) => JT_ID.test(id)).slice(0, 150);
+    if (!valid.length) return [];
+    const docs = await agentDb().select<DocRow>("jt_documents", {
+      filters: [inList("id", valid), { col: "removed_at", op: "is_null" }],
+      limit: 200,
+    });
+    const jobs = await loadDocJobs(docs.map((d) => d.job_id ?? ""));
+    const order = new Map(valid.map((id, i) => [id, i]));
+    return docs
+      .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+      .map((d) => documentHit(d, d.job_id ? jobs.get(d.job_id) : undefined))
+      .filter((h): h is ProviderHit => h !== null);
+  },
+  indexer: {
+    refreshMinutes: 15,
+    async fetchAll(): Promise<IndexDoc[]> {
+      const docs = await agentDb().select<DocRow>("jt_documents", {
+        filters: [{ col: "removed_at", op: "is_null" }],
+        limit: 50_000,
+      });
+      const jobs = await loadDocJobs(docs.map((d) => d.job_id ?? ""));
+      return docs
+        .filter((d) => JT_ID.test(d.id) && d.job_id)
+        .map((d) => {
+          const job = jobs.get(d.job_id!);
+          const type = words(d.type) ?? "Document";
+          return {
+            recordId: d.id,
+            title: d.name?.trim() || `${type}${d.number ? ` #${d.number}` : ""}`,
+            subtitle: type,
+            searchText: [words(d.status), job?.name, job?.number, job?.customer_name]
+              .filter(Boolean)
+              .join(" "),
+            identifiers: [d.number ?? "", d.id],
+            url: `https://app.jobtread.com/jobs/${encodeURIComponent(d.job_id!)}`,
+            aclCapabilities: ["reports:financial"],
+            recordUpdatedAt: d.synced_at,
           };
         });
     },

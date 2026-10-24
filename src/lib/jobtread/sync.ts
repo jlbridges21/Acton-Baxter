@@ -446,10 +446,15 @@ export async function runFullSync(triggeredBy: string): Promise<SyncRunRow> {
       records_removed: jobs.removed + catalog.removed + meta.removed + documents.removed,
       duration_ms: Date.now() - started,
     });
-    // Keep Global Search's job index in step with the cache. Never fails the sync.
-    await import("@/lib/search/admin")
-      .then((m) => m.reindexProviderById("jobtread-jobs", "jobtread-sync"))
+    // Keep Global Search's JobTread index (and direct-read cache) in step. Never fails the sync.
+    await import("@/lib/search/providers/indexed")
+      .then((m) => m.invalidateSourceDocs())
       .catch(() => undefined);
+    for (const provider of ["jobtread-jobs", "jobtread-documents"]) {
+      await import("@/lib/search/admin")
+        .then((m) => m.reindexProviderById(provider, "jobtread-sync"))
+        .catch(() => undefined);
+    }
     return done!;
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 500) : "Sync failed";

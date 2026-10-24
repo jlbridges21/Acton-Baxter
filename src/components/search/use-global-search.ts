@@ -34,6 +34,12 @@ export type GlobalSearchState = {
   askBaxter: boolean;
   error: string | null;
   tookMs: number | null;
+  /**
+   * Bumps only when the visible result set is replaced by a new search (new query, category,
+   * or a cleared box) — never when more providers stream into the same search or on "Load
+   * more". The list resets its scroll position on this, and on nothing else.
+   */
+  resultSetId: number;
 };
 
 const INITIAL: GlobalSearchState = {
@@ -46,6 +52,7 @@ const INITIAL: GlobalSearchState = {
   askBaxter: false,
   error: null,
   tookMs: null,
+  resultSetId: 0,
 };
 
 function dedupeById(list: SearchResult[]): SearchResult[] {
@@ -82,7 +89,7 @@ export function useGlobalSearch(fetcher: typeof fetch = defaultFetcher) {
       const id = ++seq.current;
       const trimmed = q.trim();
       if (!trimmed) {
-        setState(INITIAL);
+        setState((s) => ({ ...INITIAL, resultSetId: s.resultSetId + 1 }));
         return;
       }
       const ac = new AbortController();
@@ -120,6 +127,7 @@ export function useGlobalSearch(fetcher: typeof fetch = defaultFetcher) {
             firstProvider = false;
             setState((s) => ({
               ...s,
+              resultSetId: reset ? s.resultSetId + 1 : s.resultSetId,
               results: dedupeById([...(reset ? [] : s.results), ...event.results]),
               outcomes: [
                 ...(reset ? [] : s.outcomes.filter((o) => o.provider !== event.outcome.provider)),
@@ -131,6 +139,7 @@ export function useGlobalSearch(fetcher: typeof fetch = defaultFetcher) {
             setState((s) => ({
               ...s,
               phase: "done",
+              resultSetId: firstProvider ? s.resultSetId + 1 : s.resultSetId,
               results: firstProvider ? [] : s.results,
               outcomes: firstProvider ? [] : s.outcomes,
               pending: [],
@@ -165,7 +174,7 @@ export function useGlobalSearch(fetcher: typeof fetch = defaultFetcher) {
       if (!q.trim()) {
         controller.current?.abort();
         seq.current++;
-        setState(INITIAL);
+        setState((s) => ({ ...INITIAL, resultSetId: s.resultSetId + 1 }));
         return;
       }
       timer.current = setTimeout(() => void run(q, latest.current.category), SEARCH_DEBOUNCE_MS);

@@ -46,12 +46,14 @@ function contactHit(ctx: SearchContext, c: GhlContact, fields: Set<string>): Pro
     : null;
   const display = address ? formatAddress(address) : null;
   const actions: ProviderHit["actions"] = [];
-  if (email) actions.push({ kind: "copy", label: "Copy email", value: email });
-  if (phone) actions.push({ kind: "copy", label: "Copy phone", value: phone });
+  if (phone)
+    actions.push({ kind: "copy", label: "Copy phone number", value: phone, field: "phone" });
+  if (email)
+    actions.push({ kind: "copy", label: "Copy email address", value: email, field: "email" });
   if (ctx.isAdmin)
     actions.push({
       kind: "open",
-      label: "Open in GoHighLevel connector",
+      label: "Open customer",
       href: `/admin/connectors/ghl/contacts/${id}`,
     });
   return {

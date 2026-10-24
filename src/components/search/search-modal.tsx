@@ -6,16 +6,20 @@
  * that tells "no results" apart from "a source couldn't be searched".
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowRight,
+  Check,
+  ChevronDown,
   Copy,
   ExternalLink,
   Loader2,
+  Mail,
   MapPin,
   MessageCircle,
+  Phone,
   Pin,
   PinOff,
   Search,
@@ -85,7 +89,15 @@ export function SearchModal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  /**
+   * Set only by arrow-key navigation: the one option that should be scrolled into view once
+   * it becomes active. Hover, streamed provider results, and re-renders never scroll the list,
+   * so manual (wheel / trackpad) scrolling always wins.
+   */
+  const revealRef = useRef<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [noticesOpen, setNoticesOpen] = useState(false);
   const mod = isMac ? "⌘" : "Ctrl";
 
   useEffect(() => {
@@ -103,6 +115,25 @@ export function SearchModal({
     const t = setTimeout(() => setToast(null), 2000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(null), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  // A new result set (new query or category) starts at the top with nothing selected. More
+  // providers answering the same search keep the user's scroll position and selection.
+  const resultSetId = state.resultSetId;
+  const lastResultSet = useRef(resultSetId);
+  useLayoutEffect(() => {
+    if (lastResultSet.current === resultSetId) return;
+    lastResultSet.current = resultSetId;
+    if (listRef.current) listRef.current.scrollTop = 0;
+    revealRef.current = null;
+    setActiveId(null);
+    setNoticesOpen(false);
+  }, [resultSetId]);
 
   const trimmed = query.trim();
   const showHome = !trimmed;
@@ -143,11 +174,23 @@ export function SearchModal({
 
   const active = items.find((i) => i.id === activeId) ?? items[0] ?? null;
 
-  useEffect(() => {
-    if (!active) return;
-    const el = document.getElementById(optionDomId(active.id));
-    el?.scrollIntoView?.({ block: "nearest" });
-  }, [active]);
+  // Keyed on the id (a string), not the item object: `items` is rebuilt every time a provider
+  // streams in, and scrolling on that is what used to yank the list back up.
+  useLayoutEffect(() => {
+    const target = revealRef.current;
+    if (!target || target !== activeId) return;
+    revealRef.current = null;
+    const list = listRef.current;
+    const el = document.getElementById(optionDomId(target));
+    if (list && el) revealInList(list, el);
+  }, [activeId]);
+
+  /** Pointer hover highlights a row but never scrolls. */
+  function hoverSelect(id: string) {
+    if (activeId === id) return;
+    revealRef.current = null;
+    setActiveId(id);
+  }
 
   function track(r: SearchResult) {
     void fetch("/api/search/track", {
@@ -173,11 +216,13 @@ export function SearchModal({
 
   async function runAction(r: SearchResult, action: SearchResultAction) {
     if (action.kind === "copy") {
-      setToast(
-        (await copyText(action.value))
-          ? `${action.label.replace(/^Copy /, "")} copied`
-          : "Couldn't copy",
-      );
+      // Copy only: the modal stays open and the row's own click never fires.
+      if (await copyText(action.value)) {
+        setCopied(actionKey(r, action));
+        setToast(copiedMessage(action));
+      } else {
+        setToast("Couldn't copy");
+      }
       return;
     }
     if (action.kind === "open") {
@@ -262,6 +307,7 @@ export function SearchModal({
       const at = active ? items.findIndex((i) => i.id === active.id) : -1;
       const next =
         e.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+      revealRef.current = items[next]!.id;
       setActiveId(items[next]!.id);
       return;
     }
@@ -286,7 +332,7 @@ export function SearchModal({
         role="option"
         aria-selected={isActive}
         data-result-id={r.id}
-        onMouseMove={() => activeId !== item.id && setActiveId(item.id)}
+        onMouseMove={() => hoverSelect(item.id)}
         onClick={(e) => openResult(r, e.metaKey || e.ctrlKey)}
         className={cn(
           "group flex cursor-pointer items-start gap-3 rounded-lg px-3 py-2",
@@ -344,22 +390,31 @@ export function SearchModal({
                 : "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
             )}
           >
-            {r.actions.slice(0, 3).map((a) => (
-              <button
-                key={a.label}
-                type="button"
-                tabIndex={-1}
-                title={a.label}
-                aria-label={`${a.label}: ${r.title}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void runAction(r, a);
-                }}
-                className="rounded-md border border-[var(--acton-border)] bg-white p-1.5 text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]"
-              >
-                <ActionIcon action={a} />
-              </button>
-            ))}
+            {r.actions.slice(0, 3).map((a) => {
+              const done = copied === actionKey(r, a);
+              return (
+                <button
+                  key={a.label}
+                  type="button"
+                  tabIndex={-1}
+                  title={done ? "Copied!" : actionTooltip(a)}
+                  aria-label={done ? `Copied: ${a.label}` : `${a.label}: ${r.title}`}
+                  data-action={a.kind === "copy" ? (a.field ?? "copy") : a.kind}
+                  // Keep focus (and arrow keys) in the search box.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void runAction(r, a);
+                  }}
+                  className={cn(
+                    "rounded-md border border-[var(--acton-border)] bg-white p-1.5 text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)]",
+                    done && "border-emerald-300 text-emerald-700",
+                  )}
+                >
+                  {done ? <Check className="h-3.5 w-3.5" aria-hidden /> : <ActionIcon action={a} />}
+                </button>
+              );
+            })}
           </span>
         ) : null}
       </div>
@@ -485,15 +540,11 @@ export function SearchModal({
             <>
               {failures.length > 0 ? (
                 <div className="mx-1 mb-2 space-y-1" data-testid="provider-notices">
-                  {uniqueMessages(failures.filter((f) => f.status !== "unavailable")).map((m) => (
-                    <p
-                      key={m}
-                      className="flex items-start gap-2 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-900"
-                    >
-                      <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                      {m}
-                    </p>
-                  ))}
+                  <ProviderNotices
+                    failures={failures.filter((f) => f.status !== "unavailable")}
+                    open={noticesOpen}
+                    onToggle={() => setNoticesOpen((v) => !v)}
+                  />
                   {failures.some((f) => f.status === "unavailable") ? (
                     // Not connected / turned off is configuration, not a failure: one quiet line.
                     <p className="px-3 text-[11px] text-[var(--acton-muted)]">
@@ -596,7 +647,7 @@ export function SearchModal({
                   id={optionDomId("ask-baxter")}
                   role="option"
                   aria-selected={active?.id === "ask-baxter"}
-                  onMouseMove={() => activeId !== "ask-baxter" && setActiveId("ask-baxter")}
+                  onMouseMove={() => hoverSelect("ask-baxter")}
                   onClick={askBaxter}
                   className={cn(
                     "mt-1 flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2",
@@ -657,6 +708,85 @@ function uniqueMessages(outcomes: ProviderOutcome[]): string[] {
   return [...new Set(outcomes.map((o) => o.message ?? `${o.name} couldn't be searched.`))];
 }
 
+/**
+ * Scroll `el` into view inside `list` only (never the page), by the smallest amount. Called
+ * once per arrow-key press, never from hover or render.
+ */
+export function revealInList(list: HTMLElement, el: HTMLElement) {
+  const box = list.getBoundingClientRect();
+  const row = el.getBoundingClientRect();
+  if (row.top < box.top) list.scrollTop -= box.top - row.top + 4;
+  else if (row.bottom > box.bottom) list.scrollTop += row.bottom - box.bottom + 4;
+}
+
+function actionKey(r: SearchResult, a: SearchResultAction) {
+  return `${r.id}|${a.label}`;
+}
+
+function actionTooltip(a: SearchResultAction): string {
+  if (a.kind === "copy" && a.field) return `${a.label} (${a.value})`;
+  return a.label;
+}
+
+function copiedMessage(a: Extract<SearchResultAction, { kind: "copy" }>): string {
+  if (a.field === "phone") return "Phone number copied";
+  if (a.field === "email") return "Email address copied";
+  const what = a.label.replace(/^Copy /, "");
+  return `${what[0]?.toUpperCase() ?? ""}${what.slice(1)} copied`;
+}
+
+/** One quiet line per failure; several collapse into one expandable notice. */
+function ProviderNotices({
+  failures,
+  open,
+  onToggle,
+}: {
+  failures: ProviderOutcome[];
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const messages = uniqueMessages(failures);
+  if (!messages.length) return null;
+  const row = "flex items-start gap-2 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-900";
+  if (messages.length === 1) {
+    return (
+      <p className={row}>
+        <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+        {messages[0]}
+      </p>
+    );
+  }
+  return (
+    <div className="rounded-md bg-amber-50 text-xs text-amber-900">
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-expanded={open}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+      >
+        <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span className="flex-1">
+          Some sources are temporarily unavailable ({failures.length}). Results from them may be
+          missing.
+        </span>
+        <ChevronDown
+          className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
+          aria-hidden
+        />
+      </button>
+      {open ? (
+        <ul className="space-y-0.5 px-3 pb-1.5 pl-8" data-testid="provider-notice-details">
+          {messages.map((m) => (
+            <li key={m}>{m}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function optionDomId(id: string) {
   return `gs-opt-${id.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
@@ -690,7 +820,11 @@ function Kbd({ children }: { children: React.ReactNode }) {
 }
 
 function ActionIcon({ action }: { action: SearchResultAction }) {
-  if (action.kind === "copy") return <Copy className="h-3.5 w-3.5" />;
+  if (action.kind === "copy") {
+    if (action.field === "phone") return <Phone className="h-3.5 w-3.5" aria-hidden />;
+    if (action.field === "email") return <Mail className="h-3.5 w-3.5" aria-hidden />;
+    return <Copy className="h-3.5 w-3.5" aria-hidden />;
+  }
   if (action.kind === "pin_report")
     return action.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />;
   if (action.external) return <ExternalLink className="h-3.5 w-3.5" />;

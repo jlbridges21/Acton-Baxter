@@ -117,7 +117,7 @@ export type SearchProvider = {
   availability(): Promise<Availability>;
   search(ctx: SearchContext, input: ProviderSearchInput): Promise<ProviderSearchOutput>;
   /** Re-authorize specific records (recents, pinned items). Returns only what ctx may see. */
-  lookup?(ctx: SearchContext, recordIds: string[]): Promise<ProviderHit[]>;
+  lookup?(ctx: SearchContext, recordIds: string[], query?: string): Promise<ProviderHit[]>;
   /** Items for the empty-query view. */
   emptyState?(ctx: SearchContext): Promise<ProviderHit[]>;
   /** Index lifecycle (indexing: "index"). */

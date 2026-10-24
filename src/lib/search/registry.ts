@@ -12,7 +12,7 @@ import { agentsProvider } from "./providers/agents";
 import { bambooEmployeesProvider } from "./providers/bamboohr";
 import { ghlContactsProvider, ghlOpportunitiesProvider } from "./providers/ghl";
 import { inspectionsProvider, inventoryProvider, knowledgeProvider } from "./providers/internal";
-import { jobtreadJobsProvider } from "./providers/jobtread";
+import { jobtreadDocumentsProvider, jobtreadJobsProvider } from "./providers/jobtread";
 import { settingsProvider, toolsProvider } from "./providers/navigation";
 import { reportsProvider } from "./providers/reports";
 import { tasksProvider } from "./providers/tasks";
@@ -26,6 +26,7 @@ const PROVIDERS: SearchProvider[] = [
   ghlContactsProvider,
   ghlOpportunitiesProvider,
   jobtreadJobsProvider,
+  jobtreadDocumentsProvider,
   bambooEmployeesProvider,
   knowledgeProvider,
   inventoryProvider,

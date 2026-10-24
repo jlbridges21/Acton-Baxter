@@ -57,3 +57,22 @@ export function validateResultUrl(raw: string | null | undefined): ValidatedUrl 
 export function safeId(value: unknown, pattern = /^[A-Za-z0-9_-]{1,64}$/): string | null {
   return typeof value === "string" && pattern.test(value) ? value : null;
 }
+
+/**
+ * A short plain-text excerpt of `text` around the first query word it contains (for body
+ * matches whose summary doesn't show why the record matched). Null when no word appears.
+ */
+export function snippetAround(text: unknown, query: string, max = 160): string | null {
+  const plain = safeText(text, 20_000);
+  if (!plain) return null;
+  const lower = plain.toLowerCase();
+  const words = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+  const at = words.map((w) => lower.indexOf(w)).find((i) => i >= 0);
+  if (at === undefined) return null;
+  const start = Math.max(0, at - Math.floor(max / 3));
+  const slice = plain.slice(start, start + max).trim();
+  return `${start > 0 ? "…" : ""}${slice}${start + max < plain.length ? "…" : ""}`;
+}

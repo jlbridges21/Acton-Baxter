@@ -11,7 +11,7 @@ import "server-only";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { ValidationError } from "@/lib/errors";
 import type { SearchContext } from "./context";
-import { isIndexStale, needsInitialIndex, reindexProvider } from "./index-store";
+import { indexStatus, isIndexStale, needsInitialIndex, reindexProvider } from "./index-store";
 import { recordProviderSample, recordSearchSample } from "./metrics";
 import { addressKey, formatAddress, looksLikeAddress } from "./normalize";
 import type { ProviderHit, SearchProvider } from "./provider";
@@ -238,7 +238,8 @@ export async function runProvider(
         });
       }
     }
-    if (provider.indexing === "index") {
+    // Index upkeep only when the index exists; otherwise providers search their source directly.
+    if (provider.indexing === "index" && (await indexStatus()).ready) {
       if (await needsInitialIndex(provider)) {
         await withTimeout(reindexProvider(provider, "first-search"), provider.timeoutMs).catch(
           () => undefined,
@@ -290,13 +291,16 @@ export async function runProvider(
     });
   } catch (error) {
     const status = error instanceof TimeoutError ? "timeout" : "error";
-    if (status === "error") {
-      console.error(
-        "[search.provider.failed]",
-        provider.id,
-        error instanceof Error ? error.message : error,
-      );
-    }
+    // Server-side diagnostics only; the client gets the friendly message.
+    console.error(status === "timeout" ? "[search.provider.timeout]" : "[search.provider.failed]", {
+      provider: provider.id,
+      source: provider.sourceSystem,
+      indexing: provider.indexing,
+      queryLength: input.query.length,
+      latencyMs: Math.round(performance.now() - started),
+      code: error instanceof Error && "code" in error ? String(error.code) : null,
+      message: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+    });
     return done(status, [], { message: friendlyError(provider, status) });
   }
 }
