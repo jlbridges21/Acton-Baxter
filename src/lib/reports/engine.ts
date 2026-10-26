@@ -17,6 +17,8 @@ import { getJobDetail, type JobDetail } from "@/lib/jobtread/detail";
 import { isJobTreadConfigured, jobTreadJobUrl } from "@/lib/jobtread/client";
 import { isJobTreadFixtureEnabled } from "@/lib/jobtread/fixture";
 import { lastSuccessfulSync, runFullSync } from "@/lib/jobtread/sync";
+import { reportDataHealth } from "./data-health";
+import { applyValueMappings, listValueMappings } from "./mappings";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
 import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
 import { groupDocumentsByJob, jobFinancials, type DocumentRow } from "./financials";
@@ -76,6 +78,8 @@ type JobCacheRow = {
   customer_fields: Record<string, string[]>;
   synced_at: string;
 };
+
+type RegionRule = Parameters<typeof applyValueMappings>[1][number];
 
 type ModelCacheRow = {
   id: string;
@@ -162,7 +166,7 @@ export function jobRowFromCache(
   return row;
 }
 
-export function modelRowFromCache(r: ModelCacheRow): Row {
+export function modelRowFromCache(r: ModelCacheRow, regionRules: RegionRule[] = []): Row {
   const { series, code } = parseModelName(r.name);
   const cost = r.item_count > 0 ? num(r.total_cost) : null;
   const price = r.item_count > 0 ? num(r.total_price) : null;
@@ -171,6 +175,7 @@ export function modelRowFromCache(r: ModelCacheRow): Row {
     "model.name": r.name,
     "model.series": series,
     "model.code": code,
+    "model.region": applyValueMappings(r.name, regionRules),
     "model.description": r.description,
     "model.budgetStatus": r.item_count > 0 ? "Budget imported" : "Pending import",
     "model.itemCount": r.item_count,
@@ -289,7 +294,11 @@ async function loadSource(
       filters: [{ col: "removed_at", op: "is_null" }],
       limit: 5000,
     });
-    cache.models = rows.filter(isProductModel).map(modelRowFromCache);
+    // Region rules are optional admin data; without them model.region is simply blank.
+    const regionRules = await listValueMappings("region")
+      .then((rules) => rules.filter((x) => x.source_field === "model.name"))
+      .catch(() => []);
+    cache.models = rows.filter(isProductModel).map((r) => modelRowFromCache(r, regionRules));
   }
   return cache.models;
 }
@@ -1056,6 +1065,8 @@ export async function executeReport(input: {
     ctx.issues.push(
       "JobTread data hasn't been synced yet. An administrator can run a sync from Reports → Data settings.",
     );
+  // Freshness of the datasets this report depends on. Never fails the execution.
+  const dataHealth = await reportDataHealth(input.spec).catch(() => null);
   return {
     widgets,
     controls,
@@ -1068,6 +1079,7 @@ export async function executeReport(input: {
     issues: [...new Set(ctx.issues)],
     restrictedWidgets: Object.values(widgets).filter((w) => w.status === "restricted").length,
     durationMs: Date.now() - started,
+    dataHealth,
   };
 }
 

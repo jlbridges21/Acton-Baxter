@@ -238,6 +238,10 @@ export async function processJob(job: ReportJob): Promise<"complete" | "deferred
     } else if (job.jobType === "inventory_order_import") {
       const { runInventoryOrderImportJob } = await import("@/lib/inventory/import-order");
       await runInventoryOrderImportJob(job);
+    } else if (job.jobType === "jobtread_sync" && job.metadata.mode === "entities") {
+      // Sync Manager batch: advances per-entity runs within a time budget, then hands off.
+      const { processEntitySyncJob } = await import("@/lib/jobtread/sync-manager");
+      await processEntitySyncJob(job.metadata);
     } else if (job.jobType === "jobtread_sync") {
       const { runFullSync } = await import("@/lib/jobtread/sync");
       const run = await runFullSync(

@@ -15,6 +15,8 @@ import type { ApprovalRow, ApprovalStatus } from "./types";
 export const APPROVAL_ACTION_LABELS: Record<string, string> = {
   employee_communication: "Employee communication draft",
   human_review: "Needs human review",
+  "data_sync.request": "Data sync request",
+  "data_sync.enable": "Dataset enable/disable request",
 };
 
 export async function createApproval(input: {
@@ -90,6 +92,12 @@ export async function decideApproval(input: {
     const { handleOpsApprovalDecision } = await import("@/lib/ops/actions");
     await handleOpsApprovalDecision(approval, input.decision, input.userId);
   }
+  // Dexter data-sync requests from non-admins: only an administrator's approval runs them.
+  const isDataSync = approval.action_type.startsWith("data_sync.");
+  if (isDataSync && input.decision === "approved") {
+    const { assertDataSyncDecider } = await import("@/lib/reports/sync-http");
+    await assertDataSyncDecider(input.userId);
+  }
   const payload = { ...approval.payload };
   if (input.editedPayload?.subject !== undefined)
     payload.subject = input.editedPayload.subject.slice(0, 300);
@@ -111,6 +119,23 @@ export async function decideApproval(input: {
   if (isOps) {
     const { afterOpsApprovalDecision } = await import("@/lib/ops/actions");
     await afterOpsApprovalDecision(approval.id, input.decision, input.userId);
+  }
+
+  if (isDataSync && input.decision === "approved") {
+    const { runApprovedDataSync } = await import("@/lib/reports/sync-http");
+    // The approval stands even if queuing fails; the failure is recorded on the task.
+    const outcome = await runApprovedDataSync(approval.payload, input.userId).catch(
+      (error: unknown) => ({
+        message: `Approved, but the sync couldn't be queued: ${error instanceof Error ? error.message : "unknown error"}`,
+        request: undefined,
+      }),
+    );
+    if (approval.task_id)
+      await appendTaskEvent(approval.task_id, "data_sync_applied", outcome.message.slice(0, 300), {
+        approvalId: approval.id,
+        batchId: outcome.request?.batchId ?? null,
+        jobId: outcome.request?.jobId ?? null,
+      });
   }
 
   if (approval.task_id) {

@@ -48,6 +48,7 @@ import {
   Sparkles,
   Trash2,
   Undo2,
+  TriangleAlert,
 } from "lucide-react";
 import { aiFetch, errorMessage, formatRelative, Notice, useLoad } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
@@ -623,6 +624,16 @@ export function ReportView({
         </Notice>
       ) : null}
       {execError ? <Notice tone="error">{execError}</Notice> : null}
+      {result?.dataHealth?.warnings.length ? (
+        <Notice tone="warning">
+          <p className="font-semibold">Some data behind this report may be out of date</p>
+          <ul className="mt-1 list-disc pl-5">
+            {result.dataHealth.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
       {result?.issues.length ? (
         <Notice tone="warning">
           <ul className="list-disc pl-5">
@@ -681,6 +692,7 @@ export function ReportView({
                   widget={w}
                   editing={editing}
                   result={result?.widgets[w.id]}
+                  dataWarnings={result?.dataHealth?.widgetWarnings[w.id]}
                   onChange={(changes) => updateWidget(w.id, changes)}
                   onRemove={() =>
                     applyDraft((s) => ({ ...s, widgets: s.widgets.filter((x) => x.id !== w.id) }))
@@ -805,6 +817,7 @@ function WidgetCard({
   widget,
   editing,
   result,
+  dataWarnings,
   onChange,
   onRemove,
   onExport,
@@ -816,6 +829,8 @@ function WidgetCard({
   widget: WidgetSpec;
   editing: boolean;
   result: ExecutionResult["widgets"][string] | undefined;
+  /** Missing or stale synced data this widget depends on. */
+  dataWarnings?: string[];
   onChange: (changes: Partial<WidgetSpec>) => void;
   onRemove: () => void;
   onExport: () => void;
@@ -970,6 +985,15 @@ function WidgetCard({
             ) : null}
           </div>
         </header>
+      ) : null}
+      {dataWarnings?.length && !widget.hidden ? (
+        <p
+          className="mb-2 flex items-start gap-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-900"
+          title={dataWarnings.join("\n")}
+        >
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{dataWarnings[0]}</span>
+        </p>
       ) : null}
       {widget.hidden ? (
         <p className="text-sm text-[var(--acton-muted)]">

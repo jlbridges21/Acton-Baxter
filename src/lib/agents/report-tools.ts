@@ -153,10 +153,13 @@ const listFields: AgentTool = {
                 mappedTo: r && r.ok ? r.key : null,
                 available: Boolean(r && r.ok && canSeeField(access, r.def)),
                 note: !s.ref
-                  ? (s.description ?? "Not mapped to a JobTread field.")
-                  : r && r.ok && !canSeeField(access, r.def)
-                    ? "Requester lacks access"
-                    : undefined,
+                  ? (s.description ??
+                    "Not mapped to a JobTread field yet — an administrator can map it under Reports → Data settings → Business fields.")
+                  : s.unavailable
+                    ? s.unavailable
+                    : r && r.ok && !canSeeField(access, r.def)
+                      ? "Requester lacks access"
+                      : undefined,
               };
             })
         : [];

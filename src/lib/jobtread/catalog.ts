@@ -321,9 +321,10 @@ export type EntityCatalogRow = {
 
 const STALE_MS = 24 * 60 * 60_000;
 
-function missingField(error: unknown): string | null {
+export function missingField(error: unknown): string | null {
   if (!(error instanceof JobTreadError) || error.code !== "BAD_QUERY") return null;
-  return /The field "([A-Za-z]+)" does not exist/.exec(error.message)?.[1] ?? null;
+  // The message excerpts JobTread's JSON body, so the quotes may arrive escaped (\").
+  return /The field \\?"([A-Za-z]+)\\?" does not exist/.exec(error.message)?.[1] ?? null;
 }
 
 /** Verify one entity: count, resolvable fields, and populated counts. */

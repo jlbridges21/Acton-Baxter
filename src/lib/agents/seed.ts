@@ -16,6 +16,7 @@ import {
   BAXTER_SLUG,
   DEFAULT_DEPARTMENTS,
   DEXTER_AVATAR_PATH,
+  DEXTER_DATA_SYNC_TOOLS,
   DEXTER_GROUP_TOOLS,
   DEXTER_DEFAULT_CONFIG,
   DEXTER_LIMITS_V1,
@@ -232,6 +233,7 @@ async function runSeed(): Promise<void> {
   if (dexter) {
     await upgradeDexterConfig(dexter.id);
     await addDexterGroupTools(dexter.id);
+    await addDexterDataSyncTools(dexter.id);
   }
   const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
   if (sam) {
@@ -382,6 +384,29 @@ async function addDexterGroupTools(dexterId: string) {
     published,
     { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
     `${DEXTER_GROUPS_MARKER}: create, rename, and file reports into groups`,
+  );
+}
+
+const DEXTER_DATA_SYNC_MARKER = "System: Dexter data pipeline tools";
+
+/** One-time: enable the Sync Manager tools on Dexter's published config (admin edits kept). */
+async function addDexterDataSyncTools(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_DATA_SYNC_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, ...DEXTER_DATA_SYNC_TOOLS])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_DATA_SYNC_MARKER}: dataset status, freshness, dependencies, and admin-confirmed syncs`,
   );
 }
 

@@ -86,6 +86,19 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   global_search_providers: [["provider"]],
   global_search_synonyms: [["term"]],
   global_search_recents: [["user_id", "provider", "record_id"]],
+  // Sync Manager (075_jobtread_sync_manager.sql)
+  jt_sync_settings: [["id"]],
+  jt_sync_entities: [["entity"]],
+  jt_cost_items: [["id"]],
+  jt_tasks: [["id"]],
+  jt_accounts: [["id"]],
+  jt_contacts: [["id"]],
+  jt_users: [["id"]],
+  jt_daily_logs: [["id"]],
+  jt_files: [["id"]],
+  jt_payments: [["id"]],
+  jt_time_entries: [["id"]],
+  bi_value_mappings: [["kind", "source_field", "match_type", "pattern"]],
 };
 
 const NO_ID_TABLES = new Set([
@@ -104,6 +117,8 @@ const NO_ID_TABLES = new Set([
   "bi_report_user_prefs",
   "global_search_providers",
   "global_search_recents",
+  "jt_sync_settings",
+  "jt_sync_entities",
 ]);
 const NO_UPDATED_AT = new Set([
   "ai_agent_config_versions",

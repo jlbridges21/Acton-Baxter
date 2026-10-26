@@ -149,6 +149,26 @@ export type ControlOptions =
     }
   | { kind: "date_range"; id: string; selected: [string | null, string | null] };
 
+export type FreshnessLevel =
+  "fresh" | "stale" | "never" | "failed" | "disabled" | "running" | "not_configured";
+
+/** Freshness of the synced datasets a report depends on (src/lib/reports/dependencies.ts). */
+export type DataHealthSummary = {
+  status: "ok" | "warning";
+  entities: Array<{
+    entity: string;
+    label: string;
+    level: FreshnessLevel;
+    lastSuccessAt: string | null;
+    message: string | null;
+    widgets: string[];
+  }>;
+  warnings: string[];
+  /** Widget id → missing/stale data warnings for that widget. */
+  widgetWarnings: Record<string, string[]>;
+  liveWidgets: string[];
+};
+
 export type ExecutionResult = {
   widgets: Record<string, WidgetResult>;
   controls: Record<string, ControlOptions>;
@@ -161,6 +181,8 @@ export type ExecutionResult = {
   issues: string[];
   restrictedWidgets: number;
   durationMs: number;
+  /** Null when the Sync Manager isn't available (e.g. migration 075 not applied yet). */
+  dataHealth?: DataHealthSummary | null;
 };
 
 export type ControlState = Record<

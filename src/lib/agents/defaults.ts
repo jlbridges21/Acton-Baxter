@@ -427,6 +427,17 @@ export const DEXTER_GROUP_TOOLS = [
   "reports_group_suggest",
 ];
 
+/** Data pipeline tools (src/lib/agents/data-sync-tools.ts). Mutations are admin-gated in code. */
+export const DEXTER_DATA_SYNC_TOOLS = [
+  "reports_sync_overview",
+  "reports_sync_dataset",
+  "reports_sync_schedule",
+  "reports_data_dependencies",
+  "reports_data_freshness",
+  "reports_sync_request",
+  "reports_sync_enable",
+];
+
 export const DEXTER_TOOLS = [
   "reports_list_fields",
   "reports_preview",
@@ -442,6 +453,7 @@ export const DEXTER_TOOLS = [
   "reports_attachment",
   "reports_rules",
   ...DEXTER_GROUP_TOOLS,
+  ...DEXTER_DATA_SYNC_TOOLS,
 ];
 
 export const DEXTER_LIMITS_V1 = {

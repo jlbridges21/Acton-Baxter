@@ -15,6 +15,7 @@ import { z } from "zod";
 import { createApproval } from "./approvals";
 import { searchAgentKnowledge } from "./knowledge";
 import { BAMBOOHR_TOOLS } from "./bamboohr-tools";
+import { DATA_SYNC_TOOLS } from "./data-sync-tools";
 import { OPS_TOOLS } from "./ops-tools";
 import { REPORT_GROUP_TOOLS } from "./report-group-tools";
 import { REPORT_INTEL_TOOLS } from "./report-intel-tools";
@@ -322,6 +323,7 @@ export const TOOL_REGISTRY: AgentTool[] = [
   ...OPS_TOOLS,
   ...BAMBOOHR_TOOLS,
   ...REPORT_GROUP_TOOLS,
+  ...DATA_SYNC_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,

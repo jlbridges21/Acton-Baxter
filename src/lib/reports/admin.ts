@@ -4,7 +4,12 @@ import "server-only";
 
 import { agentDb } from "@/lib/agents/store";
 import { isJobTreadConfigured } from "@/lib/jobtread/client";
-import { listCustomFields, listSemanticFields, SYNCED_TARGETS } from "@/lib/jobtread/metadata";
+import {
+  EXTENDED_TARGETS,
+  listCustomFields,
+  listSemanticFields,
+  SYNCED_TARGETS,
+} from "@/lib/jobtread/metadata";
 import { getConnectionRow, listSyncRuns } from "@/lib/jobtread/sync";
 
 type CachedJob = {
@@ -61,7 +66,7 @@ export async function getDataSettingsOverview() {
     counts: { jobs: jobs.length, models: models.length },
     runs,
     fields: fields
-      .filter((f) => SYNCED_TARGETS.has(f.target_type))
+      .filter((f) => SYNCED_TARGETS.has(f.target_type) || EXTENDED_TARGETS.has(f.target_type))
       .map((f) => ({
         id: f.id,
         name: f.name,

@@ -141,6 +141,8 @@ async function upsertRemovingMissing(
   const existing = await db.select<{ id: string; removed_at: string | null }>(table, {
     filters: [{ col: "removed_at", op: "is_null" }],
     columns: "id, removed_at",
+    // An explicit limit makes the store page past PostgREST's 1,000-row response cap.
+    limit: 200_000,
   });
   const seen = new Set(rows.map((r) => r.id));
   let removed = 0;
@@ -446,6 +448,17 @@ export async function runFullSync(triggeredBy: string): Promise<SyncRunRow> {
       records_removed: jobs.removed + catalog.removed + meta.removed + documents.removed,
       duration_ms: Date.now() - started,
     });
+    // Reflect the run on the Sync Manager's core datasets. Never fails the sync.
+    await import("./sync-manager")
+      .then((m) =>
+        m.recordCoreSyncSuccess({
+          custom_fields: meta.seen,
+          jobs: jobs.seen,
+          catalog_models: catalog.seen,
+          documents: documents.seen,
+        }),
+      )
+      .catch(() => undefined);
     // Keep Global Search's JobTread index (and direct-read cache) in step. Never fails the sync.
     await import("@/lib/search/providers/indexed")
       .then((m) => m.invalidateSourceDocs())

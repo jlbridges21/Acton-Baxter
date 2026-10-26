@@ -72,7 +72,7 @@ async function semanticFieldMeta(): Promise<FieldMeta[]> {
   const byId = new Map(custom.map((c) => [c.id, c]));
   const out: FieldMeta[] = [];
   for (const s of semantic) {
-    if (!s.custom_field_id) continue;
+    if (!s.custom_field_id || (s as { archived_at?: string | null }).archived_at) continue;
     const cf = byId.get(s.custom_field_id);
     if (!cf) continue;
     out.push({ label: s.label, category: cf.category, cfId: cf.id, semantic: s.key });

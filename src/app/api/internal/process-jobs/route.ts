@@ -35,6 +35,13 @@ export async function POST(request: Request) {
         enqueued: false,
         reason: error instanceof Error ? error.message : "error",
       }));
+    // Sync Manager: resume interrupted runs and queue the daily per-dataset sync.
+    const jobtreadDailySync = await import("@/lib/jobtread/sync-manager")
+      .then((m) => m.maybeEnqueueScheduledEntitySync())
+      .catch((error: unknown) => ({
+        enqueued: false,
+        reason: error instanceof Error ? error.message : "error",
+      }));
     // Sam Operations sweep (reminders, approved actions, waiting steps). Never blocks other jobs.
     const samOperations = await import("@/lib/ops/schedule")
       .then((m) => m.maybeEnqueueSamOperationsSweep())
@@ -56,6 +63,7 @@ export async function POST(request: Request) {
       monitoring,
       streetViewBackfill,
       jobtreadSync,
+      jobtreadDailySync,
       samOperations,
       searchIndex,
     });

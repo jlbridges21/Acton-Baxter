@@ -40,6 +40,12 @@ export type SemanticFieldRow = {
 /** Targets Reports caches. Contacts, vendors, cost items, and daily logs are not synced. */
 export const SYNCED_TARGETS = new Set(["job", "location", "customer"]);
 
+/**
+ * Targets cached by the Sync Manager's accounts/contacts datasets. Their fields default to
+ * "excluded" (defaultCategory) — values are cached only after an admin opts a field in.
+ */
+export const EXTENDED_TARGETS = new Set(["vendor", "contact"]);
+
 const CUSTOMER_GENERAL = new Set([
   "recommended br models",
   "customer priorities & must-haves",
@@ -321,6 +327,17 @@ export async function syncCustomFieldMetadata(
     }
   }
   await ensureSemanticDefaults();
+  // Spreadsheet business fields + verified auto-mapping (needs migration 076). Never fails a sync.
+  await import("./business-fields")
+    .then(async (m) => {
+      await m.importRequestedBusinessFields();
+      await m.reconcileAutoMappings();
+    })
+    .catch((error: unknown) =>
+      console.error("[jobtread.business_fields.import_failed]", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   return { seen: nodes.length, added, removed };
 }
 

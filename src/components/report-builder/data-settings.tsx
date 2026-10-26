@@ -7,7 +7,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, PlugZap, RefreshCw, TriangleAlert } from "lucide-react";
+import { Activity, ArrowLeft, CheckCircle2, PlugZap, RefreshCw, TriangleAlert } from "lucide-react";
 import {
   aiFetch,
   errorMessage,
@@ -19,6 +19,9 @@ import {
 } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { BusinessFields } from "./business-fields";
+import { RegionMappings } from "./region-mappings";
+import { SyncManager } from "./sync-manager";
 
 type Overview = {
   configured: boolean;
@@ -111,11 +114,6 @@ export function DataSettings() {
         (!q || `${f.name} ${f.displayName ?? ""} ${f.id}`.toLowerCase().includes(q)),
     );
   }, [data, fieldQuery, target]);
-  const fieldName = (id: string | null) => {
-    const f = data?.fields.find((x) => x.id === id);
-    return f ? `${f.displayName || f.name} (${f.target})` : null;
-  };
-
   if (!data) {
     return error ? (
       <Notice tone="error">{error}</Notice>
@@ -136,10 +134,21 @@ export function DataSettings() {
         >
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Reports
         </Link>
-        <h1 className="mt-1 text-2xl font-bold text-[var(--acton-navy)]">Reports data settings</h1>
-        <p className="mt-1 max-w-3xl text-sm text-[var(--acton-muted)]">
-          JobTread connection (read-only), sync, and which fields each person can see in reports.
-        </p>
+        <div className="mt-1 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-[var(--acton-navy)]">Reports data settings</h1>
+            <p className="mt-1 max-w-3xl text-sm text-[var(--acton-muted)]">
+              JobTread connection (read-only), sync, and which fields each person can see in
+              reports.
+            </p>
+          </div>
+          <Link
+            href="/reports/settings/health"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
+          >
+            <Activity className="h-4 w-4" aria-hidden /> Data health
+          </Link>
+        </div>
       </div>
       {error ? <Notice tone="error">{error}</Notice> : null}
 
@@ -242,11 +251,11 @@ export function DataSettings() {
 
         <div className="rounded-lg border border-[var(--acton-border)] bg-white p-5">
           <h2 className="flex items-center gap-2 font-semibold text-[var(--acton-navy)]">
-            <RefreshCw className="h-4 w-4" aria-hidden /> Sync
+            <RefreshCw className="h-4 w-4" aria-hidden /> Core sync (frequent)
           </h2>
           <p className="mt-1 text-sm text-[var(--acton-muted)]">
-            Reports read a cached copy of JobTread jobs and catalog models. Project pages fetch
-            milestones and documents live.
+            Refreshes the core datasets (custom fields, jobs, documents, Product Library models)
+            together at the interval below. Every other dataset is managed in the Sync manager.
           </p>
           <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
             <div>
@@ -331,66 +340,11 @@ export function DataSettings() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-[var(--acton-border)] bg-white p-5">
-        <h2 className="font-semibold text-[var(--acton-navy)]">Business fields</h2>
-        <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          Reports and Dexter use these names (e.g. “Recommended BR Model”). Each points to one
-          JobTread field by its stable id, so renaming a field in JobTread doesn&apos;t break
-          reports.
-        </p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-[var(--acton-muted)]">
-              <tr>
-                <th className="py-2 pr-3 font-semibold">Business field</th>
-                <th className="py-2 pr-3 font-semibold">JobTread field</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.semantic.map((s) => (
-                <tr key={s.key} className="border-t border-[var(--acton-gray-100)]">
-                  <td className="py-2 pr-3 align-top">
-                    <p className="font-medium text-[var(--acton-navy)]">{s.label}</p>
-                    {!s.customFieldId && s.description ? (
-                      <p className="text-xs text-[var(--acton-muted)]">{s.description}</p>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <select
-                      aria-label={`JobTread field for ${s.label}`}
-                      className={cn(
-                        selectClass,
-                        "h-9",
-                        !s.customFieldId && "text-[var(--acton-muted)]",
-                      )}
-                      value={s.customFieldId ?? ""}
-                      disabled={busy !== null}
-                      onChange={(e) =>
-                        void call(`sem-${s.key}`, "/api/reports/admin/semantic", "PATCH", {
-                          key: s.key,
-                          customFieldId: e.target.value || null,
-                        })
-                      }
-                    >
-                      <option value="">Not mapped</option>
-                      {data.fields.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.displayName || f.name} ({f.target})
-                        </option>
-                      ))}
-                    </select>
-                    {s.customFieldId && !fieldName(s.customFieldId) ? (
-                      <p className="text-xs text-red-700">
-                        The mapped field no longer exists in JobTread.
-                      </p>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <SyncManager />
+
+      <BusinessFields />
+
+      <RegionMappings />
 
       <section className="rounded-lg border border-[var(--acton-border)] bg-white p-5">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -398,7 +352,9 @@ export function DataSettings() {
             <h2 className="font-semibold text-[var(--acton-navy)]">JobTread fields &amp; access</h2>
             <p className="mt-1 text-sm text-[var(--acton-muted)]">
               Customer, financial, and internal fields are only shown to people granted that access
-              on Dexter&apos;s Access tab. Excluded fields are never used.
+              on Dexter&apos;s Access tab. Excluded fields are never used. Vendor and contact fields
+              start excluded; their values are cached by the Accounts and Contacts datasets on the
+              next sync after you allow them.
             </p>
           </div>
           <div className="flex gap-2">
@@ -412,6 +368,8 @@ export function DataSettings() {
               <option value="job">Job</option>
               <option value="location">Location</option>
               <option value="customer">Customer</option>
+              <option value="vendor">Vendor</option>
+              <option value="contact">Contact</option>
             </select>
             <input
               aria-label="Search fields"

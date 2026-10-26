@@ -368,6 +368,15 @@ export const MODEL_FIELDS: FieldDef[] = [
     origin: "Derived from the model name (text after the series)",
   },
   {
+    key: "model.region",
+    label: "Region",
+    type: "text",
+    category: "general",
+    source: "catalog_models",
+    origin:
+      "Baxter region mapping on the model name (Reports → Data settings → Mappings). Blank when no rule matches — never guessed from the prefix.",
+  },
+  {
     key: "model.description",
     label: "Description",
     type: "text",
@@ -447,8 +456,17 @@ function customFieldType(f: CustomFieldRow): { type: FieldType; multi: boolean }
 export type FieldCatalog = {
   bySource: Record<ReportSource, FieldDef[]>;
   byKey: Map<string, FieldDef>;
-  /** sem:<key> → cf:<id> (or null when unmapped). */
-  semantic: Map<string, { label: string; ref: string | null; description: string | null }>;
+  /** sem:<key> → cf:<id> (or null when unmapped). Archived business fields are left out. */
+  semantic: Map<
+    string,
+    {
+      label: string;
+      ref: string | null;
+      description: string | null;
+      /** Why a mapped business field can't be used in reports (removed, excluded, non-job target). */
+      unavailable?: string;
+    }
+  >;
 };
 
 let cached: { at: number; catalog: FieldCatalog } | null = null;
@@ -485,15 +503,31 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
   const byKey = new Map<string, FieldDef>(
     [...jobs, ...MODEL_FIELDS, ...COMMISSION_FIELDS].map((f) => [f.key, f]),
   );
-  const semanticMap = new Map(
-    semantic.map((s) => [
-      `sem:${s.key}`,
-      {
-        label: s.label,
-        ref: s.custom_field_id ? `cf:${s.custom_field_id}` : null,
-        description: s.description,
-      },
-    ]),
+  const allFields = new Map(fields.map((f) => [f.id, f]));
+  const semanticMap: FieldCatalog["semantic"] = new Map(
+    semantic
+      .filter((s) => !(s as { archived_at?: string | null }).archived_at)
+      .map((s) => {
+        const cf = s.custom_field_id ? allFields.get(s.custom_field_id) : undefined;
+        const unavailable = !s.custom_field_id
+          ? undefined
+          : !cf
+            ? "Its JobTread field no longer exists (an administrator should remap it)."
+            : cf.category === "excluded"
+              ? "Its JobTread field is excluded from reports by an administrator."
+              : !["job", "location", "customer"].includes(cf.target_type)
+                ? `It maps to a ${cf.target_type} field; only job, location, and customer field values are in report data today.`
+                : undefined;
+        return [
+          `sem:${s.key}`,
+          {
+            label: s.label,
+            ref: s.custom_field_id ? `cf:${s.custom_field_id}` : null,
+            description: s.description,
+            ...(unavailable ? { unavailable } : {}),
+          },
+        ];
+      }),
   );
   const catalog: FieldCatalog = {
     bySource: { jobs, catalog_models: MODEL_FIELDS, commissions: COMMISSION_FIELDS },
@@ -519,6 +553,8 @@ export function resolveField(
         reason: `"${sem.label}" isn't mapped to a JobTread field.${sem.description ? ` ${sem.description}` : ""} An administrator can map it under Reports → Data settings.`,
       };
     }
+    if (sem.unavailable)
+      return { ok: false, reason: `"${sem.label}" can't be used in reports: ${sem.unavailable}` };
     key = sem.ref;
   }
   const def = catalog.byKey.get(key);

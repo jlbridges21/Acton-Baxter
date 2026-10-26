@@ -333,12 +333,122 @@ export const JOB_DETAIL_FILES = [
   },
 ];
 
+/**
+ * Cost items: catalog lines under two Product Library models plus job budget lines. Every
+ * 7th line has no unit price, so tests can prove blanks are never filled in.
+ */
+export const COST_ITEMS = Array.from({ length: 230 }, (_, i) => {
+  const catalog = i < 40;
+  const priced = i % 7 !== 3;
+  const quantity = (i % 5) + 1;
+  const unitCost = 100 + i;
+  return {
+    id: `ci${String(i).padStart(6, "0")}`,
+    name: `Line ${i}`,
+    description: null,
+    quantity,
+    unitCost,
+    unitPrice: priced ? unitCost * 1.4 : null,
+    cost: quantity * unitCost,
+    price: priced ? quantity * unitCost * 1.4 : null,
+    isSelected: true,
+    createdAt: "2026-05-01T00:00:00Z",
+    costGroup: catalog
+      ? i < 20
+        ? { id: "cgModel398", name: "i 398" }
+        : { id: "cgModelAge", name: "Age in Place - 498-A-1" }
+      : { id: `cgJob${(i % 3) + 1}`, name: "Budget" },
+    job: catalog ? null : { id: `job0000000${(i % 3) + 1}` },
+    costCode: { id: `cc${i % 4}`, name: ["Design", "Permits", "Foundation", "Framing"][i % 4] },
+    costType: { id: `ct${i % 2}`, name: i % 2 ? "Labor" : "Materials" },
+  };
+});
+
+export const TASKS = JOBS.flatMap((j, n) =>
+  JOB_DETAIL_TASKS.map((t) => ({
+    id: `${t.id}-${n}`,
+    name: t.name,
+    startDate: t.startDate,
+    endDate: t.endDate,
+    progress: t.completed ? 1 : 0.5,
+    completed: t.completed,
+    isGroup: !t.name.includes("Checklist"),
+    isToDo: t.name.includes("Checklist"),
+    createdAt: "2026-03-01T00:00:00Z",
+    job: { id: j.id },
+  })),
+);
+
+export const ACCOUNTS = [
+  ...JOBS.map((j) => ({
+    id: j.location.account.id,
+    name: j.location.account.name,
+    type: "customer",
+    createdAt: "2026-02-01T00:00:00Z",
+    customFieldValues: j.location.account.customFieldValues,
+  })),
+  {
+    id: "acctVendor1",
+    name: "Test Lumber Co",
+    type: "vendor",
+    createdAt: "2026-01-01T00:00:00Z",
+    customFieldValues: cf([["cfVendor001", 4]]),
+  },
+];
+
+export const MEMBERSHIPS = [
+  {
+    id: "mem1",
+    createdAt: "2026-01-01T00:00:00Z",
+    user: { id: "u1", name: "Pat Planner" },
+    role: { id: "r1", name: "Admin" },
+  },
+  {
+    id: "mem2",
+    createdAt: "2026-01-01T00:00:00Z",
+    user: { id: "u2", name: "Sam Site" },
+    role: { id: "r2", name: "Field" },
+  },
+];
+
+export const CONTACTS = JOBS.map((j, n) => ({
+  id: `contact${n + 1}`,
+  name: `Contact ${n + 1}`,
+  title: "Homeowner",
+  createdAt: "2026-02-01T00:00:00Z",
+  account: { id: j.location.account.id },
+  customFieldValues: { nodes: [] },
+}));
+
+export const DAILY_LOGS = [
+  {
+    id: "dl1",
+    date: "2026-06-01",
+    notes: "Site walk",
+    createdAt: "2026-06-01T00:00:00Z",
+    job: { id: "job00000001" },
+    user: { id: "u2" },
+  },
+];
+
+export const FILES = JOB_DETAIL_FILES.map((f) => ({
+  ...f,
+  size: 1024,
+  job: { id: "job00000001" },
+}));
+
 export type FakePaveOptions = {
   /** Respond 413 when a page is larger than this. */
   maxPageSize?: number;
   /** Status codes to return (in order) before succeeding. */
   failFirst?: number[];
   jobs?: typeof JOBS;
+  /** Fields that answer `The field "x" does not exist` (as JobTread does for unknown fields). */
+  missingFields?: string[];
+  /** Fail requests for this connection once the given offset is reached (status code). */
+  failAt?: { connection: string; offset: number; status: number; times?: number };
+  /** Replace a connection's records (e.g. to simulate deletions or an empty response). */
+  records?: Record<string, Array<Record<string, unknown>>>;
 };
 
 export type FakePaveLog = { bodies: string[]; calls: number };
@@ -392,8 +502,28 @@ export function createFixtureFetcher(
       nodes?: unknown;
     };
     const connection = conn._ ?? key;
+    const missing = (options.missingFields ?? []).find(
+      (f) => conn.nodes && f in (conn.nodes as Record<string, unknown>),
+    );
+    if (missing)
+      return {
+        status: 400,
+        text: JSON.stringify({ message: `The field "${missing}" does not exist` }),
+      };
+    const offset = conn.$?.page ? Number(conn.$.page) : 0;
+    const failAt = options.failAt;
+    if (
+      failAt &&
+      failAt.connection === connection &&
+      offset >= failAt.offset &&
+      (failAt.times ?? Infinity) > 0
+    ) {
+      failAt.times = (failAt.times ?? Infinity) - 1;
+      return { status: failAt.status, text: JSON.stringify({ message: `fake ${failAt.status}` }) };
+    }
     const all: Array<Record<string, unknown>> =
-      connection === "customFields"
+      options.records?.[connection] ??
+      (connection === "customFields"
         ? CUSTOM_FIELDS
         : connection === "jobs"
           ? jobs
@@ -401,7 +531,7 @@ export function createFixtureFetcher(
             ? COST_GROUPS
             : connection === "documents"
               ? DOCUMENTS
-              : [];
+              : (EXTRA_CONNECTIONS[connection] ?? []));
     if (conn.count && !conn.nodes) {
       // `where: [[field], "!=", null]` → populated count; no filter → total.
       const where = conn.$?.where as [string[], string, unknown] | undefined;
@@ -415,7 +545,7 @@ export function createFixtureFetcher(
     }
     const size = conn.$?.size ?? 20;
     if (options.maxPageSize && size > options.maxPageSize) return { status: 413, text: "{}" };
-    const start = conn.$?.page ? Number(conn.$.page) : 0;
+    const start = offset;
     const nodes = all.slice(start, start + size);
     const nextPage = start + size < all.length ? String(start + size) : null;
     return {
@@ -424,6 +554,18 @@ export function createFixtureFetcher(
     };
   };
 }
+
+const EXTRA_CONNECTIONS: Record<string, Array<Record<string, unknown>>> = {
+  costItems: COST_ITEMS,
+  tasks: TASKS,
+  accounts: ACCOUNTS,
+  memberships: MEMBERSHIPS,
+  contacts: CONTACTS,
+  dailyLogs: DAILY_LOGS,
+  files: FILES,
+  payments: [],
+  timeEntries: [],
+};
 
 export function isJobTreadFixtureEnabled(): boolean {
   return (
