@@ -25,7 +25,16 @@ import {
   type CostItemCacheRow,
 } from "./cost-items";
 import { applyValueMappings, listValueMappings } from "./mappings";
+import {
+  aggregateCalcNumber,
+  applyCalculations,
+  isCalcCatalog,
+  type CalcCatalog,
+} from "./calculations";
+import { buildGroupTree, type GroupColumn } from "./grouping";
+import { catalogFor } from "./metrics";
 import { attachRelated, relationshipsFrom } from "./relationships";
+import { ID_FIELDS, isRelCatalog } from "./report-relationships";
 import { SOURCE_REGISTRY } from "./sources";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
 import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
@@ -45,10 +54,10 @@ import {
   sortRows,
   type CellValue,
   type Row,
+  type RunMetric,
 } from "./compute";
 import {
   fieldOnSource,
-  getFieldCatalog,
   invalidateFieldCatalog,
   resolveField,
   type FieldCatalog,
@@ -74,6 +83,8 @@ import type {
 } from "./spec";
 
 const MAX_TABLE_ROWS = 1000;
+/** Grouped tables send their records with the groups (lazy UI); capped for the browser. */
+const MAX_GROUPED_ROWS = 5000;
 
 type JobCacheRow = {
   id: string;
@@ -243,6 +254,16 @@ type DataCache = {
   models?: Row[];
   items?: Row[];
   commissions?: Map<string, Row[]>;
+  /** Rows with rollups and row calculations applied, per source (+ rule set). */
+  enriched?: Map<string, Row[]>;
+  /** Jobs and models with related fields attached. */
+  jobsRelated?: Row[];
+  modelsRelated?: Row[];
+  /** Lookup join health per relationship id. */
+  joinStats?: Map<
+    string,
+    { label: string; from: ReportSource; to: ReportSource; linked: number; matched: number }
+  >;
   syncedAt: string | null;
 };
 
@@ -280,15 +301,43 @@ async function withRelatedFields(
   cache: DataCache,
 ): Promise<Row[]> {
   let out = rows;
-  for (const rel of relationshipsFrom(source)) {
-    const keys = [...catalog.related[source].values()]
-      .filter((f) => f.relationship === rel.id)
-      .map((f) => f.key);
-    if (!keys.length) continue;
-    const targets = rel.to === "jobs" ? await loadJobs(catalog, cache) : [];
-    out = attachRelated(out, rel, new Map(targets.map((t) => [t.id, t])), keys);
+  const byRelationship = new Map<string, string[]>();
+  for (const f of catalog.related[source].values())
+    byRelationship.set(f.relationship, [...(byRelationship.get(f.relationship) ?? []), f.key]);
+  for (const [id, keys] of byRelationship) {
+    const rel = isRelCatalog(catalog)
+      ? catalog.lookupDefs.get(id)
+      : relationshipsFrom(source).find((r) => r.id === id);
+    if (!rel || rel.from !== source) continue;
+    const targets = await loadRawSource(rel.to, catalog, cache);
+    const index = new Map(targets.map((t) => [t.id, t]));
+    out = attachRelated(out, rel, index, keys);
+    // Join health: how many linked rows found their related record (surfaced as an issue).
+    let linked = 0;
+    let matched = 0;
+    for (const r of rows) {
+      const v = r[rel.key];
+      if (typeof v !== "string" || !v) continue;
+      linked++;
+      if (index.has(v)) matched++;
+    }
+    cache.joinStats ??= new Map();
+    cache.joinStats.set(id, { label: rel.label, from: source, to: rel.to, linked, matched });
   }
   return out;
+}
+
+/** Rows of a source without related fields or calculations (lookup targets). */
+async function loadRawSource(
+  source: ReportSource,
+  catalog: FieldCatalog,
+  cache: DataCache,
+): Promise<Row[]> {
+  if (source === "jobs") return loadJobs(catalog, cache);
+  const context = await loadCatalogContext();
+  if (source === "catalog_models") return context.modelRows;
+  if (source === "cost_items") return context.items();
+  return [];
 }
 
 /** Commission rows for a rule set: JobTread jobs + documents × Baxter rates/assignments. */
@@ -350,13 +399,56 @@ async function loadCommissions(
   return rows;
 }
 
+/**
+ * Source rows with approved related fields, rollups, and row calculations applied.
+ * Cached per execution; never adds or drops records.
+ */
 async function loadSource(
   ds: Pick<DatasetSpec, "source" | "ruleSet">,
   catalog: FieldCatalog,
   cache: DataCache,
 ): Promise<Row[]> {
-  if (ds.source === "jobs") return loadJobs(catalog, cache);
-  if (ds.source === "commissions") return loadCommissions(ds.ruleSet ?? "", catalog, cache);
+  const base = await loadBaseSource(ds, catalog, cache);
+  if (!isCalcCatalog(catalog) || !catalog.calcOrder[ds.source].length) return base;
+  cache.enriched ??= new Map();
+  const key = `${ds.source}|${ds.ruleSet ?? ""}`;
+  const hit = cache.enriched.get(key);
+  if (hit) return hit;
+  const rows = await applyCalculations(catalog, ds.source, base, (source, ruleSet) =>
+    loadSource({ source, ruleSet }, catalog, cache),
+  );
+  cache.enriched.set(key, rows);
+  return rows;
+}
+
+async function loadBaseSource(
+  ds: Pick<DatasetSpec, "source" | "ruleSet">,
+  catalog: FieldCatalog,
+  cache: DataCache,
+): Promise<Row[]> {
+  if (ds.source === "jobs") {
+    cache.jobsRelated ??= await withRelatedFields(
+      "jobs",
+      await loadJobs(catalog, cache),
+      catalog,
+      cache,
+    );
+    return cache.jobsRelated;
+  }
+  if (ds.source === "commissions") {
+    const key = `related|${ds.ruleSet ?? ""}`;
+    cache.commissions ??= new Map();
+    const hit = cache.commissions.get(key);
+    if (hit) return hit;
+    const rows = await withRelatedFields(
+      "commissions",
+      await loadCommissions(ds.ruleSet ?? "", catalog, cache),
+      catalog,
+      cache,
+    );
+    cache.commissions.set(key, rows);
+    return rows;
+  }
   if (ds.source === "cost_items") {
     if (!cache.items) {
       const items = (await loadCatalogContext()).items();
@@ -368,7 +460,8 @@ async function loadSource(
     const c = await loadCatalogContext();
     cache.models = c.modelRows;
   }
-  return cache.models;
+  cache.modelsRelated ??= await withRelatedFields("catalog_models", cache.models, catalog, cache);
+  return cache.modelsRelated;
 }
 
 /**
@@ -459,8 +552,12 @@ export function loadCatalogContext() {
 }
 
 /** Authorized-agnostic source rows (callers apply field access). Used by Dexter's tools. */
-export async function loadSourceRows(source: DatasetSpec["source"], ruleSet?: string) {
-  const catalog = await getFieldCatalog();
+export async function loadSourceRows(
+  source: DatasetSpec["source"],
+  ruleSet?: string,
+  spec?: Partial<Pick<ReportSpec, "calculations" | "relationships">>,
+) {
+  const catalog = await catalogFor(spec);
   const rows = await loadSource({ source, ruleSet }, catalog, { syncedAt: null });
   return { catalog, rows };
 }
@@ -542,7 +639,90 @@ function requireField(ctx: Ctx, ref: string): { key: string; def: FieldDef } {
 }
 
 function canonicalConditions(ctx: Ctx, conds: Condition[]): Condition[] {
-  return conds.map((c) => ({ ...c, field: requireField(ctx, c.field).key }));
+  return conds.map((c) => ({ ...c, field: rowField(ctx, c.field, "filter by").key }));
+}
+
+/** A field that has a value on every record (not an aggregate calculation). */
+function rowField(ctx: Ctx, ref: string, use: string): { key: string; def: FieldDef } {
+  const f = requireField(ctx, ref);
+  if (f.def.calc?.basis === "aggregate")
+    throw new RefError(
+      `Can't ${use} ${f.def.label}: it's an aggregate calculation (one value per group). Use a row calculation for per-record values.`,
+      false,
+    );
+  return f;
+}
+
+/**
+ * A metric ready to aggregate. Aggregate calculations are evaluated as formulas over the
+ * records (whatever op was given), so weighted ratios are never summed or averaged.
+ */
+function runMetric(ctx: Ctx, m: Metric): RunMetric {
+  if (!m.field) {
+    if (m.op === "formula") throw new RefError(`"formula" metrics need a calc:* field.`, false);
+    return m;
+  }
+  const f = requireField(ctx, m.field);
+  if (f.def.calc?.basis === "aggregate") {
+    const catalog = ctx.catalog as CalcCatalog;
+    return {
+      ...m,
+      op: "formula",
+      field: f.key,
+      evaluate: (rows) => aggregateCalcNumber(catalog, f.key, rows),
+    };
+  }
+  if (m.op === "formula")
+    throw new RefError(
+      `${f.def.label} has a value per record; use sum, avg, min, max, or count with it ("formula" is for aggregate calculations).`,
+      false,
+    );
+  return { ...m, field: f.key };
+}
+
+/** The metric a KPI or chart shows: the viewer's metric picker choice, else its own. */
+function viewMetric(ctx: Ctx, widgetId: string, fallback: Metric): Metric {
+  for (const c of ctx.spec.controls) {
+    if (c.kind !== "metric_picker" || !c.widgets.includes(widgetId)) continue;
+    const raw = ctx.state[c.id];
+    const idx = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : c.default;
+    const option = c.options[idx] ?? c.options[c.default];
+    if (option) return option.metric;
+  }
+  return fallback;
+}
+
+/** The viewer's grouping for a widget (group_by control), or null to use the widget's own. */
+function viewGroupLevels(ctx: Ctx, widgetId: string): string[] | null {
+  for (const c of ctx.spec.controls) {
+    if (c.kind !== "group_by" || !c.widgets.includes(widgetId)) continue;
+    const raw = ctx.state[c.id];
+    const chosen = (Array.isArray(raw) ? raw : raw ? [raw] : c.default)
+      .filter((v): v is string => typeof v === "string" && c.options.includes(v))
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .slice(0, c.maxLevels);
+    if (Array.isArray(raw) && raw.length === 0) return [];
+    return chosen.length ? chosen : null;
+  }
+  return null;
+}
+
+/** "Formula: …" text of a calculated field (provenance). */
+function calcFormula(ctx: Ctx, key: string): string {
+  const c = isCalcCatalog(ctx.catalog) ? ctx.catalog.calcs.get(key) : undefined;
+  return c ? (c.spec.formula ?? c.def.origin) : key;
+}
+
+/** The viewer's sort for a widget (sort control), or null. */
+function viewSort(ctx: Ctx, widgetId: string): { field: string; dir: "asc" | "desc" } | null {
+  for (const c of ctx.spec.controls) {
+    if (c.kind !== "sort" || !c.widgets.includes(widgetId)) continue;
+    const raw = ctx.state[c.id];
+    if (Array.isArray(raw) && typeof raw[0] === "string" && c.options.includes(raw[0]))
+      return { field: raw[0], dir: raw[1] === "asc" ? "asc" : "desc" };
+    return c.default ?? null;
+  }
+  return null;
 }
 
 function describeCondition(ctx: Ctx, c: Condition): string {
@@ -575,7 +755,7 @@ async function datasetRows(ctx: Ctx, datasetId: string, applied: string[]): Prom
   rows = filterRows(rows, canonicalConditions(ctx, ds.filters));
   ds.filters.forEach((f) => applied.push(describeCondition(ctx, f)));
   for (const control of ctx.spec.controls) {
-    if (control.kind === "job_picker" || !control.datasets.includes(datasetId)) continue;
+    if (!("datasets" in control) || !control.datasets.includes(datasetId)) continue;
     const value = ctx.state[control.id];
     if (control.kind === "select") {
       const selected = (Array.isArray(value) ? value : value ? [value] : control.default).filter(
@@ -617,6 +797,7 @@ function metricLabel(ctx: Ctx, m: Metric): string {
   if (m.op === "count") return "Count";
   const f = m.field ? resolveField(ctx.catalog, m.field) : null;
   const name = f && f.ok ? f.def.label : (m.field ?? "");
+  if (m.op === "formula" || (f && f.ok && f.def.calc?.basis === "aggregate")) return name;
   const ops: Record<string, string> = {
     sum: "Total",
     avg: "Average",
@@ -630,6 +811,7 @@ function metricLabel(ctx: Ctx, m: Metric): string {
 
 function metricType(ctx: Ctx, m: Metric): FieldDef["type"] | "count" {
   if (m.op === "count" || m.op === "count_distinct" || !m.field) return "count";
+
   const f = resolveField(ctx.catalog, m.field);
   return f.ok ? f.def.type : "number";
 }
@@ -737,27 +919,25 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
       };
     }
     case "kpi": {
-      if (w.metric.field) requireField(ctx, w.metric.field);
+      const wm = viewMetric(ctx, w.id, w.metric);
+      const metric = runMetric(ctx, wm);
       const rows = filterRows(
         await datasetRows(ctx, w.dataset, filtersApplied),
         canonicalConditions(ctx, w.filters),
       );
       w.filters.forEach((f) => filtersApplied.push(describeCondition(ctx, f)));
-      const metric = {
-        ...w.metric,
-        field: w.metric.field ? requireField(ctx, w.metric.field).key : undefined,
-      };
       const agg = aggregate(rows, metric);
       return {
         id: w.id,
         kind: "kpi",
-        status: rows.length === 0 && w.metric.op !== "count" ? "empty" : "ok",
+        status: rows.length === 0 && wm.op !== "count" ? "empty" : "ok",
         value: agg.value,
-        fieldType: metricType(ctx, w.metric),
+        fieldType: metricType(ctx, wm),
+        ...(wm !== w.metric ? { label: metricLabel(ctx, wm) } : {}),
         provenance: provenance(ctx, {
-          fields: w.metric.field ? [w.metric.field] : [],
+          fields: wm.field ? [wm.field] : [],
           filters: filtersApplied,
-          calculation: `${metricLabel(ctx, w.metric)} across ${rows.length} record${rows.length === 1 ? "" : "s"}${agg.blank ? ` (${agg.blank} blank, excluded)` : ""}`,
+          calculation: `${metricLabel(ctx, wm)} across ${rows.length} record${rows.length === 1 ? "" : "s"}${metric.evaluate ? ` (${calcFormula(ctx, metric.field!)})` : ""}${agg.blank ? ` (${agg.blank} blank, excluded)` : ""}`,
           rows: rows.length,
           withValue: agg.counted,
         }),
@@ -823,12 +1003,13 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
           }),
         };
       }
-      const g = requireField(ctx, w.groupBy!);
-      const s = w.seriesBy ? requireField(ctx, w.seriesBy) : null;
-      const metric = {
-        ...w.metric,
-        field: w.metric.field ? requireField(ctx, w.metric.field).key : undefined,
-      };
+      const levels = viewGroupLevels(ctx, w.id);
+      const groupRef = levels?.[0] ?? w.groupBy!;
+      const g = rowField(ctx, groupRef, "group by");
+      const s = w.seriesBy ? rowField(ctx, w.seriesBy, "split by") : null;
+      const wm = viewMetric(ctx, w.id, w.metric);
+      const sortCtl = viewSort(ctx, w.id);
+      const metric = runMetric(ctx, wm);
       const chronological = g.def.type === "date";
       const series = computeSeries({
         rows,
@@ -836,7 +1017,13 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         seriesBy: s?.key,
         metric,
         bucket: chronological ? (w.bucket ?? "month") : undefined,
-        sort: w.sort,
+        sort: sortCtl
+          ? sortCtl.field === groupRef
+            ? "label"
+            : sortCtl.dir === "asc"
+              ? "value_asc"
+              : "value_desc"
+          : w.sort,
         limit: w.limit,
         chronological,
       });
@@ -844,30 +1031,35 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
       if (series.multiValueNote)
         notes.push(`Some records have several ${g.def.label} values and are counted under each.`);
       // Sums/averages use records that have a value; say so when some don't.
-      if (metric.field && metric.op !== "count" && metric.op !== "count_distinct") {
+      if (
+        metric.field &&
+        !metric.evaluate &&
+        metric.op !== "count" &&
+        metric.op !== "count_distinct"
+      ) {
         const blank = rows.filter((r) => isBlank(r[metric.field!])).length;
         if (blank)
           notes.push(
-            `${blank} of ${rows.length} records have no ${requireField(ctx, w.metric.field!).def.label} value and aren't included in the totals.`,
+            `${blank} of ${rows.length} records have no ${requireField(ctx, wm.field!).def.label} value and aren't included in the totals.`,
           );
       }
+      if (metric.evaluate)
+        notes.push(
+          `Each point re-evaluates ${calcFormula(ctx, metric.field!)} over that group's records (weighted, not an average of per-record values).`,
+        );
       return {
         id: w.id,
         kind: "chart",
         status: series.points.length ? "ok" : "empty",
         points: series.points,
         seriesKeys: series.seriesKeys,
-        valueType: metricType(ctx, w.metric),
+        valueType: metricType(ctx, wm),
         groupLabel: g.def.label,
-        metricLabel: metricLabel(ctx, w.metric),
+        metricLabel: metricLabel(ctx, wm),
         provenance: provenance(ctx, {
-          fields: [
-            w.groupBy!,
-            ...(w.seriesBy ? [w.seriesBy] : []),
-            ...(w.metric.field ? [w.metric.field] : []),
-          ],
+          fields: [groupRef, ...(w.seriesBy ? [w.seriesBy] : []), ...(wm.field ? [wm.field] : [])],
           filters: filtersApplied,
-          calculation: `${metricLabel(ctx, w.metric)} grouped by ${g.def.label}${s ? ` and ${s.def.label}` : ""}`,
+          calculation: `${metricLabel(ctx, wm)} grouped by ${g.def.label}${s ? ` and ${s.def.label}` : ""}`,
           rows: rows.length,
           notes,
         }),
@@ -898,10 +1090,35 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         );
       }
       const visibleKeys = new Set(columns.map((x) => x.f.key));
-      const sort = w.sort.flatMap((s) => {
+      const sortCtl = viewSort(ctx, w.id);
+      let groupSort: { key: string; dir: "asc" | "desc" } | undefined;
+      let sort = w.sort.flatMap((s) => {
         const r = resolveField(ctx.catalog, s.field);
         return r.ok && visibleKeys.has(r.key) ? [{ field: r.key, dir: s.dir }] : [];
       });
+      if (sortCtl) {
+        const r = resolveField(ctx.catalog, sortCtl.field);
+        if (r.ok && canSeeField(ctx.access, r.def)) {
+          groupSort = { key: r.key, dir: sortCtl.dir };
+          if (r.def.calc?.basis !== "aggregate") sort = [{ field: r.key, dir: sortCtl.dir }];
+        }
+      }
+      const levelRefs = viewGroupLevels(ctx, w.id) ?? w.groupLevels;
+      const levels = levelRefs.flatMap((ref) => {
+        try {
+          const f = rowField(ctx, ref, "group by");
+          return canSeeField(ctx.access, f.def) ? [{ key: f.key, label: f.def.label }] : [];
+        } catch (error) {
+          if (!(error instanceof RefError)) throw error;
+          missing.push(error.message);
+          return [];
+        }
+      });
+      const aggregateCols = new Map(
+        columns
+          .filter((x) => x.f.def.calc?.basis === "aggregate")
+          .map((x) => [x.f.key, runMetric(ctx, { op: "formula", field: x.c.field })] as const),
+      );
       const highlight = w.highlight.flatMap((h) => {
         const r = resolveField(ctx.catalog, h.field);
         return r.ok && canSeeField(ctx.access, r.def) ? [{ ...h, field: r.key }] : [];
@@ -911,11 +1128,26 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         canonicalConditions(ctx, w.filters),
       );
       w.filters.forEach((f) => filtersApplied.push(describeCondition(ctx, f)));
-      if (w.groupBy) {
+      if (w.groupBy && !levels.length) {
         const gb = resolveField(ctx.catalog, w.groupBy);
         if (gb.ok && canSeeField(ctx.access, gb.def)) sort.unshift({ field: gb.key, dir: "asc" });
       }
       rows = sortRows(rows, sort);
+      const groupColumns: GroupColumn[] = columns.map(({ c, f }) => {
+        const agg = aggregateCols.get(f.key);
+        if (agg) return { key: f.key, mode: "formula", evaluate: (rs) => agg.evaluate!(rs) };
+        if (c.aggregate !== "auto") return { key: f.key, mode: c.aggregate };
+        return {
+          key: f.key,
+          mode: ["currency", "number", "sqft"].includes(f.def.type) ? "sum" : "none",
+        };
+      });
+      const tree =
+        levels.length && !w.summarize
+          ? buildGroupTree(rows, levels, groupColumns, { sort: groupSort })
+          : null;
+      if (tree) rows = tree.orderedRows;
+      const totalRecords = tree ? rows.length : null;
       const isJobs =
         !w.summarize && ctx.spec.datasets.find((d) => d.id === w.dataset)?.source === "jobs";
       const summary = w.summarize
@@ -946,25 +1178,60 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
           origin: "Count of records in the row's group",
         });
       const cellKeys = [...columns.map(({ f }) => f.key), ...(summary ? [SUMMARY_COUNT] : [])];
+      const cell = (r: Row, k: string): CellValue => {
+        const agg = aggregateCols.get(k);
+        return agg ? agg.evaluate!([r]) : (r[k] ?? null);
+      };
+      const notes: string[] = [];
+      if (tree?.truncated)
+        notes.push("Showing the first groups only; filter the report to see the rest.");
+      if (tree && Object.keys(tree.totalsIncomplete).length)
+        notes.push(
+          "Some records have no value for a totaled column; they're left out of that total.",
+        );
+      if (tree && groupColumns.some((g) => g.mode === "formula"))
+        notes.push(
+          "Calculated ratios in group rows are recomputed from each group's records (weighted), not added up.",
+        );
+      if (
+        levels.length &&
+        rows.some((r) =>
+          levels.some((l) => Array.isArray(r[l.key]) && (r[l.key] as string[]).length > 1),
+        )
+      )
+        notes.push(
+          "Records with several values in a grouping field appear under each value; the grand total counts them once.",
+        );
       return {
         id: w.id,
         kind: "table",
         status: rows.length ? "ok" : "empty",
         columns: meta,
-        rows: rows.slice(0, MAX_TABLE_ROWS).map((r) => ({
+        ...(tree
+          ? {
+              groups: tree.groups,
+              groupLevels: levels,
+              totals: w.grandTotal ? tree.totals : undefined,
+              totalsIncomplete: w.grandTotal ? tree.totalsIncomplete : undefined,
+              expandDepth: w.expandDepth,
+            }
+          : {}),
+        sortedBy: groupSort ?? null,
+        rows: rows.slice(0, tree ? MAX_GROUPED_ROWS : MAX_TABLE_ROWS).map((r) => ({
           id: r.id,
-          cells: Object.fromEntries(cellKeys.map((k) => [k, r[k] ?? null])),
+          cells: Object.fromEntries(cellKeys.map((k) => [k, cell(r, k)])),
           tone: highlight.find((h) =>
             matchesCondition(r[h.field], { field: h.field, op: h.op, value: h.value }),
           )?.tone,
           jobtreadUrl: isJobs ? jobTreadJobUrl(r.id) : undefined,
         })),
-        totalRows: rows.length,
-        truncated: rows.length > MAX_TABLE_ROWS,
+        totalRows: totalRecords ?? rows.length,
+        truncated: rows.length > (tree ? MAX_GROUPED_ROWS : MAX_TABLE_ROWS),
         message:
           [
             hidden.length ? `${hidden.length} column(s) hidden by your access level.` : null,
             ...(summary?.notes ?? []),
+            ...notes,
             ...missing.map((m) => `Column skipped: ${m}`),
           ]
             .filter(Boolean)
@@ -972,7 +1239,9 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         provenance: provenance(ctx, {
           fields: columns.map((x) => x.c.field),
           filters: filtersApplied,
-          calculation: "One row per record",
+          calculation: levels.length
+            ? `Grouped by ${levels.map((l) => l.label).join(" → ")}; subtotals from each group's records`
+            : "One row per record",
           rows: rows.length,
         }),
       };
@@ -1217,6 +1486,59 @@ async function controlOptions(ctx: Ctx, control: ControlSpec): Promise<ControlOp
     const v = ctx.state[control.id];
     return { kind: "search", id: control.id, value: typeof v === "string" ? v : "" };
   }
+  if (control.kind === "group_by" || control.kind === "sort") {
+    // Only fields this viewer may see are offered.
+    const options = control.options.flatMap((ref) => {
+      const r = resolveField(ctx.catalog, ref);
+      if (!r.ok || !canSeeField(ctx.access, r.def)) return [];
+      if (control.kind === "group_by" && r.def.calc?.basis === "aggregate") return [];
+      return [{ value: ref, label: r.def.label }];
+    });
+    const allowed = new Set(options.map((o) => o.value));
+    if (control.kind === "group_by") {
+      const widget = ctx.spec.widgets.find((w) => w.id === control.widgets[0]);
+      const own =
+        widget?.type === "table"
+          ? widget.groupLevels
+          : widget?.type === "chart" && widget.groupBy
+            ? [widget.groupBy]
+            : [];
+      const selected = (viewGroupLevels(ctx, control.widgets[0]!) ?? own).filter((v) =>
+        allowed.has(v),
+      );
+      return {
+        kind: "group_by",
+        id: control.id,
+        options,
+        selected,
+        maxLevels: control.maxLevels,
+      };
+    }
+    const sel = viewSort(ctx, control.widgets[0]!);
+    return {
+      kind: "sort",
+      id: control.id,
+      options,
+      selected: sel && allowed.has(sel.field) ? sel : null,
+    };
+  }
+  if (control.kind === "metric_picker") {
+    const options = control.options.flatMap((o, i) => {
+      if (o.metric.field) {
+        const r = resolveField(ctx.catalog, o.metric.field);
+        if (!r.ok || !canSeeField(ctx.access, r.def)) return [];
+      }
+      return [{ value: String(i), label: o.label }];
+    });
+    const raw = ctx.state[control.id];
+    const selected =
+      typeof raw === "string" && options.some((o) => o.value === raw)
+        ? raw
+        : (options.find((o) => o.value === String(control.default))?.value ??
+          options[0]?.value ??
+          "");
+    return { kind: "metric_picker", id: control.id, options, selected };
+  }
   if (control.kind === "number_range") {
     const v = ctx.state[control.id];
     let min: number | null = null;
@@ -1273,7 +1595,7 @@ export async function executeReport(input: {
 }): Promise<ExecutionResult> {
   const started = Date.now();
   const lastSync = await ensureJobTreadData();
-  const catalog = await getFieldCatalog();
+  const catalog = await catalogFor(input.spec);
   const ctx: Ctx = {
     spec: input.spec,
     catalog,
@@ -1303,6 +1625,11 @@ export async function executeReport(input: {
       widgets[w.id] = failed(w, error);
     }
   }
+  for (const s of ctx.data.joinStats?.values() ?? [])
+    if (s.linked && s.matched / s.linked < 0.9)
+      ctx.issues.push(
+        `${s.label}: only ${s.matched} of ${s.linked} ${s.from} records with a key found their ${s.to} record; related values are blank for the rest. Check the join with Dexter (reports_relationship_check) or sync the related data.`,
+      );
   if (!lastSync)
     ctx.issues.push(
       "JobTread data hasn't been synced yet. An administrator can run a sync from Reports → Data settings.",
@@ -1339,7 +1666,7 @@ export async function drilldown(input: {
   total: number;
   title: string;
 }> {
-  const catalog = await getFieldCatalog();
+  const catalog = await catalogFor(input.spec);
   const ctx: Ctx = {
     spec: input.spec,
     catalog,
@@ -1408,14 +1735,55 @@ export async function drilldown(input: {
 }
 
 /** Field existence + access problems for a spec, used when saving (Dexter and manual edits). */
+/**
+ * Data check for a report relationship whose key isn't a declared id field: most of its values
+ * must be ids of the related source's records. Name-like keys fail here instead of silently
+ * joining the wrong records.
+ */
+async function verifyJoinKey(
+  r: ReportSpec["relationships"][number],
+  catalog: FieldCatalog,
+): Promise<string | null> {
+  const [keySource, idSource, key] =
+    r.kind === "lookup" ? [r.from, r.to, r.key] : [r.child, r.parent, r.childKey];
+  const k = resolveField(catalog, key);
+  if (!k.ok || ID_FIELDS[k.key] === idSource) return null;
+  if (keySource === "commissions" || idSource === "commissions") return null; // needs a rule set
+  const cache: DataCache = { syncedAt: null };
+  const [rows, ids] = await Promise.all([
+    loadRawSource(keySource, catalog, cache),
+    loadRawSource(idSource, catalog, cache),
+  ]);
+  const idSet = new Set(ids.map((x) => x.id));
+  const values = rows.map((x) => x[k.key]).filter((v): v is string => typeof v === "string" && !!v);
+  if (!values.length) return `Relationship "${r.label}": ${k.def.label} has no values to join on.`;
+  const rate = values.filter((v) => idSet.has(v)).length / values.length;
+  return rate >= 0.9
+    ? null
+    : `Relationship "${r.label}": only ${Math.round(rate * 100)}% of ${k.def.label} values are ${idSource} ids, so it isn't a stable key (names or other text don't qualify). Use reports_relationship_discover to find the id field, or ask how the records should be linked.`;
+}
+
 export async function checkSpecFields(
   spec: ReportSpec,
   access: ReportsAccess,
   refs: string[],
 ): Promise<{ missing: string[]; restricted: string[] }> {
-  const catalog = await getFieldCatalog();
+  const catalog = await catalogFor(spec);
   const missing: string[] = [];
   const restricted: string[] = [];
+  // The report's own relationships and calculations must compile even when unused.
+  for (const r of spec.relationships) {
+    const error = catalog.relationshipErrors.get(r.id);
+    if (error) missing.push(error);
+    else {
+      const problem = await verifyJoinKey(r, catalog);
+      if (problem) missing.push(problem);
+    }
+  }
+  for (const c of spec.calculations) {
+    const error = catalog.calcErrors.get(`calc:${c.key}`);
+    if (error) missing.push(error);
+  }
   for (const ref of refs) {
     const r = resolveField(catalog, ref);
     if (!r.ok) missing.push(`${ref}: ${r.reason}`);
@@ -1435,6 +1803,29 @@ export async function checkSpecFields(
     if (!r.ok) continue;
     const on = fieldOnSource(catalog, source, { ...r.def, key: r.key });
     if (!on.ok) missing.push(`${ref} (dataset "${dataset}"): ${on.reason}`);
+  }
+  // Aggregate calculations have one value per group: never a filter, grouping, or row sort.
+  const rowOnly = new Set<string>();
+  for (const d of spec.datasets) d.filters.forEach((f) => rowOnly.add(f.field));
+  for (const c of spec.controls)
+    if (c.kind === "select" || c.kind === "number_range" || c.kind === "date_range")
+      rowOnly.add(c.field);
+    else if (c.kind === "search") c.fields.forEach((f) => rowOnly.add(f));
+    else if (c.kind === "group_by") c.options.forEach((f) => rowOnly.add(f));
+  for (const w of spec.widgets) {
+    if ("filters" in w) w.filters.forEach((f) => rowOnly.add(f.field));
+    if (w.type === "chart") [w.groupBy, w.seriesBy, w.x, w.y].forEach((f) => f && rowOnly.add(f));
+    if (w.type === "table") {
+      w.groupLevels.forEach((f) => rowOnly.add(f));
+      if (w.groupBy) rowOnly.add(w.groupBy);
+    }
+  }
+  for (const ref of rowOnly) {
+    const r = resolveField(catalog, ref);
+    if (r.ok && r.def.calc?.basis === "aggregate")
+      missing.push(
+        `${ref}: ${r.def.label} is an aggregate calculation (one value per group); it can be a KPI/chart metric or a table column, not a filter, grouping, or axis. Use a row calculation for per-record values.`,
+      );
   }
   return { missing, restricted };
 }

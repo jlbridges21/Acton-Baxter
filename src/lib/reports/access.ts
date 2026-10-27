@@ -62,8 +62,14 @@ export async function requireReportsAccess(requester: Requester): Promise<Report
   return access;
 }
 
-export function canSeeField(access: ReportsAccess, def: Pick<FieldDef, "category">): boolean {
-  return access.categories.has(def.category);
+export function canSeeField(
+  access: ReportsAccess,
+  def: Pick<FieldDef, "category"> & Partial<Pick<FieldDef, "requires">>,
+): boolean {
+  return (
+    access.categories.has(def.category) &&
+    (def.requires ?? []).every((c) => access.categories.has(c))
+  );
 }
 
 export const CATEGORY_LABELS: Record<FieldDef["category"], string> = {

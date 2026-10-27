@@ -353,6 +353,8 @@ describe("with a synced JobTread fixture", () => {
         title: "GP",
         description: "",
         datasets: [{ id: "j", source: "jobs", filters: [] }],
+        calculations: [],
+        relationships: [],
         controls: [],
         widgets: [
           {

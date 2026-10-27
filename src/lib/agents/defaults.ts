@@ -439,6 +439,19 @@ export const DEXTER_DATA_SYNC_TOOLS = [
   "reports_sync_enable",
 ];
 
+/** Report engineering tools (src/lib/agents/report-engine-tools.ts). */
+export const DEXTER_ENGINE_TOOLS = [
+  "reports_calculation_check",
+  "reports_metrics",
+  "reports_metric_save",
+  "reports_metric_archive",
+  "reports_relationships",
+  "reports_relationship_check",
+  "reports_relationship_discover",
+  "reports_relationship_promote",
+  "reports_relationship_approve_field",
+];
+
 export const DEXTER_TOOLS = [
   "reports_list_fields",
   "reports_preview",
@@ -455,6 +468,7 @@ export const DEXTER_TOOLS = [
   "reports_rules",
   ...DEXTER_GROUP_TOOLS,
   ...DEXTER_DATA_SYNC_TOOLS,
+  ...DEXTER_ENGINE_TOOLS,
 ];
 
 export const DEXTER_LIMITS_V1 = {

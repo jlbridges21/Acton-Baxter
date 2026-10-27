@@ -17,6 +17,7 @@ import {
   DEFAULT_DEPARTMENTS,
   DEXTER_AVATAR_PATH,
   DEXTER_DATA_SYNC_TOOLS,
+  DEXTER_ENGINE_TOOLS,
   DEXTER_GROUP_TOOLS,
   DEXTER_DEFAULT_CONFIG,
   DEXTER_LIMITS_V1,
@@ -235,6 +236,7 @@ async function runSeed(): Promise<void> {
     await addDexterGroupTools(dexter.id);
     await addDexterDataSyncTools(dexter.id);
     await addDexterSourceRegistryTool(dexter.id);
+    await addDexterEngineTools(dexter.id);
   }
   const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
   if (sam) {
@@ -431,6 +433,29 @@ async function addDexterSourceRegistryTool(dexterId: string) {
     published,
     { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
     `${DEXTER_SOURCES_MARKER}: discover report sources (cost items, models, jobs) from metadata`,
+  );
+}
+
+const DEXTER_ENGINE_MARKER = "System: Dexter reporting engine 2.0";
+
+/** One-time: enable the report-engineering tools (calculations, metrics, relationships). */
+async function addDexterEngineTools(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_ENGINE_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, ...DEXTER_ENGINE_TOOLS])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_ENGINE_MARKER}: calculated fields, Metric Library, grouping, viewer controls, and relationships`,
   );
 }
 

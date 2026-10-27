@@ -18,6 +18,7 @@ import { BAMBOOHR_TOOLS } from "./bamboohr-tools";
 import { DATA_SYNC_TOOLS } from "./data-sync-tools";
 import { OPS_TOOLS } from "./ops-tools";
 import { REPORT_GROUP_TOOLS } from "./report-group-tools";
+import { REPORT_ENGINE_TOOLS } from "./report-engine-tools";
 import { REPORT_INTEL_TOOLS } from "./report-intel-tools";
 import { REPORT_TOOLS } from "./report-tools";
 import {
@@ -324,6 +325,7 @@ export const TOOL_REGISTRY: AgentTool[] = [
   ...BAMBOOHR_TOOLS,
   ...REPORT_GROUP_TOOLS,
   ...DATA_SYNC_TOOLS,
+  ...REPORT_ENGINE_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,

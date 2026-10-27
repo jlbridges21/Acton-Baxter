@@ -27,6 +27,7 @@ import {
   type WidgetSpec,
 } from "@/lib/reports/spec";
 import type { FieldOption, FieldsResponse } from "./types";
+import { GroupByPicker } from "./view-controls";
 
 const TYPE_LABELS: Record<string, string> = {
   kpi: "KPI number",
@@ -152,6 +153,7 @@ export function AddWidgetDialog({
   const [groupBy, setGroupBy] = useState("");
   const [seriesBy, setSeriesBy] = useState("");
   const [columns, setColumns] = useState<string[]>([]);
+  const [groupLevels, setGroupLevels] = useState<string[]>([]);
   const [body, setBody] = useState("");
   const [control, setControl] = useState(pickers[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -194,7 +196,13 @@ export function AddWidgetDialog({
               metric,
             };
     else if (type === "table")
-      raw = { ...base, type, dataset, columns: columns.map((field) => ({ field })) };
+      raw = {
+        ...base,
+        type,
+        dataset,
+        columns: columns.map((field) => ({ field })),
+        ...(groupLevels.length ? { groupLevels } : {}),
+      };
     else if (type === "text") raw = { ...base, type, body };
     else if (type === "data_status") raw = { ...base, type };
     else if (type === "detail")
@@ -398,6 +406,31 @@ export function AddWidgetDialog({
                 </label>
               ))}
             </div>
+          </Field>
+        ) : null}
+        {type === "table" ? (
+          <Field
+            label="Group rows by (optional)"
+            help="Nested, expandable groups with subtotals — e.g. Phase, then Project Manager, then Job. Use the arrows to change the order."
+          >
+            <GroupByPicker
+              id="wb-group-levels"
+              options={{
+                kind: "group_by",
+                id: "builder",
+                maxLevels: 4,
+                selected: groupLevels,
+                options: [...options.business, ...options.all]
+                  .filter(
+                    (f, i, all) =>
+                      !["currency", "number", "percent"].includes(f.type) &&
+                      all.findIndex((x) => x.key === f.key) === i,
+                  )
+                  .map((f) => ({ value: f.key, label: f.label })),
+              }}
+              value={groupLevels}
+              onChange={setGroupLevels}
+            />
           </Field>
         ) : null}
         {type === "text" ? (

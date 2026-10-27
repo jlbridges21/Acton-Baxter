@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ControlOptions, ControlState } from "@/lib/reports/result-types";
 import type { ControlSpec } from "@/lib/reports/spec";
+import { GroupByPicker, MetricPicker, SortPicker } from "./view-controls";
 
 const inputClass =
   "h-9 rounded-md border border-[var(--acton-border)] bg-white px-2.5 text-sm text-[var(--acton-navy)] focus-visible:ring-2 focus-visible:ring-[var(--acton-navy)] focus-visible:outline-none";
@@ -80,6 +81,27 @@ export function FilterBar({
                 value={(state[c.id] as string | undefined) ?? ""}
                 onChange={(v) => set(c.id, v || null)}
               />
+            ) : c.kind === "group_by" ? (
+              <GroupByPicker
+                id={id}
+                options={o?.kind === "group_by" ? o : undefined}
+                value={state[c.id]}
+                onChange={(v) => set(c.id, v)}
+              />
+            ) : c.kind === "sort" ? (
+              <SortPicker
+                id={id}
+                options={o?.kind === "sort" ? o : undefined}
+                value={state[c.id]}
+                onChange={(v) => set(c.id, v)}
+              />
+            ) : c.kind === "metric_picker" ? (
+              <MetricPicker
+                id={id}
+                options={o?.kind === "metric_picker" ? o : undefined}
+                value={state[c.id]}
+                onChange={(v) => set(c.id, v)}
+              />
             ) : c.kind === "number_range" ? (
               <RangeInputs
                 id={id}
@@ -118,7 +140,7 @@ export function FilterBar({
             )
           }
         >
-          <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Reset filters
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Reset to default
         </Button>
       ) : null}
     </div>

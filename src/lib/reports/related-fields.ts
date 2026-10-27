@@ -15,11 +15,14 @@ import { getFieldCatalog, invalidateFieldCatalog, resolveField } from "./fields"
 import { RELATIONSHIPS, type RelationshipId } from "./relationships";
 
 export async function getRelatedFieldsOverview() {
-  const { catalog, rows } = await loadSourceRows("cost_items");
-  const jobIds = new Set((await loadSourceRows("jobs")).rows.map((r) => r.id));
-  return Object.values(RELATIONSHIPS).map((rel) => {
+  const { catalog, rows: jobs } = await loadSourceRows("jobs");
+  const targetIds = new Set(jobs.map((r) => r.id));
+  const out = [];
+  for (const rel of Object.values(RELATIONSHIPS)) {
+    // Commission rows need a rule set to exist; their link counts are shown as unknown.
+    const rows = rel.from === "commissions" ? [] : (await loadSourceRows(rel.from)).rows;
     const linked = rows.filter((r) => typeof r[rel.key] === "string");
-    const matched = linked.filter((r) => jobIds.has(String(r[rel.key])));
+    const matched = linked.filter((r) => targetIds.has(String(r[rel.key])));
     const approved = [...catalog.related[rel.from].values()].filter(
       (f) => f.relationship === rel.id,
     );
@@ -27,7 +30,7 @@ export async function getRelatedFieldsOverview() {
     const semByRef = new Map(
       [...catalog.semantic.entries()].flatMap(([k, s]) => (s.ref ? [[s.ref, k] as const] : [])),
     );
-    return {
+    out.push({
       id: rel.id,
       from: rel.from,
       to: rel.to,
@@ -61,8 +64,9 @@ export async function getRelatedFieldsOverview() {
           category: d.category,
         }))
         .sort((a, b) => a.label.localeCompare(b.label)),
-    };
-  });
+    });
+  }
+  return out;
 }
 
 /** Approve (enabled) or remove (disabled) a related field. Defaults can be removed too. */

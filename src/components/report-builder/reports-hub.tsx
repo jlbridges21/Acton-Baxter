@@ -22,6 +22,7 @@ import {
   Sparkles,
   Users,
   X,
+  Sigma,
 } from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "@/components/ui/action-menu";
 import {
@@ -295,6 +296,12 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
             className={buttonVariants({ variant: "ghost", size: "sm" })}
           >
             <BookOpen className="h-4 w-4" aria-hidden /> Data catalog
+          </Link>
+          <Link
+            href="/reports/metrics"
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            <Sigma className="h-4 w-4" aria-hidden /> Metric Library
           </Link>
           {access?.isAdmin ? (
             <Link

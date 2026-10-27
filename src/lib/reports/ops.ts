@@ -6,7 +6,11 @@
 
 import { z } from "zod";
 import {
+  calcKey,
+  calculationSchema,
   conditionSchema,
+  relationshipKey,
+  relationshipSchema,
   controlSchema,
   datasetSchema,
   parseReportSpec,
@@ -58,6 +62,12 @@ export const reportOpSchema = z.discriminatedUnion("op", [
     changes: z.record(z.string(), z.unknown()),
   }),
   z.object({ op: z.literal("remove_control"), id: widgetId }),
+  /** Add or replace a report-specific calculated field (calc:<key>). */
+  z.object({ op: z.literal("set_calculation"), calculation: calculationSchema }),
+  z.object({ op: z.literal("remove_calculation"), key: calcKey }),
+  /** Add or replace a report-specific relationship (validated stable-id join). */
+  z.object({ op: z.literal("set_relationship"), relationship: relationshipSchema }),
+  z.object({ op: z.literal("remove_relationship"), id: relationshipKey }),
 ]);
 export type ReportOp = z.infer<typeof reportOpSchema>;
 
@@ -241,6 +251,68 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
         draft.controls = draft.controls.filter((c) => c.id !== op.id);
         summary.push(`Removed filter "${op.id}"`);
         break;
+      case "set_calculation": {
+        const idx = draft.calculations.findIndex((c) => c.key === op.calculation.key);
+        if (idx >= 0) draft.calculations[idx] = op.calculation;
+        else draft.calculations.push(op.calculation);
+        summary.push(
+          `${idx >= 0 ? "Updated" : "Added"} calculation "${op.calculation.label}" (calc:${op.calculation.key})`,
+        );
+        break;
+      }
+      case "set_relationship": {
+        const idx = draft.relationships.findIndex((r) => r.id === op.relationship.id);
+        if (idx >= 0) draft.relationships[idx] = op.relationship;
+        else draft.relationships.push(op.relationship);
+        summary.push(
+          `${idx >= 0 ? "Updated" : "Added"} relationship "${op.relationship.label}" (${op.relationship.id})`,
+        );
+        break;
+      }
+      case "remove_relationship": {
+        if (
+          !need(
+            draft.relationships.some((r) => r.id === op.id),
+            `Relationship "${op.id}"`,
+          )
+        )
+          break;
+        if (draft.calculations.some((c) => c.rollup?.relationship === op.id)) {
+          issues.push({
+            path: `operations[${i}]`,
+            message: `Relationship "${op.id}" is used by a rollup calculation; remove that first.`,
+          });
+          break;
+        }
+        draft.relationships = draft.relationships.filter((r) => r.id !== op.id);
+        summary.push(`Removed relationship ${op.id}`);
+        break;
+      }
+      case "remove_calculation": {
+        if (
+          !need(
+            draft.calculations.some((c) => c.key === op.key),
+            `Calculation "${op.key}"`,
+          )
+        )
+          break;
+        const ref = new RegExp(`calc:${op.key}(?![a-z0-9_])`);
+        const { calculations, ...rest } = draft;
+        if (
+          ref.test(
+            JSON.stringify({ ...rest, calculations: calculations.filter((c) => c.key !== op.key) }),
+          )
+        ) {
+          issues.push({
+            path: `operations[${i}]`,
+            message: `calc:${op.key} is still used in this report; remove those uses first.`,
+          });
+          break;
+        }
+        draft.calculations = calculations.filter((c) => c.key !== op.key);
+        summary.push(`Removed calculation calc:${op.key}`);
+        break;
+      }
     }
   }
   if (issues.length) return { ok: false, issues };
@@ -275,5 +347,9 @@ export function diffSpecs(before: ReportSpec, after: ReportSpec): string[] {
     out.push("Changed data filters");
   if (JSON.stringify(before.controls) !== JSON.stringify(after.controls))
     out.push("Changed report filters");
+  if (JSON.stringify(before.calculations ?? []) !== JSON.stringify(after.calculations ?? []))
+    out.push("Changed calculations");
+  if (JSON.stringify(before.relationships ?? []) !== JSON.stringify(after.relationships ?? []))
+    out.push("Changed relationships");
   return out;
 }

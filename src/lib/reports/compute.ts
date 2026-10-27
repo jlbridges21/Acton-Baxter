@@ -96,10 +96,21 @@ export function filterRows(rows: Row[], conditions: Condition[]): Row[] {
   return rows.filter((r) => conditions.every((c) => matchesCondition(r[c.field], c)));
 }
 
+/** A metric ready to run: aggregate calculations carry their evaluator. */
+export type RunMetric = Omit<Metric, "op"> & {
+  op: Metric["op"];
+  evaluate?: (rows: Row[]) => number | null;
+};
+
 export function aggregate(
   rows: Row[],
-  metric: Metric,
+  metric: RunMetric,
 ): { value: number | null; counted: number; blank: number } {
+  if (metric.evaluate) {
+    const value = metric.evaluate(rows);
+    return { value, counted: value === null ? 0 : rows.length, blank: 0 };
+  }
+  if (metric.op === "formula") return { value: null, counted: 0, blank: rows.length };
   if (metric.op === "count") return { value: rows.length, counted: rows.length, blank: 0 };
   const field = metric.field!;
   if (metric.op === "count_distinct") {
@@ -190,7 +201,7 @@ export type ChartPoint = {
 export function computeSeries(input: {
   rows: Row[];
   groupBy: string;
-  metric: Metric;
+  metric: RunMetric;
   seriesBy?: string;
   bucket?: Bucket;
   sort: "value_desc" | "value_asc" | "label";

@@ -13,7 +13,7 @@
 import type { Row } from "./compute";
 import type { ReportSource } from "./spec";
 
-export type RelationshipId = "cost_items.job";
+export type RelationshipId = "cost_items.job" | "commissions.job";
 
 export type Relationship = {
   id: RelationshipId;
@@ -51,6 +51,69 @@ export const RELATIONSHIPS: Record<RelationshipId, Relationship> = {
       "sem:contract_type",
       "sem:model",
     ],
+  },
+  "commissions.job": {
+    id: "commissions.job",
+    from: "commissions",
+    to: "jobs",
+    key: "com.jobId",
+    label: "Job",
+    description: "Commission rows carry approved fields of their JobTread job, matched by job id.",
+    defaultFields: [
+      "job.number",
+      "job.customer",
+      "job.city",
+      "sem:phase",
+      "sem:status",
+      "sem:project_manager",
+      "sem:model",
+      "sem:total_sqft",
+    ],
+  },
+};
+
+/**
+ * One-to-many relationships for rollups: child records pre-aggregated onto their parent by
+ * stable id (e.g. a job's total budget cost from its cost items). Rollups produce one value
+ * per parent, so they can never multiply parent rows or double count parent totals.
+ */
+export type RollupId = "jobs.cost_items" | "jobs.commissions" | "catalog_models.cost_items";
+
+export type Rollup = {
+  id: RollupId;
+  parent: ReportSource;
+  child: ReportSource;
+  /** Field on child rows holding the parent's stable JobTread id. */
+  childKey: string;
+  label: string;
+  description: string;
+};
+
+export const ROLLUPS: Record<RollupId, Rollup> = {
+  "jobs.cost_items": {
+    id: "jobs.cost_items",
+    parent: "jobs",
+    child: "cost_items",
+    childKey: "item.jobId",
+    label: "Budget lines (cost items)",
+    description: "A job's budget lines (cost items whose job id is the job's id).",
+  },
+  "jobs.commissions": {
+    id: "jobs.commissions",
+    parent: "jobs",
+    child: "commissions",
+    childKey: "com.jobId",
+    label: "Commission rows",
+    description: "A job's commission rows for a rule set (needs ruleSet).",
+  },
+  "catalog_models.cost_items": {
+    id: "catalog_models.cost_items",
+    parent: "catalog_models",
+    child: "cost_items",
+    childKey: "item.modelId",
+    label: "Model budget lines",
+    description:
+      "A Product Library model's catalog lines (cost items whose model id is the model's id).",
   },
 };
 

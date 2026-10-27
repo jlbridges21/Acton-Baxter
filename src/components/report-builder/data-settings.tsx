@@ -15,6 +15,8 @@ import {
   PlugZap,
   RefreshCw,
   TriangleAlert,
+  Link2,
+  Sigma,
 } from "lucide-react";
 import {
   aiFetch,
@@ -155,6 +157,18 @@ export function DataSettings() {
             className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
           >
             <Boxes className="h-4 w-4" aria-hidden /> Cost items & models
+          </Link>
+          <Link
+            href="/reports/settings/relationships"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
+          >
+            <Link2 className="h-4 w-4" aria-hidden /> Relationships
+          </Link>
+          <Link
+            href="/reports/metrics"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
+          >
+            <Sigma className="h-4 w-4" aria-hidden /> Metric Library
           </Link>
           <Link
             href="/reports/settings/health"

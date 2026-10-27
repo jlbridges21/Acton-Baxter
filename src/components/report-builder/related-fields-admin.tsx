@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button";
 
 type Field = { ref: string; key: string; label: string; type: string; category: string };
 type Relationship = {
-  id: "cost_items.job";
+  id: "cost_items.job" | "commissions.job";
+  from: string;
   label: string;
   key: string;
   description: string;
@@ -76,9 +77,14 @@ export function RelatedFieldsAdmin({ className }: { className?: string }) {
       {!rels && !error ? <p className="mt-2 text-sm text-[var(--acton-muted)]">Loading…</p> : null}
       {rels?.map((rel) => (
         <div key={rel.id} className="mt-2 space-y-3">
+          <h3 className="text-sm font-semibold text-[var(--acton-navy)]">
+            {rel.from === "cost_items" ? "Cost items" : "Commissions"} → Job
+          </h3>
           <p className="text-sm text-[var(--acton-muted)]">
-            {rel.description} Linked by <code>{rel.key}</code>: {rel.matchedRows.toLocaleString()}{" "}
-            of {rel.linkedRows.toLocaleString()} job budget lines match a synced job
+            {rel.description} Linked by <code>{rel.key}</code>:{" "}
+            {rel.linkedRows
+              ? `${rel.matchedRows.toLocaleString()} of ${rel.linkedRows.toLocaleString()} linked records match a synced job`
+              : "link counts appear once records are synced"}
             {rel.unmatchedRows
               ? ` (${rel.unmatchedRows.toLocaleString()} point at jobs that aren't synced or were removed; their job fields stay blank)`
               : ""}

@@ -31,6 +31,8 @@ export type KpiResult = Base & {
   kind: "kpi";
   value: number | null;
   fieldType: FieldType | "count";
+  /** Set when a viewer's metric choice replaced the KPI's own metric. */
+  label?: string;
 };
 export type ChartResult = Base & {
   kind: "chart";
@@ -54,6 +56,32 @@ export type TableResult = Base & {
   }>;
   totalRows: number;
   truncated: boolean;
+  /** Nested groups (groupLevels or a viewer's grouping), each with subtotals. */
+  groups?: TableGroup[];
+  groupLevels?: Array<{ key: string; label: string }>;
+  /** Grand total across all records (computed from records, not from group subtotals). */
+  totals?: Record<string, CellValue>;
+  totalsIncomplete?: Record<string, number>;
+  /** Levels expanded by default; viewers' own expand/collapse choices are kept per viewer. */
+  expandDepth?: number;
+  sortedBy?: { key: string; dir: "asc" | "desc" } | null;
+};
+
+export type TableGroup = {
+  /** Stable path id (JSON array of labels). */
+  id: string;
+  level: number;
+  field: string;
+  fieldLabel: string;
+  label: string;
+  count: number;
+  /** Subtotals keyed by column key (blank when the column isn't aggregated). */
+  values: Record<string, CellValue>;
+  /** Column key → records in this group without a value (excluded from the subtotal). */
+  incomplete?: Record<string, number>;
+  children: TableGroup[];
+  /** Deepest level only: the records in this group (ids into `rows`). */
+  rowIds: string[];
 };
 export type DetailResult = Base & {
   kind: "detail";
@@ -158,7 +186,26 @@ export type ControlOptions =
       max: number | null;
       selected: [number | null, number | null];
     }
-  | { kind: "date_range"; id: string; selected: [string | null, string | null] };
+  | { kind: "date_range"; id: string; selected: [string | null, string | null] }
+  | {
+      kind: "group_by";
+      id: string;
+      options: Array<{ value: string; label: string }>;
+      selected: string[];
+      maxLevels: number;
+    }
+  | {
+      kind: "sort";
+      id: string;
+      options: Array<{ value: string; label: string }>;
+      selected: { field: string; dir: "asc" | "desc" } | null;
+    }
+  | {
+      kind: "metric_picker";
+      id: string;
+      options: Array<{ value: string; label: string }>;
+      selected: string;
+    };
 
 export type FreshnessLevel =
   "fresh" | "stale" | "never" | "failed" | "disabled" | "running" | "not_configured";

@@ -18,7 +18,8 @@ import {
 } from "@/lib/reports/access";
 import { aggregate, asList, computeSeries, filterRows, isBlank } from "@/lib/reports/compute";
 import { checkSpecFields, executeReport } from "@/lib/reports/engine";
-import { getFieldCatalog, resolveField } from "@/lib/reports/fields";
+import { resolveField } from "@/lib/reports/fields";
+import { catalogFor } from "@/lib/reports/metrics";
 import { applyReportOps } from "@/lib/reports/ops";
 import {
   createReport,
@@ -50,11 +51,16 @@ Fields: "job.*" built-ins (incl. job.orderGrossProfit, job.orderPrice, job.order
 Commissions: dataset {"id","source":"commissions","ruleSet":<key from reports_rules>} — one row per project × salesperson with com.salesperson, com.jobName, com.grossProfit, com.ratePct, com.splitPct, com.commission, com.date, com.status. Editors: {"id","type":"rate_editor","ruleSet"} and {"id","type":"assignment_editor","ruleSet"} let authorized people set rates and assign projects in the report. A per-salesperson view is a "select" control on com.salesperson (use "default":[name] for a salesperson-specific copy).
 { "title": str, "description": str,
   "datasets": [{ "id": "active_jobs", "source": ${SOURCE_LIST}, "label": str, "filters": [Condition] }],
-  "controls": [ { "id","kind":"job_picker","label","dataset" } | { "id","kind":"select","label","field","datasets":[id] } | { "id","kind":"search","label","fields":[f],"datasets":[id] } | { "id","kind":"number_range"|"date_range","label","field","datasets":[id] } ],
+  "calculations": [Calculation] (report-specific calculated fields, referenced as "calc:<key>" anywhere a field goes),
+  "relationships": [ { "id","kind":"lookup","label","from":source,"to":"jobs"|"catalog_models"|"cost_items","key":<from field holding the to-record's id>,"fields":[to fields] } | { "id","kind":"rollup","label","parent":source,"child":source,"childKey":<child field holding the parent's id> } ] (report-specific stable-id joins: lookup fields become readable on "from" rows by their own keys; rollups are used by rollup calculations via "relationship": id),
+  "controls": [ { "id","kind":"job_picker","label","dataset" } | { "id","kind":"select","label","field","datasets":[id] } | { "id","kind":"search","label","fields":[f],"datasets":[id] } | { "id","kind":"number_range"|"date_range","label","field","datasets":[id] }
+    | { "id","kind":"group_by","label","widgets":[table/chart ids],"options":[f],"default"?:[f],"maxLevels"?:1-4 } (viewer picks grouping; several levels for tables)
+    | { "id","kind":"sort","label","widgets":[table/chart ids],"options":[f],"default"?:{ "field","dir":"asc"|"desc" } } (viewer picks sort field and direction)
+    | { "id","kind":"metric_picker","label","widgets":[kpi/chart ids],"options":[{ "label","metric":Metric }],"default"?:index } ],
   "widgets": [ (order = layout; "span": 3|4|6|8|12; optional "title","description","height":"sm"|"md"|"lg"|"auto")
-    { "id","type":"kpi","dataset","metric":{ "op":"count"|"count_distinct"|"sum"|"avg"|"median"|"min"|"max","field"? },"filters":[Condition],"format":"auto"|"number"|"currency"|"percent"|"sqft" } (percent values are 0–100)
+    { "id","type":"kpi","dataset","metric":{ "op":"count"|"count_distinct"|"sum"|"avg"|"median"|"min"|"max"|"formula","field"? },"filters":[Condition],"format":"auto"|"number"|"currency"|"percent"|"sqft" } (percent values are 0–100)
     { "id","type":"chart","dataset","chart":"bar"|"horizontal_bar"|"stacked_bar"|"line"|"area"|"donut"|"scatter"|"histogram","groupBy":f,"seriesBy"?:f,"metric":Metric,"x"?:f,"y"?:f (scatter),"bucket"?:"month"|"quarter"|"year","sort":"value_desc"|"value_asc"|"label","limit":1-50 }
-    { "id","type":"table","dataset","columns":[{ "field","label"?,"format"? }],"sort":[{ "field","dir":"asc"|"desc" }],"groupBy"?:f,"pageSize":5-100,"rowDrilldown":bool,"comparable":bool,"highlight":[{ "field","op","value","tone":"green"|"amber"|"red"|"blue" }],"summarize"?:bool } (summarize: one row per distinct text-column combination, amount columns summed, plus a Lines count — e.g. columns item.model, item.option, item.cost, item.price for option totals per model; keep unit cost/price out of summary tables)
+    { "id","type":"table","dataset","columns":[{ "field","label"?,"format"?,"aggregate"?:"auto"|"sum"|"avg"|"min"|"max"|"count"|"count_distinct"|"none" }],"sort":[{ "field","dir":"asc"|"desc" }],"groupLevels"?:[f, f, …up to 4] (nested expandable groups with subtotals, e.g. ["sem:phase","sem:project_manager","job.name"]),"expandDepth"?:0-4,"grandTotal"?:bool,"groupBy"?:f (legacy single-level sort),"pageSize":5-100,"rowDrilldown":bool,"comparable":bool,"highlight":[{ "field","op","value","tone":"green"|"amber"|"red"|"blue" }],"summarize"?:bool } (summarize: one row per distinct text-column combination, amount columns summed, plus a Lines count — e.g. columns item.model, item.option, item.cost, item.price for option totals per model; keep unit cost/price out of summary tables)
     { "id","type":"project_header","control":<job_picker id>,"fields":[f] }
     { "id","type":"detail","control":<job_picker id>,"style":"grid"|"long_text"|"badges","fields":[{ "field","label"? }] }
     { "id","type":"milestones","control":<job_picker id>,"show":"schedule"|"checklists"|"all","style":"timeline"|"list" }
@@ -63,7 +69,14 @@ Commissions: dataset {"id","source":"commissions","ruleSet":<key from reports_ru
     { "id","type":"data_status" } (live: when each dataset the report reads last synced, and whether it's fresh)
     { "id","type":"rate_editor"|"assignment_editor","ruleSet":key } ] }
 Condition = { "field", "op":"eq"|"neq"|"in"|"not_in"|"contains"|"not_contains"|"starts_with"|"blank"|"not_blank"|"gt"|"gte"|"lt"|"lte", "value"? }
-Ids: lowercase letters/numbers/_/- . Detail/header/milestones/documents widgets need a job_picker control on a jobs dataset.`;
+Ids: lowercase letters/numbers/_/- . Detail/header/milestones/documents widgets need a job_picker control on a jobs dataset.
+Calculation = { "key","label","source","basis":"row"|"aggregate"|"rollup","formula"?,"rollup"?:{ "relationship","op","field"?,"filters"? },"type":"number"|"currency"|"percent"|"sqft"|"text"|"date"|"boolean","unit"?,"decimals"?,"description"? }
+ - row: one value per record, e.g. "job.projectedPrice - job.projectedCost" or "DIVIDE(job.projectedCost, sem:total_sqft)". Usable in filters, grouping, sorting, columns, and sum/avg metrics.
+ - aggregate: computed per group from totals, e.g. "(SUM(job.projectedPrice) - SUM(job.projectedCost)) / SUM(job.projectedPrice) * 100" (weighted margin). Use as {"op":"formula","field":"calc:key"} in KPIs/charts, or as a table column (subtotals recompute it). Never a filter/grouping.
+ - rollup: aggregates related child records onto each parent by stable id, e.g. on jobs {"relationship":"jobs.cost_items","op":"sum","field":"item.cost"} — no row duplication (see reports_relationships).
+ Formula language: + - * / % ( ), = != < <= > >=, AND OR NOT, & (text); IF, COALESCE, ABS, ROUND, MIN/MAX(a,b), DIVIDE, PERCENT(part,whole), DAYS_BETWEEN, NUMBER, TEXT, ISBLANK, CONTAINS, YEAR, MONTH; aggregates SUM AVG MEDIAN COUNT COUNT_DISTINCT MIN(x) MAX(x). Blank ≠ zero (COALESCE(x,0) to treat blank as 0); division by zero is blank.
+ENGINEERING: you can build calculated metrics (reports_calculation_check → reports_update set_calculation, or reports_metric_save for reusable ones; check reports_metrics first to reuse), multi-level grouping, viewer grouping/sorting/metric controls, and cross-source reports (approved related fields are usable directly; rollups for one-to-many). Do these yourself when the data exists — don't tell people a formula, grouping, or join needs an administrator or engineering. When a margin/ratio basis is ambiguous (weighted totals vs average of per-record values), ask once; otherwise prefer weighted (aggregate). Report edits: {"op":"set_calculation","calculation"} | {"op":"remove_calculation","key"} | {"op":"set_relationship","relationship"} | {"op":"remove_relationship","id"} plus the widget/control ops.
+CROSS-SOURCE: when a report needs fields or totals from another source, check reports_relationships; if no join exists, run reports_relationship_discover and add the verified candidate to the report with set_relationship (no approval needed — viewers' field access is still enforced). Lookups bring the "one" side's fields onto "many" rows; rollups total "many" rows per "one" record. Never sum a looked-up value across many rows and never join on names; if only uncertain or name matches exist, ask one focused question.`;
 
 async function accessFor(ctx: ToolContext): Promise<ReportsAccess> {
   const access = await getReportsAccess(ctx.requester);
@@ -84,7 +97,7 @@ async function sourceRows(source: (typeof SOURCES)[number], ruleSet?: string) {
 
 /** Canonicalize conditions for the viewer; throws on unknown/restricted fields with a clear reason. */
 async function canonical(conds: z.infer<typeof conditionSchema>[], access: ReportsAccess) {
-  const catalog = await getFieldCatalog();
+  const catalog = await catalogFor();
   return conds.map((c) => {
     const r = resolveField(catalog, c.field);
     if (!r.ok) throw new Error(r.reason);
@@ -117,7 +130,7 @@ const listFields: AgentTool = {
     const access = await accessFor(ctx);
     const { catalog, rows } =
       source === "commissions" && !ruleSet
-        ? { catalog: await getFieldCatalog(), rows: [] }
+        ? { catalog: await catalogFor(), rows: [] }
         : await sourceRows(source, ruleSet);
     const q = search?.toLowerCase();
     const fields = catalog.bySource[source]

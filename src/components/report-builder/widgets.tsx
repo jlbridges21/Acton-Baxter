@@ -81,6 +81,7 @@ import {
   resolveDisplayType,
   type DisplayType,
 } from "./format";
+import { ColumnsMenu, GroupedTable, useViewerPref } from "./grouped-table";
 import { RuleEditorWidget } from "./rule-editors";
 
 /** Categorical slots in fixed order (validated reference palette, light surface). */
@@ -351,6 +352,9 @@ function KpiWidget({
       ) : (
         value
       )}
+      {result.label ? (
+        <p className="mt-0.5 text-xs font-semibold text-[var(--acton-muted)]">{result.label}</p>
+      ) : null}
       {result.provenance ? (
         <p className="mt-1 text-xs text-[var(--acton-muted)]">
           {result.provenance.rows.toLocaleString()} record{result.provenance.rows === 1 ? "" : "s"}
@@ -784,8 +788,37 @@ function TableWidget({
   result: TableResult;
   actions: WidgetActions;
 }) {
+  if (result.groups) {
+    return (
+      <GroupedTable
+        widgetId={spec.id}
+        result={result}
+        onOpenRow={
+          spec.type === "table" && spec.rowDrilldown && actions.onOpenRow
+            ? actions.onOpenRow
+            : undefined
+        }
+      />
+    );
+  }
+  return <FlatTable spec={spec} result={result} actions={actions} />;
+}
+
+function FlatTable({
+  spec,
+  result,
+  actions,
+}: {
+  spec: WidgetSpec;
+  result: TableResult;
+  actions: WidgetActions;
+}) {
   const tableSpec = spec.type === "table" ? spec : null;
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [hiddenColumns, setHiddenColumns] = useViewerPref<string[]>(
+    `baxter.report.columns:${typeof window === "undefined" ? "" : window.location.pathname}:${spec.id}`,
+    [],
+  );
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [comparing, setComparing] = useState(false);
@@ -832,7 +865,11 @@ function TableWidget({
   const table = useReactTable({
     data: result.rows,
     columns,
-    state: { sorting, globalFilter: search },
+    state: {
+      sorting,
+      globalFilter: search,
+      columnVisibility: Object.fromEntries(hiddenColumns.map((k) => [k, false])),
+    },
     onSortingChange: setSorting,
     onGlobalFilterChange: setSearch,
     globalFilterFn: (row, _columnId, value: string) => {
@@ -880,6 +917,13 @@ function TableWidget({
           <span />
         )}
         <div className="flex items-center gap-2 text-xs text-[var(--acton-muted)]">
+          {result.columns.length > 3 ? (
+            <ColumnsMenu
+              columns={result.columns}
+              hidden={hiddenColumns}
+              onChange={setHiddenColumns}
+            />
+          ) : null}
           {comparable ? (
             <Button
               size="sm"

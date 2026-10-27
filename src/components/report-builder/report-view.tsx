@@ -60,6 +60,7 @@ import type { ControlState, ExecutionResult, FieldMeta } from "@/lib/reports/res
 import { CHART_TYPES, type ReportSpec, type WidgetSpec } from "@/lib/reports/spec";
 import { DexterChat } from "./dexter-chat";
 import { FilterBar } from "./filter-bar";
+import { SavedViewsMenu } from "./saved-views-menu";
 import { DrillDrawer, HistoryDialog, RowDrawer, ShareDialog, type DrillData } from "./panels";
 import type { ChatArtifact, ReportDetail } from "./types";
 import { AddWidgetDialog } from "./widget-builder";
@@ -216,6 +217,12 @@ export function ReportView({
     else qs.delete("f");
     router.replace(`?${qs.toString()}`, { scroll: false });
   };
+  const [hadUrlState] = useState(() => params.has("f"));
+  const changeStateRef = useRef(changeState);
+  useEffect(() => {
+    changeStateRef.current = changeState;
+  });
+  const applySavedView = useCallback((next: ControlState) => changeStateRef.current(next), []);
 
   // ---- editing -----------------------------------------------------------
   const startEdit = () => {
@@ -644,6 +651,16 @@ export function ReportView({
         </Notice>
       ) : null}
 
+      {spec.controls.length && !editing ? (
+        <div className="flex justify-end">
+          <SavedViewsMenu
+            reportId={reportId}
+            state={state}
+            hasUrlState={hadUrlState}
+            onApply={applySavedView}
+          />
+        </div>
+      ) : null}
       <FilterBar
         controls={spec.controls}
         options={result?.controls ?? {}}

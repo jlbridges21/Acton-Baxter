@@ -1,6 +1,7 @@
 import { jsonError, jsonOk } from "@/lib/api";
 import { canSeeField } from "@/lib/reports/access";
-import { getFieldCatalog, resolveField } from "@/lib/reports/fields";
+import { resolveField } from "@/lib/reports/fields";
+import { catalogFor } from "@/lib/reports/metrics";
 import { requireReportsContext } from "@/lib/reports/http";
 import type { ReportSource } from "@/lib/reports/spec";
 
@@ -10,7 +11,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const ctx = await requireReportsContext();
-    const catalog = await getFieldCatalog();
+    // Includes Metric Library calculations (calc:*) and approved related fields.
+    const catalog = await catalogFor();
     const visible = (source: ReportSource) =>
       catalog.bySource[source]
         .filter((f) => canSeeField(ctx.access, f))
@@ -21,6 +23,8 @@ export async function GET() {
           multi: Boolean(f.multi),
           description: f.description ?? null,
           origin: f.origin,
+          ...(f.calc ? { calc: f.calc.basis } : {}),
+          ...(f.via ? { via: f.via } : {}),
         }));
     const business = [...catalog.semantic.entries()]
       .map(([key, s]) => {

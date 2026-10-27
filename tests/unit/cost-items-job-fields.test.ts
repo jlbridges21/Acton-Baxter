@@ -128,6 +128,7 @@ function addPhaseFilter(spec: ReportSpec): ReportSpec {
       label: "Phase",
       format: "auto",
       wrap: false,
+      aggregate: "auto",
     });
   }
   return reportSpecSchema.parse(next);
@@ -468,7 +469,7 @@ describe("Dexter", () => {
       widgets: [{ id: "t", type: "table", dataset: "m", columns: [{ field: "sem:phase" }] }],
     });
     const b = await checkSpecFields(unrelated, access, collectFieldRefs(unrelated));
-    expect(b.missing.join(" ")).toMatch(/no relationship to jobs/);
+    expect(b.missing.join(" ")).toMatch(/aren.t joined to jobs yet/);
   });
 });
 

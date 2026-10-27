@@ -13,7 +13,7 @@ import {
   type FieldCategory,
 } from "@/lib/jobtread/metadata";
 import { agentDb } from "@/lib/agents/store";
-import { RELATIONSHIPS, type RelationshipId } from "./relationships";
+import { RELATIONSHIPS } from "./relationships";
 import type { ReportSource } from "./spec";
 
 export type FieldType =
@@ -33,7 +33,11 @@ export type FieldDef = {
   multi?: boolean;
   description?: string;
   /** Set on a related field listed under another source (e.g. a job field on cost items). */
-  via?: RelationshipId;
+  via?: string;
+  /** Every access category a viewer needs (calculated fields inherit their inputs'). */
+  requires?: Array<Exclude<FieldCategory, "excluded">>;
+  /** Calculated field (calc:*). */
+  calc?: { basis: "row" | "aggregate" | "rollup"; source: ReportSource };
 };
 
 export const JOB_BUILTINS: FieldDef[] = [
@@ -600,6 +604,14 @@ export const ITEM_FIELDS: FieldDef[] = [
   ),
   itemField("item.job", "Job", "text", "general", "JobTread job name (job budget lines only)"),
   itemField(
+    "item.modelId",
+    "Model ID",
+    "text",
+    "general",
+    "JobTread cost group id of the line's Product Library model (root of its group path)",
+    "Stable id of the Product Library model this catalog line belongs to (blank for job budget lines).",
+  ),
+  itemField(
     "item.jobId",
     "Job ID",
     "text",
@@ -647,12 +659,13 @@ function customFieldType(f: CustomFieldRow): { type: FieldType; multi: boolean }
 
 /** An approved related field: a target-source field readable from another source's rows. */
 export type RelatedField = {
-  relationship: RelationshipId;
+  /** Registry relationship id, or a report/company relationship id. */
+  relationship: string;
   /** As approved (built-in key or sem:*). */
   ref: string;
   /** Canonical key on the row (sem:* resolved to its cf:*). */
   key: string;
-  approvedBy: "default" | "admin";
+  approvedBy: "default" | "admin" | "company" | "report";
 };
 
 export type RelatedFieldSetting = { relationship: string; field_ref: string; enabled: boolean };
@@ -826,7 +839,7 @@ export function fieldOnSource(
   catalog: FieldCatalog,
   source: ReportSource,
   def: Pick<FieldDef, "key" | "label" | "source">,
-): { ok: true; via?: RelationshipId } | { ok: false; reason: string; approvable: boolean } {
+): { ok: true; via?: string } | { ok: false; reason: string; approvable: boolean } {
   if (def.source === source) return { ok: true };
   const rel = catalog.related[source].get(def.key);
   if (rel) return { ok: true, via: rel.relationship };
@@ -835,12 +848,12 @@ export function fieldOnSource(
     return {
       ok: false,
       approvable: true,
-      reason: `"${def.label}" is a ${def.source} field that isn't approved for ${source} reports yet. The ${source} source is linked to ${def.source} (${path.label}), so an administrator can approve it under Reports → Data settings → Cost items & models → Related job fields.`,
+      reason: `"${def.label}" is a ${def.source} field that isn't approved for ${source} reports yet. The ${source} source is linked to ${def.source} (${path.label}), so the report can add it through its own lookup relationship (reports_update set_relationship with key ${path.key} — Dexter does this without approval), or an administrator can approve it for every report under Reports → Data settings → Relationships.`,
     };
   return {
     ok: false,
     approvable: false,
-    reason: `"${def.label}" is a ${def.source} field; ${source} rows have no relationship to ${def.source}, so it can't be used on this dataset.`,
+    reason: `"${def.label}" is a ${def.source} field and ${source} rows aren't joined to ${def.source} yet. Find a stable-id join with reports_relationship_discover and add it to the report (set_relationship), or use a rollup calculation for totals of related records.`,
   };
 }
 
@@ -864,6 +877,15 @@ export function resolveField(
     key = sem.ref;
   }
   const def = catalog.byKey.get(key);
+  if (!def && ref.startsWith("calc:")) {
+    const error = (catalog as { calcErrors?: Map<string, string> }).calcErrors?.get(ref);
+    return {
+      ok: false,
+      reason:
+        error ??
+        `Calculated field "${ref}" isn't defined. Add it to the report's calculations or the Metric Library.`,
+    };
+  }
   if (!def)
     return { ok: false, reason: `Field "${ref}" doesn't exist in the connected JobTread data.` };
   return {

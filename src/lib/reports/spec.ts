@@ -10,6 +10,9 @@
  *   cf:<id>          a JobTread custom field by stable id (job, location, or customer field)
  *   sem:<key>        business vocabulary mapped by admins (sem:phase → cf:22Pg…)
  *   model.*          Product Library (catalog model) attributes
+ *   item.* / com.*   cost-item and commission attributes
+ *   calc:<key>       a calculated field: defined in the spec's `calculations` or in the
+ *                    shared Metric Library (row formula, aggregate formula, or rollup)
  */
 
 import { z } from "zod";
@@ -24,7 +27,7 @@ export const fieldRef = z
   .string()
   .trim()
   .regex(
-    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|item\.[a-zA-Z]+|com\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60})$/,
+    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|item\.[a-zA-Z]+|com\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60}|calc:[a-z][a-z0-9_]{1,40})$/,
     "Unknown field reference format.",
   );
 
@@ -95,6 +98,18 @@ export const METRIC_OPS = [
   "median",
   "min",
   "max",
+  /** Evaluate an aggregate calculated field (calc:*) over the records. */
+  "formula",
+] as const;
+/** Aggregations a rollup can apply to related records. */
+export const ROLLUP_OPS = [
+  "count",
+  "count_distinct",
+  "sum",
+  "avg",
+  "median",
+  "min",
+  "max",
 ] as const;
 export const metricSchema = z.object({
   op: z.enum(METRIC_OPS),
@@ -102,6 +117,104 @@ export const metricSchema = z.object({
   label: z.string().max(80).optional(),
 });
 export type Metric = z.infer<typeof metricSchema>;
+
+export const CALC_TYPES = [
+  "number",
+  "currency",
+  "percent",
+  "sqft",
+  "text",
+  "date",
+  "boolean",
+] as const;
+export const calcKey = z
+  .string()
+  .trim()
+  .regex(
+    /^[a-z][a-z0-9_]{1,40}$/,
+    "Calculation keys use lowercase letters, numbers, or underscores.",
+  );
+
+/**
+ * A calculated field (also the shape stored in the Metric Library). Referenced as calc:<key>.
+ *   row        formula evaluated per record (filter, sort, group, column, or aggregate it)
+ *   aggregate  formula with SUM/AVG/COUNT… evaluated over each group of records (KPIs,
+ *              charts, table subtotals) — e.g. weighted margin = (SUM(p) − SUM(c)) ÷ SUM(p)
+ *   rollup     one value per record from its related records through a registered
+ *              relationship (e.g. a job's total budget cost from its cost items) —
+ *              pre-aggregated by stable id, so sums over the parent never double count
+ */
+export const calculationSchema = z
+  .object({
+    key: calcKey,
+    label: z.string().trim().min(1).max(80),
+    description: z.string().max(400).optional(),
+    source: z.enum(SOURCES),
+    basis: z.enum(["row", "aggregate", "rollup"]),
+    formula: z.string().max(1000).optional(),
+    rollup: z
+      .object({
+        relationship: z.string().max(60),
+        op: z.enum(ROLLUP_OPS),
+        field: fieldRef.optional(),
+        filters: z.array(conditionSchema).max(10).default([]),
+        /** commissions children only. */
+        ruleSet: ruleSetKey.optional(),
+      })
+      .optional(),
+    type: z.enum(CALC_TYPES).default("number"),
+    unit: z.string().max(20).optional(),
+    decimals: z.number().int().min(0).max(6).optional(),
+  })
+  .superRefine((c, ctx) => {
+    if (c.basis === "rollup" && !c.rollup)
+      ctx.addIssue({ code: "custom", message: "A rollup needs rollup settings." });
+    if (c.basis !== "rollup" && !c.formula?.trim())
+      ctx.addIssue({ code: "custom", message: "A row or aggregate calculation needs a formula." });
+    if (c.rollup && c.rollup.op !== "count" && !c.rollup.field)
+      ctx.addIssue({ code: "custom", message: `Rollup "${c.rollup.op}" needs a field.` });
+  });
+export type CalculationSpec = z.infer<typeof calculationSchema>;
+
+export const relationshipKey = z
+  .string()
+  .trim()
+  .regex(
+    /^[a-z][a-z0-9_]{1,40}$/,
+    "Relationship ids use lowercase letters, numbers, or underscores.",
+  );
+
+/**
+ * A report-specific (or promoted company) relationship between sources, joined only on a key
+ * field whose values are the related record's stable JobTread id.
+ *   lookup  many-to-one: `fields` of the `to` record become readable on each `from` row
+ *           (rows are never added or dropped)
+ *   rollup  one-to-many: child records grouped by `childKey` (the parent's id); use it from a
+ *           calculation {"basis":"rollup","rollup":{"relationship":<id>,…}} so totals are
+ *           pre-aggregated per parent and never double count
+ */
+export const relationshipSchema = z.discriminatedUnion("kind", [
+  z.object({
+    id: relationshipKey,
+    kind: z.literal("lookup"),
+    label: z.string().trim().min(1).max(80),
+    from: z.enum(SOURCES),
+    to: z.enum(["jobs", "catalog_models", "cost_items"]),
+    key: fieldRef,
+    fields: z.array(fieldRef).min(1).max(30),
+    description: z.string().max(400).optional(),
+  }),
+  z.object({
+    id: relationshipKey,
+    kind: z.literal("rollup"),
+    label: z.string().trim().min(1).max(80),
+    parent: z.enum(SOURCES),
+    child: z.enum(SOURCES),
+    childKey: fieldRef,
+    description: z.string().max(400).optional(),
+  }),
+]);
+export type RelationshipSpec = z.infer<typeof relationshipSchema>;
 
 const controlBase = { id, label: z.string().trim().min(1).max(60) };
 
@@ -139,6 +252,41 @@ export const controlSchema = z.discriminatedUnion("kind", [
     field: fieldRef,
     datasets: z.array(id).min(1).max(10),
   }),
+  /** Viewer picks the grouping (one or several levels) of tables and charts. */
+  z.object({
+    ...controlBase,
+    kind: z.literal("group_by"),
+    widgets: z.array(id).min(1).max(10),
+    options: z.array(fieldRef).min(1).max(12),
+    /** Default levels; empty = the widgets' own grouping. */
+    default: z.array(fieldRef).max(4).default([]),
+    maxLevels: z.number().int().min(1).max(4).default(3),
+  }),
+  /** Viewer picks the sort field and direction of tables (and value order of charts). */
+  z.object({
+    ...controlBase,
+    kind: z.literal("sort"),
+    widgets: z.array(id).min(1).max(10),
+    options: z.array(fieldRef).min(1).max(12),
+    default: z.object({ field: fieldRef, dir: z.enum(["asc", "desc"]).default("desc") }).optional(),
+  }),
+  /** Viewer picks which metric KPIs and charts show. */
+  z.object({
+    ...controlBase,
+    kind: z.literal("metric_picker"),
+    widgets: z.array(id).min(1).max(10),
+    options: z
+      .array(z.object({ label: z.string().trim().min(1).max(60), metric: metricSchema }))
+      .min(2)
+      .max(8),
+    default: z.number().int().min(0).max(7).default(0),
+  }),
+]);
+export type ViewControlKind = "group_by" | "sort" | "metric_picker";
+export const VIEW_CONTROL_KINDS: ReadonlySet<string> = new Set([
+  "group_by",
+  "sort",
+  "metric_picker",
 ]);
 export type ControlSpec = z.infer<typeof controlSchema>;
 
@@ -152,12 +300,27 @@ const widgetBase = {
   hidden: z.boolean().default(false),
 };
 
+export const COLUMN_AGGREGATES = [
+  "auto",
+  "sum",
+  "avg",
+  "min",
+  "max",
+  "count",
+  "count_distinct",
+  "none",
+] as const;
 const columnSchema = z.object({
   field: fieldRef,
   label: z.string().max(60).optional(),
   format: z.enum(FORMATS).default("auto"),
   width: z.number().int().min(60).max(600).optional(),
   wrap: z.boolean().default(false),
+  /**
+   * Group subtotal behavior. auto = sum amounts and counts, nothing for percentages, and
+   * aggregate calculations are re-evaluated over each group (weighted, never summed).
+   */
+  aggregate: z.enum(COLUMN_AGGREGATES).default("auto"),
 });
 
 export const HIGHLIGHT_TONES = ["green", "amber", "red", "blue", "gray"] as const;
@@ -212,6 +375,12 @@ export const widgetSchema = z.discriminatedUnion("type", [
       .default([]),
     pageSize: z.number().int().min(5).max(100).default(25),
     groupBy: fieldRef.optional(),
+    /** Nested, expandable groups (e.g. Phase → Project Manager → Job) with subtotals. */
+    groupLevels: z.array(fieldRef).max(4).default([]),
+    /** Levels expanded by default (0 = all collapsed). Viewers' own choices are kept per viewer. */
+    expandDepth: z.number().int().min(0).max(4).default(1),
+    /** Grand-total row across every group. */
+    grandTotal: z.boolean().default(true),
     searchable: z.boolean().default(true),
     filters: z.array(conditionSchema).max(10).default([]),
     /** Clicking a job row opens its detail drawer. */
@@ -305,7 +474,11 @@ export const reportSpecSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().max(1000).default(""),
   datasets: z.array(datasetSchema).min(0).max(8).default([]),
-  controls: z.array(controlSchema).max(10).default([]),
+  /** Report-specific calculated fields (calc:<key>); shared ones live in the Metric Library. */
+  calculations: z.array(calculationSchema).max(30).default([]),
+  /** Report-specific relationships between sources (validated stable-id joins). */
+  relationships: z.array(relationshipSchema).max(10).default([]),
+  controls: z.array(controlSchema).max(12).default([]),
   /** Order = layout order on a 12-column grid. */
   widgets: z.array(widgetSchema).max(40).default([]),
 });
@@ -336,6 +509,7 @@ export function checkSpecReferences(spec: ReportSpec): SpecIssue[] {
     if (controlIds.has(c.id))
       issues.push({ path: `controls[${i}]`, message: `Duplicate control id "${c.id}".` });
     controlIds.add(c.id);
+    if (c.kind === "group_by" || c.kind === "sort" || c.kind === "metric_picker") return;
     const refs = c.kind === "job_picker" ? [c.dataset] : c.datasets;
     for (const ref of refs) {
       if (!datasetIds.has(ref))
@@ -375,6 +549,67 @@ export function checkSpecReferences(spec: ReportSpec): SpecIssue[] {
     if ((w.type === "kpi" || w.type === "chart") && w.metric.op !== "count" && !w.metric.field) {
       issues.push({ path: `widgets[${i}]`, message: `"${w.metric.op}" needs a field.` });
     }
+    if ((w.type === "kpi" || w.type === "chart") && w.metric.op === "formula") {
+      if (!w.metric.field?.startsWith("calc:"))
+        issues.push({
+          path: `widgets[${i}]`,
+          message: `"formula" metrics need an aggregate calculated field (calc:…).`,
+        });
+    }
+    if (w.type === "table" && w.groupLevels.length && w.summarize)
+      issues.push({
+        path: `widgets[${i}]`,
+        message: `Table "${w.id}": use either summarize or groupLevels, not both.`,
+      });
+  });
+  const relIds = new Set<string>();
+  spec.relationships.forEach((r, i) => {
+    if (relIds.has(r.id))
+      issues.push({ path: `relationships[${i}]`, message: `Duplicate relationship "${r.id}".` });
+    relIds.add(r.id);
+    const [a, b] = r.kind === "lookup" ? [r.from, r.to] : [r.parent, r.child];
+    if (a === b)
+      issues.push({
+        path: `relationships[${i}]`,
+        message: "A relationship joins two different sources.",
+      });
+  });
+  const calcKeys = new Set<string>();
+  spec.calculations.forEach((c, i) => {
+    if (calcKeys.has(c.key))
+      issues.push({ path: `calculations[${i}]`, message: `Duplicate calculation "${c.key}".` });
+    calcKeys.add(c.key);
+  });
+  const widgetById = new Map(spec.widgets.map((w) => [w.id, w]));
+  spec.controls.forEach((c, i) => {
+    if (c.kind !== "group_by" && c.kind !== "sort" && c.kind !== "metric_picker") return;
+    for (const wid of c.widgets) {
+      const w = widgetById.get(wid);
+      const ok =
+        c.kind === "metric_picker"
+          ? w?.type === "kpi" || w?.type === "chart"
+          : w?.type === "table" || w?.type === "chart";
+      if (!ok)
+        issues.push({
+          path: `controls[${i}]`,
+          message: `Control "${c.id}" targets "${wid}", which isn't a ${c.kind === "metric_picker" ? "KPI or chart" : "table or chart"}.`,
+        });
+    }
+    if (c.kind === "group_by") {
+      const bad = c.default.filter((f) => !c.options.includes(f));
+      if (bad.length)
+        issues.push({
+          path: `controls[${i}]`,
+          message: `Default grouping ${bad.join(", ")} must be one of the options.`,
+        });
+    }
+    if (c.kind === "sort" && c.default && !c.options.includes(c.default.field))
+      issues.push({
+        path: `controls[${i}]`,
+        message: `Default sort ${c.default.field} must be one of the options.`,
+      });
+    if (c.kind === "metric_picker" && c.default >= c.options.length)
+      issues.push({ path: `controls[${i}]`, message: "Default metric is out of range." });
   });
   return issues;
 }
@@ -414,8 +649,22 @@ export function collectDatasetFieldRefs(
   const conds = (dataset: string | null, cs: Condition[]) =>
     cs.forEach((c) => add(dataset, c.field));
   spec.datasets.forEach((d) => conds(d.id, d.filters));
+  const widgetDataset = new Map(
+    spec.widgets.flatMap((w) => ("dataset" in w ? [[w.id, w.dataset] as const] : [])),
+  );
   spec.controls.forEach((c) => {
     if (c.kind === "job_picker") return;
+    if (c.kind === "group_by" || c.kind === "sort" || c.kind === "metric_picker") {
+      const fields =
+        c.kind === "metric_picker"
+          ? c.options.flatMap((o) => (o.metric.field ? [o.metric.field] : []))
+          : c.options;
+      for (const wid of c.widgets) {
+        const ds = widgetDataset.get(wid) ?? null;
+        fields.forEach((f) => add(ds, f));
+      }
+      return;
+    }
     const fields = c.kind === "search" ? c.fields : [c.field];
     const datasets = c.datasets.length ? c.datasets : [null];
     for (const ds of datasets) fields.forEach((f) => add(ds, f));
@@ -431,6 +680,7 @@ export function collectDatasetFieldRefs(
       w.columns.forEach((c) => add(w.dataset, c.field));
       w.sort.forEach((x) => add(w.dataset, x.field));
       add(w.dataset, w.groupBy);
+      w.groupLevels.forEach((f) => add(w.dataset, f));
       conds(w.dataset, w.filters);
       w.highlight.forEach((h) => add(w.dataset, h.field));
     } else if (w.type === "detail")

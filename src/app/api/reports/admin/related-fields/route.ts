@@ -18,7 +18,7 @@ export async function GET() {
 }
 
 const bodySchema = z.object({
-  relationship: z.enum(["cost_items.job"]),
+  relationship: z.enum(["cost_items.job", "commissions.job"]),
   ref: z.string().trim().min(1).max(120),
   enabled: z.boolean(),
 });
