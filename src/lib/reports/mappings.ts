@@ -11,12 +11,13 @@ import "server-only";
 
 import { agentDb, eq } from "@/lib/agents/store";
 import { ValidationError } from "@/lib/errors";
+import { applyValueMappings, type MatchType } from "./mappings-core";
 
-export type MatchType = "prefix" | "exact" | "contains";
+export { applyValueMappings, type MatchType };
 
 export type ValueMappingRow = {
   id: string;
-  kind: "region";
+  kind: "region" | "model_scope" | "option_group";
   source_field: string;
   match_type: MatchType;
   pattern: string;
@@ -30,7 +31,27 @@ export type ValueMappingRow = {
 /** Fields a region rule may read. */
 export const REGION_SOURCE_FIELDS = ["model.name"] as const;
 
-export async function listValueMappings(kind: "region" = "region"): Promise<ValueMappingRow[]> {
+/** What each rule kind reads and which values it may set (validated on the server). */
+const KIND_RULES: Record<
+  ValueMappingRow["kind"],
+  { sourceFields: string[]; values: string[] | null; what: string }
+> = {
+  region: { sourceFields: ["model.name"], values: null, what: "Region rules read the model name." },
+  model_scope: {
+    sourceFields: ["model.name"],
+    values: ["include", "exclude"],
+    what: "Model rules read the top-level group name and either include or exclude it.",
+  },
+  option_group: {
+    sourceFields: ["group.name"],
+    values: ["include", "exclude"],
+    what: "Option-group rules read a cost group's name and either include or exclude it.",
+  },
+};
+
+export async function listValueMappings(
+  kind: ValueMappingRow["kind"] = "region",
+): Promise<ValueMappingRow[]> {
   return agentDb().select<ValueMappingRow>("bi_value_mappings", {
     filters: [eq("kind", kind)],
     order: { col: "priority" },
@@ -40,7 +61,7 @@ export async function listValueMappings(kind: "region" = "region"): Promise<Valu
 export async function saveValueMapping(
   input: {
     id?: string;
-    kind: "region";
+    kind: ValueMappingRow["kind"];
     sourceField: string;
     matchType: MatchType;
     pattern: string;
@@ -49,11 +70,14 @@ export async function saveValueMapping(
   },
   userId: string | null,
 ): Promise<ValueMappingRow> {
-  if (!(REGION_SOURCE_FIELDS as readonly string[]).includes(input.sourceField))
-    throw new ValidationError("Region rules can only read the model name.");
+  const kind = KIND_RULES[input.kind];
+  if (!kind || !kind.sourceFields.includes(input.sourceField))
+    throw new ValidationError(kind?.what ?? "Unknown rule type.");
   const pattern = input.pattern.trim();
   const value = input.value.trim();
-  if (!pattern || !value) throw new ValidationError("Enter both a pattern and a region.");
+  if (!pattern || !value) throw new ValidationError("Enter both a pattern and a value.");
+  if (kind.values && !kind.values.includes(value))
+    throw new ValidationError(`Value must be one of: ${kind.values.join(", ")}.`);
   const row = {
     kind: input.kind,
     source_field: input.sourceField,
@@ -86,29 +110,6 @@ export async function deleteValueMapping(id: string): Promise<void> {
   await agentDb().remove("bi_value_mappings", [eq("id", id)]);
 }
 
-/** First matching rule wins: lower priority number first, then the longest pattern. */
-export function applyValueMappings(
-  text: string | null | undefined,
-  rules: Array<Pick<ValueMappingRow, "match_type" | "pattern" | "value" | "priority">>,
-): string | null {
-  if (!text) return null;
-  const subject = text.trim().toLowerCase();
-  const ordered = [...rules].sort(
-    (a, b) => a.priority - b.priority || b.pattern.length - a.pattern.length,
-  );
-  for (const r of ordered) {
-    const p = r.pattern.trim().toLowerCase();
-    if (!p) continue;
-    if (
-      (r.match_type === "exact" && subject === p) ||
-      (r.match_type === "prefix" && subject.startsWith(p)) ||
-      (r.match_type === "contains" && subject.includes(p))
-    )
-      return r.value;
-  }
-  return null;
-}
-
 /**
  * Candidate prefixes seen in model names ("LA - i 498" → "LA -"), for the admin to confirm.
  * Suggestions only: nothing is mapped until an admin saves a rule.
@@ -130,7 +131,8 @@ export function suggestPrefixes(
 
 /** Region rules plus every Product Library model and the region it resolves to. */
 export async function getRegionMappingOverview() {
-  const { isProductModel } = await import("./engine");
+  const { isProductModel, loadModelScopeRules } = await import("./engine");
+  const scopeRules = await loadModelScopeRules();
   const [rules, models] = await Promise.all([
     listValueMappings("region"),
     agentDb().select<{ id: string; name: string; description: string | null }>(
@@ -138,7 +140,9 @@ export async function getRegionMappingOverview() {
       { filters: [{ col: "removed_at", op: "is_null" }], limit: 5000 },
     ),
   ]);
-  const productModels = models.filter(isProductModel).sort((a, b) => a.name.localeCompare(b.name));
+  const productModels = models
+    .filter((m) => isProductModel(m, scopeRules))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const resolved = productModels.map((m) => ({
     id: m.id,
     name: m.name,

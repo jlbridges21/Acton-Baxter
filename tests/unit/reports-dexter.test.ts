@@ -174,6 +174,7 @@ describe("report permissions", () => {
       "active_projects",
       "blank",
       "design_handoff",
+      "exterior_options",
       "product_library",
       "sales_commissions",
     ]);

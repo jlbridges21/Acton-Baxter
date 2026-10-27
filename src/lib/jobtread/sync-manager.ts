@@ -607,6 +607,14 @@ async function reconcile(table: string, generation: string): Promise<number> {
   return removed.length;
 }
 
+/** Reports cache the catalog for a minute; refresh it after catalog data changes. */
+async function invalidateReportCaches(key: SyncEntityKey) {
+  if (!["catalog_models", "cost_groups", "cost_items", "jobs"].includes(key)) return;
+  await import("@/lib/reports/engine")
+    .then((m) => m.invalidateCatalogContext())
+    .catch(() => undefined);
+}
+
 export type AdvanceOutcome = "completed" | "paused" | "failed" | "skipped";
 
 /** Advance one run until it finishes, fails, or the deadline passes (then it's re-queued). */
@@ -682,6 +690,7 @@ export async function advanceRun(input: EntityRunRow, deadline: number): Promise
           last_error_code: null,
         },
       );
+      await invalidateReportCaches(def.key);
       return "completed";
     }
 
@@ -750,6 +759,7 @@ export async function advanceRun(input: EntityRunRow, deadline: number): Promise
         last_error_code: shrank ? "SHRINK_GUARD" : null,
       },
     );
+    await invalidateReportCaches(def.key);
     return "completed";
   } catch (error) {
     const c = classifySyncError(error);

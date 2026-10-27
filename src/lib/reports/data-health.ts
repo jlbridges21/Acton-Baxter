@@ -17,7 +17,7 @@ import {
   summarizeDataHealth,
   type FreshnessInput,
 } from "./dependencies";
-import { isProductModel } from "./engine";
+import { isProductModel, loadModelScopeRules } from "./engine";
 import { applyValueMappings, listValueMappings, suggestPrefixes } from "./mappings";
 import { parseReportSpec } from "./spec";
 
@@ -61,6 +61,27 @@ export async function getDatasetFreshness(): Promise<FreshnessInput[]> {
   const value = withLegacyFallback(overviews, legacy);
   cached = { at: Date.now(), value };
   return value;
+}
+
+/**
+ * Phrases in report text widgets that state data facts (counts, import progress, sync status)
+ * which go stale. Flagged for review only — user-authored text is never rewritten.
+ */
+const STATIC_DATA_CLAIM =
+  /\b\d+\s+of\s+\d+\b|pending import|budgets? (are|is) (still )?pending|not (been )?(imported|synced) yet|(don'?t|do not|doesn'?t) exist in jobtread( yet)?|no templates carry|as of (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d)|last (successful )?sync(ed)? (on|at)/i;
+
+export function staticDataClaims(spec: {
+  widgets: Array<{ id: string; type: string; title?: string; body?: string }>;
+}) {
+  return spec.widgets.flatMap((w) => {
+    if (w.type !== "text" || !w.body) return [];
+    const m = STATIC_DATA_CLAIM.exec(w.body);
+    if (!m) return [];
+    const start = Math.max(0, m.index - 60);
+    return [
+      { widgetId: w.id, title: w.title ?? "", excerpt: w.body.slice(start, m.index + 80).trim() },
+    ];
+  });
 }
 
 export async function reportDataHealth(spec: Parameters<typeof reportDependencies>[0]) {
@@ -119,9 +140,18 @@ export async function getDataHealthDashboard() {
     widgetsAffected: number;
   }> = [];
   const usage = new Map<string, number>();
+  const staticNotes: Array<{
+    reportId: string;
+    reportTitle: string;
+    widgetId: string;
+    title: string;
+    excerpt: string;
+  }> = [];
   for (const r of reports.filter((x) => !x.is_template)) {
     const parsed = parseReportSpec(r.spec);
     if (!parsed.ok) continue;
+    for (const claim of staticDataClaims(parsed.spec))
+      staticNotes.push({ reportId: r.id, reportTitle: r.title, ...claim });
     const deps = reportDependencies(parsed.spec);
     for (const d of deps.datasets) usage.set(d.entity, (usage.get(d.entity) ?? 0) + 1);
     const health = summarizeDataHealth(deps, freshness, now);
@@ -135,7 +165,8 @@ export async function getDataHealthDashboard() {
       });
   }
 
-  const productModels = models.filter(isProductModel);
+  const scopeRules = await loadModelScopeRules();
+  const productModels = models.filter((m) => isProductModel(m, scopeRules));
   const regionRules = rules.filter((r) => r.source_field === "model.name");
   const unmappedModels = productModels.filter((m) => !applyValueMappings(m.name, regionRules));
   const byTarget = new Map<string, { total: number; excluded: number }>();
@@ -175,6 +206,7 @@ export async function getDataHealthDashboard() {
       dependsOn: d.dependsOn.map((k) => getSyncEntity(k)?.label ?? k),
     })),
     reportsAffected: affected.slice(0, 50),
+    staticNotes: staticNotes.slice(0, 50),
     mappings: {
       semanticTotal: semantic.length,
       semanticUnmapped: semantic.filter((s) => !s.custom_field_id).length,

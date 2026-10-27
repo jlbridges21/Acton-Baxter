@@ -234,6 +234,7 @@ async function runSeed(): Promise<void> {
     await upgradeDexterConfig(dexter.id);
     await addDexterGroupTools(dexter.id);
     await addDexterDataSyncTools(dexter.id);
+    await addDexterSourceRegistryTool(dexter.id);
   }
   const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
   if (sam) {
@@ -407,6 +408,29 @@ async function addDexterDataSyncTools(dexterId: string) {
     published,
     { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
     `${DEXTER_DATA_SYNC_MARKER}: dataset status, freshness, dependencies, and admin-confirmed syncs`,
+  );
+}
+
+const DEXTER_SOURCES_MARKER = "System: Dexter source registry";
+
+/** One-time: enable reports_sources (registry discovery) on Dexter's published config. */
+async function addDexterSourceRegistryTool(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_SOURCES_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, "reports_sources"])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_SOURCES_MARKER}: discover report sources (cost items, models, jobs) from metadata`,
   );
 }
 

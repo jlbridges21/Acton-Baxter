@@ -2,6 +2,7 @@ import { jsonError, jsonOk } from "@/lib/api";
 import { canSeeField } from "@/lib/reports/access";
 import { getFieldCatalog, resolveField } from "@/lib/reports/fields";
 import { requireReportsContext } from "@/lib/reports/http";
+import type { ReportSource } from "@/lib/reports/spec";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export async function GET() {
   try {
     const ctx = await requireReportsContext();
     const catalog = await getFieldCatalog();
-    const visible = (source: "jobs" | "catalog_models" | "commissions") =>
+    const visible = (source: ReportSource) =>
       catalog.bySource[source]
         .filter((f) => canSeeField(ctx.access, f))
         .map((f) => ({
@@ -40,6 +41,7 @@ export async function GET() {
     return jsonOk({
       jobs: { business, all: visible("jobs") },
       catalog_models: { business: [], all: visible("catalog_models") },
+      cost_items: { business: [], all: visible("cost_items") },
       commissions: { business: [], all: visible("commissions") },
     });
   } catch (error) {

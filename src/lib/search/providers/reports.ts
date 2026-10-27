@@ -20,6 +20,7 @@ const UUID = /^[0-9a-f-]{36}$/i;
 const SOURCE_LABEL: Record<string, string> = {
   jobs: "Jobs",
   catalog_models: "Product Library",
+  cost_items: "Cost items",
   commissions: "Commissions",
 };
 

@@ -33,6 +33,7 @@ const TYPE_LABELS: Record<string, string> = {
   chart: "Chart",
   table: "Table",
   text: "Text note",
+  data_status: "Data status (live)",
   project_header: "Project header",
   detail: "Project details",
   milestones: "Milestone timeline",
@@ -137,7 +138,13 @@ export function AddWidgetDialog({
   const [type, setType] = useState<WidgetSpec["type"]>("chart");
   const [title, setTitle] = useState("");
   // Reports without data sources (older blank reports) can pick a default one here.
-  const datasets = spec.datasets.length ? spec.datasets : DEFAULT_DATASETS;
+  // The report's datasets plus any default source it doesn't use yet (added on save).
+  const datasets = [
+    ...spec.datasets,
+    ...DEFAULT_DATASETS.filter(
+      (d) => !spec.datasets.some((x) => x.source === d.source || x.id === d.id),
+    ),
+  ];
   const [dataset, setDataset] = useState(datasets[0]?.id ?? "");
   const [chart, setChart] = useState<(typeof CHART_TYPES)[number]>("bar");
   const [op, setOp] = useState<(typeof METRIC_OPS)[number]>("count");
@@ -189,6 +196,7 @@ export function AddWidgetDialog({
     else if (type === "table")
       raw = { ...base, type, dataset, columns: columns.map((field) => ({ field })) };
     else if (type === "text") raw = { ...base, type, body };
+    else if (type === "data_status") raw = { ...base, type };
     else if (type === "detail")
       raw = { ...base, type, control, fields: columns.map((field) => ({ field })) };
     else if (type === "project_header")

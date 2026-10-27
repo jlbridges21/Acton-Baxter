@@ -90,6 +90,7 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   jt_sync_settings: [["id"]],
   jt_sync_entities: [["entity"]],
   jt_cost_items: [["id"]],
+  jt_cost_groups: [["id"]],
   jt_tasks: [["id"]],
   jt_accounts: [["id"]],
   jt_contacts: [["id"]],

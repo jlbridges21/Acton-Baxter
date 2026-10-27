@@ -59,8 +59,10 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { CellValue } from "@/lib/reports/compute";
+import { formatRelative } from "@/components/ai/ui";
 import type {
   ChartResult,
+  DataStatusResult,
   DetailResult,
   DocumentsResult,
   FieldMeta,
@@ -276,7 +278,43 @@ export function WidgetBody({
       return <p className="text-sm whitespace-pre-wrap text-[var(--acton-muted)]">{result.body}</p>;
     case "rule_editor":
       return <RuleEditorWidget result={result} onChanged={() => actions.onRulesChanged?.()} />;
+    case "data_status":
+      return <DataStatusWidget result={result} />;
   }
+}
+
+const FRESHNESS_TONE: Record<string, string> = {
+  fresh: "bg-emerald-500",
+  running: "bg-indigo-500",
+  stale: "bg-amber-500",
+  failed: "bg-red-500",
+  never: "bg-slate-400",
+  disabled: "bg-slate-400",
+  not_configured: "bg-slate-400",
+};
+
+function DataStatusWidget({ result }: { result: DataStatusResult }) {
+  if (!result.datasets.length) return <StatusMessage result={result} />;
+  return (
+    <ul className="divide-y divide-[var(--acton-gray-100)] text-sm">
+      {result.datasets.map((d) => (
+        <li key={d.entity} className="flex items-start gap-2 py-1.5">
+          <span
+            className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", FRESHNESS_TONE[d.level])}
+            aria-hidden
+          />
+          <span className="min-w-0 flex-1">
+            <span className="font-medium text-[var(--acton-navy)]">{d.label}</span>
+            <span className="text-[var(--acton-muted)]">
+              {" "}
+              · {d.lastSuccessAt ? `synced ${formatRelative(d.lastSuccessAt)}` : "never synced"}
+            </span>
+            {d.message ? <span className="block text-xs text-amber-900">{d.message}</span> : null}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 // ---------------------------------------------------------------------------

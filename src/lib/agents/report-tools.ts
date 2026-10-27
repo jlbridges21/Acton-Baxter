@@ -40,21 +40,27 @@ import { ACTIVE_PHASES } from "@/lib/reports/templates";
 import { attachAttachmentsToReport } from "@/lib/reports/attachments";
 import { attachSessionToReport } from "@/lib/reports/sessions";
 import { ensureJobTreadData, loadSourceRows } from "@/lib/reports/engine";
+import { describeSourcesForModel, SOURCE_REGISTRY } from "@/lib/reports/sources";
 
-const SPEC_GUIDE = `REPORT SPEC (JSON). Fields: "job.*" built-ins (incl. job.orderGrossProfit, job.orderPrice, job.orderCost from customer orders), "cf:<id>" custom fields, "sem:<key>" business names, "model.*" for catalog_models, "com.*" for commissions. Use keys exactly as reports_list_fields returns them.
+const SOURCE_LIST = SOURCES.map((x) => `"${x}"`).join("|");
+
+const SPEC_GUIDE = `REPORT SPEC (JSON). Sources (from the source registry; reports_sources has fields, relationships, and freshness):
+${describeSourcesForModel()}
+Fields: "job.*" built-ins (incl. job.orderGrossProfit, job.orderPrice, job.orderCost from customer orders), "cf:<id>" custom fields, "sem:<key>" business names, and each source's own prefix (see above). Use keys exactly as reports_list_fields returns them. A report can have several datasets from different sources; combine related sources by filtering/grouping on their link fields (e.g. item.model), never by duplicating rows.
 Commissions: dataset {"id","source":"commissions","ruleSet":<key from reports_rules>} — one row per project × salesperson with com.salesperson, com.jobName, com.grossProfit, com.ratePct, com.splitPct, com.commission, com.date, com.status. Editors: {"id","type":"rate_editor","ruleSet"} and {"id","type":"assignment_editor","ruleSet"} let authorized people set rates and assign projects in the report. A per-salesperson view is a "select" control on com.salesperson (use "default":[name] for a salesperson-specific copy).
 { "title": str, "description": str,
-  "datasets": [{ "id": "active_jobs", "source": "jobs"|"catalog_models", "label": str, "filters": [Condition] }],
+  "datasets": [{ "id": "active_jobs", "source": ${SOURCE_LIST}, "label": str, "filters": [Condition] }],
   "controls": [ { "id","kind":"job_picker","label","dataset" } | { "id","kind":"select","label","field","datasets":[id] } | { "id","kind":"search","label","fields":[f],"datasets":[id] } | { "id","kind":"number_range"|"date_range","label","field","datasets":[id] } ],
   "widgets": [ (order = layout; "span": 3|4|6|8|12; optional "title","description","height":"sm"|"md"|"lg"|"auto")
     { "id","type":"kpi","dataset","metric":{ "op":"count"|"count_distinct"|"sum"|"avg"|"median"|"min"|"max","field"? },"filters":[Condition],"format":"auto"|"number"|"currency"|"percent"|"sqft" } (percent values are 0–100)
     { "id","type":"chart","dataset","chart":"bar"|"horizontal_bar"|"stacked_bar"|"line"|"area"|"donut"|"scatter"|"histogram","groupBy":f,"seriesBy"?:f,"metric":Metric,"x"?:f,"y"?:f (scatter),"bucket"?:"month"|"quarter"|"year","sort":"value_desc"|"value_asc"|"label","limit":1-50 }
-    { "id","type":"table","dataset","columns":[{ "field","label"?,"format"? }],"sort":[{ "field","dir":"asc"|"desc" }],"groupBy"?:f,"pageSize":5-100,"rowDrilldown":bool,"comparable":bool,"highlight":[{ "field","op","value","tone":"green"|"amber"|"red"|"blue" }] }
+    { "id","type":"table","dataset","columns":[{ "field","label"?,"format"? }],"sort":[{ "field","dir":"asc"|"desc" }],"groupBy"?:f,"pageSize":5-100,"rowDrilldown":bool,"comparable":bool,"highlight":[{ "field","op","value","tone":"green"|"amber"|"red"|"blue" }],"summarize"?:bool } (summarize: one row per distinct text-column combination, amount columns summed, plus a Lines count — e.g. columns item.model, item.option, item.cost, item.price for option totals per model; keep unit cost/price out of summary tables)
     { "id","type":"project_header","control":<job_picker id>,"fields":[f] }
     { "id","type":"detail","control":<job_picker id>,"style":"grid"|"long_text"|"badges","fields":[{ "field","label"? }] }
     { "id","type":"milestones","control":<job_picker id>,"show":"schedule"|"checklists"|"all","style":"timeline"|"list" }
     { "id","type":"documents","control":<job_picker id> }
-    { "id","type":"text","body":str }
+    { "id","type":"text","body":str } (business commentary only — never type sync dates, record counts, or import progress into text; use KPIs or data_status)
+    { "id","type":"data_status" } (live: when each dataset the report reads last synced, and whether it's fresh)
     { "id","type":"rate_editor"|"assignment_editor","ruleSet":key } ] }
 Condition = { "field", "op":"eq"|"neq"|"in"|"not_in"|"contains"|"not_contains"|"starts_with"|"blank"|"not_blank"|"gt"|"gte"|"lt"|"lte", "value"? }
 Ids: lowercase letters/numbers/_/- . Detail/header/milestones/documents widgets need a job_picker control on a jobs dataset.`;
@@ -93,8 +99,7 @@ const listFields: AgentTool = {
   label: "Discover report fields",
   description:
     "Lists the JobTread fields Dexter may use for this person, with how often each is filled and example values.",
-  modelUsage:
-    'reports_list_fields {"source": "jobs"|"catalog_models", "search"?: string} — fields available to this requester (key, label, type, fill rate, sample values) plus business names (sem:*) and whether each is mapped. Call this before building any report.',
+  modelUsage: `reports_list_fields {"source": ${SOURCE_LIST}, "search"?: string} — fields available to this requester (key, label, type, fill rate, sample values) plus business names (sem:*) and whether each is mapped. Call this before building any report.`,
   risk: "read",
   alwaysRequiresApproval: false,
   available: true,
@@ -179,7 +184,15 @@ const listFields: AgentTool = {
         note:
           source === "jobs"
             ? `Active work is identified by the Phase field (sem:phase); the Status field is mostly blank in JobTread. Active phases: ${ACTIVE_PHASES.join(", ")}.`
-            : "Models are top-level catalog cost groups; most have budgets pending import.",
+            : [
+                SOURCE_REGISTRY[source].grain,
+                ...SOURCE_REGISTRY[source].notes,
+                source === "catalog_models"
+                  ? `Live: ${rows.filter((r) => Number(r["model.itemCount"] ?? 0) > 0).length} of ${rows.length} models have budget lines in JobTread.`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
       },
       logSummary: `Listed ${fields.length} ${source} field(s).`,
     };

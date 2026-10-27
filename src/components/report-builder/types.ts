@@ -58,7 +58,7 @@ export type FieldOption = {
   origin: string;
 };
 export type FieldsResponse = Record<
-  "jobs" | "catalog_models" | "commissions",
+  "jobs" | "catalog_models" | "cost_items" | "commissions",
   { business: FieldOption[]; all: FieldOption[] }
 >;
 

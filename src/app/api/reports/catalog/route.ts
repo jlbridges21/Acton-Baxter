@@ -11,6 +11,7 @@ import { isBlank } from "@/lib/reports/compute";
 import { ensureJobTreadData, loadSourceRows } from "@/lib/reports/engine";
 import { getFieldCatalog } from "@/lib/reports/fields";
 import { requireReportsContext } from "@/lib/reports/http";
+import { SOURCES } from "@/lib/reports/spec";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -34,11 +35,7 @@ export async function GET(request: Request) {
       capabilityMatrix(ctx.access),
       suggestedReports(ctx.access),
     ]);
-    const all = [
-      ...catalog.bySource.jobs,
-      ...catalog.bySource.catalog_models,
-      ...catalog.bySource.commissions,
-    ];
+    const all = [...SOURCES.flatMap((source) => catalog.bySource[source])];
     const hiddenByCategory: Record<string, number> = {};
     const fields = [];
     for (const f of all) {

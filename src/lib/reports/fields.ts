@@ -377,6 +377,23 @@ export const MODEL_FIELDS: FieldDef[] = [
       "Baxter region mapping on the model name (Reports → Data settings → Mappings). Blank when no rule matches — never guessed from the prefix.",
   },
   {
+    key: "model.optionGroups",
+    label: "Option Groups",
+    type: "list",
+    category: "general",
+    source: "catalog_models",
+    origin:
+      "Option groups (e.g. Exterior Package Options) found under the model in the cost-group hierarchy",
+  },
+  {
+    key: "model.optionCount",
+    label: "Options",
+    type: "number",
+    category: "general",
+    source: "catalog_models",
+    origin: "Number of options (groups) inside the model's option groups",
+  },
+  {
     key: "model.description",
     label: "Description",
     type: "text",
@@ -432,6 +449,169 @@ export const MODEL_FIELDS: FieldDef[] = [
     source: "catalog_models",
     origin: "Derived: (base price − base cost) ÷ base price × 100",
   },
+];
+
+const itemField = (
+  key: string,
+  label: string,
+  type: FieldType,
+  category: FieldDef["category"],
+  origin: string,
+  description?: string,
+): FieldDef => ({
+  key,
+  label,
+  type,
+  category,
+  source: "cost_items",
+  origin,
+  ...(description ? { description } : {}),
+});
+
+/** Cost items (budget and catalog lines). One row per JobTread cost item. */
+export const ITEM_FIELDS: FieldDef[] = [
+  itemField("item.name", "Item", "text", "general", "JobTread costItem.name"),
+  itemField(
+    "item.description",
+    "Item Description",
+    "text",
+    "general",
+    "JobTread costItem.description",
+  ),
+  itemField(
+    "item.context",
+    "Belongs To",
+    "text",
+    "general",
+    "Derived from the cost-group hierarchy",
+    "Product Library model, Other catalog group (e.g. a shared selections library), Job budget, or Item library (no group).",
+  ),
+  itemField(
+    "item.model",
+    "Model",
+    "text",
+    "general",
+    "Root cost group when it is a Product Library model (by id)",
+  ),
+  itemField(
+    "item.modelSeries",
+    "Model Series",
+    "text",
+    "general",
+    "Model name prefix (see model.series)",
+  ),
+  itemField(
+    "item.modelRegion",
+    "Model Region",
+    "text",
+    "general",
+    "Admin region rule on the model name; blank when unmapped",
+  ),
+  itemField(
+    "item.rootGroup",
+    "Top-Level Group",
+    "text",
+    "general",
+    "Root of the JobTread cost-group hierarchy",
+  ),
+  itemField(
+    "item.section",
+    "Section",
+    "text",
+    "general",
+    "First group below the root (e.g. Windows, Exterior Package Options)",
+  ),
+  itemField(
+    "item.group",
+    "Cost Group",
+    "text",
+    "general",
+    "JobTread costItem.costGroup.name (immediate group)",
+  ),
+  itemField(
+    "item.groupPath",
+    "Group Path",
+    "text",
+    "general",
+    "Full JobTread cost-group path, root first",
+  ),
+  itemField(
+    "item.optionGroup",
+    "Option Group",
+    "text",
+    "general",
+    'Nearest group named "… Options" (or set by an admin rule)',
+    "e.g. Exterior Package Options.",
+  ),
+  itemField(
+    "item.option",
+    "Option",
+    "text",
+    "general",
+    "Group directly below the option group on the item's path",
+    "e.g. Hayward Modern.",
+  ),
+  itemField("item.costCode", "Cost Code", "text", "general", "JobTread costItem.costCode.name"),
+  itemField("item.costType", "Cost Type", "text", "general", "JobTread costItem.costType.name"),
+  itemField("item.unit", "Unit", "text", "general", "JobTread costItem.unit.name"),
+  itemField("item.quantity", "Quantity", "number", "general", "JobTread costItem.quantity"),
+  itemField("item.unitCost", "Unit Cost", "currency", "financial", "JobTread costItem.unitCost"),
+  itemField(
+    "item.unitPrice",
+    "Unit Price",
+    "currency",
+    "financial",
+    "JobTread costItem.unitPrice (selling price per unit)",
+  ),
+  itemField("item.cost", "Extended Cost", "currency", "financial", "JobTread costItem.cost"),
+  itemField(
+    "item.price",
+    "Extended Price",
+    "currency",
+    "financial",
+    "JobTread costItem.price (selling price)",
+    "Customer-facing selling price from JobTread. Blank when JobTread has no price — never filled from cost.",
+  ),
+  itemField(
+    "item.markupPct",
+    "Markup %",
+    "percent",
+    "financial",
+    "Derived: (price − cost) ÷ cost × 100",
+  ),
+  itemField(
+    "item.marginPct",
+    "Margin %",
+    "percent",
+    "financial",
+    "Derived: (price − cost) ÷ price × 100",
+  ),
+  itemField(
+    "item.priceStatus",
+    "Price Status",
+    "text",
+    "financial",
+    "Derived from JobTread price and cost",
+    "Priced in JobTread, Price equals cost (no markup), or No selling price in JobTread.",
+  ),
+  itemField("item.job", "Job", "text", "general", "JobTread job name (job budget lines only)"),
+  itemField("item.jobNumber", "Job Number", "text", "general", "JobTread job number"),
+  itemField("item.taxable", "Taxable", "boolean", "general", "JobTread costItem.isTaxable"),
+  itemField(
+    "item.sourceItemId",
+    "Source Catalog Item",
+    "text",
+    "general",
+    "JobTread costItem.organizationCostItem.id",
+  ),
+  itemField("item.id", "Cost Item ID", "text", "general", "JobTread costItem.id"),
+  itemField(
+    "item.syncedAt",
+    "Last Synced",
+    "date",
+    "general",
+    "When Baxter last read this item from JobTread",
+  ),
 ];
 
 function customFieldType(f: CustomFieldRow): { type: FieldType; multi: boolean } {
@@ -501,7 +681,7 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
     });
   const jobs = [...JOB_BUILTINS, ...JOB_FINANCIAL_FIELDS, ...custom];
   const byKey = new Map<string, FieldDef>(
-    [...jobs, ...MODEL_FIELDS, ...COMMISSION_FIELDS].map((f) => [f.key, f]),
+    [...jobs, ...MODEL_FIELDS, ...ITEM_FIELDS, ...COMMISSION_FIELDS].map((f) => [f.key, f]),
   );
   const allFields = new Map(fields.map((f) => [f.id, f]));
   const semanticMap: FieldCatalog["semantic"] = new Map(
@@ -530,7 +710,12 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
       }),
   );
   const catalog: FieldCatalog = {
-    bySource: { jobs, catalog_models: MODEL_FIELDS, commissions: COMMISSION_FIELDS },
+    bySource: {
+      jobs,
+      catalog_models: MODEL_FIELDS,
+      cost_items: ITEM_FIELDS,
+      commissions: COMMISSION_FIELDS,
+    },
     byKey,
     semantic: semanticMap,
   };

@@ -451,7 +451,82 @@ const enableTool: AgentTool = {
   },
 };
 
+const sourcesArgs = z.object({ source: z.string().max(40).optional() });
+
+const sourcesTool: AgentTool = {
+  key: "reports_sources",
+  label: "Discover report sources",
+  description:
+    "Every registered report source (jobs, Product Library models, cost items, commissions, …) with its grain, relationships, fields this person may use, supported filters and aggregations, record count, and data freshness.",
+  modelUsage:
+    'reports_sources {"source"?: id} — the source registry: what one row is, link fields to other sources, visible fields (key, label, type), restricted field count, filters/aggregations, records, freshness. Call it when a request may need a source other than jobs (pricing, cost items, options, models).',
+  risk: "read",
+  alwaysRequiresApproval: false,
+  available: true,
+  source: "jobtread",
+  args: sourcesArgs,
+  async execute(ctx, raw) {
+    return guarded(async () => {
+      const access = await reportsAccess(ctx);
+      const { source } = sourcesArgs.parse(raw ?? {});
+      const { SOURCES } = await import("@/lib/reports/spec");
+      const { SOURCE_REGISTRY, SUPPORTED_OPERATIONS } = await import("@/lib/reports/sources");
+      const { getFieldCatalog } = await import("@/lib/reports/fields");
+      const { canSeeField } = await import("@/lib/reports/access");
+      const { loadSourceRows } = await import("@/lib/reports/engine");
+      const { getDatasetFreshness } = await import("@/lib/reports/data-health");
+      const { assessFreshness } = await import("@/lib/reports/dependencies");
+      const [catalog, freshness] = await Promise.all([
+        getFieldCatalog(),
+        getDatasetFreshness().catch(() => []),
+      ]);
+      const ids = SOURCES.filter((id) => !source || id === source);
+      if (!ids.length)
+        throw new Error(`Unknown source "${source}". Sources: ${SOURCES.join(", ")}.`);
+      const out = [];
+      for (const id of ids) {
+        const meta = SOURCE_REGISTRY[id];
+        const fields = catalog.bySource[id];
+        const visible = fields.filter((f) => canSeeField(access, f));
+        const records =
+          id === "commissions"
+            ? null
+            : await loadSourceRows(id)
+                .then((r) => r.rows.length)
+                .catch(() => null);
+        out.push({
+          id,
+          label: meta.label,
+          description: meta.description,
+          grain: meta.grain,
+          sourceSystem: meta.sourceSystem,
+          relationships: meta.relationships,
+          notes: meta.notes,
+          records,
+          fields: (source ? visible : visible.slice(0, 60)).map((f) => ({
+            key: f.key,
+            label: f.label,
+            type: f.type,
+          })),
+          restrictedFields: fields.length - visible.length,
+          freshness: meta.syncEntities.map((e) => {
+            const f = freshness.find((x) => x.key === e);
+            return f
+              ? { dataset: e, lastSuccessAt: f.lastSuccessAt, ...assessFreshness(f) }
+              : { dataset: e, level: "unknown", message: null };
+          }),
+        });
+      }
+      return {
+        data: { sources: out, operations: SUPPORTED_OPERATIONS },
+        logSummary: `Read ${out.length} report source(s) from the registry.`,
+      };
+    });
+  },
+};
+
 export const DATA_SYNC_TOOLS: AgentTool[] = [
+  sourcesTool,
   overviewTool,
   entityTool,
   scheduleTool,

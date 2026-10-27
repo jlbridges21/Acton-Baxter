@@ -532,6 +532,160 @@ export const SALES_COMMISSIONS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
   ],
 });
 
+/** Option group name used by Acton's Product Library budgets (verified in JobTread 2026-10-27). */
+export const EXTERIOR_OPTION_GROUP = "Exterior Package Options";
+
+export const EXTERIOR_OPTIONS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
+  title: "Exterior Package Options by Model",
+  description:
+    "Each ADU model's exterior package options with JobTread cost and selling price, from the model budgets' Exterior Package Options groups.",
+  datasets: [
+    {
+      id: "options",
+      source: "cost_items",
+      label: "Exterior option lines",
+      filters: [
+        { field: "item.optionGroup", op: "eq", value: EXTERIOR_OPTION_GROUP },
+        { field: "item.context", op: "eq", value: "Product Library model" },
+      ],
+    },
+    { id: "models", source: "catalog_models", label: "ADU models" },
+  ],
+  controls: [
+    {
+      id: "model",
+      kind: "select",
+      label: "Model",
+      field: "item.model",
+      datasets: ["options"],
+    },
+    {
+      id: "option",
+      kind: "select",
+      label: "Exterior option",
+      field: "item.option",
+      datasets: ["options"],
+    },
+    {
+      id: "series",
+      kind: "select",
+      label: "Series",
+      field: "item.modelSeries",
+      datasets: ["options"],
+    },
+  ],
+  widgets: [
+    {
+      id: "models_with_options",
+      type: "kpi",
+      title: "Models with exterior options",
+      span: 3,
+      dataset: "models",
+      metric: { op: "count" },
+      filters: [{ field: "model.optionGroups", op: "contains", value: EXTERIOR_OPTION_GROUP }],
+    },
+    {
+      id: "options_offered",
+      type: "kpi",
+      title: "Exterior options",
+      span: 3,
+      dataset: "options",
+      metric: { op: "count_distinct", field: "item.option" },
+    },
+    {
+      id: "option_lines",
+      type: "kpi",
+      title: "Option lines",
+      span: 3,
+      dataset: "options",
+      metric: { op: "count" },
+    },
+    {
+      id: "unpriced",
+      type: "kpi",
+      title: "Lines without a selling price",
+      span: 3,
+      dataset: "options",
+      metric: { op: "count" },
+      filters: [{ field: "item.priceStatus", op: "eq", value: "No selling price in JobTread" }],
+    },
+    {
+      id: "price_by_option",
+      type: "chart",
+      title: "Selling price by option and model",
+      span: 12,
+      height: "lg",
+      dataset: "options",
+      chart: "stacked_bar",
+      groupBy: "item.model",
+      seriesBy: "item.option",
+      metric: { op: "sum", field: "item.price" },
+      format: "currency",
+      sort: "label",
+      limit: 50,
+    },
+    {
+      id: "option_totals",
+      type: "table",
+      title: "Option price list (per model)",
+      description: "Totals per model and option. Price = JobTread selling price; cost = internal.",
+      span: 12,
+      dataset: "options",
+      summarize: true,
+      columns: [
+        { field: "item.model" },
+        { field: "item.option", label: "Exterior option" },
+        { field: "item.cost", label: "Total cost" },
+        { field: "item.price", label: "Total price" },
+      ],
+      sort: [
+        { field: "item.model", dir: "asc" },
+        { field: "item.option", dir: "asc" },
+      ],
+      pageSize: 50,
+      comparable: true,
+    },
+    {
+      id: "option_lines_table",
+      type: "table",
+      title: "Option lines",
+      span: 12,
+      dataset: "options",
+      groupBy: "item.option",
+      columns: [
+        { field: "item.model" },
+        { field: "item.option", label: "Exterior option" },
+        { field: "item.name" },
+        { field: "item.quantity" },
+        { field: "item.unit" },
+        { field: "item.unitCost" },
+        { field: "item.unitPrice" },
+        { field: "item.cost", label: "Total cost" },
+        { field: "item.price", label: "Total price" },
+        { field: "item.priceStatus" },
+      ],
+      sort: [{ field: "item.model", dir: "asc" }],
+      pageSize: 25,
+      highlight: [
+        {
+          field: "item.priceStatus",
+          op: "eq",
+          value: "No selling price in JobTread",
+          tone: "amber",
+        },
+      ],
+    },
+    { id: "data_status", type: "data_status", title: "Data status", span: 6 },
+    {
+      id: "about",
+      type: "text",
+      title: "About these numbers",
+      span: 6,
+      body: "Selling price is JobTread's price on each budget line; cost is the internal cost. Option totals are summed from the lines in each model's Exterior Package Options group, so they reflect that model's quantities. A total is left blank when any of its lines has no price in JobTread.",
+    },
+  ],
+});
+
 export const BLANK_TEMPLATE: ReportSpec = reportSpecSchema.parse({
   title: "Blank report",
   description: "Start from scratch — add widgets yourself or describe what you need to Dexter.",
@@ -560,6 +714,11 @@ export const REPORT_TEMPLATES: Array<{ key: string; spec: ReportSpec; summary: s
     key: "sales_commissions",
     spec: SALES_COMMISSIONS_TEMPLATE,
     summary: "Commissions by salesperson with editable rates and project assignments.",
+  },
+  {
+    key: "exterior_options",
+    spec: EXTERIOR_OPTIONS_TEMPLATE,
+    summary: "Exterior package options per ADU model with JobTread costs and selling prices.",
   },
   { key: "blank", spec: BLANK_TEMPLATE, summary: "An empty canvas." },
 ];

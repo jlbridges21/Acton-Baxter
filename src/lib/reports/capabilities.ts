@@ -58,6 +58,8 @@ type Ctx = {
   catalog: FieldCatalog;
   entities: Map<string, EntityCatalogRow>;
   jobs: Row[];
+  models: Row[];
+  items: Row[];
   ruleSets: RuleSetRow[];
   ratesBySet: Map<string, number>;
   connected: boolean;
@@ -338,11 +340,66 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
           gap: `Requires "${CATEGORY_LABELS.financial}" access.`,
           alternative: null,
         };
+      // Live counts — never a canned statement about import progress.
+      const total = ctx.models.length;
+      const priced = ctx.models.filter((m) => m["model.basePrice"] !== null).length;
+      if (!total)
+        return {
+          ...b,
+          status: "unavailable",
+          available: "No Product Library models are synced.",
+          gap: "Run a sync (Reports → Data settings).",
+          alternative: null,
+        };
       return {
         ...b,
-        status: "partial",
-        available: `${entityCount(ctx, "costGroups") ?? "?"} cost groups; only models with imported budgets have prices.`,
-        gap: "Most models are pending budget import.",
+        status: priced === total ? "ready" : priced ? "partial" : "unavailable",
+        available: `${priced} of ${total} models have budget prices in JobTread.`,
+        gap: priced === total ? "" : `${total - priced} models have no budget lines yet.`,
+        alternative: null,
+      };
+    },
+  ),
+  def(
+    "option_pricing",
+    "Model option pricing (e.g. exterior packages)",
+    "JobTread catalog",
+    ["item.option", "item.price"],
+    (ctx, b) => {
+      if (!ctx.access.categories.has("financial"))
+        return {
+          ...b,
+          status: "restricted",
+          available: "Option names",
+          gap: `Requires "${CATEGORY_LABELS.financial}" access.`,
+          alternative: null,
+        };
+      const optionItems = ctx.items.filter(
+        (i) => i["item.option"] && i["item.context"] === "Product Library model",
+      );
+      if (!ctx.items.length)
+        return {
+          ...b,
+          status: "unavailable",
+          available: "Cost items aren't synced yet.",
+          gap: "Enable and sync the Cost items and Cost groups datasets.",
+          alternative: null,
+        };
+      if (!optionItems.length)
+        return {
+          ...b,
+          status: "unavailable",
+          available: `${ctx.items.length} cost items synced; none sit in an option group.`,
+          gap: "Option groups are groups named “… Options” (or set by an admin rule). Check that Cost groups are synced.",
+          alternative: null,
+        };
+      const models = new Set(optionItems.map((i) => i["item.modelId"]));
+      const unpriced = optionItems.filter((i) => i["item.price"] === null).length;
+      return {
+        ...b,
+        status: unpriced ? "partial" : "ready",
+        available: `${optionItems.length} option lines across ${models.size} models.`,
+        gap: unpriced ? `${unpriced} option lines have no selling price in JobTread.` : "",
         alternative: null,
       };
     },
@@ -377,13 +434,16 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
 ];
 
 async function buildCtx(access: ReportsAccess): Promise<Ctx> {
-  const [catalog, entityRows, jobsLoaded, ruleSets, sync] = await Promise.all([
-    getFieldCatalog(),
-    listEntityCatalog().catch(() => []),
-    loadSourceRows("jobs").catch(() => ({ rows: [] as Row[] })),
-    listRuleSets().catch(() => []),
-    lastSuccessfulSync().catch(() => null),
-  ]);
+  const [catalog, entityRows, jobsLoaded, modelsLoaded, itemsLoaded, ruleSets, sync] =
+    await Promise.all([
+      getFieldCatalog(),
+      listEntityCatalog().catch(() => []),
+      loadSourceRows("jobs").catch(() => ({ rows: [] as Row[] })),
+      loadSourceRows("catalog_models").catch(() => ({ rows: [] as Row[] })),
+      loadSourceRows("cost_items").catch(() => ({ rows: [] as Row[] })),
+      listRuleSets().catch(() => []),
+      lastSuccessfulSync().catch(() => null),
+    ]);
   const ratesBySet = new Map<string, number>();
   for (const rs of ruleSets) ratesBySet.set(rs.id, (await listRates(rs.id).catch(() => [])).length);
   return {
@@ -391,6 +451,8 @@ async function buildCtx(access: ReportsAccess): Promise<Ctx> {
     catalog,
     entities: new Map(entityRows.map((e) => [e.entity, e])),
     jobs: jobsLoaded.rows,
+    models: modelsLoaded.rows,
+    items: itemsLoaded.rows,
     ruleSets,
     ratesBySet,
     connected: isJobTreadConfigured(),
@@ -534,6 +596,15 @@ export const SUGGESTED_REPORTS: SuggestedReport[] = [
     prompt: "Compare ADU models by base price and margin.",
     requires: ["model_pricing"],
     templateKey: "product_library",
+  },
+  {
+    key: "exterior_options",
+    title: "Exterior Package Options by Model",
+    description: "Every exterior package option per ADU model with cost and selling price.",
+    prompt:
+      "Create a Product Library report showing each ADU model and all available exterior package options, including their costs and selling prices where available.",
+    requires: ["option_pricing"],
+    templateKey: "exterior_options",
   },
   {
     key: "cost_per_sqft",

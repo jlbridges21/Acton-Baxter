@@ -275,6 +275,7 @@ describe("daily schedule", () => {
       [
         "accounts",
         "catalog_models",
+        "cost_groups",
         "cost_items",
         "custom_fields",
         "documents",

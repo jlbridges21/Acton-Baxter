@@ -106,6 +106,16 @@ export type DocumentsResult = Base & {
   jobtreadUrl: string | null;
 };
 export type TextResult = Base & { kind: "text"; body: string };
+export type DataStatusResult = Base & {
+  kind: "data_status";
+  datasets: Array<{
+    entity: string;
+    label: string;
+    level: FreshnessLevel;
+    lastSuccessAt: string | null;
+    message: string | null;
+  }>;
+};
 export type RuleEditorResult = Base & {
   kind: "rule_editor";
   editor: "rates" | "assignments";
@@ -123,6 +133,7 @@ export type WidgetResult =
   | MilestonesResult
   | DocumentsResult
   | TextResult
+  | DataStatusResult
   | RuleEditorResult;
 
 export type ControlOptions =

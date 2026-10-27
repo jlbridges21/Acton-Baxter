@@ -337,11 +337,46 @@ export const JOB_DETAIL_FILES = [
  * Cost items: catalog lines under two Product Library models plus job budget lines. Every
  * 7th line has no unit price, so tests can prove blanks are never filled in.
  */
+/**
+ * Catalog group hierarchy below the Product Library models (mirrors Acton's real structure:
+ * model → "Exterior Package Options" → style → items), plus job budget groups.
+ */
+export const CHILD_COST_GROUPS = [
+  { id: "cgExt398", name: "Exterior Package Options", parent: "cgModel398", job: null },
+  { id: "cgHay398", name: "Hayward Modern", parent: "cgExt398", job: null },
+  { id: "cgHmb398", name: "Half Moon Bay Coastal", parent: "cgExt398", job: null },
+  { id: "cgWin398", name: "Windows", parent: "cgModel398", job: null },
+  { id: "cgExtAge", name: "Exterior Package Options", parent: "cgModelAge", job: null },
+  { id: "cgHayAge", name: "Hayward Modern", parent: "cgExtAge", job: null },
+  { id: "cgJob1", name: "Budget", parent: null, job: "job00000001" },
+  { id: "cgJob2", name: "Budget", parent: null, job: "job00000002" },
+  { id: "cgJob3", name: "Budget", parent: null, job: "job00000003" },
+];
+
+const ITEM_GROUP: Array<[number, string]> = [
+  [4, "cgHay398"],
+  [6, "cgHmb398"],
+  [10, "cgWin398"],
+  [20, "cgModel398"],
+  [23, "cgHayAge"],
+  [40, "cgModelAge"],
+];
+const groupFor = (i: number) => ITEM_GROUP.find(([end]) => i < end)?.[1] ?? null;
+const groupName = (id: string) =>
+  CHILD_COST_GROUPS.find((g) => g.id === id)?.name ??
+  (id === "cgModel398" ? "i 398" : id === "cgModelAge" ? "Age in Place - 498-A-1" : id);
+
+/**
+ * Cost items: catalog lines under two Product Library models (some inside exterior options)
+ * plus job budget lines. Every 7th line has no unit price, so tests can prove blanks are
+ * never filled in.
+ */
 export const COST_ITEMS = Array.from({ length: 230 }, (_, i) => {
   const catalog = i < 40;
   const priced = i % 7 !== 3;
   const quantity = (i % 5) + 1;
   const unitCost = 100 + i;
+  const group = catalog ? groupFor(i)! : `cgJob${(i % 3) + 1}`;
   return {
     id: `ci${String(i).padStart(6, "0")}`,
     name: `Line ${i}`,
@@ -353,14 +388,13 @@ export const COST_ITEMS = Array.from({ length: 230 }, (_, i) => {
     price: priced ? quantity * unitCost * 1.4 : null,
     isSelected: true,
     createdAt: "2026-05-01T00:00:00Z",
-    costGroup: catalog
-      ? i < 20
-        ? { id: "cgModel398", name: "i 398" }
-        : { id: "cgModelAge", name: "Age in Place - 498-A-1" }
-      : { id: `cgJob${(i % 3) + 1}`, name: "Budget" },
+    costGroup: { id: group, name: catalog ? groupName(group) : "Budget" },
     job: catalog ? null : { id: `job0000000${(i % 3) + 1}` },
     costCode: { id: `cc${i % 4}`, name: ["Design", "Permits", "Foundation", "Framing"][i % 4] },
     costType: { id: `ct${i % 2}`, name: i % 2 ? "Labor" : "Materials" },
+    unit: { id: "u1", name: "Each" },
+    organizationCostItem: i < 10 ? { id: `org${i}` } : null,
+    isTaxable: false,
   };
 });
 
@@ -528,7 +562,11 @@ export function createFixtureFetcher(
         : connection === "jobs"
           ? jobs
           : connection === "costGroups"
-            ? COST_GROUPS
+            ? // The Product Library query filters to top-level catalog groups; the cost_groups
+              // dataset reads the whole hierarchy.
+              conn.$?.where
+              ? COST_GROUPS
+              : ALL_COST_GROUPS
             : connection === "documents"
               ? DOCUMENTS
               : (EXTRA_CONNECTIONS[connection] ?? []));
@@ -554,6 +592,18 @@ export function createFixtureFetcher(
     };
   };
 }
+
+const ALL_COST_GROUPS: Array<Record<string, unknown>> = [
+  ...COST_GROUPS.map((g) => ({ ...g, parentCostGroup: null, job: null, quantity: null })),
+  ...CHILD_COST_GROUPS.map((g) => ({
+    id: g.id,
+    name: g.name,
+    description: null,
+    quantity: null,
+    parentCostGroup: g.parent ? { id: g.parent } : null,
+    job: g.job ? { id: g.job } : null,
+  })),
+];
 
 const EXTRA_CONNECTIONS: Record<string, Array<Record<string, unknown>>> = {
   costItems: COST_ITEMS,

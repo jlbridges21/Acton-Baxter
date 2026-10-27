@@ -46,6 +46,8 @@ import {
   type RuleActor,
 } from "@/lib/reports/rules";
 import { getOrCreateSession, requirementsSchema, updateSession } from "@/lib/reports/sessions";
+import { SOURCE_REGISTRY } from "@/lib/reports/sources";
+import { SOURCES } from "@/lib/reports/spec";
 import { resolveModelTarget } from "./models";
 import type { AgentTool, ToolContext } from "./tools";
 
@@ -129,11 +131,7 @@ const dataCatalog: AgentTool = {
     if (input.view === "fields") {
       const { rows } = await loadSourceRows("jobs");
       const q = input.search?.toLowerCase();
-      const all = [
-        ...catalog.bySource.jobs,
-        ...catalog.bySource.catalog_models,
-        ...catalog.bySource.commissions,
-      ];
+      const all = [...SOURCES.flatMap((source) => catalog.bySource[source])];
       const visible = all
         .filter((f) => canSeeField(access, f))
         .filter((f) => !q || `${f.label} ${f.key} ${f.origin}`.toLowerCase().includes(q));
@@ -187,10 +185,14 @@ const dataCatalog: AgentTool = {
           note: "Values for job, location, and customer custom fields are synced; other targets are not used in reports.",
         },
         businessNames: { mapped, total: catalog.semantic.size },
-        reportFieldsAvailableToThisRequester: [
-          ...catalog.bySource.jobs,
-          ...catalog.bySource.catalog_models,
-        ].filter((f) => canSeeField(access, f)).length,
+        reportFieldsAvailableToThisRequester: SOURCES.flatMap(
+          (source) => catalog.bySource[source],
+        ).filter((f) => canSeeField(access, f)).length,
+        reportSources: SOURCES.map((source) => ({
+          id: source,
+          label: SOURCE_REGISTRY[source].label,
+          grain: SOURCE_REGISTRY[source].grain,
+        })),
         hiddenCategoriesForThisRequester: hidden,
         fullInventory: "/reports/catalog",
       },

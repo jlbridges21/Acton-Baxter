@@ -449,6 +449,7 @@ export function DataCatalog() {
               <option value="jobs">Jobs</option>
               <option value="custom">Custom fields only</option>
               <option value="catalog_models">Product Library</option>
+              <option value="cost_items">Cost items</option>
               <option value="commissions">Commissions</option>
             </select>
             <select
@@ -502,7 +503,9 @@ export function DataCatalog() {
                             : "Job"
                           : f.source === "catalog_models"
                             ? "Product Library"
-                            : "Commissions (Baxter)"}
+                            : f.source === "cost_items"
+                              ? "Cost items"
+                              : "Commissions (Baxter)"}
                       </td>
                       <td className="px-3 py-2 text-xs">{f.type}</td>
                       <td className="px-3 py-2 text-xs capitalize">{f.category}</td>

@@ -43,6 +43,13 @@ type Dashboard = {
     warnings: string[];
     widgetsAffected: number;
   }>;
+  staticNotes: Array<{
+    reportId: string;
+    reportTitle: string;
+    widgetId: string;
+    title: string;
+    excerpt: string;
+  }>;
   mappings: {
     semanticTotal: number;
     semanticUnmapped: number;
@@ -235,6 +242,34 @@ export function DataHealth() {
               </p>
             )}
           </section>
+
+          {data.staticNotes.length ? (
+            <section className="rounded-lg border border-[var(--acton-border)] bg-white p-5">
+              <h2 className="font-semibold text-[var(--acton-navy)]">Text notes to review</h2>
+              <p className="mt-1 text-sm text-[var(--acton-muted)]">
+                These report notes state data facts (counts, import or sync status) that may be out
+                of date. They&apos;re never changed automatically — replace them with KPI or Data
+                status widgets, or edit the note.
+              </p>
+              <ul className="mt-3 divide-y divide-[var(--acton-gray-100)] text-sm">
+                {data.staticNotes.map((n) => (
+                  <li key={`${n.reportId}-${n.widgetId}`} className="py-2">
+                    <Link
+                      href={`/reports/${n.reportId}`}
+                      className="font-medium text-[var(--acton-navy)] hover:underline"
+                    >
+                      {n.reportTitle}
+                    </Link>
+                    <span className="text-xs text-[var(--acton-muted)]">
+                      {" "}
+                      · {n.title || n.widgetId}
+                    </span>
+                    <p className="mt-0.5 text-xs text-amber-900">“…{n.excerpt}…”</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-lg border border-[var(--acton-border)] bg-white p-5 text-sm">

@@ -24,11 +24,11 @@ export const fieldRef = z
   .string()
   .trim()
   .regex(
-    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|com\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60})$/,
+    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|item\.[a-zA-Z]+|com\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60})$/,
     "Unknown field reference format.",
   );
 
-export const SOURCES = ["jobs", "catalog_models", "commissions"] as const;
+export const SOURCES = ["jobs", "catalog_models", "cost_items", "commissions"] as const;
 export type ReportSource = (typeof SOURCES)[number];
 
 export const OPERATORS = [
@@ -229,6 +229,12 @@ export const widgetSchema = z.discriminatedUnion("type", [
       .default([]),
     /** Comparison mode: select rows and compare them side by side. */
     comparable: z.boolean().default(false),
+    /**
+     * One row per distinct combination of the text columns, with amount columns summed and a
+     * "Lines" count (e.g. model × option totals from cost items). A total is left blank when
+     * any of its lines has no value; percentages are not summed.
+     */
+    summarize: z.boolean().default(false),
   }),
   z.object({
     ...widgetBase,
@@ -269,6 +275,14 @@ export const widgetSchema = z.discriminatedUnion("type", [
     ...widgetBase,
     type: z.literal("text"),
     body: z.string().max(2000),
+  }),
+  /**
+   * Live data status: when each synced dataset this report reads last refreshed and whether it
+   * is fresh. Use instead of typing sync dates or import progress into a text widget.
+   */
+  z.object({
+    ...widgetBase,
+    type: z.literal("data_status"),
   }),
   /** Edit commission rates for a rule set (authorized users only; changes are audited). */
   z.object({
@@ -410,13 +424,14 @@ export function collectFieldRefs(spec: ReportSpec): string[] {
   return [...refs];
 }
 
-/** Data sources every new report can use right away. */
+/** Data sources every report can add from the widget builder (added on first use). */
 export const DEFAULT_DATASETS: DatasetSpec[] = [
   { id: "jobs", source: "jobs", label: "All JobTread jobs", filters: [] },
   { id: "models", source: "catalog_models", label: "Product Library models", filters: [] },
+  { id: "items", source: "cost_items", label: "Cost items (budget & catalog lines)", filters: [] },
 ];
 
 export const BLANK_SPEC: ReportSpec = reportSpecSchema.parse({
   title: "Untitled report",
-  datasets: DEFAULT_DATASETS,
+  datasets: DEFAULT_DATASETS.filter((d) => d.source !== "cost_items"),
 });

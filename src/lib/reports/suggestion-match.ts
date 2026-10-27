@@ -28,6 +28,7 @@ export const SUGGESTION_SIGNATURES: Record<string, Signature | null> = {
   milestone_tracker: { widgets: ["milestones"] },
   pm_workload: { sources: ["jobs"], groupedBy: [/^sem:project_manager$/, /^sem:phase$/] },
   model_comparison: { sources: ["catalog_models"], uses: [/^model\.(basePrice|marginPct)$/] },
+  exterior_options: { sources: ["cost_items"], uses: [/^item\.(option|optionGroup)$/] },
   cost_per_sqft: { sources: ["jobs"], uses: [/total_sqft/, /(price|order|revenue)/i] },
   profitability: {
     sources: ["jobs", "commissions"],

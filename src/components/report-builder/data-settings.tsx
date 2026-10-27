@@ -7,7 +7,15 @@
 
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { Activity, ArrowLeft, CheckCircle2, PlugZap, RefreshCw, TriangleAlert } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  Boxes,
+  CheckCircle2,
+  PlugZap,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
 import {
   aiFetch,
   errorMessage,
@@ -142,6 +150,12 @@ export function DataSettings() {
               reports.
             </p>
           </div>
+          <Link
+            href="/reports/settings/cost-items"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
+          >
+            <Boxes className="h-4 w-4" aria-hidden /> Cost items & models
+          </Link>
           <Link
             href="/reports/settings/health"
             className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"

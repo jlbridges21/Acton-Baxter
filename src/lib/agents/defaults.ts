@@ -429,6 +429,7 @@ export const DEXTER_GROUP_TOOLS = [
 
 /** Data pipeline tools (src/lib/agents/data-sync-tools.ts). Mutations are admin-gated in code. */
 export const DEXTER_DATA_SYNC_TOOLS = [
+  "reports_sources",
   "reports_sync_overview",
   "reports_sync_dataset",
   "reports_sync_schedule",

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { jsonError, jsonOk } from "@/lib/api";
 import { recordAudit } from "@/lib/agents/audit";
 import { invalidateDataHealthCache } from "@/lib/reports/data-health";
+import { invalidateCatalogContext } from "@/lib/reports/engine";
 import { requireReportsAdmin } from "@/lib/reports/http";
 import {
   deleteValueMapping,
@@ -37,6 +38,7 @@ export async function POST(request: Request) {
     const body = saveSchema.parse(await request.json());
     const row = await saveValueMapping(body, ctx.user.id);
     invalidateDataHealthCache();
+    invalidateCatalogContext();
     await recordAudit({
       actor: { userId: ctx.user.id, label: ctx.requester.label },
       action: "reports.mapping_saved",
@@ -56,6 +58,7 @@ export async function DELETE(request: Request) {
     const id = z.string().uuid().parse(new URL(request.url).searchParams.get("id"));
     await deleteValueMapping(id);
     invalidateDataHealthCache();
+    invalidateCatalogContext();
     await recordAudit({
       actor: { userId: ctx.user.id, label: ctx.requester.label },
       action: "reports.mapping_deleted",

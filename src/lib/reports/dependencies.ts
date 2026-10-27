@@ -6,7 +6,14 @@
 
 import type { SyncEntityKey } from "@/lib/jobtread/entities";
 import type { DataHealthSummary, FreshnessLevel } from "./result-types";
-import { collectFieldRefs, type Condition, type ReportSpec, type WidgetSpec } from "./spec";
+import { SOURCE_REGISTRY } from "./sources";
+import {
+  collectFieldRefs,
+  type Condition,
+  type ReportSource,
+  type ReportSpec,
+  type WidgetSpec,
+} from "./spec";
 
 /** Job fields computed from cached financial documents (JOB_FINANCIAL_FIELDS minus actualCost). */
 const DOCUMENT_FIELD = /^job\.(order[A-Z]\w*|invoicedTotal|amountPaid|balanceDue|lastInvoiceDate)$/;
@@ -65,14 +72,20 @@ export function reportDependencies(spec: ReportSpec): ReportDependencies {
         need("documents", `Uses ${ref} (from financial documents)`, widget);
     }
   };
-  const sourceNeed = (source: string, label: string, widget?: string) => {
-    if (source === "jobs") need("jobs", `Reads ${label}`, widget);
-    else if (source === "catalog_models") need("catalog_models", `Reads ${label}`, widget);
-    else if (source === "commissions") {
+  const sourceNeed = (source: ReportSource, label: string, widget?: string) => {
+    if (source === "jobs") {
+      need("jobs", `Reads ${label}`, widget);
+      return;
+    }
+    if (source === "commissions") {
       need("jobs", "Commissions are calculated per job", widget);
       need("documents", "Commissions use customer order gross profit", widget);
       need("custom_fields", "Commissions use the salesperson field", widget);
+      return;
     }
+    // Every other source declares the synced datasets it reads in the source registry.
+    for (const entity of SOURCE_REGISTRY[source].syncEntities)
+      need(entity, `Reads ${label}`, widget);
   };
 
   for (const ds of spec.datasets) {

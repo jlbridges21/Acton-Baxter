@@ -18,7 +18,14 @@ import { isJobTreadConfigured, jobTreadJobUrl } from "@/lib/jobtread/client";
 import { isJobTreadFixtureEnabled } from "@/lib/jobtread/fixture";
 import { lastSuccessfulSync, runFullSync } from "@/lib/jobtread/sync";
 import { reportDataHealth } from "./data-health";
+import {
+  costItemRow,
+  optionGroupsByRoot,
+  type CostGroupCacheRow,
+  type CostItemCacheRow,
+} from "./cost-items";
 import { applyValueMappings, listValueMappings } from "./mappings";
+import { SOURCE_REGISTRY } from "./sources";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
 import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
 import { groupDocumentsByJob, jobFinancials, type DocumentRow } from "./financials";
@@ -166,7 +173,11 @@ export function jobRowFromCache(
   return row;
 }
 
-export function modelRowFromCache(r: ModelCacheRow, regionRules: RegionRule[] = []): Row {
+export function modelRowFromCache(
+  r: ModelCacheRow,
+  regionRules: RegionRule[] = [],
+  options?: { groups: Set<string>; options: number },
+): Row {
   const { series, code } = parseModelName(r.name);
   const cost = r.item_count > 0 ? num(r.total_cost) : null;
   const price = r.item_count > 0 ? num(r.total_price) : null;
@@ -176,6 +187,8 @@ export function modelRowFromCache(r: ModelCacheRow, regionRules: RegionRule[] = 
     "model.series": series,
     "model.code": code,
     "model.region": applyValueMappings(r.name, regionRules),
+    "model.optionGroups": options ? [...options.groups].sort() : [],
+    "model.optionCount": options?.options ?? 0,
     "model.description": r.description,
     "model.budgetStatus": r.item_count > 0 ? "Budget imported" : "Pending import",
     "model.itemCount": r.item_count,
@@ -186,9 +199,30 @@ export function modelRowFromCache(r: ModelCacheRow, regionRules: RegionRule[] = 
   };
 }
 
-/** Catalog roots that are ADU models (excludes budget templates and selection libraries). */
-export function isProductModel(r: Pick<ModelCacheRow, "description" | "name">): boolean {
-  return /product library/i.test(r.description ?? "");
+/**
+ * Catalog roots that are ADU models (excludes budget templates and selection libraries).
+ *
+ * With admin model-scope rules (bi_value_mappings kind "model_scope"): every top-level catalog
+ * group is a model unless an "exclude" rule matches; if any "include" rule exists, only
+ * matching groups count. Without rules, the original rule applies (description mentions
+ * "Product Library") — it misses models whose description JobTread users replaced.
+ */
+export function isProductModel(
+  r: Pick<ModelCacheRow, "description" | "name">,
+  scopeRules?: RegionRule[],
+): boolean {
+  if (!scopeRules?.length) return /product library/i.test(r.description ?? "");
+  const verdict = applyValueMappings(r.name, scopeRules);
+  if (verdict === "exclude") return false;
+  if (verdict === "include") return true;
+  return !scopeRules.some((x) => x.value === "include");
+}
+
+/** Model-scope rules (empty when none are configured or the table isn't migrated). */
+export async function loadModelScopeRules(): Promise<RegionRule[]> {
+  return listValueMappings("model_scope")
+    .then((rules) => rules.filter((x) => x.source_field === "model.name"))
+    .catch(() => []);
 }
 
 type DataCache = {
@@ -196,6 +230,7 @@ type DataCache = {
   jobRaw?: JobCacheRow[];
   docs?: Map<string, DocumentRow[]>;
   models?: Row[];
+  items?: Row[];
   commissions?: Map<string, Row[]>;
   syncedAt: string | null;
 };
@@ -289,18 +324,102 @@ async function loadSource(
 ): Promise<Row[]> {
   if (ds.source === "jobs") return loadJobs(catalog, cache);
   if (ds.source === "commissions") return loadCommissions(ds.ruleSet ?? "", catalog, cache);
+  if (ds.source === "cost_items") {
+    cache.items ??= (await loadCatalogContext()).items();
+    return cache.items;
+  }
   if (!cache.models) {
-    const rows = await agentDb().select<ModelCacheRow>("jt_catalog_models", {
-      filters: [{ col: "removed_at", op: "is_null" }],
-      limit: 5000,
-    });
-    // Region rules are optional admin data; without them model.region is simply blank.
-    const regionRules = await listValueMappings("region")
-      .then((rules) => rules.filter((x) => x.source_field === "model.name"))
-      .catch(() => []);
-    cache.models = rows.filter(isProductModel).map((r) => modelRowFromCache(r, regionRules));
+    const c = await loadCatalogContext();
+    cache.models = c.modelRows;
   }
   return cache.models;
+}
+
+/**
+ * Product Library models + cost items, resolved through the cost-group hierarchy. Cached for
+ * a minute per server instance: ~18k items and ~4k groups are read once, not per widget.
+ */
+let catalogContextCache: {
+  at: number;
+  value: Promise<{ modelRows: Row[]; items: () => Row[] }>;
+} | null = null;
+
+export function invalidateCatalogContext() {
+  catalogContextCache = null;
+}
+
+export function loadCatalogContext() {
+  if (catalogContextCache && Date.now() - catalogContextCache.at < 60_000)
+    return catalogContextCache.value;
+  const value = (async () => {
+    const db = agentDb();
+    const [models, regionRules, scopeRules, optionRules, groups] = await Promise.all([
+      db.select<ModelCacheRow>("jt_catalog_models", {
+        filters: [{ col: "removed_at", op: "is_null" }],
+        limit: 5000,
+      }),
+      // Region rules are optional admin data; without them model.region is simply blank.
+      listValueMappings("region")
+        .then((rules) => rules.filter((x) => x.source_field === "model.name"))
+        .catch(() => []),
+      loadModelScopeRules(),
+      listValueMappings("option_group").catch(() => []),
+      db
+        .select<CostGroupCacheRow>("jt_cost_groups", {
+          filters: [{ col: "removed_at", op: "is_null" }],
+          columns: "id, name, parent_id, job_id",
+          limit: 50_000,
+        })
+        .catch(() => [] as CostGroupCacheRow[]),
+    ]);
+    const groupIndex = new Map(groups.map((g) => [g.id, g]));
+    const optionsByRoot = optionGroupsByRoot(groupIndex, optionRules);
+    const productModels = models.filter((m) => isProductModel(m, scopeRules));
+    const modelRows = productModels.map((r) =>
+      modelRowFromCache(r, regionRules, optionsByRoot.get(r.id)),
+    );
+    const modelRefs = new Map(
+      modelRows.map((m) => [
+        m.id,
+        {
+          id: m.id,
+          name: String(m["model.name"]),
+          series: (m["model.series"] as string | null) ?? null,
+          region: (m["model.region"] as string | null) ?? null,
+        },
+      ]),
+    );
+    let itemRows: Row[] | null = null;
+    const loadItems = async () => {
+      const [items, jobs] = await Promise.all([
+        db
+          .select<CostItemCacheRow>("jt_cost_items", {
+            filters: [{ col: "removed_at", op: "is_null" }],
+            limit: 100_000,
+          })
+          .catch(() => [] as CostItemCacheRow[]),
+        db.select<{ id: string; name: string; number: string | null }>("jt_jobs", {
+          filters: [{ col: "removed_at", op: "is_null" }],
+          columns: "id, name, number",
+          limit: 20_000,
+        }),
+      ]);
+      const ctx = {
+        groups: groupIndex,
+        models: modelRefs,
+        jobs: new Map(jobs.map((j) => [j.id, { name: j.name, number: j.number }])),
+        optionRules,
+      };
+      itemRows = items.map((i) => costItemRow(i, ctx));
+    };
+    await loadItems();
+    return { modelRows, items: () => itemRows ?? [] };
+  })();
+  catalogContextCache = { at: Date.now(), value };
+  value.catch(() => {
+    catalogContextCache = null;
+  });
+  return value;
 }
 
 /** Authorized-agnostic source rows (callers apply field access). Used by Dexter's tools. */
@@ -308,6 +427,52 @@ export async function loadSourceRows(source: DatasetSpec["source"], ruleSet?: st
   const catalog = await getFieldCatalog();
   const rows = await loadSource({ source, ruleSet }, catalog, { syncedAt: null });
   return { catalog, rows };
+}
+
+const SUMMARY_COUNT = "__lines";
+const SUMMED_TYPES = new Set<FieldDef["type"]>(["number", "currency", "sqft"]);
+
+/**
+ * Group rows by their text-like columns and sum amount columns (deterministic, from the
+ * underlying records). A sum is null when any record in the group lacks the value, so a
+ * partial total is never presented as complete. Percentages can't be summed and stay blank.
+ */
+export function summarizeRows(
+  rows: Row[],
+  fields: Array<{ key: string; def: Pick<FieldDef, "type" | "label"> }>,
+): { rows: Row[]; notes: string[] } {
+  const dims = fields.filter((f) => !SUMMED_TYPES.has(f.def.type) && f.def.type !== "percent");
+  const sums = fields.filter((f) => SUMMED_TYPES.has(f.def.type));
+  const pct = fields.filter((f) => f.def.type === "percent");
+  const groups = new Map<string, Row>();
+  let incomplete = 0;
+  for (const r of rows) {
+    const key = JSON.stringify(dims.map((d) => r[d.key] ?? null));
+    let g = groups.get(key);
+    if (!g) {
+      g = { id: `group:${groups.size + 1}`, [SUMMARY_COUNT]: 0 };
+      for (const d of dims) g[d.key] = r[d.key] ?? null;
+      for (const sf of sums) g[sf.key] = 0;
+      for (const p of pct) g[p.key] = null;
+      groups.set(key, g);
+    }
+    g[SUMMARY_COUNT] = Number(g[SUMMARY_COUNT]) + 1;
+    for (const sf of sums) {
+      const v = asNumber(r[sf.key]);
+      if (g[sf.key] === null) continue;
+      if (v === null) {
+        g[sf.key] = null;
+        incomplete++;
+      } else g[sf.key] = Math.round((Number(g[sf.key]) + v) * 100) / 100;
+    }
+  }
+  const notes: string[] = [];
+  if (incomplete)
+    notes.push(
+      "Some totals are blank because at least one of their lines has no value in JobTread (they aren't partial sums).",
+    );
+  if (pct.length) notes.push("Percentage columns aren't summed in a summary table.");
+  return { rows: [...groups.values()], notes };
 }
 
 class RefError extends Error {
@@ -502,6 +667,22 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
   switch (w.type) {
     case "text":
       return { id: w.id, kind: "text", status: "ok", body: w.body };
+    case "data_status": {
+      const health = await reportDataHealth(ctx.spec);
+      return {
+        id: w.id,
+        kind: "data_status",
+        status: health.entities.length ? "ok" : "empty",
+        datasets: health.entities.map((e) => ({
+          entity: e.entity,
+          label: e.label,
+          level: e.level,
+          lastSuccessAt: e.lastSuccessAt,
+          message: e.message,
+        })),
+        ...(health.entities.length ? {} : { message: "This report doesn't read synced data." }),
+      };
+    }
     case "rate_editor":
     case "assignment_editor": {
       // Rates and assignments are compensation data: financial access required to see them.
@@ -556,10 +737,8 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         const x = requireField(ctx, w.x!);
         const y = requireField(ctx, w.y!);
         const labelKey =
-          w.dataset &&
-          ctx.spec.datasets.find((d) => d.id === w.dataset)?.source === "catalog_models"
-            ? "model.name"
-            : "job.name";
+          SOURCE_REGISTRY[ctx.spec.datasets.find((d) => d.id === w.dataset)?.source ?? "jobs"]
+            .labelField;
         const points = rows.flatMap((r) => {
           const xv = asNumber(r[x.key]);
           const yv = asNumber(r[y.key]);
@@ -628,6 +807,14 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
       const notes: string[] = [];
       if (series.multiValueNote)
         notes.push(`Some records have several ${g.def.label} values and are counted under each.`);
+      // Sums/averages use records that have a value; say so when some don't.
+      if (metric.field && metric.op !== "count" && metric.op !== "count_distinct") {
+        const blank = rows.filter((r) => isBlank(r[metric.field!])).length;
+        if (blank)
+          notes.push(
+            `${blank} of ${rows.length} records have no ${requireField(ctx, w.metric.field!).def.label} value and aren't included in the totals.`,
+          );
+      }
       return {
         id: w.id,
         kind: "chart",
@@ -693,7 +880,15 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         if (gb.ok && canSeeField(ctx.access, gb.def)) sort.unshift({ field: gb.key, dir: "asc" });
       }
       rows = sortRows(rows, sort);
-      const isJobs = ctx.spec.datasets.find((d) => d.id === w.dataset)?.source === "jobs";
+      const isJobs =
+        !w.summarize && ctx.spec.datasets.find((d) => d.id === w.dataset)?.source === "jobs";
+      const summary = w.summarize
+        ? summarizeRows(
+            rows,
+            columns.map((x) => x.f),
+          )
+        : null;
+      if (summary) rows = summary.rows;
       const meta: FieldMeta[] = columns.map(({ c, f }) => ({
         key: f.key,
         label: c.label || f.def.label,
@@ -707,6 +902,14 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         origin: f.def.origin,
         wrap: c.wrap || undefined,
       }));
+      if (summary)
+        meta.push({
+          key: SUMMARY_COUNT,
+          label: "Lines",
+          type: "number",
+          origin: "Count of records in the row's group",
+        });
+      const cellKeys = [...columns.map(({ f }) => f.key), ...(summary ? [SUMMARY_COUNT] : [])];
       return {
         id: w.id,
         kind: "table",
@@ -714,7 +917,7 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         columns: meta,
         rows: rows.slice(0, MAX_TABLE_ROWS).map((r) => ({
           id: r.id,
-          cells: Object.fromEntries(columns.map(({ f }) => [f.key, r[f.key] ?? null])),
+          cells: Object.fromEntries(cellKeys.map((k) => [k, r[k] ?? null])),
           tone: highlight.find((h) =>
             matchesCondition(r[h.field], { field: h.field, op: h.op, value: h.value }),
           )?.tone,
@@ -725,6 +928,7 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         message:
           [
             hidden.length ? `${hidden.length} column(s) hidden by your access level.` : null,
+            ...(summary?.notes ?? []),
             ...missing.map((m) => `Column skipped: ${m}`),
           ]
             .filter(Boolean)
@@ -915,6 +1119,8 @@ function failed(w: WidgetSpec, error: unknown): WidgetResult {
       return { ...base, kind: "documents", jobId: null, files: [], jobtreadUrl: null };
     case "text":
       return { ...base, kind: "text", body: "" };
+    case "data_status":
+      return { ...base, kind: "data_status", datasets: [] };
     case "rate_editor":
     case "assignment_editor":
       return {
@@ -1126,27 +1332,7 @@ export async function drilldown(input: {
     title = `${g.def.label}: ${input.groupKey}${input.seriesKey ? ` · ${input.seriesKey}` : ""}`;
   }
   const source = input.spec.datasets.find((d) => d.id === w.dataset)!.source;
-  const wanted =
-    source === "jobs"
-      ? [
-          "job.name",
-          "job.number",
-          "sem:phase",
-          "sem:project_manager",
-          "sem:model",
-          "sem:total_sqft",
-        ]
-      : source === "commissions"
-        ? [
-            "com.salesperson",
-            "com.jobName",
-            "com.status",
-            "com.date",
-            "com.grossProfit",
-            "com.ratePct",
-            "com.commission",
-          ]
-        : ["model.name", "model.series", "model.budgetStatus", "model.basePrice"];
+  const wanted = [...SOURCE_REGISTRY[source].drilldownFields];
   if (w.type === "kpi" && w.metric.field) wanted.push(w.metric.field);
   if (w.type === "chart" && w.metric.field) wanted.push(w.metric.field);
   const cols: FieldMeta[] = [];
@@ -1164,12 +1350,7 @@ export async function drilldown(input: {
   }
   rows = sortRows(rows, [
     {
-      field:
-        source === "jobs"
-          ? "job.name"
-          : source === "commissions"
-            ? "com.salesperson"
-            : "model.name",
+      field: SOURCE_REGISTRY[source].labelField,
       dir: "asc",
     },
   ]);
