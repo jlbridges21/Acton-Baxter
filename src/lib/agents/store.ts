@@ -58,6 +58,7 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   jt_jobs: [["id"]],
   jt_catalog_models: [["id"]],
   bi_reports: [["template_key"]],
+  bi_related_fields: [["relationship", "field_ref"]],
   jt_documents: [["id"]],
   jt_entity_catalog: [["entity"]],
   bi_rule_sets: [["key"]],

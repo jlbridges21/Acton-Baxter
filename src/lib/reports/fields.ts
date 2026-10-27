@@ -12,6 +12,8 @@ import {
   type CustomFieldRow,
   type FieldCategory,
 } from "@/lib/jobtread/metadata";
+import { agentDb } from "@/lib/agents/store";
+import { RELATIONSHIPS, type RelationshipId } from "./relationships";
 import type { ReportSource } from "./spec";
 
 export type FieldType =
@@ -30,6 +32,8 @@ export type FieldDef = {
   options?: string[];
   multi?: boolean;
   description?: string;
+  /** Set on a related field listed under another source (e.g. a job field on cost items). */
+  via?: RelationshipId;
 };
 
 export const JOB_BUILTINS: FieldDef[] = [
@@ -595,6 +599,14 @@ export const ITEM_FIELDS: FieldDef[] = [
     "Priced in JobTread, Price equals cost (no markup), or No selling price in JobTread.",
   ),
   itemField("item.job", "Job", "text", "general", "JobTread job name (job budget lines only)"),
+  itemField(
+    "item.jobId",
+    "Job ID",
+    "text",
+    "general",
+    "JobTread costItem.job.id",
+    "Stable JobTread id of the job this budget line belongs to (blank for catalog lines).",
+  ),
   itemField("item.jobNumber", "Job Number", "text", "general", "JobTread job number"),
   itemField("item.taxable", "Taxable", "boolean", "general", "JobTread costItem.isTaxable"),
   itemField(
@@ -633,8 +645,23 @@ function customFieldType(f: CustomFieldRow): { type: FieldType; multi: boolean }
   }
 }
 
+/** An approved related field: a target-source field readable from another source's rows. */
+export type RelatedField = {
+  relationship: RelationshipId;
+  /** As approved (built-in key or sem:*). */
+  ref: string;
+  /** Canonical key on the row (sem:* resolved to its cf:*). */
+  key: string;
+  approvedBy: "default" | "admin";
+};
+
+export type RelatedFieldSetting = { relationship: string; field_ref: string; enabled: boolean };
+
 export type FieldCatalog = {
+  /** Fields per source, including approved related fields (marked with `via`). */
   bySource: Record<ReportSource, FieldDef[]>;
+  /** Approved related fields per source, by canonical key. */
+  related: Record<ReportSource, Map<string, RelatedField>>;
   byKey: Map<string, FieldDef>;
   /** sem:<key> → cf:<id> (or null when unmapped). Archived business fields are left out. */
   semantic: Map<
@@ -655,9 +682,66 @@ export function invalidateFieldCatalog(): void {
   cached = null;
 }
 
+/** Admin approvals for related fields (migration 078). Without the table, defaults apply. */
+async function listRelatedFieldSettings(): Promise<RelatedFieldSetting[]> {
+  return agentDb()
+    .select<RelatedFieldSetting>("bi_related_fields", { limit: 1000 })
+    .catch(() => []);
+}
+
+/**
+ * Approved related fields per source: each relationship's defaults plus admin approvals,
+ * minus admin removals, restricted to fields that exist on the target source.
+ */
+export function buildRelatedFields(
+  base: Pick<FieldCatalog, "bySource" | "byKey" | "semantic">,
+  settings: RelatedFieldSetting[],
+): { related: FieldCatalog["related"]; listed: Record<ReportSource, FieldDef[]> } {
+  const related = {
+    jobs: new Map(),
+    catalog_models: new Map(),
+    cost_items: new Map(),
+    commissions: new Map(),
+  } as FieldCatalog["related"];
+  const listed = { jobs: [], catalog_models: [], cost_items: [], commissions: [] } as Record<
+    ReportSource,
+    FieldDef[]
+  >;
+  for (const rel of Object.values(RELATIONSHIPS)) {
+    const mine = settings.filter((s) => s.relationship === rel.id);
+    const refs = new Map<string, RelatedField["approvedBy"]>(
+      rel.defaultFields.map((f) => [f, "default"]),
+    );
+    for (const s of mine) {
+      if (!s.enabled) refs.delete(s.field_ref);
+      else if (!refs.has(s.field_ref)) refs.set(s.field_ref, "admin");
+    }
+    const targetKeys = new Set(base.bySource[rel.to].map((f) => f.key));
+    for (const [ref, approvedBy] of refs) {
+      const sem = ref.startsWith("sem:") ? base.semantic.get(ref) : undefined;
+      if (ref.startsWith("sem:") && (!sem?.ref || sem.unavailable)) continue;
+      const key = sem?.ref ?? ref;
+      const def = base.byKey.get(key);
+      if (!def || !targetKeys.has(key) || related[rel.from].has(key)) continue;
+      related[rel.from].set(key, { relationship: rel.id, ref, key, approvedBy });
+      listed[rel.from].push({
+        ...def,
+        label: `${sem?.label ?? def.label} · ${rel.label}`,
+        via: rel.id,
+        description: `From the related JobTread ${rel.label.toLowerCase()} (${def.origin}).`,
+      });
+    }
+  }
+  return { related, listed };
+}
+
 export async function getFieldCatalog(): Promise<FieldCatalog> {
   if (cached && Date.now() - cached.at < 30_000) return cached.catalog;
-  const [fields, semantic] = await Promise.all([listCustomFields(), listSemanticFields()]);
+  const [fields, semantic, relatedSettings] = await Promise.all([
+    listCustomFields(),
+    listSemanticFields(),
+    listRelatedFieldSettings(),
+  ]);
   const custom: FieldDef[] = fields
     .filter(
       (f) => f.category !== "excluded" && ["job", "location", "customer"].includes(f.target_type),
@@ -709,18 +793,55 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
         ];
       }),
   );
+  const own: FieldCatalog["bySource"] = {
+    jobs,
+    catalog_models: MODEL_FIELDS,
+    cost_items: ITEM_FIELDS,
+    commissions: COMMISSION_FIELDS,
+  };
+  const { related, listed } = buildRelatedFields(
+    { bySource: own, byKey, semantic: semanticMap },
+    relatedSettings,
+  );
   const catalog: FieldCatalog = {
     bySource: {
-      jobs,
-      catalog_models: MODEL_FIELDS,
-      cost_items: ITEM_FIELDS,
-      commissions: COMMISSION_FIELDS,
+      jobs: [...own.jobs, ...listed.jobs],
+      catalog_models: [...own.catalog_models, ...listed.catalog_models],
+      cost_items: [...own.cost_items, ...listed.cost_items],
+      commissions: [...own.commissions, ...listed.commissions],
     },
+    related,
     byKey,
     semantic: semanticMap,
   };
   cached = { at: Date.now(), catalog };
   return catalog;
+}
+
+/**
+ * Whether a resolved field can be read from a source's rows: its own field, or an approved
+ * related field. Otherwise explains why (and whether an administrator can approve it).
+ */
+export function fieldOnSource(
+  catalog: FieldCatalog,
+  source: ReportSource,
+  def: Pick<FieldDef, "key" | "label" | "source">,
+): { ok: true; via?: RelationshipId } | { ok: false; reason: string; approvable: boolean } {
+  if (def.source === source) return { ok: true };
+  const rel = catalog.related[source].get(def.key);
+  if (rel) return { ok: true, via: rel.relationship };
+  const path = Object.values(RELATIONSHIPS).find((r) => r.from === source && r.to === def.source);
+  if (path)
+    return {
+      ok: false,
+      approvable: true,
+      reason: `"${def.label}" is a ${def.source} field that isn't approved for ${source} reports yet. The ${source} source is linked to ${def.source} (${path.label}), so an administrator can approve it under Reports → Data settings → Cost items & models → Related job fields.`,
+    };
+  return {
+    ok: false,
+    approvable: false,
+    reason: `"${def.label}" is a ${def.source} field; ${source} rows have no relationship to ${def.source}, so it can't be used on this dataset.`,
+  };
 }
 
 /** Resolve any field reference (including sem:) to its definition, or explain why not. */

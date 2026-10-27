@@ -507,7 +507,14 @@ const sourcesTool: AgentTool = {
             key: f.key,
             label: f.label,
             type: f.type,
+            ...(f.via ? { via: f.via } : {}),
           })),
+          relatedFields: [...catalog.related[id].values()]
+            .filter((r) => {
+              const def = catalog.byKey.get(r.key);
+              return def && canSeeField(access, def);
+            })
+            .map((r) => ({ ref: r.ref, key: r.key, via: r.relationship })),
           restrictedFields: fields.length - visible.length,
           freshness: meta.syncEntities.map((e) => {
             const f = freshness.find((x) => x.key === e);

@@ -20,6 +20,7 @@ import {
   useLoad,
 } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
+import { RelatedFieldsAdmin } from "./related-fields-admin";
 import { cn } from "@/lib/utils";
 
 type Rule = { id: string | null; matchType: string; pattern: string; value: string };
@@ -470,6 +471,8 @@ export function CostItemsAdmin() {
               </form>
             </div>
           </section>
+
+          <RelatedFieldsAdmin className={card} />
 
           <section className={card}>
             <h2 className="font-semibold text-[var(--acton-navy)]">Preview rows</h2>

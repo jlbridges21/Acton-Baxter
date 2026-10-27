@@ -1,0 +1,202 @@
+{
+  "title": "Project Allowance Tracker",
+  "widgets": [
+    {
+      "id": "kpi_lines",
+      "span": 3,
+      "type": "kpi",
+      "title": "Allowance lines",
+      "format": "number",
+      "height": "auto",
+      "hidden": false,
+      "metric": {
+        "op": "count"
+      },
+      "dataset": "allowance_lines",
+      "filters": [],
+      "drilldown": true
+    },
+    {
+      "id": "kpi_jobs",
+      "span": 3,
+      "type": "kpi",
+      "title": "Jobs with allowances",
+      "format": "number",
+      "height": "auto",
+      "hidden": false,
+      "metric": {
+        "op": "count_distinct",
+        "field": "item.job"
+      },
+      "dataset": "allowance_lines",
+      "filters": [],
+      "drilldown": true
+    },
+    {
+      "id": "kpi_cost",
+      "span": 3,
+      "type": "kpi",
+      "title": "Total allowance cost",
+      "format": "currency",
+      "height": "auto",
+      "hidden": false,
+      "metric": {
+        "op": "sum",
+        "field": "item.cost"
+      },
+      "dataset": "allowance_lines",
+      "filters": [],
+      "drilldown": true
+    },
+    {
+      "id": "kpi_price",
+      "span": 3,
+      "type": "kpi",
+      "title": "Total allowance price",
+      "format": "currency",
+      "height": "auto",
+      "hidden": false,
+      "metric": {
+        "op": "sum",
+        "field": "item.price"
+      },
+      "dataset": "allowance_lines",
+      "filters": [],
+      "drilldown": true
+    },
+    {
+      "id": "chart_job_price",
+      "sort": "value_desc",
+      "span": 12,
+      "type": "chart",
+      "chart": "horizontal_bar",
+      "limit": 15,
+      "title": "Allowance price by job",
+      "format": "auto",
+      "height": "auto",
+      "hidden": false,
+      "metric": {
+        "op": "sum",
+        "field": "item.price"
+      },
+      "dataset": "allowance_lines",
+      "filters": [],
+      "groupBy": "item.job",
+      "drilldown": true
+    },
+    {
+      "id": "table_lines",
+      "sort": [
+        {
+          "dir": "asc",
+          "field": "item.job"
+        }
+      ],
+      "span": 12,
+      "type": "table",
+      "title": "Allowance lines by job",
+      "height": "auto",
+      "hidden": false,
+      "columns": [
+        {
+          "wrap": false,
+          "field": "item.job",
+          "label": "Job",
+          "format": "auto"
+        },
+        {
+          "wrap": false,
+          "field": "item.jobNumber",
+          "label": "Job Number",
+          "format": "auto"
+        },
+        {
+          "wrap": false,
+          "field": "item.name",
+          "label": "Allowance item",
+          "format": "auto"
+        },
+        {
+          "wrap": false,
+          "field": "item.cost",
+          "label": "Extended cost",
+          "format": "currency"
+        },
+        {
+          "wrap": false,
+          "field": "item.price",
+          "label": "Extended price",
+          "format": "currency"
+        },
+        {
+          "wrap": false,
+          "field": "item.priceStatus",
+          "label": "Price status",
+          "format": "auto"
+        }
+      ],
+      "dataset": "allowance_lines",
+      "filters": [],
+      "pageSize": 25,
+      "highlight": [
+        {
+          "op": "lt",
+          "tone": "red",
+          "field": "item.price",
+          "value": 0
+        }
+      ],
+      "summarize": false,
+      "comparable": false,
+      "searchable": true,
+      "rowDrilldown": false
+    },
+    {
+      "id": "data_status",
+      "span": 6,
+      "type": "data_status",
+      "title": "",
+      "height": "auto",
+      "hidden": false
+    }
+  ],
+  "controls": [
+    {
+      "id": "job_select",
+      "kind": "select",
+      "field": "item.job",
+      "label": "Job",
+      "default": [],
+      "datasets": ["allowance_lines"],
+      "multiple": true
+    },
+    {
+      "id": "item_search",
+      "kind": "search",
+      "label": "Search allowance item",
+      "fields": ["item.name"],
+      "datasets": ["allowance_lines"]
+    }
+  ],
+  "datasets": [
+    {
+      "id": "allowance_lines",
+      "label": "Allowance budget lines",
+      "source": "cost_items",
+      "filters": [
+        {
+          "op": "eq",
+          "field": "item.context",
+          "value": "Job budget"
+        },
+        {
+          "op": "contains",
+          "field": "item.name",
+          "value": "allowance"
+        }
+      ]
+    }
+  ],
+  "description": "Budget lines on JobTread job budgets whose item name contains 'allowance'. Matching is by name because JobTread has no dedicated allowance field or populated option group.",
+  "schemaVersion": 1
+}

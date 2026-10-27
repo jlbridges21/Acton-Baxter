@@ -6,6 +6,7 @@
  */
 
 import type { SyncEntityKey } from "@/lib/jobtread/entities";
+import { relationshipsFrom } from "./relationships";
 import { METRIC_OPS, OPERATORS, SOURCES, type ReportSource } from "./spec";
 
 export type SourceRelationship = {
@@ -128,14 +129,16 @@ export const SOURCE_REGISTRY: Record<ReportSource, SourceMeta> = {
       {
         to: "jobs",
         cardinality: "many-to-one",
-        via: "item.job",
-        description: "Job budget lines belong to one job.",
+        via: "item.jobId (JobTread job id)",
+        description:
+          "Job budget lines belong to one job. Approved job fields (Phase, Status, Project Manager, Customer, Job Number…) are readable on cost-item rows by their job keys (e.g. sem:phase); see relatedFields.",
       },
     ],
     notes: [
       'Filter item.context = "Product Library model" for model pricing; "Other catalog group" holds shared libraries such as Build Ready Selections.',
       "Options: item.optionGroup (e.g. Exterior Package Options) and item.option (e.g. Hayward Modern). Sum item.cost / item.price grouped by item.model and item.option for option totals.",
       "item.price / item.unitPrice are JobTread selling prices; item.cost / item.unitCost are internal costs. Never present cost as price. item.priceStatus flags missing prices.",
+      'Job fields on budget lines: filter or group by sem:phase (Phase), sem:status, sem:project_manager, job.number, job.customer, etc. directly on a cost_items dataset (e.g. {"field":"sem:phase","op":"in","value":["BR-Permitting"]}). Catalog lines have no job, so these are blank for them; blank Phase is not a phase.',
     ],
   },
   commissions: {
@@ -172,7 +175,13 @@ export const SOURCE_REGISTRY: Record<ReportSource, SourceMeta> = {
 export function describeSourcesForModel(): string {
   return SOURCES.map((id) => {
     const s = SOURCE_REGISTRY[id];
-    return `- "${id}" (${s.fieldPrefix}* fields): ${s.description} ${s.grain} ${s.notes.join(" ")}`;
+    const related = relationshipsFrom(id)
+      .map(
+        (r) =>
+          `Related ${r.label.toLowerCase()} fields (via ${r.key}, approved by default): ${r.defaultFields.join(", ")}.`,
+      )
+      .join(" ");
+    return `- "${id}" (${s.fieldPrefix}* fields): ${s.description} ${s.grain} ${s.notes.join(" ")}${related ? ` ${related}` : ""}`;
   }).join("\n");
 }
 

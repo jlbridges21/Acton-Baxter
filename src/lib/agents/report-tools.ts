@@ -135,6 +135,7 @@ const listFields: AgentTool = {
           label: f.label,
           type: f.type,
           target: f.target,
+          ...(f.via ? { via: f.via } : {}),
           filled: `${values.length}/${rows.length}`,
           examples: [...distinct.entries()]
             .sort((a, b) => b[1] - a[1])
@@ -146,10 +147,17 @@ const listFields: AgentTool = {
     const hiddenCategories = (["customer", "financial", "internal"] as const)
       .filter((c) => !access.categories.has(c))
       .map((c) => CATEGORY_LABELS[c]);
+    // Business names apply to jobs and to sources with approved related job fields.
+    const related = catalog.related[source];
     const semantic =
-      source === "jobs"
+      source === "jobs" || related.size
         ? [...catalog.semantic.entries()]
             .filter(([key, s]) => !q || s.label.toLowerCase().includes(q) || key.includes(q))
+            .filter(
+              ([key, s]) =>
+                source === "jobs" ||
+                [...related.values()].some((f) => f.ref === key || f.key === s.ref),
+            )
             .map(([key, s]) => {
               const r = s.ref ? resolveField(catalog, key) : null;
               return {
@@ -174,6 +182,11 @@ const listFields: AgentTool = {
         records: rows.length,
         fields,
         businessNames: semantic,
+        ...(related.size
+          ? {
+              relatedFields: `Fields marked "via" come from a related record by stable id (e.g. a budget line's job). Use their key or business name (e.g. sem:phase) directly in filters, groupBy, columns, and select controls on this source; rows are never duplicated. Other fields of the related record need an administrator to approve them (Reports → Data settings → Cost items & models → Related job fields).`,
+            }
+          : {}),
         hiddenCategoriesForThisRequester: hiddenCategories,
         ...(rows.length === 0
           ? {

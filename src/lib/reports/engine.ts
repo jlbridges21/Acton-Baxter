@@ -25,6 +25,7 @@ import {
   type CostItemCacheRow,
 } from "./cost-items";
 import { applyValueMappings, listValueMappings } from "./mappings";
+import { attachRelated, relationshipsFrom } from "./relationships";
 import { SOURCE_REGISTRY } from "./sources";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
 import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
@@ -46,6 +47,7 @@ import {
   type Row,
 } from "./compute";
 import {
+  fieldOnSource,
   getFieldCatalog,
   invalidateFieldCatalog,
   resolveField,
@@ -60,7 +62,16 @@ import type {
   Provenance,
   WidgetResult,
 } from "./result-types";
-import type { Condition, ControlSpec, DatasetSpec, Metric, ReportSpec, WidgetSpec } from "./spec";
+import { collectDatasetFieldRefs } from "./spec";
+import type {
+  Condition,
+  ControlSpec,
+  DatasetSpec,
+  Metric,
+  ReportSource,
+  ReportSpec,
+  WidgetSpec,
+} from "./spec";
 
 const MAX_TABLE_ROWS = 1000;
 
@@ -258,6 +269,28 @@ async function loadJobs(catalog: FieldCatalog, cache: DataCache): Promise<Row[]>
   return cache.jobs;
 }
 
+/**
+ * Attach approved related fields (e.g. a budget line's job Phase) by stable id. Rows are
+ * never added or dropped, so totals over the source are unchanged.
+ */
+async function withRelatedFields(
+  source: ReportSource,
+  rows: Row[],
+  catalog: FieldCatalog,
+  cache: DataCache,
+): Promise<Row[]> {
+  let out = rows;
+  for (const rel of relationshipsFrom(source)) {
+    const keys = [...catalog.related[source].values()]
+      .filter((f) => f.relationship === rel.id)
+      .map((f) => f.key);
+    if (!keys.length) continue;
+    const targets = rel.to === "jobs" ? await loadJobs(catalog, cache) : [];
+    out = attachRelated(out, rel, new Map(targets.map((t) => [t.id, t])), keys);
+  }
+  return out;
+}
+
 /** Commission rows for a rule set: JobTread jobs + documents × Baxter rates/assignments. */
 async function loadCommissions(
   ruleSetKey: string,
@@ -325,7 +358,10 @@ async function loadSource(
   if (ds.source === "jobs") return loadJobs(catalog, cache);
   if (ds.source === "commissions") return loadCommissions(ds.ruleSet ?? "", catalog, cache);
   if (ds.source === "cost_items") {
-    cache.items ??= (await loadCatalogContext()).items();
+    if (!cache.items) {
+      const items = (await loadCatalogContext()).items();
+      cache.items = await withRelatedFields("cost_items", items, catalog, cache);
+    }
     return cache.items;
   }
   if (!cache.models) {
@@ -1386,6 +1422,19 @@ export async function checkSpecFields(
     else if (!canSeeField(access, r.def))
       restricted.push(`${r.def.label} (${CATEGORY_LABELS[r.def.category]})`);
   }
-  void spec;
+  // A field must be readable from the dataset it's used on: its own source or an approved
+  // related field. Otherwise the widget would silently show blanks.
+  const wanted = new Set(refs);
+  const sources = new Map(spec.datasets.map((d) => [d.id, d.source]));
+  const seen = new Set<string>();
+  for (const { ref, dataset } of collectDatasetFieldRefs(spec)) {
+    const source = dataset ? sources.get(dataset) : undefined;
+    if (!source || !wanted.has(ref) || seen.has(`${source}:${ref}`)) continue;
+    seen.add(`${source}:${ref}`);
+    const r = resolveField(catalog, ref);
+    if (!r.ok) continue;
+    const on = fieldOnSource(catalog, source, { ...r.def, key: r.key });
+    if (!on.ok) missing.push(`${ref} (dataset "${dataset}"): ${on.reason}`);
+  }
   return { missing, restricted };
 }

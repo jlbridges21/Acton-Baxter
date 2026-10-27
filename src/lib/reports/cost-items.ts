@@ -154,6 +154,7 @@ export function costItemRow(item: CostItemCacheRow, ctx: ItemContext): Row {
           ? PRICE_EQUALS_COST
           : PRICED,
     "item.job": job?.name ?? null,
+    "item.jobId": item.job_id,
     "item.jobNumber": job?.number ?? null,
     "item.taxable": item.is_taxable ?? null,
     "item.sourceItemId": item.source_cost_item_id ?? null,

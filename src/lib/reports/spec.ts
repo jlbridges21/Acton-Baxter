@@ -397,31 +397,48 @@ export function parseReportSpec(
 
 /** Collect every field reference in a spec (for validation, provenance, and access checks). */
 export function collectFieldRefs(spec: ReportSpec): string[] {
-  const refs = new Set<string>();
-  const add = (f?: string) => f && refs.add(f);
-  const conds = (cs: Condition[]) => cs.forEach((c) => add(c.field));
-  spec.datasets.forEach((d) => conds(d.filters));
+  return [...new Set(collectDatasetFieldRefs(spec).map((r) => r.ref))];
+}
+
+/** Every field reference with the dataset(s) it's read from (null when none applies). */
+export function collectDatasetFieldRefs(
+  spec: ReportSpec,
+): Array<{ ref: string; dataset: string | null }> {
+  const out: Array<{ ref: string; dataset: string | null }> = [];
+  const pickerDataset = new Map(
+    spec.controls.flatMap((c) => (c.kind === "job_picker" ? [[c.id, c.dataset] as const] : [])),
+  );
+  const add = (dataset: string | null, f?: string) => {
+    if (f) out.push({ ref: f, dataset });
+  };
+  const conds = (dataset: string | null, cs: Condition[]) =>
+    cs.forEach((c) => add(dataset, c.field));
+  spec.datasets.forEach((d) => conds(d.id, d.filters));
   spec.controls.forEach((c) => {
-    if (c.kind === "search") c.fields.forEach(add);
-    else if (c.kind !== "job_picker") add(c.field);
+    if (c.kind === "job_picker") return;
+    const fields = c.kind === "search" ? c.fields : [c.field];
+    const datasets = c.datasets.length ? c.datasets : [null];
+    for (const ds of datasets) fields.forEach((f) => add(ds, f));
   });
   for (const w of spec.widgets) {
     if (w.type === "kpi") {
-      add(w.metric.field);
-      conds(w.filters);
+      add(w.dataset, w.metric.field);
+      conds(w.dataset, w.filters);
     } else if (w.type === "chart") {
-      [w.groupBy, w.seriesBy, w.x, w.y, w.metric.field].forEach(add);
-      conds(w.filters);
+      [w.groupBy, w.seriesBy, w.x, w.y, w.metric.field].forEach((f) => add(w.dataset, f));
+      conds(w.dataset, w.filters);
     } else if (w.type === "table") {
-      w.columns.forEach((c) => add(c.field));
-      w.sort.forEach((s) => add(s.field));
-      add(w.groupBy);
-      conds(w.filters);
-      w.highlight.forEach((h) => add(h.field));
-    } else if (w.type === "detail") w.fields.forEach((f) => add(f.field));
-    else if (w.type === "project_header") w.fields.forEach(add);
+      w.columns.forEach((c) => add(w.dataset, c.field));
+      w.sort.forEach((x) => add(w.dataset, x.field));
+      add(w.dataset, w.groupBy);
+      conds(w.dataset, w.filters);
+      w.highlight.forEach((h) => add(w.dataset, h.field));
+    } else if (w.type === "detail")
+      w.fields.forEach((f) => add(pickerDataset.get(w.control) ?? null, f.field));
+    else if (w.type === "project_header")
+      w.fields.forEach((f) => add(pickerDataset.get(w.control) ?? null, f));
   }
-  return [...refs];
+  return out;
 }
 
 /** Data sources every report can add from the widget builder (added on first use). */
