@@ -35,6 +35,7 @@ import { buildGroupTree, type GroupColumn } from "./grouping";
 import { catalogFor } from "./metrics";
 import { attachRelated, relationshipsFrom } from "./relationships";
 import { ID_FIELDS, isRelCatalog } from "./report-relationships";
+import { firstRuleStyle } from "./style";
 import { SOURCE_REGISTRY } from "./sources";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
 import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
@@ -635,6 +636,8 @@ function requireField(ctx: Ctx, ref: string): { key: string; def: FieldDef } {
   if (!canSeeField(ctx.access, r.def)) {
     throw new RefError(`Requires "${CATEGORY_LABELS[r.def.category]}" access.`, true);
   }
+  // Nonfatal caveats (e.g. a business name that reads a shared narrative text field).
+  if (r.warning) ctx.issues.push(r.warning);
   return r;
 }
 
@@ -1056,6 +1059,8 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         valueType: metricType(ctx, wm),
         groupLabel: g.def.label,
         metricLabel: metricLabel(ctx, wm),
+        groupField: groupRef,
+        ...(w.seriesBy ? { seriesField: w.seriesBy } : {}),
         provenance: provenance(ctx, {
           fields: [groupRef, ...(w.seriesBy ? [w.seriesBy] : []), ...(wm.field ? [wm.field] : [])],
           filters: filtersApplied,
@@ -1169,6 +1174,7 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         description: f.def.description,
         origin: f.def.origin,
         wrap: c.wrap || undefined,
+        ref: c.field,
       }));
       if (summary)
         meta.push({
@@ -1178,6 +1184,23 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
           origin: "Count of records in the row's group",
         });
       const cellKeys = [...columns.map(({ f }) => f.key), ...(summary ? [SUMMARY_COUNT] : [])];
+      // Appearance rules are evaluated here so a rule can't reveal a field the viewer can't see.
+      const ruleFields = (w.appearance?.rules ?? []).flatMap((rule) => {
+        if (!rule.field) return [];
+        try {
+          const f = rowField(ctx, rule.field, "style by");
+          return [{ rule, key: f.key }];
+        } catch {
+          return [];
+        }
+      });
+      const ruleStyleFor = (r: Row) =>
+        ruleFields.length
+          ? (firstRuleStyle(
+              ruleFields.map((x) => x.rule),
+              (rule) => r[ruleFields.find((x) => x.rule === rule)!.key],
+            ) ?? undefined)
+          : undefined;
       const cell = (r: Row, k: string): CellValue => {
         const agg = aggregateCols.get(k);
         return agg ? agg.evaluate!([r]) : (r[k] ?? null);
@@ -1223,6 +1246,7 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
           tone: highlight.find((h) =>
             matchesCondition(r[h.field], { field: h.field, op: h.op, value: h.value }),
           )?.tone,
+          ruleStyle: ruleStyleFor(r),
           jobtreadUrl: isJobs ? jobTreadJobUrl(r.id) : undefined,
         })),
         totalRows: totalRecords ?? rows.length,

@@ -9,7 +9,12 @@
 import "server-only";
 
 import { agentDb, eq, type Filter } from "@/lib/agents/store";
-import { paginate, type PaveStats } from "./client";
+import {
+  DEFAULT_JOBTREAD_ORGANIZATION_ID,
+  getJobTreadConfig,
+  paginate,
+  type PaveStats,
+} from "./client";
 
 export type FieldCategory = "general" | "customer" | "financial" | "internal" | "excluded";
 
@@ -26,6 +31,10 @@ export type CustomFieldRow = {
   first_seen_at: string;
   last_seen_at: string;
   removed_at: string | null;
+  /** Migration 080: tenant scope and type-change tracking. */
+  organization_id?: string | null;
+  previous_type?: string | null;
+  type_changed_at?: string | null;
 };
 
 export type SemanticFieldRow = {
@@ -35,6 +44,10 @@ export type SemanticFieldRow = {
   custom_field_id: string | null;
   updated_by: string | null;
   updated_at: string;
+  /** Migration 080: administrator review of the alias. */
+  review_status?: "deprecated" | "verified" | null;
+  review_note?: string | null;
+  reviewed_at?: string | null;
 };
 
 /** Targets Reports caches. Contacts, vendors, cost items, and daily logs are not synced. */
@@ -260,7 +273,11 @@ export async function listCustomFields(options?: {
     filters,
     order: { col: "position" },
   });
-  return rows.map((r) => ({ ...r, options: Array.isArray(r.options) ? r.options : [] }));
+  // Tenant scope: rows from before migration 080 have no organization yet.
+  const org = currentOrganizationId();
+  return rows
+    .filter((r) => !r.organization_id || r.organization_id === org)
+    .map((r) => ({ ...r, options: Array.isArray(r.options) ? r.options : [] }));
 }
 
 export async function listSemanticFields(): Promise<SemanticFieldRow[]> {
@@ -276,26 +293,116 @@ type FieldNode = {
   position?: string;
 };
 
-/** Discover custom fields and upsert metadata (admin edits preserved). */
+/** The JobTread organization the catalog belongs to (tenant scope for every catalog row). */
+export function currentOrganizationId(): string {
+  return getJobTreadConfig()?.organizationId ?? DEFAULT_JOBTREAD_ORGANIZATION_ID;
+}
+
+/** Stable, tenant-qualified identity of a JobTread field (never its label). */
+export function fieldSourceRef(f: { id: string; target_type: string }, org?: string | null) {
+  return `jobtread:${org ?? currentOrganizationId()}:${f.target_type}:${f.id}`;
+}
+
+/** Migration 080 adds catalog history/refresh tables and columns; detect once per process. */
+let catalogSchema: Promise<boolean> | null = null;
+export function catalogSchemaReady(): Promise<boolean> {
+  catalogSchema ??= agentDb()
+    .select("jt_field_catalog_refreshes", { limit: 1 })
+    .then(() => true)
+    .catch(() => false);
+  return catalogSchema;
+}
+export function resetCatalogSchemaProbe() {
+  catalogSchema = null;
+}
+
+/**
+ * Removals are applied only when the response looks complete: an empty response, or one that
+ * would remove more than half of the active fields (and more than 5), is held for an
+ * administrator to confirm. A failed refresh never touches the last known good catalog.
+ */
+export function shouldHoldRemovals(activeBefore: number, seen: number, removing: number) {
+  if (removing === 0) return false;
+  if (seen === 0) return true;
+  return removing > 5 && removing > activeBefore / 2;
+}
+
+const sameOptions = (a: string[] | null | undefined, b: string[] | null | undefined) =>
+  JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+
+/**
+ * Discover custom fields for every JobTread target (job, location, customer, contacts,
+ * vendors, daily logs, cost items, …) and upsert metadata by immutable field id. Admin edits
+ * (display name, description, category) are never overwritten. Renames, type/option changes,
+ * removals, and restorations are recorded in jt_custom_field_history.
+ */
 export async function syncCustomFieldMetadata(
   stats: PaveStats,
-): Promise<{ seen: number; added: number; removed: number }> {
-  const nodes = await paginate<FieldNode>({
-    connection: "customFields",
-    args: { sortBy: [{ field: "targetType" }, { field: "position" }] },
-    nodes: { id: {}, name: {}, type: {}, targetType: {}, options: {}, position: {} },
-    pageSize: 100,
-    stats,
-  });
+  options: { triggeredBy?: string; confirmRemovals?: boolean } = {},
+): Promise<{
+  seen: number;
+  added: number;
+  removed: number;
+  renamed: number;
+  typeChanged: number;
+  restored: number;
+  heldRemovals: number;
+}> {
   const db = agentDb();
+  const org = currentOrganizationId();
+  const tracked = await catalogSchemaReady();
+  const [refresh] = tracked
+    ? await db
+        .insert<{ id: string }>("jt_field_catalog_refreshes", {
+          organization_id: org,
+          status: "running",
+          triggered_by: options.triggeredBy ?? "sync",
+          started_at: new Date().toISOString(),
+        })
+        .catch(() => [] as Array<{ id: string }>)
+    : [];
+  const finish = async (patch: Record<string, unknown>) => {
+    if (!refresh) return;
+    await db
+      .update("jt_field_catalog_refreshes", [eq("id", refresh.id)], {
+        ...patch,
+        finished_at: new Date().toISOString(),
+      })
+      .catch(() => undefined);
+  };
+  let nodes: FieldNode[];
+  try {
+    nodes = await paginate<FieldNode>({
+      connection: "customFields",
+      args: { sortBy: [{ field: "targetType" }, { field: "position" }] },
+      nodes: { id: {}, name: {}, type: {}, targetType: {}, options: {}, position: {} },
+      pageSize: 100,
+      stats,
+    });
+  } catch (error) {
+    await finish({ status: "failed", error: error instanceof Error ? error.message : "failed" });
+    console.error("[jobtread.field_catalog.refresh_failed]", {
+      organization: org,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  const history: Array<Record<string, unknown>> = [];
+  const log = (field_id: string, change: string, old_value: unknown, new_value: unknown) =>
+    history.push({ organization_id: org, field_id, change, old_value, new_value });
   const existing = new Map(
-    (await listCustomFields({ includeRemoved: true })).map((f) => [f.id, f]),
+    (await listCustomFields({ includeRemoved: true }))
+      .filter((f) => !f.organization_id || f.organization_id === org)
+      .map((f) => [f.id, f]),
   );
   const now = new Date().toISOString();
   let added = 0;
+  let renamed = 0;
+  let typeChanged = 0;
+  let restored = 0;
   for (const n of nodes) {
     const prior = existing.get(n.id);
-    const source = {
+    const source: Record<string, unknown> = {
       name: n.name,
       type: n.type,
       target_type: n.targetType,
@@ -303,11 +410,28 @@ export async function syncCustomFieldMetadata(
       position: n.position ?? null,
       last_seen_at: now,
       removed_at: null,
+      ...(tracked ? { organization_id: org } : {}),
     };
     if (prior) {
+      if (prior.name !== n.name) {
+        renamed++;
+        log(n.id, "renamed", { name: prior.name }, { name: n.name });
+      }
+      if (prior.type !== n.type) {
+        typeChanged++;
+        log(n.id, "type_changed", { type: prior.type }, { type: n.type });
+        if (tracked) Object.assign(source, { previous_type: prior.type, type_changed_at: now });
+      }
+      if (!sameOptions(prior.options, n.options))
+        log(n.id, "options_changed", prior.options, n.options);
+      if (prior.removed_at) {
+        restored++;
+        log(n.id, "restored", null, { name: n.name });
+      }
       await db.update("jt_custom_fields", [eq("id", n.id)], source);
     } else {
       added++;
+      log(n.id, "added", null, { name: n.name, type: n.type, target: n.targetType });
       await db.insert("jt_custom_fields", {
         id: n.id,
         ...source,
@@ -319,13 +443,45 @@ export async function syncCustomFieldMetadata(
     }
   }
   const seenIds = new Set(nodes.map((n) => n.id));
+  const removable = [...existing.values()].filter((p) => !seenIds.has(p.id) && !p.removed_at);
+  const activeBefore = [...existing.values()].filter((p) => !p.removed_at).length;
+  const hold =
+    !options.confirmRemovals && shouldHoldRemovals(activeBefore, nodes.length, removable.length);
   let removed = 0;
-  for (const prior of existing.values()) {
-    if (!seenIds.has(prior.id) && !prior.removed_at) {
+  if (!hold) {
+    for (const prior of removable) {
       removed++;
+      log(prior.id, "removed", { name: prior.name, type: prior.type }, null);
       await db.update("jt_custom_fields", [eq("id", prior.id)], { removed_at: now });
     }
+  } else {
+    console.warn("[jobtread.field_catalog.removals_held]", {
+      organization: org,
+      seen: nodes.length,
+      wouldRemove: removable.length,
+    });
   }
+  if (tracked && history.length)
+    await db.insert("jt_custom_field_history", history).catch((error: unknown) =>
+      console.error("[jobtread.field_catalog.history_failed]", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  await finish({
+    status: hold ? "held" : "succeeded",
+    seen: nodes.length,
+    added,
+    renamed,
+    type_changed: typeChanged,
+    removed,
+    restored,
+    held_removals: hold ? removable.length : 0,
+    ...(hold
+      ? {
+          error: `${removable.length} field(s) missing from JobTread's response were kept (the response looked incomplete). An administrator can confirm the removals from the field catalog.`,
+        }
+      : {}),
+  });
   await ensureSemanticDefaults();
   // Spreadsheet business fields + verified auto-mapping (needs migration 076). Never fails a sync.
   await import("./business-fields")
@@ -338,7 +494,15 @@ export async function syncCustomFieldMetadata(
         error: error instanceof Error ? error.message : String(error),
       }),
     );
-  return { seen: nodes.length, added, removed };
+  return {
+    seen: nodes.length,
+    added,
+    removed,
+    renamed,
+    typeChanged,
+    restored,
+    heldRemovals: hold ? removable.length : 0,
+  };
 }
 
 /** Create missing vocabulary rows and auto-map unmapped ones by exact (target, name) match. */

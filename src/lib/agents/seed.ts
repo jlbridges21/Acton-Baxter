@@ -237,6 +237,7 @@ async function runSeed(): Promise<void> {
     await addDexterDataSyncTools(dexter.id);
     await addDexterSourceRegistryTool(dexter.id);
     await addDexterEngineTools(dexter.id);
+    await addDexterFieldCatalogTools(dexter.id);
   }
   const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
   if (sam) {
@@ -456,6 +457,38 @@ async function addDexterEngineTools(dexterId: string) {
     published,
     { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
     `${DEXTER_ENGINE_MARKER}: calculated fields, Metric Library, grouping, viewer controls, and relationships`,
+  );
+}
+
+const DEXTER_FIELD_CATALOG_MARKER = "System: Dexter field catalog and styling";
+
+/** One-time: enable the field catalog / audit / repair tools (after the 2.0 marker ran). */
+async function addDexterFieldCatalogTools(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_FIELD_CATALOG_MARKER)))
+    return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [
+    ...new Set([
+      ...parsed.data.tools.enabled,
+      "reports_fields",
+      "reports_catalog_audit",
+      "reports_field_impact",
+      "reports_field_repair",
+    ]),
+  ];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_FIELD_CATALOG_MARKER}: native JobTread field catalog, field audit/repair, report styling`,
   );
 }
 

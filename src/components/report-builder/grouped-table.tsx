@@ -13,7 +13,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CellValue } from "@/lib/reports/compute";
 import type { FieldMeta, TableGroup, TableResult } from "@/lib/reports/result-types";
+import type { WidgetSpec } from "@/lib/reports/spec";
 import { formatValue } from "./format";
+import { ruleRowStyle, tableLook, useReportTheme } from "./report-theme";
 
 const NUMERIC = new Set(["number", "currency", "percent", "sqft"]);
 const ROWS_PER_GROUP = 50;
@@ -122,17 +124,20 @@ export function ColumnsMenu({
 }
 
 export function GroupedTable({
-  widgetId,
+  widget,
   result,
   onOpenRow,
 }: {
-  widgetId: string;
+  widget: WidgetSpec;
   result: TableResult;
   onOpenRow?: (
     row: { id: string; cells: Record<string, CellValue>; jobtreadUrl?: string },
     columns: FieldMeta[],
   ) => void;
 }) {
+  const widgetId = widget.id;
+  const theme = useReportTheme();
+  const look = tableLook(theme, widget);
   const groups = useMemo(() => result.groups ?? [], [result.groups]);
   const levels = result.groupLevels ?? [];
   const scope =
@@ -167,8 +172,13 @@ export function GroupedTable({
     <td
       key={meta.key}
       className={cn(
-        "max-w-md px-3 py-2 align-top",
+        "max-w-md align-top",
+        look.cell,
+        look.cellBorder,
         NUMERIC.has(meta.type) && "text-right tabular-nums",
+        look.align(meta.ref) === "center" && "text-center",
+        look.align(meta.ref) === "left" && "text-left",
+        look.align(meta.ref) === "right" && "text-right",
         meta.wrap ? "whitespace-pre-wrap" : "truncate",
       )}
     >
@@ -184,12 +194,22 @@ export function GroupedTable({
       <Fragment key={g.id}>
         <tr
           className={cn(
-            "border-t border-[var(--acton-gray-100)] font-semibold text-[var(--acton-navy)]",
-            g.level === 0 ? "bg-[var(--acton-gray-50)]" : "bg-white",
+            look.row,
+            "text-[var(--acton-navy)]",
+            look.subtotalBold ? "font-bold" : "font-semibold",
+            look.groupHeader === "subtle"
+              ? "bg-white"
+              : look.groupHeader === "emphasized"
+                ? g.level === 0
+                  ? "bg-[var(--acton-gray-100)]"
+                  : "bg-[var(--acton-gray-50)]"
+                : g.level === 0
+                  ? "bg-[var(--acton-gray-50)]"
+                  : "bg-white",
           )}
         >
           <td
-            className="px-3 py-2 whitespace-nowrap"
+            className={cn("whitespace-nowrap", look.cell)}
             style={{ paddingLeft: `${0.75 + g.level * 1.25}rem` }}
           >
             <button
@@ -213,7 +233,7 @@ export function GroupedTable({
           {columns.map((c) => (
             <td
               key={c.key}
-              className={cn("px-3 py-2", NUMERIC.has(c.type) && "text-right tabular-nums")}
+              className={cn(look.cell, NUMERIC.has(c.type) && "text-right tabular-nums")}
               title={
                 g.incomplete?.[c.key]
                   ? `${g.incomplete[c.key]} record(s) have no value and aren't in this subtotal`
@@ -234,8 +254,11 @@ export function GroupedTable({
               return (
                 <tr
                   key={`${g.id}:${id}:${i}`}
+                  style={ruleRowStyle(theme, r.ruleStyle)}
                   className={cn(
-                    "border-t border-[var(--acton-gray-100)] text-[var(--acton-navy)]",
+                    look.row,
+                    !r.ruleStyle?.color && "text-[var(--acton-navy)]",
+                    look.zebra && i % 2 === 1 && "bg-[var(--acton-gray-50)]",
                     clickable && "cursor-pointer hover:bg-[var(--acton-gray-50)]",
                   )}
                   onClick={clickable ? () => onOpenRow!(r, result.columns) : undefined}
@@ -270,13 +293,17 @@ export function GroupedTable({
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--acton-muted)]">
           <span>Grouped by {levels.map((l) => l.label).join(" → ")}</span>
-          <Button size="sm" variant="secondary" onClick={() => expandTo(levels.length)}>
-            Expand all
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setExpanded([])}>
-            Collapse all
-          </Button>
-          {levels.length > 1 ? (
+          {look.show.expandAll ? (
+            <Button size="sm" variant="secondary" onClick={() => expandTo(levels.length)}>
+              Expand all
+            </Button>
+          ) : null}
+          {look.show.collapseAll ? (
+            <Button size="sm" variant="secondary" onClick={() => setExpanded([])}>
+              Collapse all
+            </Button>
+          ) : null}
+          {levels.length > 1 && look.show.expandToLevel ? (
             <label className="inline-flex items-center gap-1">
               Expand to
               <select
@@ -300,7 +327,9 @@ export function GroupedTable({
           ) : null}
         </div>
         <div className="flex items-center gap-2 text-xs text-[var(--acton-muted)]">
-          <ColumnsMenu columns={result.columns} hidden={hidden} onChange={setHidden} />
+          {look.show.columns ? (
+            <ColumnsMenu columns={result.columns} hidden={hidden} onChange={setHidden} />
+          ) : null}
           <span>
             {groups.length.toLocaleString()} groups · {result.totalRows.toLocaleString()} records
             {result.truncated ? " (first 5,000 loaded)" : ""}
@@ -312,9 +341,9 @@ export function GroupedTable({
       ) : null}
       <div className="overflow-x-auto rounded-md border border-[var(--acton-border)]">
         <table className="w-full min-w-max text-sm">
-          <thead className="bg-[var(--acton-gray-50)] text-left text-xs text-[var(--acton-muted)]">
+          <thead className={look.head} style={look.headStyle}>
             <tr>
-              <th scope="col" className="px-3 py-2 font-semibold whitespace-nowrap">
+              <th scope="col" className={cn("font-semibold whitespace-nowrap", look.cell)}>
                 {levels.map((l) => l.label).join(" › ")}
               </th>
               {columns.map((c) => (
@@ -322,7 +351,8 @@ export function GroupedTable({
                   key={c.key}
                   scope="col"
                   className={cn(
-                    "px-3 py-2 font-semibold whitespace-nowrap",
+                    "font-semibold whitespace-nowrap",
+                    look.cell,
                     NUMERIC.has(c.type) && "text-right",
                   )}
                   title={c.description ?? c.origin}

@@ -82,6 +82,17 @@ import {
   type DisplayType,
 } from "./format";
 import { ColumnsMenu, GroupedTable, useViewerPref } from "./grouped-table";
+import {
+  color,
+  ruleRowStyle,
+  tableLook,
+  kpiValueClass,
+  paletteFor,
+  styled,
+  useReportTheme,
+  valueColor as boundColor,
+} from "./report-theme";
+import { firstRuleStyle } from "@/lib/reports/style";
 import { RuleEditorWidget } from "./rule-editors";
 
 /** Categorical slots in fixed order (validated reference palette, light surface). */
@@ -333,13 +344,40 @@ function KpiWidget({
 }) {
   const type = resolveDisplayType(spec.type === "kpi" ? spec.format : undefined, result.fieldType);
   const canDrill = spec.type === "kpi" && spec.drilldown && actions.onDrill;
+  const theme = useReportTheme();
+  const look = spec.type === "kpi" ? spec.appearance : undefined;
+  // Conditional rules test the KPI value; the first match wins.
+  const rule = firstRuleStyle(look?.rules, () => result.value);
+  const valueColor = rule?.color ?? look?.valueColor;
+  const background = rule?.background ?? look?.background;
+  const accent = rule?.accent ?? look?.accent;
   const value = (
-    <span className="text-3xl font-bold tracking-tight text-[var(--acton-navy)] tabular-nums">
+    <span
+      className={cn(
+        "font-bold tracking-tight text-[var(--acton-navy)] tabular-nums",
+        kpiValueClass(theme, spec),
+        rule?.emphasis === "muted" && "opacity-60",
+      )}
+      style={valueColor ? { color: color(theme, valueColor) } : undefined}
+    >
       {formatValue(result.value, type)}
     </span>
   );
   return (
-    <div>
+    <div
+      className={cn(
+        (background || accent) && "rounded-md px-3 py-2",
+        look?.align === "center" && "text-center",
+      )}
+      style={
+        background || accent
+          ? {
+              ...(background ? { backgroundColor: color(theme, background) } : {}),
+              ...(accent ? { borderLeft: `4px solid ${color(theme, accent)}` } : {}),
+            }
+          : undefined
+      }
+    >
       {canDrill ? (
         <button
           type="button"
@@ -453,6 +491,71 @@ function ChartWidget({
     });
   };
   const data = result.points.map((p) => ({ ...p, ...(p.series ?? {}) }));
+  const theme = useReportTheme();
+  const look = chartSpec?.appearance;
+  const stable = styled(theme, spec);
+  const palette = paletteFor(theme, spec);
+  const single = stable ? palette[0]! : SINGLE_COLOR;
+  const bindsCategories = Boolean(
+    look?.categoryColors ||
+    look?.rules?.length ||
+    theme?.statusColors ||
+    (result.groupField && theme?.categoryColors?.[result.groupField]),
+  );
+  /** Category color: rule → binding/stable hash (styled) → position (legacy look). */
+  const categoryFill = (p: { key: string; value: number | null; isOther?: boolean }, i: number) => {
+    const rule = firstRuleStyle(look?.rules, (r) => (r.target === "category" ? p.key : p.value));
+    if (rule?.color) return color(theme, rule.color);
+    if (p.isOther) return OTHER_COLOR;
+    return stable
+      ? boundColor(theme, spec, p.key, result.groupField, look?.categoryColors)
+      : colorFor(i, p.isOther);
+  };
+  const seriesFill = (k: string, i: number) =>
+    stable
+      ? k.startsWith("Other (")
+        ? OTHER_COLOR
+        : boundColor(theme, spec, k, result.seriesField, look?.seriesColors)
+      : colorFor(i, k.startsWith("Other ("));
+  const legendPos = look?.legend?.position;
+  const showLegend = look?.legend?.show !== false && legendPos !== "none";
+  const legendProps =
+    legendPos === "left" || legendPos === "right"
+      ? ({ layout: "vertical", verticalAlign: "middle", align: legendPos } as const)
+      : legendPos === "top"
+        ? ({ verticalAlign: "top" } as const)
+        : legendPos === "bottom"
+          ? ({ verticalAlign: "bottom" } as const)
+          : {};
+  const showGrid = look?.axis?.grid !== false;
+  const xAxisLook = {
+    hide: look?.axis?.x?.show === false,
+    ...(look?.axis?.x?.label
+      ? {
+          label: {
+            value: look.axis.x.label,
+            position: "insideBottom" as const,
+            offset: -4,
+            fontSize: 11,
+            fill: AXIS_TEXT,
+          },
+        }
+      : {}),
+  };
+  const yAxisLook = {
+    hide: look?.axis?.y?.show === false,
+    ...(look?.axis?.y?.label
+      ? {
+          label: {
+            value: look.axis.y.label,
+            angle: -90,
+            position: "insideLeft" as const,
+            fontSize: 11,
+            fill: AXIS_TEXT,
+          },
+        }
+      : {}),
+  };
   const tooltip = (
     <Tooltip
       content={<ChartTooltip valueType={valueType} metricLabel={result.metricLabel} />}
@@ -487,18 +590,21 @@ function ChartWidget({
           isAnimationActive={false}
         >
           {data.map((p, i) => (
-            <Cell key={p.key} fill={colorFor(i, p.isOther)} />
+            <Cell key={p.key} fill={categoryFill(p, i)} />
           ))}
         </Pie>
         {tooltip}
-        <Legend
-          formatter={legendText}
-          verticalAlign="middle"
-          align="right"
-          layout="vertical"
-          iconType="circle"
-          wrapperStyle={{ fontSize: 12, color: "#0b1f3a" }}
-        />
+        {showLegend ? (
+          <Legend
+            formatter={legendText}
+            verticalAlign="middle"
+            align="right"
+            layout="vertical"
+            iconType="circle"
+            wrapperStyle={{ fontSize: 12, color: "#0b1f3a" }}
+            {...legendProps}
+          />
+        ) : null}
       </PieChart>
     );
   } else if (kind === "scatter") {
@@ -543,7 +649,7 @@ function ChartWidget({
         />
         <Scatter
           data={result.scatter ?? []}
-          fill={SINGLE_COLOR}
+          fill={single}
           stroke="#ffffff"
           strokeWidth={2}
           isAnimationActive={false}
@@ -560,14 +666,24 @@ function ChartWidget({
           drill(e?.activeLabel != null ? String(e.activeLabel) : null)
         }
       >
-        <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="key" {...axisProps} />
-        <YAxis {...valueAxis} width={56} tickFormatter={(v: number) => formatAxis(v, valueType)} />
+        {showGrid ? <CartesianGrid stroke={GRID} vertical={false} /> : null}
+        <XAxis dataKey="key" {...axisProps} {...xAxisLook} />
+        <YAxis
+          {...valueAxis}
+          {...yAxisLook}
+          width={56}
+          tickFormatter={(v: number) => formatAxis(v, valueType)}
+        />
         <Tooltip
           content={<ChartTooltip valueType={valueType} metricLabel={result.metricLabel} />}
         />
-        {series.length ? (
-          <Legend formatter={legendText} iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+        {series.length && showLegend ? (
+          <Legend
+            formatter={legendText}
+            iconType="circle"
+            wrapperStyle={{ fontSize: 12 }}
+            {...legendProps}
+          />
         ) : null}
         {(series.length ? series : ["value"]).map((k, i) =>
           kind === "line" ? (
@@ -576,7 +692,7 @@ function ChartWidget({
               type="monotone"
               dataKey={k}
               name={series.length ? k : result.metricLabel}
-              stroke={series.length ? colorFor(i) : SINGLE_COLOR}
+              stroke={series.length ? seriesFill(k, i) : single}
               strokeWidth={2}
               dot={{ r: 4, strokeWidth: 2, fill: "#ffffff" }}
               activeDot={{ r: 5 }}
@@ -589,8 +705,8 @@ function ChartWidget({
               dataKey={k}
               name={series.length ? k : result.metricLabel}
               stackId={series.length ? "a" : undefined}
-              stroke={series.length ? colorFor(i) : SINGLE_COLOR}
-              fill={series.length ? colorFor(i) : SINGLE_COLOR}
+              stroke={series.length ? seriesFill(k, i) : single}
+              fill={series.length ? seriesFill(k, i) : single}
               fillOpacity={0.18}
               strokeWidth={2}
               isAnimationActive={false}
@@ -609,18 +725,22 @@ function ChartWidget({
         margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
         barCategoryGap="20%"
       >
-        <CartesianGrid stroke={GRID} horizontal={!horizontal} vertical={horizontal} />
+        {showGrid ? (
+          <CartesianGrid stroke={GRID} horizontal={!horizontal} vertical={horizontal} />
+        ) : null}
         {horizontal ? (
           <>
             <XAxis
               type="number"
               {...valueAxis}
+              {...yAxisLook}
               tickFormatter={(v: number) => formatAxis(v, valueType)}
             />
             <YAxis
               type="category"
               dataKey="key"
               {...axisProps}
+              {...xAxisLook}
               width={140}
               interval={0}
               tickFormatter={(v: string) => (v.length > 22 ? `${v.slice(0, 21)}…` : v)}
@@ -631,19 +751,26 @@ function ChartWidget({
             <XAxis
               dataKey="key"
               {...axisProps}
+              {...xAxisLook}
               interval={0}
               tickFormatter={(v: string) => (v.length > 14 ? `${v.slice(0, 13)}…` : v)}
             />
             <YAxis
               {...valueAxis}
+              {...yAxisLook}
               width={56}
               tickFormatter={(v: number) => formatAxis(v, valueType)}
             />
           </>
         )}
         {tooltip}
-        {stacked ? (
-          <Legend formatter={legendText} iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+        {stacked && showLegend ? (
+          <Legend
+            formatter={legendText}
+            iconType="circle"
+            wrapperStyle={{ fontSize: 12 }}
+            {...legendProps}
+          />
         ) : null}
         {stacked ? (
           series.map((k, i) => (
@@ -652,7 +779,7 @@ function ChartWidget({
               dataKey={k}
               name={k}
               stackId="a"
-              fill={colorFor(i, k.startsWith("Other ("))}
+              fill={seriesFill(k, i)}
               stroke="#ffffff"
               strokeWidth={1}
               className="cursor-pointer"
@@ -670,8 +797,11 @@ function ChartWidget({
             onClick={(d: { payload?: { key?: string } }) => drill(d.payload?.key ?? null)}
             isAnimationActive={false}
           >
-            {data.map((p) => (
-              <Cell key={p.key} fill={p.isOther ? OTHER_COLOR : SINGLE_COLOR} />
+            {data.map((p, i) => (
+              <Cell
+                key={p.key}
+                fill={p.isOther ? OTHER_COLOR : bindsCategories ? categoryFill(p, i) : single}
+              />
             ))}
           </Bar>
         )}
@@ -791,7 +921,7 @@ function TableWidget({
   if (result.groups) {
     return (
       <GroupedTable
-        widgetId={spec.id}
+        widget={spec}
         result={result}
         onOpenRow={
           spec.type === "table" && spec.rowDrilldown && actions.onOpenRow
@@ -814,6 +944,8 @@ function FlatTable({
   actions: WidgetActions;
 }) {
   const tableSpec = spec.type === "table" ? spec : null;
+  const theme = useReportTheme();
+  const look = tableLook(theme, spec);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [hiddenColumns, setHiddenColumns] = useViewerPref<string[]>(
     `baxter.report.columns:${typeof window === "undefined" ? "" : window.location.pathname}:${spec.id}`,
@@ -899,7 +1031,7 @@ function FlatTable({
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
-        {tableSpec?.searchable !== false ? (
+        {tableSpec?.searchable !== false && look.show.search ? (
           <label className="relative block w-full max-w-xs">
             <span className="sr-only">Search this table</span>
             <Search
@@ -917,7 +1049,7 @@ function FlatTable({
           <span />
         )}
         <div className="flex items-center gap-2 text-xs text-[var(--acton-muted)]">
-          {result.columns.length > 3 ? (
+          {result.columns.length > 3 && look.show.columns ? (
             <ColumnsMenu
               columns={result.columns}
               hidden={hiddenColumns}
@@ -946,7 +1078,7 @@ function FlatTable({
       ) : null}
       <div className="overflow-x-auto rounded-md border border-[var(--acton-border)]">
         <table className="w-full min-w-max text-sm">
-          <thead className="bg-[var(--acton-gray-50)] text-left text-xs text-[var(--acton-muted)]">
+          <thead className={look.head} style={look.headStyle}>
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
                 {hg.headers.map((h) => {
@@ -956,7 +1088,12 @@ function FlatTable({
                     <th
                       key={h.id}
                       scope="col"
-                      className="px-3 py-2 font-semibold whitespace-nowrap"
+                      className={cn(
+                        "font-semibold whitespace-nowrap",
+                        look.cell,
+                        look.align(meta?.ref) === "right" && "text-right",
+                        look.align(meta?.ref) === "center" && "text-center",
+                      )}
                       aria-sort={
                         sorted === "asc"
                           ? "ascending"
@@ -989,11 +1126,13 @@ function FlatTable({
             ))}
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {rows.map((row, ri) => (
               <tr
                 key={row.id}
+                style={ruleRowStyle(theme, row.original.ruleStyle)}
                 className={cn(
-                  "border-t border-[var(--acton-gray-100)]",
+                  look.row,
+                  look.zebra && ri % 2 === 1 && "bg-[var(--acton-gray-50)]",
                   row.original.tone ? TONES[row.original.tone] : null,
                   clickable && "cursor-pointer hover:bg-[var(--acton-gray-50)]",
                 )}
@@ -1011,12 +1150,19 @@ function FlatTable({
                   const meta = result.columns.find((c) => c.key === cell.column.id);
                   const numeric =
                     meta && ["number", "currency", "percent", "sqft"].includes(meta.type);
+                  const align = look.align(meta?.ref);
                   return (
                     <td
                       key={cell.id}
                       className={cn(
-                        "max-w-md px-3 py-2 align-top text-[var(--acton-navy)]",
+                        "max-w-md align-top",
+                        look.cell,
+                        look.cellBorder,
+                        !row.original.ruleStyle?.color && "text-[var(--acton-navy)]",
                         numeric && "text-right tabular-nums",
+                        align === "left" && "text-left",
+                        align === "center" && "text-center",
+                        align === "right" && "text-right",
                         meta?.wrap ? "whitespace-pre-wrap" : "truncate",
                       )}
                     >

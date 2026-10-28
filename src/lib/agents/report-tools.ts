@@ -20,7 +20,8 @@ import { aggregate, asList, computeSeries, filterRows, isBlank } from "@/lib/rep
 import { checkSpecFields, executeReport } from "@/lib/reports/engine";
 import { resolveField } from "@/lib/reports/fields";
 import { catalogFor } from "@/lib/reports/metrics";
-import { applyReportOps } from "@/lib/reports/ops";
+import { applyReportOps, diffSpecs } from "@/lib/reports/ops";
+import { PALETTE_NAMES, styleWarnings } from "@/lib/reports/style";
 import {
   createReport,
   listReportsFor,
@@ -44,6 +45,7 @@ import { ensureJobTreadData, loadSourceRows } from "@/lib/reports/engine";
 import { describeSourcesForModel, SOURCE_REGISTRY } from "@/lib/reports/sources";
 
 const SOURCE_LIST = SOURCES.map((x) => `"${x}"`).join("|");
+const PALETTE_LIST = PALETTE_NAMES.map((x) => `"${x}"`).join("|");
 
 const SPEC_GUIDE = `REPORT SPEC (JSON). Sources (from the source registry; reports_sources has fields, relationships, and freshness):
 ${describeSourcesForModel()}
@@ -76,6 +78,12 @@ Calculation = { "key","label","source","basis":"row"|"aggregate"|"rollup","formu
  - rollup: aggregates related child records onto each parent by stable id, e.g. on jobs {"relationship":"jobs.cost_items","op":"sum","field":"item.cost"} — no row duplication (see reports_relationships).
  Formula language: + - * / % ( ), = != < <= > >=, AND OR NOT, & (text); IF, COALESCE, ABS, ROUND, MIN/MAX(a,b), DIVIDE, PERCENT(part,whole), DAYS_BETWEEN, NUMBER, TEXT, ISBLANK, CONTAINS, YEAR, MONTH; aggregates SUM AVG MEDIAN COUNT COUNT_DISTINCT MIN(x) MAX(x). Blank ≠ zero (COALESCE(x,0) to treat blank as 0); division by zero is blank.
 ENGINEERING: you can build calculated metrics (reports_calculation_check → reports_update set_calculation, or reports_metric_save for reusable ones; check reports_metrics first to reuse), multi-level grouping, viewer grouping/sorting/metric controls, and cross-source reports (approved related fields are usable directly; rollups for one-to-many). Do these yourself when the data exists — don't tell people a formula, grouping, or join needs an administrator or engineering. When a margin/ratio basis is ambiguous (weighted totals vs average of per-record values), ask once; otherwise prefer weighted (aggregate). Report edits: {"op":"set_calculation","calculation"} | {"op":"remove_calculation","key"} | {"op":"set_relationship","relationship"} | {"op":"remove_relationship","id"} plus the widget/control ops.
+FIELDS: prefer native JobTread refs (cf:<id> — permanent even when a field is renamed; reports_fields searches them with their current JobTread names). Business names (sem:<key>) are optional shortcuts: use one only when it is intentional shared vocabulary and reports_list_fields shows it available. Never map or pick a field by a similar name, never present part of a narrative text field (e.g. "Water Service & Scope") as a separate structured value, never use excluded or restricted fields, and if a name is ambiguous ask which field is meant. Explain stale (removed from JobTread) or deprecated fields plainly and offer reports_field_repair (dry-run first).
+STYLE (optional; omit for the standard look): report "theme": { "palette"?: ${PALETTE_LIST}, "tokens"?: { background|surface|text|muted|border|accent|positive|warning|negative|info|neutral: Color }, "chart"?: { "categorical"?: [Color…], "sequential"?: [Color, Color] }, "typography"?: "sm"|"md"|"lg", "density"?: "compact"|"default"|"comfortable", "spacing"?: "tight"|"default"|"loose", "card"?: "default"|"flat"|"outlined"|"elevated", "categoryColors"?: { <field ref>: { <value>: Color } } (same colors in every chart grouped by that field), "statusColors"?: { <value>: Color }, "nullColor"?: Color }.
+ Color = "#rrggbb" or "token:<name>" (e.g. "token:negative"); no CSS, names, or transparency.
+ Widget "appearance" — all: card, typography, density, titleAlign ("left"|"center"), hideTitle; widgets also take "subtitle". KPI: accent, background, valueColor, align, rules. Chart: palette, seriesColors {value: Color}, categoryColors {value: Color}, legend {show, position: top|bottom|left|right|none}, axis {x:{show,label}, y:{show,label}, grid}, rules. Table: header (default|muted|bold|accent), zebra, dividers (rows|none|grid), groupHeader (default|emphasized|subtle), subtotal (default|bold), columns {<field ref>: {align}}, controls {search, columns, expandAll, collapseAll, expandToLevel: false hides that button}, rules.
+ Rule = { "field"? (required for tables; KPIs test their value; charts test each point's value, or its label with "target":"category"), "op": eq|neq|in|not_in|contains|blank|not_blank|gt|gte|lt|lte|between, "value"?, "style": { color?, background?, accent?, emphasis?: normal|bold|muted } } — first matching rule wins. Percent values are 0–100 ("below 20%" → {"op":"lt","value":20}).
+ Examples: "Use Acton's palette" → set_theme {"palette":"acton"}. "Blocked phases red, waiting amber" → set_theme {"categoryColors":{"sem:phase":{"Blocked":"token:negative","Waiting":"token:warning"}}} with the real phase values from reports_list_fields (don't invent values). "Same phase colors in every chart" → theme.categoryColors for that field. "KPI red below 20%" → set_widget_appearance {"rules":[{"op":"lt","value":20,"style":{"color":"token:negative"}}]}. "Compact table, hide Columns and Expand all" → set_widget_appearance {"density":"compact","controls":{"columns":false,"expandAll":false}}.
 CROSS-SOURCE: when a report needs fields or totals from another source, check reports_relationships; if no join exists, run reports_relationship_discover and add the verified candidate to the report with set_relationship (no approval needed — viewers' field access is still enforced). Lookups bring the "one" side's fields onto "many" rows; rollups total "many" rows per "one" record. Never sum a looked-up value across many rows and never join on names; if only uncertain or name matches exist, ask one focused question.`;
 
 async function accessFor(ctx: ToolContext): Promise<ReportsAccess> {
@@ -178,6 +186,11 @@ const listFields: AgentTool = {
                 label: s.label,
                 mappedTo: r && r.ok ? r.key : null,
                 available: Boolean(r && r.ok && canSeeField(access, r.def)),
+                ...(s.status && s.status !== "ok" ? { status: s.status } : {}),
+                // Warnings name the target field: only shown when the person can see it.
+                ...(s.warning && r && r.ok && canSeeField(access, r.def)
+                  ? { warning: s.warning }
+                  : {}),
                 note: !s.ref
                   ? (s.description ??
                     "Not mapped to a JobTread field yet — an administrator can map it under Reports → Data settings → Business fields.")
@@ -581,6 +594,8 @@ const updateReportTool: AgentTool = {
  {"op":"update_widget","id","changes":{...partial widget...}} (e.g. {"chart":"donut"}, {"span":12}, {"columns":[...]}) | {"op":"remove_widget","id"}
  {"op":"move_widget","id","to":"top"|"bottom"|{"after":id}|{"before":id}} | {"op":"reorder_widgets","order":[ids]}
  {"op":"add_dataset","dataset"} | {"op":"set_dataset_filters","id","filters":[Condition]} | {"op":"add_control","control"} | {"op":"update_control","id","changes"} | {"op":"remove_control","id"}
+ {"op":"set_theme","theme":Theme,"mode"?:"merge"|"replace"} | {"op":"remove_theme"} | {"op":"set_widget_appearance","id","appearance":Appearance,"mode"?:"merge"|"replace"} | {"op":"remove_widget_appearance","id"}
+"dryRun": true validates everything and returns the change list, problems (with operation paths), and readability warnings without saving — use it for styling and field changes, then repeat without dryRun.
 Use the same spec vocabulary as reports_create.`,
   risk: "draft",
   alwaysRequiresApproval: false,
@@ -590,6 +605,7 @@ Use the same spec vocabulary as reports_create.`,
     expectedVersion: z.number().int().min(1).optional(),
     operations: z.array(z.unknown()).min(1).max(30),
     summary: z.string().trim().min(1).max(300),
+    dryRun: z.boolean().default(false),
   }),
   async execute(ctx, raw) {
     const input = this.args.parse(raw) as {
@@ -597,6 +613,7 @@ Use the same spec vocabulary as reports_create.`,
       expectedVersion?: number;
       operations: unknown[];
       summary: string;
+      dryRun: boolean;
     };
     const access = await accessFor(ctx);
     const { report, permission } = await loadReportFor(input.reportId, ctx.requester, access);
@@ -627,6 +644,19 @@ Use the same spec vocabulary as reports_create.`,
         logSummary: "Edit referenced unavailable fields.",
       };
     }
+    if (input.dryRun)
+      return {
+        data: {
+          saved: false,
+          dryRun: true,
+          valid: true,
+          changes: diffSpecs(report.spec, applied.spec),
+          summary: applied.summary,
+          readabilityWarnings: styleWarnings(applied.spec),
+          emptyWidgets: check.empty,
+        },
+        logSummary: `Dry run: ${applied.summary.length} change(s) validated.`,
+      };
     const { report: saved, changes } = await saveReportVersion({
       report,
       spec: applied.spec,

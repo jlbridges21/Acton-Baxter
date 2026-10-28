@@ -7,12 +7,14 @@
 import "server-only";
 
 import {
+  currentOrganizationId,
   listCustomFields,
   listSemanticFields,
   type CustomFieldRow,
   type FieldCategory,
 } from "@/lib/jobtread/metadata";
 import { agentDb } from "@/lib/agents/store";
+import { analyzeAliases, type AliasStatus } from "@/lib/jobtread/alias-audit";
 import { RELATIONSHIPS } from "./relationships";
 import type { ReportSource } from "./spec";
 
@@ -671,6 +673,8 @@ export type RelatedField = {
 export type RelatedFieldSetting = { relationship: string; field_ref: string; enabled: boolean };
 
 export type FieldCatalog = {
+  /** cf:<id> of fields removed from JobTread (kept so reports can explain them). */
+  stale?: Map<string, { name: string; removedAt: string }>;
   /** Fields per source, including approved related fields (marked with `via`). */
   bySource: Record<ReportSource, FieldDef[]>;
   /** Approved related fields per source, by canonical key. */
@@ -685,11 +689,16 @@ export type FieldCatalog = {
       description: string | null;
       /** Why a mapped business field can't be used in reports (removed, excluded, non-job target). */
       unavailable?: string;
+      /** It resolves, but with a caveat (e.g. it reads a shared narrative text field). */
+      warning?: string;
+      /** Alias audit status (see jobtread/alias-audit.ts). */
+      status?: AliasStatus;
     }
   >;
 };
 
-let cached: { at: number; catalog: FieldCatalog } | null = null;
+/** Cached per JobTread organization (tenant-safe key). */
+let cached: { at: number; org: string; catalog: FieldCatalog } | null = null;
 
 export function invalidateFieldCatalog(): void {
   cached = null;
@@ -749,12 +758,15 @@ export function buildRelatedFields(
 }
 
 export async function getFieldCatalog(): Promise<FieldCatalog> {
-  if (cached && Date.now() - cached.at < 30_000) return cached.catalog;
-  const [fields, semantic, relatedSettings] = await Promise.all([
-    listCustomFields(),
+  const org = currentOrganizationId();
+  if (cached && cached.org === org && Date.now() - cached.at < 30_000) return cached.catalog;
+  const [allCustom, semantic, relatedSettings] = await Promise.all([
+    listCustomFields({ includeRemoved: true }),
     listSemanticFields(),
     listRelatedFieldSettings(),
   ]);
+  const fields = allCustom.filter((f) => !f.removed_at);
+  const aliasFindings = analyzeAliases(semantic, allCustom);
   const custom: FieldDef[] = fields
     .filter(
       (f) => f.category !== "excluded" && ["job", "location", "customer"].includes(f.target_type),
@@ -786,15 +798,18 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
       .filter((s) => !(s as { archived_at?: string | null }).archived_at)
       .map((s) => {
         const cf = s.custom_field_id ? allFields.get(s.custom_field_id) : undefined;
+        const finding = aliasFindings.get(s.key);
         const unavailable = !s.custom_field_id
           ? undefined
-          : !cf
-            ? "Its JobTread field no longer exists (an administrator should remap it)."
-            : cf.category === "excluded"
-              ? "Its JobTread field is excluded from reports by an administrator."
-              : !["job", "location", "customer"].includes(cf.target_type)
-                ? `It maps to a ${cf.target_type} field; only job, location, and customer field values are in report data today.`
-                : undefined;
+          : finding?.status === "stale" || !cf
+            ? `${finding?.reason ?? "Its JobTread field no longer exists."} An administrator can repair it in Reports → Data settings → Field catalog.`
+            : finding?.status === "conflict" || finding?.status === "ambiguous"
+              ? `${finding.reason} An administrator can repair it in Reports → Data settings → Field catalog.`
+              : cf.category === "excluded"
+                ? "Its JobTread field is excluded from reports by an administrator."
+                : !["job", "location", "customer"].includes(cf.target_type)
+                  ? `It maps to a ${cf.target_type} field; only job, location, and customer field values are in report data today.`
+                  : undefined;
         return [
           `sem:${s.key}`,
           {
@@ -802,6 +817,11 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
             ref: s.custom_field_id ? `cf:${s.custom_field_id}` : null,
             description: s.description,
             ...(unavailable ? { unavailable } : {}),
+            ...(!unavailable &&
+            (finding?.status === "shared_text" || finding?.status === "deprecated")
+              ? { warning: finding.reason! }
+              : {}),
+            ...(finding ? { status: finding.status } : {}),
           },
         ];
       }),
@@ -816,7 +836,13 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
     { bySource: own, byKey, semantic: semanticMap },
     relatedSettings,
   );
+  const stale = new Map(
+    allCustom
+      .filter((f) => f.removed_at)
+      .map((f) => [`cf:${f.id}`, { name: f.display_name || f.name, removedAt: f.removed_at! }]),
+  );
   const catalog: FieldCatalog = {
+    stale,
     bySource: {
       jobs: [...own.jobs, ...listed.jobs],
       catalog_models: [...own.catalog_models, ...listed.catalog_models],
@@ -827,7 +853,7 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
     byKey,
     semantic: semanticMap,
   };
-  cached = { at: Date.now(), catalog };
+  cached = { at: Date.now(), org, catalog };
   return catalog;
 }
 
@@ -861,8 +887,9 @@ export function fieldOnSource(
 export function resolveField(
   catalog: FieldCatalog,
   ref: string,
-): { ok: true; def: FieldDef; key: string } | { ok: false; reason: string } {
+): { ok: true; def: FieldDef; key: string; warning?: string } | { ok: false; reason: string } {
   let key = ref;
+  let warning: string | undefined;
   if (ref.startsWith("sem:")) {
     const sem = catalog.semantic.get(ref);
     if (!sem) return { ok: false, reason: `"${ref}" isn't a known business field.` };
@@ -875,6 +902,7 @@ export function resolveField(
     if (sem.unavailable)
       return { ok: false, reason: `"${sem.label}" can't be used in reports: ${sem.unavailable}` };
     key = sem.ref;
+    warning = sem.warning ? `${ref} (${sem.label}): ${sem.warning}` : undefined;
   }
   const def = catalog.byKey.get(key);
   if (!def && ref.startsWith("calc:")) {
@@ -886,11 +914,18 @@ export function resolveField(
         `Calculated field "${ref}" isn't defined. Add it to the report's calculations or the Metric Library.`,
     };
   }
+  const removed = !def ? catalog.stale?.get(key) : undefined;
+  if (removed)
+    return {
+      ok: false,
+      reason: `“${removed.name}” (${key}) was removed from JobTread on ${removed.removedAt.slice(0, 10)}. Replace it in this report (Reports → Data settings → Field catalog shows a repair preview).`,
+    };
   if (!def)
     return { ok: false, reason: `Field "${ref}" doesn't exist in the connected JobTread data.` };
   return {
     ok: true,
     def: ref.startsWith("sem:") ? { ...def, label: catalog.semantic.get(ref)!.label } : def,
     key,
+    ...(warning ? { warning } : {}),
   };
 }

@@ -6,6 +6,13 @@
 
 import { z } from "zod";
 import {
+  basicStyleSchema,
+  chartStyleSchema,
+  kpiStyleSchema,
+  tableStyleSchema,
+  themeSchema,
+} from "./style";
+import {
   calcKey,
   calculationSchema,
   conditionSchema,
@@ -68,6 +75,22 @@ export const reportOpSchema = z.discriminatedUnion("op", [
   /** Add or replace a report-specific relationship (validated stable-id join). */
   z.object({ op: z.literal("set_relationship"), relationship: relationshipSchema }),
   z.object({ op: z.literal("remove_relationship"), id: relationshipKey }),
+  /** Report-wide styling (palette, tokens, density, typography, category colors…). */
+  z.object({
+    op: z.literal("set_theme"),
+    theme: themeSchema,
+    /** Merge into the current theme (default) or replace it. */
+    mode: z.enum(["merge", "replace"]).default("merge"),
+  }),
+  z.object({ op: z.literal("remove_theme") }),
+  /** Widget presentation (colors, legend, rules, table look, grouped-table buttons…). */
+  z.object({
+    op: z.literal("set_widget_appearance"),
+    id: widgetId,
+    appearance: z.record(z.string(), z.unknown()),
+    mode: z.enum(["merge", "replace"]).default("merge"),
+  }),
+  z.object({ op: z.literal("remove_widget_appearance"), id: widgetId }),
 ]);
 export type ReportOp = z.infer<typeof reportOpSchema>;
 
@@ -94,10 +117,12 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
     const parsed = reportOpSchema.safeParse(raw);
     if (parsed.success) ops.push(parsed.data);
     else
-      issues.push({
-        path: `operations[${i}]`,
-        message: parsed.error.issues[0]?.message ?? "Invalid operation",
-      });
+      issues.push(
+        ...parsed.error.issues.slice(0, 5).map((issue) => ({
+          path: [`operations[${i}]`, ...issue.path.map(String)].join("."),
+          message: issue.message,
+        })),
+      );
   });
   if (issues.length) return { ok: false, issues };
 
@@ -260,6 +285,58 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
         );
         break;
       }
+      case "set_theme": {
+        const merged =
+          op.mode === "replace" || !draft.theme ? op.theme : { ...draft.theme, ...op.theme };
+        const parsed = themeSchema.safeParse(merged);
+        if (!parsed.success) {
+          issues.push(
+            ...parsed.error.issues.slice(0, 5).map((issue) => ({
+              path: [`operations[${i}].theme`, ...issue.path.map(String)].join("."),
+              message: issue.message,
+            })),
+          );
+          break;
+        }
+        draft.theme = parsed.data;
+        summary.push("Updated the report style");
+        break;
+      }
+      case "remove_theme":
+        delete draft.theme;
+        summary.push("Removed the report style (default look)");
+        break;
+      case "set_widget_appearance":
+      case "remove_widget_appearance": {
+        const idx = draft.widgets.findIndex((w) => w.id === op.id);
+        if (!need(idx >= 0, `Widget "${op.id}"`)) break;
+        const current = draft.widgets[idx]!;
+        const next: LooseWidget = { ...current };
+        if (op.op === "remove_widget_appearance") delete next.appearance;
+        else
+          next.appearance =
+            op.mode === "replace"
+              ? op.appearance
+              : { ...((current.appearance as Record<string, unknown>) ?? {}), ...op.appearance };
+        const parsed = widgetSchema.safeParse(next);
+        if (!parsed.success) {
+          issues.push(
+            ...parsed.error.issues.slice(0, 5).map((issue) => ({
+              path: [`operations[${i}]`, `widget ${op.id}`, ...issue.path.map(String)].join("."),
+              message:
+                issue.code === "unrecognized_keys"
+                  ? `${issue.message}. ${current.type} widgets support: ${allowedAppearanceKeys(current.type)}.`
+                  : issue.message,
+            })),
+          );
+          break;
+        }
+        draft.widgets[idx] = parsed.data as unknown as LooseWidget;
+        summary.push(
+          `${op.op === "remove_widget_appearance" ? "Reset the look of" : "Styled"} "${widgetTitle(op.id)}"`,
+        );
+        break;
+      }
       case "set_relationship": {
         const idx = draft.relationships.findIndex((r) => r.id === op.relationship.id);
         if (idx >= 0) draft.relationships[idx] = op.relationship;
@@ -321,6 +398,19 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
   return { ok: true, spec: validated.spec, summary };
 }
 
+/** Appearance keys a widget type supports (for helpful validation messages). */
+export function allowedAppearanceKeys(type: string): string {
+  const shape =
+    type === "kpi"
+      ? kpiStyleSchema.shape
+      : type === "chart"
+        ? chartStyleSchema.shape
+        : type === "table"
+          ? tableStyleSchema.shape
+          : basicStyleSchema.shape;
+  return Object.keys(shape).join(", ");
+}
+
 /** Human summary of what changed between two specs (for revision history). */
 export function diffSpecs(before: ReportSpec, after: ReportSpec): string[] {
   const out: string[] = [];
@@ -351,5 +441,7 @@ export function diffSpecs(before: ReportSpec, after: ReportSpec): string[] {
     out.push("Changed calculations");
   if (JSON.stringify(before.relationships ?? []) !== JSON.stringify(after.relationships ?? []))
     out.push("Changed relationships");
+  if (JSON.stringify(before.theme ?? null) !== JSON.stringify(after.theme ?? null))
+    out.push("Changed the report style");
   return out;
 }

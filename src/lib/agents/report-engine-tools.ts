@@ -573,7 +573,271 @@ const relationshipPromote: AgentTool = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Native field catalog, audit, and repair
+// ---------------------------------------------------------------------------
+
+const fieldsArgs = z.object({
+  entity: z.string().max(40).optional(),
+  search: z.string().trim().max(80).optional(),
+  status: z.enum(["active", "stale", "excluded", "unsupported"]).optional(),
+  type: z.string().max(30).optional(),
+  offset: z.number().int().min(0).max(5000).default(0),
+});
+
+const fieldsTool: AgentTool = {
+  key: "reports_fields",
+  label: "Search the JobTread field catalog",
+  description:
+    "Searches every discovered JobTread field by entity, current or old name, business name, id, type, and status — only fields this person may see.",
+  modelUsage:
+    'reports_fields {"entity"?: "job"|"location"|"customer"|… (loose names like "jobs" or "custom fields" work), "search"?: name/old name/sem key/id, "status"?: "active"|"stale"|"excluded"|"unsupported", "type"?, "offset"?} — the native catalog: ref (use cf:<id> in new reports — it never changes when a field is renamed), current JobTread label, entity, type, status and why, business names (sem:…) pointing at it, and old names. Prefer native refs; a business name is only for intentional shared vocabulary. Never treat a narrative text field as structured data, and never pick a field by a similar-sounding name.',
+  risk: "read",
+  alwaysRequiresApproval: false,
+  available: true,
+  args: fieldsArgs,
+  async execute(ctx, raw) {
+    return guarded(async () => {
+      const a = fieldsArgs.parse(raw ?? {});
+      const access = await requireReportsAccess(ctx.requester);
+      const { searchNativeFields, canonicalEntity } = await import("@/lib/reports/field-catalog");
+      if (a.entity && !canonicalEntity(a.entity))
+        throw new Error(
+          `Unknown entity "${a.entity}". Use job, location, customer, customerContact, vendor, vendorContact, dailyLog, or costItem.`,
+        );
+      const r = await searchNativeFields(access, { ...a, limit: 40 });
+      return {
+        data: {
+          total: r.total,
+          offset: r.offset,
+          fields: r.fields.map((f) => ({
+            ref: f.ref,
+            label: f.label,
+            entity: f.entity,
+            type: f.type,
+            status: f.status,
+            ...(f.statusReason ? { why: f.statusReason } : {}),
+            ...(f.aliases.length ? { businessNames: f.aliases } : {}),
+            ...(f.renamedFrom.length ? { formerNames: f.renamedFrom } : {}),
+            ...(f.duplicateLabel ? { note: "Another field has the same name — use the ref." } : {}),
+            ...(f.typeChange ? { typeChangedFrom: f.typeChange.from } : {}),
+          })),
+          countsByEntity: r.counts,
+          ...(r.total > r.offset + r.fields.length ? { more: "Use offset to page." } : {}),
+        },
+        logSummary: `Listed ${r.fields.length} of ${r.total} catalog field(s)`,
+      };
+    });
+  },
+};
+
+const auditArgs = z.object({ reportId: z.string().uuid().optional() });
+
+const catalogAudit: AgentTool = {
+  key: "reports_catalog_audit",
+  label: "Audit fields used by reports",
+  description:
+    "Finds stale, removed, ambiguous, or shared-text fields used by a report (or, for Reports administrators, by every report, saved view, and metric).",
+  modelUsage:
+    'reports_catalog_audit {"reportId"?} — with a report id: that report\'s field problems (path, ref, kind, message, safe replacement when one is certain). Without: Reports administrators get an organization-wide summary plus business names that need repair. Kinds: stale (removed from JobTread), conflict (business name points at the wrong field — an administrator repairs the name), ambiguous (several possible fields — ask which one, never guess), shared_text (a business name reading a whole narrative field — use the native cf: ref instead), type_changed, missing. Explain findings plainly; offer reports_field_repair for certain replacements.',
+  risk: "read",
+  alwaysRequiresApproval: false,
+  available: true,
+  args: auditArgs,
+  async execute(ctx, raw) {
+    return guarded(async () => {
+      const a = auditArgs.parse(raw ?? {});
+      const access = await requireReportsAccess(ctx.requester);
+      const { auditAll, auditReport } = await import("@/lib/reports/report-audit");
+      if (a.reportId) {
+        const { report } = await loadReportFor(a.reportId, ctx.requester, access);
+        const findings = await auditReport(report);
+        return {
+          data: { report: report.title, findings: findings.slice(0, 40), total: findings.length },
+          logSummary: `Audited ${report.title}: ${findings.length} finding(s)`,
+        };
+      }
+      if (!(access.isAdmin || access.canManage))
+        throw new Error(
+          "Organization-wide audits are for Reports administrators; give a report id instead.",
+        );
+      const [all, catalog] = await Promise.all([
+        auditAll({ limit: 40 }),
+        import("@/lib/reports/field-catalog").then((m) =>
+          m.searchNativeFields(access, { limit: 1 }),
+        ),
+      ]);
+      return {
+        data: {
+          ...all,
+          businessNamesNeedingRepair: catalog.aliases
+            .filter((x) => !["ok", "unmapped"].includes(x.status))
+            .map((x) => ({
+              ref: x.ref,
+              status: x.status,
+              reason: x.reason,
+              ...(x.repair ? { certainRepair: `cf:${x.repair.id} (${x.repair.name})` } : {}),
+              ...(x.candidates.length
+                ? { candidates: x.candidates.map((c) => `cf:${c.id} (${c.name})`) }
+                : {}),
+            })),
+          repairWhere: "Reports → Data settings → Field catalog",
+        },
+        logSummary: `Organization audit: ${all.total} finding(s)`,
+      };
+    });
+  },
+};
+
+const impactArgs = z.object({
+  from: fieldRef,
+  to: fieldRef.optional(),
+});
+
+const fieldImpact: AgentTool = {
+  key: "reports_field_impact",
+  label: "Check the impact of replacing a field",
+  description:
+    "Lists reports, saved views, and metrics that use a field, and checks whether a replacement is compatible — without changing anything.",
+  modelUsage:
+    'reports_field_impact {"from": ref, "to"?: ref} — before replacing a field: where it is used (reports you can see; everything for administrators) and, with "to", whether the replacement exists, is visible, and has a compatible type. Read-only.',
+  risk: "read",
+  alwaysRequiresApproval: false,
+  available: true,
+  args: impactArgs,
+  async execute(ctx, raw) {
+    return guarded(async () => {
+      const a = impactArgs.parse(raw);
+      const access = await requireReportsAccess(ctx.requester);
+      const { collectRefUses } = await import("@/lib/reports/report-audit");
+      const { listReportsFor } = await import("@/lib/reports/repo");
+      const visible = await listReportsFor(ctx.requester, access).catch(() => []);
+      const uses = visible
+        .map((x) => ({
+          id: x.report.id,
+          title: x.report.title,
+          paths: collectRefUses(x.report.spec)
+            .filter((u) => u.ref === a.from)
+            .map((u) => u.path),
+        }))
+        .filter((x) => x.paths.length);
+      const catalog = await catalogFor();
+      const fromDef = resolveField(catalog, a.from);
+      let replacement: Record<string, unknown> | null = null;
+      if (a.to) {
+        const toDef = resolveField(catalog, a.to);
+        replacement = !toDef.ok
+          ? { ok: false, problem: toDef.reason }
+          : !canSeeField(access, toDef.def)
+            ? { ok: false, problem: "That field needs access this person doesn't have." }
+            : {
+                ok: true,
+                label: toDef.def.label,
+                type: toDef.def.type,
+                compatible: !fromDef.ok || fromDef.def.type === toDef.def.type,
+                ...(fromDef.ok && fromDef.def.type !== toDef.def.type
+                  ? {
+                      warning: `Type changes from ${fromDef.def.type} to ${toDef.def.type}; check filters, sorting, and formatting.`,
+                    }
+                  : {}),
+              };
+      }
+      return {
+        data: {
+          from: a.from,
+          current: fromDef.ok
+            ? { label: fromDef.def.label, type: fromDef.def.type }
+            : { problem: fromDef.reason },
+          usedIn: uses.slice(0, 30),
+          reports: uses.length,
+          ...(replacement ? { replacement } : {}),
+        },
+        logSummary: `Impact of ${a.from}: ${uses.length} report(s)`,
+      };
+    });
+  },
+};
+
+const repairArgs = z.object({
+  reportId: z.string().uuid(),
+  /** Explicit replacements; omit to use only certain ones (same JobTread field id). */
+  replacements: z.record(fieldRef, fieldRef).optional(),
+  dryRun: z.boolean().default(true),
+  expectedVersion: z.number().int().min(1).optional(),
+});
+
+const fieldRepair: AgentTool = {
+  key: "reports_field_repair",
+  label: "Repair field references in a report",
+  description:
+    "Replaces stale or shared-text field references in a report. Dry-run by default; applying saves a new report version (the previous version stays restorable).",
+  modelUsage:
+    'reports_field_repair {"reportId", "replacements"?: {"sem:old": "cf:<id>"}, "dryRun"?: true (default), "expectedVersion"?} — without replacements it uses only certain repairs (a business name reading a shared field → that same field\'s native ref). Show the dry-run changes, then call with "dryRun": false. Only pass explicit replacements the person chose; never choose between ambiguous candidates yourself.',
+  risk: "draft",
+  alwaysRequiresApproval: false,
+  available: true,
+  args: repairArgs,
+  async execute(ctx, raw) {
+    return guarded(async () => {
+      const a = repairArgs.parse(raw);
+      const access = await requireReportsAccess(ctx.requester);
+      const { permission } = await loadReportFor(a.reportId, ctx.requester, access);
+      if (!permission.canEdit) throw new Error("The requester can view but not edit this report.");
+      const { applyReportRepair, previewReportRepair } = await import("@/lib/reports/report-audit");
+      if (a.dryRun) {
+        const {
+          spec: _s,
+          findings,
+          ...p
+        } = await previewReportRepair({
+          reportId: a.reportId,
+          access,
+          replacements: a.replacements,
+        });
+        void _s;
+        return {
+          data: { ...p, findings: findings.slice(0, 20), dryRun: true },
+          logSummary: `Repair dry run: ${p.changes.length} change(s)`,
+        };
+      }
+      const {
+        spec: _s,
+        findings,
+        ...r
+      } = await applyReportRepair({
+        reportId: a.reportId,
+        access,
+        userId: ctx.requester.userId,
+        authorKind: "dexter",
+        replacements: a.replacements,
+        expectedVersion: a.expectedVersion,
+      });
+      void _s;
+      void findings;
+      return {
+        data: r,
+        logSummary: r.saved ? `Repaired fields: v${r.version}` : "Nothing to repair",
+        ...(r.saved
+          ? {
+              artifact: {
+                type: "report" as const,
+                id: r.reportId,
+                title: r.title,
+                url: `/reports/${r.reportId}`,
+                version: r.version,
+              },
+            }
+          : {}),
+      };
+    });
+  },
+};
+
 export const REPORT_ENGINE_TOOLS: AgentTool[] = [
+  fieldsTool,
+  catalogAudit,
+  fieldImpact,
+  fieldRepair,
   calculationCheck,
   metricsList,
   metricSave,

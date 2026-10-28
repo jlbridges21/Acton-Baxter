@@ -10,6 +10,8 @@ export type FieldMeta = {
   description?: string;
   origin: string;
   wrap?: boolean;
+  /** The field reference as written in the spec (for per-column appearance). */
+  ref?: string;
 };
 
 export type Provenance = {
@@ -41,6 +43,9 @@ export type ChartResult = Base & {
   valueType: FieldType | "count";
   groupLabel: string;
   metricLabel: string;
+  /** Field refs behind the categories and series (for value-bound colors). */
+  groupField?: string;
+  seriesField?: string;
   scatter?: Array<{ id: string; label: string; x: number; y: number }>;
   xLabel?: string;
   yLabel?: string;
@@ -52,6 +57,8 @@ export type TableResult = Base & {
     id: string;
     cells: Record<string, CellValue>;
     tone?: string;
+    /** First matching appearance rule (evaluated server-side with field access checks). */
+    ruleStyle?: { color?: string; background?: string; accent?: string; emphasis?: string };
     jobtreadUrl?: string;
   }>;
   totalRows: number;

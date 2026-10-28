@@ -49,6 +49,7 @@ import {
   Trash2,
   Undo2,
   TriangleAlert,
+  Palette,
 } from "lucide-react";
 import { aiFetch, errorMessage, formatRelative, Notice, useLoad } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
@@ -61,9 +62,19 @@ import { CHART_TYPES, type ReportSpec, type WidgetSpec } from "@/lib/reports/spe
 import { DexterChat } from "./dexter-chat";
 import { FilterBar } from "./filter-bar";
 import { SavedViewsMenu } from "./saved-views-menu";
+import { ReportStyleDialog } from "./style-editor";
 import { DrillDrawer, HistoryDialog, RowDrawer, ShareDialog, type DrillData } from "./panels";
 import type { ChatArtifact, ReportDetail } from "./types";
 import { AddWidgetDialog } from "./widget-builder";
+import {
+  appearanceOf,
+  cardClasses,
+  gridGap,
+  ReportThemeContext,
+  surfaceStyle,
+  titleClass,
+  useReportTheme,
+} from "./report-theme";
 import { ProvenanceButton, WidgetBody, type DrillRequest } from "./widgets";
 
 const SPAN_CLASS: Record<number, string> = {
@@ -160,8 +171,8 @@ export function ReportView({
   const [chatOpen, setChatOpen] = useState(false);
   const [focus, setFocus] = useState<{ widgetId: string; title: string } | null>(null);
   // "Share…" in the Reports library links here with ?share=1.
-  const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | null>(() =>
-    params.get("share") === "1" ? "share" : null,
+  const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | "style" | null>(
+    () => (params.get("share") === "1" ? "share" : null),
   );
 
   const load = useCallback(async () => {
@@ -526,6 +537,9 @@ export function ReportView({
               <Button variant="secondary" size="sm" onClick={() => setDialog("add")}>
                 <Plus className="h-4 w-4" aria-hidden /> Add widget
               </Button>
+              <Button variant="secondary" size="sm" onClick={() => setDialog("style")}>
+                <Palette className="h-4 w-4" aria-hidden /> Style
+              </Button>
               <Button variant="secondary" size="sm" onClick={stopEdit}>
                 Cancel
               </Button>
@@ -702,33 +716,40 @@ export function ReportView({
             strategy={rectSortingStrategy}
             disabled={!editing}
           >
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-12 print:block">
-              {visibleWidgets.map((w) => (
-                <WidgetCard
-                  key={w.id}
-                  widget={w}
-                  editing={editing}
-                  result={result?.widgets[w.id]}
-                  dataWarnings={result?.dataHealth?.widgetWarnings[w.id]}
-                  onChange={(changes) => updateWidget(w.id, changes)}
-                  onRemove={() =>
-                    applyDraft((s) => ({ ...s, widgets: s.widgets.filter((x) => x.id !== w.id) }))
-                  }
-                  onExport={() => void exportWidget(w.id)}
-                  onDrill={(req) => void openDrill(req)}
-                  onOpenRow={(row, columns) => setRowView({ row, columns })}
-                  onRulesChanged={() => setRefreshTick((t) => t + 1)}
-                  onAskDexter={
-                    canChat
-                      ? () => {
-                          setFocus({ widgetId: w.id, title: w.title || w.type });
-                          setChatOpen(true);
-                        }
-                      : undefined
-                  }
-                />
-              ))}
-            </div>
+            <ReportThemeContext.Provider value={spec.theme ?? null}>
+              <div
+                className={cn(
+                  "grid grid-cols-1 md:grid-cols-12 print:block",
+                  gridGap(spec.theme ?? null),
+                )}
+              >
+                {visibleWidgets.map((w) => (
+                  <WidgetCard
+                    key={w.id}
+                    widget={w}
+                    editing={editing}
+                    result={result?.widgets[w.id]}
+                    dataWarnings={result?.dataHealth?.widgetWarnings[w.id]}
+                    onChange={(changes) => updateWidget(w.id, changes)}
+                    onRemove={() =>
+                      applyDraft((s) => ({ ...s, widgets: s.widgets.filter((x) => x.id !== w.id) }))
+                    }
+                    onExport={() => void exportWidget(w.id)}
+                    onDrill={(req) => void openDrill(req)}
+                    onOpenRow={(row, columns) => setRowView({ row, columns })}
+                    onRulesChanged={() => setRefreshTick((t) => t + 1)}
+                    onAskDexter={
+                      canChat
+                        ? () => {
+                            setFocus({ widgetId: w.id, title: w.title || w.type });
+                            setChatOpen(true);
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            </ReportThemeContext.Provider>
           </SortableContext>
         </DndContext>
       )}
@@ -773,6 +794,20 @@ export function ReportView({
               text: "Restored. The previous version is still in the history.",
             });
           }}
+        />
+      ) : null}
+      {dialog === "style" && draft ? (
+        <ReportStyleDialog
+          spec={draft}
+          onClose={() => setDialog(null)}
+          onApply={(theme, widgets) =>
+            applyDraft((s) => {
+              const next = { ...s, widgets };
+              if (theme) next.theme = theme;
+              else delete next.theme;
+              return next;
+            })
+          }
         />
       ) : null}
       {dialog === "add" && draft ? (
@@ -866,13 +901,16 @@ function WidgetCard({
     result.status !== "restricted" &&
     result.status !== "error";
   const bare = widget.type === "project_header";
+  const theme = useReportTheme();
+  const look = appearanceOf(widget);
   return (
     <section
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
+      style={{ transform: CSS.Transform.toString(transform), transition, ...surfaceStyle(theme) }}
       aria-label={widget.title || widget.type}
       className={cn(
-        "col-span-1 min-w-0 rounded-lg border border-[var(--acton-border)] bg-white p-4 shadow-sm print:mb-4 print:break-inside-avoid print:shadow-none",
+        "col-span-1 min-w-0 print:mb-4 print:break-inside-avoid print:shadow-none",
+        cardClasses(theme, widget),
         SPAN_CLASS[widget.span],
         editing && "ring-1 ring-transparent hover:ring-[var(--acton-yellow)]",
         widget.hidden && "opacity-50",
@@ -968,9 +1006,16 @@ function WidgetCard({
       ) : null}
       {!bare && (widget.title || result?.provenance) ? (
         <header className="mb-3 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            {widget.title ? (
-              <h2 className="text-sm font-semibold text-[var(--acton-navy)]">{widget.title}</h2>
+          <div className={cn("min-w-0", look?.titleAlign === "center" && "flex-1 text-center")}>
+            {widget.title && !look?.hideTitle ? (
+              <h2
+                className={cn("font-semibold text-[var(--acton-navy)]", titleClass(theme, widget))}
+              >
+                {widget.title}
+              </h2>
+            ) : null}
+            {widget.subtitle ? (
+              <p className="text-xs font-medium text-[var(--acton-muted)]">{widget.subtitle}</p>
             ) : null}
             {widget.description ? (
               <p className="text-xs text-[var(--acton-muted)]">{widget.description}</p>

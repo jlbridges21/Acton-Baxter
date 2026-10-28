@@ -16,6 +16,13 @@
  */
 
 import { z } from "zod";
+import {
+  basicStyleSchema,
+  chartStyleSchema,
+  kpiStyleSchema,
+  tableStyleSchema,
+  themeSchema,
+} from "./style";
 
 export const REPORT_SCHEMA_VERSION = 1;
 
@@ -294,6 +301,8 @@ export const SPANS = [3, 4, 6, 8, 12] as const;
 const widgetBase = {
   id,
   title: z.string().trim().max(100).default(""),
+  /** Short line under the title (plain text). */
+  subtitle: z.string().trim().max(160).optional(),
   description: z.string().max(400).optional(),
   span: z.union([z.literal(3), z.literal(4), z.literal(6), z.literal(8), z.literal(12)]).default(6),
   height: z.enum(["sm", "md", "lg", "auto"]).default("auto"),
@@ -340,6 +349,7 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("kpi"),
+    appearance: kpiStyleSchema.optional(),
     dataset: id,
     metric: metricSchema,
     filters: z.array(conditionSchema).max(10).default([]),
@@ -349,6 +359,7 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("chart"),
+    appearance: chartStyleSchema.optional(),
     dataset: id,
     chart: z.enum(CHART_TYPES),
     groupBy: fieldRef.optional(),
@@ -367,6 +378,7 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("table"),
+    appearance: tableStyleSchema.optional(),
     dataset: id,
     columns: z.array(columnSchema).min(1).max(30),
     sort: z
@@ -408,12 +420,14 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("project_header"),
+    appearance: basicStyleSchema.optional(),
     control: id,
     fields: z.array(fieldRef).max(8).default([]),
   }),
   z.object({
     ...widgetBase,
     type: z.literal("detail"),
+    appearance: basicStyleSchema.optional(),
     control: id,
     style: z.enum(["grid", "long_text", "badges"]).default("grid"),
     fields: z
@@ -430,6 +444,7 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("milestones"),
+    appearance: basicStyleSchema.optional(),
     control: id,
     show: z.enum(["schedule", "checklists", "all"]).default("schedule"),
     style: z.enum(["timeline", "list"]).default("timeline"),
@@ -437,12 +452,14 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("documents"),
+    appearance: basicStyleSchema.optional(),
     control: id,
     groupByFolder: z.boolean().default(true),
   }),
   z.object({
     ...widgetBase,
     type: z.literal("text"),
+    appearance: basicStyleSchema.optional(),
     body: z.string().max(2000),
   }),
   /**
@@ -452,17 +469,20 @@ export const widgetSchema = z.discriminatedUnion("type", [
   z.object({
     ...widgetBase,
     type: z.literal("data_status"),
+    appearance: basicStyleSchema.optional(),
   }),
   /** Edit commission rates for a rule set (authorized users only; changes are audited). */
   z.object({
     ...widgetBase,
     type: z.literal("rate_editor"),
+    appearance: basicStyleSchema.optional(),
     ruleSet: ruleSetKey,
   }),
   /** Assign JobTread projects to salespeople, with splits and payment dates. */
   z.object({
     ...widgetBase,
     type: z.literal("assignment_editor"),
+    appearance: basicStyleSchema.optional(),
     ruleSet: ruleSetKey,
   }),
 ]);
@@ -481,6 +501,8 @@ export const reportSpecSchema = z.object({
   controls: z.array(controlSchema).max(12).default([]),
   /** Order = layout order on a 12-column grid. */
   widgets: z.array(widgetSchema).max(40).default([]),
+  /** Optional report-wide styling (palette, tokens, density, category colors…). */
+  theme: themeSchema.optional(),
 });
 export type ReportSpec = z.infer<typeof reportSpecSchema>;
 
@@ -556,6 +578,22 @@ export function checkSpecReferences(spec: ReportSpec): SpecIssue[] {
           message: `"formula" metrics need an aggregate calculated field (calc:…).`,
         });
     }
+    if (w.type === "table")
+      (w.appearance?.rules ?? []).forEach((r, j) => {
+        if (!r.field)
+          issues.push({
+            path: `widgets[${i}].appearance.rules[${j}].field`,
+            message: "Table rules need the field to test (e.g. item.price).",
+          });
+      });
+    if (w.type === "kpi")
+      (w.appearance?.rules ?? []).forEach((r, j) => {
+        if (r.target === "category")
+          issues.push({
+            path: `widgets[${i}].appearance.rules[${j}].target`,
+            message: 'KPI rules compare the KPI value; "category" applies to charts only.',
+          });
+      });
     if (w.type === "table" && w.groupLevels.length && w.summarize)
       issues.push({
         path: `widgets[${i}]`,

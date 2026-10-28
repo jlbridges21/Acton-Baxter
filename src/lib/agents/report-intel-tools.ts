@@ -100,7 +100,18 @@ const dataCatalog: AgentTool = {
       .filter((c) => !access.categories.has(c))
       .map((c) => CATEGORY_LABELS[c]);
     if (input.view === "entity") {
-      const e = entities.find((x) => x.entity === input.entity);
+      // Accept "custom_fields", "customField", "Custom fields", "jobs", "Job"… (canonical key match).
+      const norm = (v: string) =>
+        v
+          .toLowerCase()
+          .replace(/[^a-z]/g, "")
+          .replace(/s$/, "");
+      const want = norm(input.entity ?? "");
+      const e =
+        entities.find((x) => x.entity === input.entity) ??
+        entities.find(
+          (x) => norm(x.entity) === want || norm(x.label.split(" (")[0] ?? "") === want,
+        );
       if (!e)
         return {
           data: { error: `Unknown entity. Known: ${entities.map((x) => x.entity).join(", ")}` },

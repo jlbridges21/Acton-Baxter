@@ -441,6 +441,10 @@ export const DEXTER_DATA_SYNC_TOOLS = [
 
 /** Report engineering tools (src/lib/agents/report-engine-tools.ts). */
 export const DEXTER_ENGINE_TOOLS = [
+  "reports_fields",
+  "reports_catalog_audit",
+  "reports_field_impact",
+  "reports_field_repair",
   "reports_calculation_check",
   "reports_metrics",
   "reports_metric_save",

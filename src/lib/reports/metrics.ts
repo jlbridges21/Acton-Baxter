@@ -237,9 +237,7 @@ export async function metricUsage(key: string): Promise<{
   const pattern = new RegExp(`${ref}(?![a-z0-9_])`);
   const uses = (v: unknown) => pattern.test(JSON.stringify(v));
   return {
-    reports: reports
-      .filter((r) => r.status !== "deleted" && uses(r.spec))
-      .map((r) => ({ id: r.id, title: r.title })),
+    reports: reports.filter((r) => uses(r.spec)).map((r) => ({ id: r.id, title: r.title })),
     metrics: library.filter((m) => m.key !== key && uses(m.definition)).map((m) => m.key),
   };
 }

@@ -155,9 +155,9 @@ export const orchestrationSchema = z.object({
 export type AgentOrchestration = z.infer<typeof orchestrationSchema>;
 
 export const toolsConfigSchema = z.object({
-  enabled: z.array(z.string().min(1).max(80)).max(40).default([]),
+  enabled: z.array(z.string().min(1).max(80)).max(80).default([]),
   /** Extra tools that need human approval (code-level minimums always apply too). */
-  approvalRequired: z.array(z.string().min(1).max(80)).max(40).default([]),
+  approvalRequired: z.array(z.string().min(1).max(80)).max(80).default([]),
 });
 
 export const knowledgeConfigSchema = z.object({

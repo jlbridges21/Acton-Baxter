@@ -17,6 +17,7 @@ import {
   TriangleAlert,
   Link2,
   Sigma,
+  Database,
 } from "lucide-react";
 import {
   aiFetch,
@@ -157,6 +158,12 @@ export function DataSettings() {
             className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
           >
             <Boxes className="h-4 w-4" aria-hidden /> Cost items & models
+          </Link>
+          <Link
+            href="/reports/settings/fields"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
+          >
+            <Database className="h-4 w-4" aria-hidden /> Field catalog
           </Link>
           <Link
             href="/reports/settings/relationships"
