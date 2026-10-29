@@ -78,6 +78,15 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   ops_reminders: [["ref_type", "ref_id", "threshold"]],
   ops_timecard_checks: [["period_start", "period_end"]],
   ops_integration_settings: [["key"]],
+  ops_lifecycle_sources: [
+    ["document_key", "version_label"],
+    ["document_key", "content_hash"],
+  ],
+  ops_compliance_verifications: [["item_id", "citation", "document_version"]],
+  ops_software_platforms: [["key"]],
+  ops_compliance_calendar: [["key"]],
+  ops_compliance_occurrences: [["calendar_id", "period_key"]],
+  ops_comm_templates: [["key", "version"]],
   bamboohr_connections: [["company_domain"]],
   bi_report_group_items: [["group_id", "report_id"]],
   bi_report_suggestion_states: [["user_id", "suggestion_key"]],
@@ -118,6 +127,7 @@ const NO_ID_TABLES = new Set([
   "jt_entity_catalog",
   "ops_decisions",
   "ops_integration_settings",
+  "ops_software_platforms",
   "bi_report_views",
   "bi_report_pins",
   "bi_report_group_items",
@@ -136,6 +146,7 @@ const NO_UPDATED_AT = new Set([
   "ai_knowledge_chunks",
   "ai_onboarding_template_steps",
   "ai_audit_log",
+  "ops_lifecycle_events",
 ]);
 
 type MemoryState = { tables: Map<string, Row[]> };

@@ -29,6 +29,8 @@ import {
   PLACEHOLDER_ONBOARDING_TEMPLATE,
   SAM_DEFAULT_CONFIG,
   SAM_DEFAULT_CONFIG_V1,
+  SAM_DEFAULT_CONFIG_V2,
+  SAM_LIFECYCLE_TOOLS,
   SAM_DESCRIPTION,
   SAM_DESCRIPTION_V1,
   SAM_BAMBOOHR_TOOLS,
@@ -243,6 +245,7 @@ async function runSeed(): Promise<void> {
   if (sam) {
     await upgradeSamConfig(sam);
     await addSamBambooTools(sam.id);
+    await upgradeSamLifecycle(sam.id);
   }
   await ensurePlaceholderOnboardingTemplate();
 }
@@ -577,6 +580,54 @@ async function upgradeSamConfig(sam: AgentRow) {
     published,
     config,
     `${SAM_UPGRADE_MARKER}: HR/admin/legal operations coordinator, operations tools, and leadership-brief instructions`,
+  );
+}
+
+const SAM_LIFECYCLE_MARKER = "System: Sam HR lifecycle coordinator";
+
+/**
+ * One-time: Sam becomes the HR lifecycle coordinator (leadership Staff Lifecycle Checklist).
+ * Instruction and delegation fields are replaced only where they still equal the Sam Operations
+ * (V2) default — admin edits are kept — and the read-only lifecycle tools are enabled.
+ */
+async function upgradeSamLifecycle(samId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", samId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(SAM_LIFECYCLE_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const current = parsed.data;
+  const v2 = SAM_DEFAULT_CONFIG_V2;
+  const next = SAM_DEFAULT_CONFIG;
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const instructions = { ...current.instructions };
+  for (const key of Object.keys(instructions) as Array<keyof typeof instructions>) {
+    if (instructions[key] === v2.instructions[key]) instructions[key] = next.instructions[key];
+  }
+  const delegation = { ...current.delegation };
+  for (const key of ["specialization", "supportedTasks", "positiveExamples", "keywords"] as const) {
+    if (same(delegation[key], v2.delegation[key]))
+      Object.assign(delegation, { [key]: next.delegation[key] });
+  }
+  const config = {
+    ...current,
+    instructions,
+    delegation,
+    tools: {
+      ...current.tools,
+      enabled: [...new Set([...current.tools.enabled, ...SAM_LIFECYCLE_TOOLS])],
+    },
+  };
+  if (same(config, current)) return;
+  await publishSystemVersion(
+    samId,
+    versions,
+    published,
+    config,
+    `${SAM_LIFECYCLE_MARKER}: staff lifecycle checklist instructions, task statuses, and read-only lifecycle tools`,
   );
 }
 

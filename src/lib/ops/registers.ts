@@ -111,7 +111,8 @@ export async function savePerson(input: {
     action: input.id ? "ops.person_updated" : "ops.person_created",
     targetType: "ops_person",
     targetId: row.id,
-    summary: `${input.id ? "Updated" : "Added"} ${patch.test_record ? "test record" : "person"} ${patch.full_name}.`,
+    // The broad audit log never carries employee names; the record is reachable by targetId.
+    summary: `${input.id ? "Updated" : "Added"} ${patch.test_record ? "a test person record" : "a person record"}.`,
   });
   return row;
 }

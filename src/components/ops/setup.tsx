@@ -400,7 +400,9 @@ function DecisionCard({ decision }: { decision: FullOpsState["decisions"][number
         ? ((decision.value as string[] | null) ?? []).map((v) => nameOf(people, v)).join(", ")
         : typeof decision.value === "string"
           ? decision.value
-          : null;
+          : typeof decision.value === "number"
+            ? String(decision.value)
+            : null;
   return (
     <Card className="space-y-2">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -482,6 +484,19 @@ function DecisionCard({ decision }: { decision: FullOpsState["decisions"][number
                 type="date"
                 value={(value as string) ?? ""}
                 onChange={(e) => setValue(e.target.value)}
+              />
+            </Field>
+          ) : decision.input === "number" ? (
+            <Field label="Number" htmlFor={id}>
+              <Input
+                id={id}
+                type="number"
+                min={0}
+                step={1}
+                value={typeof value === "number" ? value : ""}
+                onChange={(e) =>
+                  setValue(e.target.value === "" ? null : Math.floor(Number(e.target.value)))
+                }
               />
             </Field>
           ) : decision.input === "longtext" || decision.input === "text" ? (

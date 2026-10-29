@@ -8,18 +8,19 @@ Everything is run from **AI Workspace → Sam Operations** (`/ai/operations`). N
 
 ## Documents
 
-| Document                                                       | For                                                                                            |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [Requirements matrix](requirements-matrix.md)                  | Each requirement in the leadership brief and implementation brief, and where it stands         |
-| [Architecture](architecture.md)                                | Developers: components, database, workflow engine, approval model, permission model            |
-| [Integration capabilities](integrations.md)                    | What each external system can and cannot do today                                              |
-| [BambooHR integration](bamboohr.md)                            | Connecting the Baxter OAuth app, scopes, fields, access, attribution                           |
-| [Configuration guides](configuration-guides.md)                | Administrators: onboarding, offboarding, recruitment, surveys, timecards, contracts, insurance |
-| [User guides](user-guides.md)                                  | Administrators, the CEO and COO, and employees                                                 |
-| [Operations](operations.md)                                    | Deployment, recovery, monitoring, support, maintenance, recurring costs                        |
-| [Testing results](testing.md)                                  | Automated tests and how to demonstrate the system                                              |
-| [Limitations and open decisions](limitations-and-decisions.md) | What is blocked and on whom, plus the decision log                                             |
-| [Handover checklist](handover-checklist.md)                    | Steps to go live with the CEO and COO                                                          |
+| Document                                                                | For                                                                                            |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [Requirements matrix](requirements-matrix.md)                           | Each requirement in the leadership brief and implementation brief, and where it stands         |
+| [Architecture](architecture.md)                                         | Developers: components, database, workflow engine, approval model, permission model            |
+| [Integration capabilities](integrations.md)                             | What each external system can and cannot do today                                              |
+| [Staff lifecycle (HR lifecycle coordinator)](../hr-lifecycle/README.md) | The leadership Staff Lifecycle Checklist as pre-boarding, onboarding, and offboarding cases    |
+| [BambooHR integration](bamboohr.md)                                     | Connecting the Baxter OAuth app, scopes, fields, access, attribution                           |
+| [Configuration guides](configuration-guides.md)                         | Administrators: onboarding, offboarding, recruitment, surveys, timecards, contracts, insurance |
+| [User guides](user-guides.md)                                           | Administrators, the CEO and COO, and employees                                                 |
+| [Operations](operations.md)                                             | Deployment, recovery, monitoring, support, maintenance, recurring costs                        |
+| [Testing results](testing.md)                                           | Automated tests and how to demonstrate the system                                              |
+| [Limitations and open decisions](limitations-and-decisions.md)          | What is blocked and on whom, plus the decision log                                             |
+| [Handover checklist](handover-checklist.md)                             | Steps to go live with the CEO and COO                                                          |
 
 ## The rules Sam follows
 

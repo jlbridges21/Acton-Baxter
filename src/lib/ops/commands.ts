@@ -110,6 +110,10 @@ export async function loadOpsState(ctx: AiContext) {
   if (!access.canViewAll && !access.canConfigure) return { ...base, limited: true as const };
   if (access.canConfigure) {
     await ensureStarterWorkflows();
+    // HR lifecycle templates, registers, and calendar from the leadership checklist (drafts).
+    await import("@/lib/hr-lifecycle/service")
+      .then((m) => m.ensureLifecycleSetup(access))
+      .catch(() => undefined);
     // Leadership-brief material for Sam's Knowledge Hub (once; never replaces admin edits).
     await import("./brief-knowledge")
       .then((m) => m.ensureBriefKnowledge(access.userId))

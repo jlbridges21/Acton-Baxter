@@ -20,6 +20,7 @@ import {
 } from "./registers";
 import { EmployeesTab } from "./bamboohr";
 import { LibraryTab } from "./editor";
+import { LifecycleTab } from "./lifecycle";
 import { ActivityTab, IntegrationsTab, OverviewTab, SamConfigTab, SetupTab } from "./setup";
 import { OpsProvider, useFullOps, useOps } from "./shared";
 import { ApprovalsTab, InboxTab, InstanceDialog, WorkflowsTab } from "./workflows";
@@ -31,6 +32,7 @@ const TABS: TabDef[] = [
   { key: "inbox", label: "My tasks", group: "Home" },
   { key: "approvals", label: "Approvals", group: "Home", full: true },
   { key: "workflows", label: "Active workflows", group: "Workflows" },
+  { key: "lifecycle", label: "Staff lifecycle", group: "Workflows" },
   { key: "onboarding", label: "Onboarding", group: "Workflows", full: true },
   { key: "offboarding", label: "Offboarding", group: "Workflows", full: true },
   { key: "library", label: "Library & editor", group: "Workflows", full: true },
@@ -154,6 +156,7 @@ function Studio() {
           onOpen={setOpenInstance}
         />
       ) : null}
+      {current.key === "lifecycle" ? <LifecycleTab /> : null}
       {current.key === "library" ? <LibraryTab /> : null}
       {current.key === "employees" ? <EmployeesTab /> : null}
       {current.key === "documents" ? <DocumentsTab /> : null}

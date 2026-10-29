@@ -320,6 +320,34 @@ export const DECISION_DEFS: DecisionDef[] = [
     "Employee count, expected workflow volumes, recurring cost budget, and support arrangements.",
     "longtext",
   ),
+  d(
+    "HR lifecycle",
+    "company_headcount",
+    "Confirmed company headcount",
+    "The staff lifecycle checklist changes at 5, 20, and 75 employees (CFRA, COBRA or Cal-COBRA, harassment training, Cal-WARN). Until this is confirmed, those items stay in every case and are flagged.",
+    "number",
+  ),
+  d(
+    "HR lifecycle",
+    "tech_ops_manager",
+    "Tech ops manager",
+    "Owns the Baxter intro, walkthrough, live session, checkpoint, and the quarterly Baxter review in the lifecycle checklist.",
+    "person",
+  ),
+  d(
+    "HR lifecycle",
+    "lifecycle_timing_review",
+    "Counsel or payroll provider reviewed timing items",
+    "The checklist asks employment counsel or the payroll provider to check timing items (final pay, I-9, DE 34, training deadlines) before it goes live. Record who reviewed them and when.",
+    "longtext",
+  ),
+  d(
+    "HR lifecycle",
+    "social_primary_owner",
+    "Company owns social and Google accounts",
+    "Confirm the company Google Workspace account owns the YouTube channel and is Primary Owner on Meta Business Suite and Google Business Profile before the next hire or departure.",
+    "longtext",
+  ),
 ];
 
 export type DecisionRow = {
@@ -421,6 +449,7 @@ export type OpsRoles = {
   hrAdmins: string[];
   financeOwner: string | null;
   contractReviewOwner: string | null;
+  techOpsManager: string | null;
   timezone: string;
 };
 
@@ -429,7 +458,7 @@ export async function getOpsRoles(): Promise<OpsRoles> {
   const str = (v: unknown) => (typeof v === "string" && v ? v : null);
   const list = (v: unknown) =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  const [ceo, coo, hr, finance, review, tz] = await Promise.all(
+  const [ceo, coo, hr, finance, review, tz, techOps] = await Promise.all(
     [
       "ceo_account",
       "coo_account",
@@ -437,6 +466,7 @@ export async function getOpsRoles(): Promise<OpsRoles> {
       "finance_owner",
       "contract_review_owner",
       "timezone",
+      "tech_ops_manager",
     ].map(decisionValue),
   );
   return {
@@ -445,6 +475,7 @@ export async function getOpsRoles(): Promise<OpsRoles> {
     hrAdmins: list(hr),
     financeOwner: str(finance),
     contractReviewOwner: str(review),
+    techOpsManager: str(techOps),
     timezone: str(tz) ?? "America/Los_Angeles",
   };
 }
@@ -540,6 +571,7 @@ export async function setDecision(input: {
     "record_access",
     "manager_exceptions",
     "approval_boundary",
+    "company_headcount",
   ].includes(def.key);
   requireOps(input.access, sensitive ? "sensitive" : "configure");
   if (
@@ -555,6 +587,13 @@ export async function setDecision(input: {
     !(Array.isArray(input.value) && input.value.every((v) => typeof v === "string"))
   ) {
     throw new ValidationError("Choose people.");
+  }
+  if (
+    def.input === "number" &&
+    input.status === "confirmed" &&
+    !(typeof input.value === "number" && Number.isInteger(input.value) && input.value >= 0)
+  ) {
+    throw new ValidationError("Enter a whole number.");
   }
   await ensureOpsOrg();
   const previous = await selectOne<DecisionRow>("ops_decisions", {

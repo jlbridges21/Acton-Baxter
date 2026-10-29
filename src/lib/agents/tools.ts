@@ -16,6 +16,7 @@ import { createApproval } from "./approvals";
 import { searchAgentKnowledge } from "./knowledge";
 import { BAMBOOHR_TOOLS } from "./bamboohr-tools";
 import { DATA_SYNC_TOOLS } from "./data-sync-tools";
+import { LIFECYCLE_TOOLS } from "./lifecycle-tools";
 import { OPS_TOOLS } from "./ops-tools";
 import { REPORT_GROUP_TOOLS } from "./report-group-tools";
 import { REPORT_ENGINE_TOOLS } from "./report-engine-tools";
@@ -323,6 +324,7 @@ export const TOOL_REGISTRY: AgentTool[] = [
   ...REPORT_INTEL_TOOLS,
   ...OPS_TOOLS,
   ...BAMBOOHR_TOOLS,
+  ...LIFECYCLE_TOOLS,
   ...REPORT_GROUP_TOOLS,
   ...DATA_SYNC_TOOLS,
   ...REPORT_ENGINE_TOOLS,

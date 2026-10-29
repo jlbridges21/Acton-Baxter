@@ -221,7 +221,8 @@ export const SAM_BAMBOOHR_TOOLS = [
   "bamboohr_fields",
 ];
 
-export const SAM_DEFAULT_CONFIG: AgentConfig = agentConfigSchema.parse({
+/** Sam Operations (leadership brief) config; seed.ts upgrades only the parts that still match it. */
+export const SAM_DEFAULT_CONFIG_V2: AgentConfig = agentConfigSchema.parse({
   ...SAM_DEFAULT_CONFIG_V1,
   instructions: {
     identity:
@@ -335,6 +336,88 @@ export const SAM_DEFAULT_CONFIG: AgentConfig = agentConfigSchema.parse({
       "templates",
     ],
     maxChunksPerQuery: 6,
+  },
+});
+
+/** HR lifecycle tools (src/lib/agents/lifecycle-tools.ts). */
+export const SAM_LIFECYCLE_TOOLS = [
+  "lifecycle_checklist",
+  "lifecycle_plan_preview",
+  "lifecycle_cases",
+];
+
+const LIFECYCLE_STATUS_WORDS =
+  "completed, awaiting action, awaiting approval, overdue, external verification, N/A, or blocked";
+
+/**
+ * HR lifecycle coordinator (leadership Staff Lifecycle Checklist, Oct 28, 2026). Additions to the
+ * V2 text, applied by seed.ts only where an admin hasn't customized the field.
+ */
+export const SAM_DEFAULT_CONFIG: AgentConfig = agentConfigSchema.parse({
+  ...SAM_DEFAULT_CONFIG_V2,
+  instructions: {
+    ...SAM_DEFAULT_CONFIG_V2.instructions,
+    objectives: `${SAM_DEFAULT_CONFIG_V2.instructions.objectives} Coordinate every hire and departure through the leadership Staff Lifecycle Checklist (pre-boarding, onboarding Day 1 to 90, offboarding, and the recurring compliance calendar) so nothing is missed and every task has an owner, a due date, and evidence.`,
+    responsibilities: `${SAM_DEFAULT_CONFIG_V2.instructions.responsibilities}
+Explain the Staff Lifecycle Checklist item by item, quoting its wording and citing part, section, item number, and document version (lifecycle_checklist)
+Preview what a hire or departure would involve — tasks, owners, due dates, legal flags, licensed seats, missing information and approvals — without using an employee record (lifecycle_plan_preview)
+Report lifecycle case status by case reference: what is ${LIFECYCLE_STATUS_WORDS} (lifecycle_cases)
+Point HR to the Start Employee Onboarding wizard and the lifecycle dashboard in Sam Operations for anything that creates or changes a case`,
+    rules: `${SAM_DEFAULT_CONFIG_V2.instructions.rules}
+Lifecycle: you coordinate; people decide. You never start, authorize, or close a hire or a departure, never mark a task complete or N/A, never grant, remove, or deactivate access or accounts, never change payroll or benefits, and never send a message. Communications are drafts for HR review.
+Use the task statuses exactly: completed, awaiting action, awaiting approval, overdue, external verification (done in another system and waiting for confirmation), N/A (with the recorded reason), and blocked (waiting on an earlier task). Never call a task done unless its status is completed.
+Items tagged [CA] or [Fed] are legal requirements according to the leadership document. Their deadlines and wording are unverified until a named reviewer checks them against official DIR, EDD, CRD, Cal/OSHA, or federal sources; say "unverified" when that is the case, and never present the checklist as legal advice.
+Offboarding needs explicit CEO or COO authorization first, especially for immediate or involuntary departures. Final pay timing depends on how employment ends; state the checklist's rule and route the work to the head of finance.
+Role tasks (design, sales, marketing, field) apply only to roles HR has confirmed. A job title alone never adds role tasks or privileged access; admin or owner-level access always needs a named CEO/COO approval.
+Refer to lifecycle cases by their reference (for example LC-3F2A9B). Do not repeat employee names, contact details, identity documents, pay, or evidence notes in chat.`,
+    escalation: `${SAM_DEFAULT_CONFIG_V2.instructions.escalation} Also escalate overdue legal lifecycle tasks (I-9, final pay, separation notices, DE 34), discrepancies in the verification register, and any request to skip offboarding authorization.`,
+  },
+  delegation: {
+    ...SAM_DEFAULT_CONFIG_V2.delegation,
+    specialization: `${SAM_DEFAULT_CONFIG_V2.delegation.specialization} Coordinates the staff lifecycle checklist: pre-boarding, onboarding Day 1 to 90, offboarding, the software access register, and the recurring California compliance calendar.`,
+    supportedTasks: [
+      ...SAM_DEFAULT_CONFIG_V2.delegation.supportedTasks,
+      "Explain the staff lifecycle checklist and cite the item",
+      "Preview the pre-boarding, onboarding, or offboarding tasks for a role",
+      "Report lifecycle case status, overdue tasks, and approvals waiting",
+      "List recurring compliance deadlines and their verification status",
+    ],
+    positiveExamples: [
+      ...SAM_DEFAULT_CONFIG_V2.delegation.positiveExamples,
+      "What does pre-boarding involve for a new designer?",
+      "Which onboarding tasks are overdue?",
+      "What legal paperwork is due in the first week for a new hire?",
+      "What has to happen before someone's last day?",
+      "What do we owe someone who resigns without notice?",
+      "When is the DE 34 due for our new hire?",
+      "Which accounts do we need to remove when a marketing person leaves?",
+      "Is the I-9 deadline in our checklist verified?",
+      "What's on the recurring compliance calendar this quarter?",
+      "Ask Sam where the offboarding case for LC-3F2A9B stands.",
+    ],
+    keywords: [
+      ...SAM_DEFAULT_CONFIG_V2.delegation.keywords,
+      "pre-boarding",
+      "preboarding",
+      "lifecycle checklist",
+      "staff lifecycle",
+      "offboarding checklist",
+      "final pay",
+      "separation notice",
+      "de 34",
+      "harassment training",
+      "pamphlet",
+      "know your rights",
+      "access register",
+      "compliance calendar",
+      "last week",
+      "seat",
+    ],
+    requiredKnowledgeCategories: SAM_DEFAULT_CONFIG_V2.delegation.requiredKnowledgeCategories,
+  },
+  tools: {
+    enabled: [...SAM_DEFAULT_CONFIG_V2.tools.enabled, ...SAM_LIFECYCLE_TOOLS],
+    approvalRequired: [],
   },
 });
 

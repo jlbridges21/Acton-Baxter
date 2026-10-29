@@ -94,7 +94,9 @@ export type StepRow = {
     | "completed"
     | "skipped"
     | "failed"
-    | "cancelled";
+    | "cancelled"
+    | "external_verification"
+    | "not_applicable";
   assignee_profile_id: string | null;
   assignee_role: string | null;
   due_at: string | null;
@@ -126,7 +128,8 @@ type PersonRow = {
   manager_profile_id: string | null;
 };
 
-const DONE = new Set(["completed", "skipped"]);
+/** Finished for dependency and completion purposes. N/A is a recorded decision, not a skip. */
+const DONE = new Set(["completed", "skipped", "not_applicable"]);
 const DAY = 86_400_000;
 const actorOf = (a: OpsAccess, label: string) => ({ userId: a.userId, label });
 
@@ -283,7 +286,13 @@ export async function requestPublish(input: {
   const issues = validateDefinition(version.definition).filter((i) => i.severity === "error");
   if (issues.length)
     throw new ValidationError(`Fix these first: ${issues.map((i) => i.message).join("; ")}`);
-  if (input.access.isLeadership) {
+  // HR lifecycle: changes to legal ([CA]/[Fed]) items always go through a recorded review.
+  const published = versions.find((v) => v.id === template.published_version_id) ?? null;
+  const { complianceChanges } = await import("@/lib/hr-lifecycle/templates");
+  const compliance = version.definition.lifecycle
+    ? complianceChanges(published?.definition ?? null, version.definition)
+    : [];
+  if (input.access.isLeadership && !compliance.length) {
     await publishVersionNow(template.id, version.id, input.access.userId);
     return { published: true as const };
   }
@@ -295,8 +304,10 @@ export async function requestPublish(input: {
     payload: { templateId: template.id, versionId: version.id, definition: version.definition },
     display: {
       target: `${template.name} (${version.definition.steps.length} steps)`,
-      effect:
-        "New workflows of this type will follow this version. Running workflows keep their version.",
+      effect: compliance.length
+        ? `Compliance review: ${compliance.length} legal item change(s). New cases follow this version; running cases keep theirs. Changed legal items return to "unverified" in the verification register.`
+        : "New workflows of this type will follow this version. Running workflows keep their version.",
+      ...(compliance.length ? { evidence: compliance.slice(0, 20) } : {}),
     },
     mode: "live",
     risk: "medium",
@@ -325,6 +336,11 @@ export async function publishVersionNow(
     status: "published",
     published_version_id: versionId,
   });
+  if (version.definition.lifecycle) {
+    const previous = versions.find((v) => v.id === template.published_version_id) ?? null;
+    const { onLifecycleVersionPublished } = await import("@/lib/hr-lifecycle/service");
+    await onLifecycleVersionPublished(previous?.definition ?? null, version.definition, userId);
+  }
   await recordAudit({
     actor: { userId, label: "Leadership" },
     action: "ops.workflow_published",
@@ -431,6 +447,8 @@ async function resolveAssignee(
       return { profileId: roles.coo, role: "coo" };
     case "finance_owner":
       return { profileId: roles.financeOwner, role: "finance_owner" };
+    case "tech_ops_manager":
+      return { profileId: roles.techOpsManager, role: "tech_ops_manager" };
     case "employee":
       return { profileId: person?.profile_id ?? null, role: "employee" };
     case "hiring_manager":
@@ -464,6 +482,21 @@ export async function startWorkflow(input: {
   actorLabel: string;
   /** Approval evidence shown to leadership, e.g. "Offer accepted 10/20 per Jackson". */
   reason: string;
+  /**
+   * Per-step values decided before the start (HR lifecycle cases): computed due dates, items
+   * that don't apply (status not_applicable, with the reason in data), and tailored checklists.
+   */
+  stepOverrides?: Record<
+    string,
+    {
+      dueAt?: string | null;
+      status?: "not_applicable";
+      data?: Record<string, unknown>;
+      checklist?: string[];
+    }
+  >;
+  /** Extra columns for the instance row (lifecycle summary). */
+  extra?: Record<string, unknown>;
 }): Promise<InstanceRow> {
   requireOps(input.access, "configure");
   if (input.idempotencyKey) {
@@ -501,10 +534,12 @@ export async function startWorkflow(input: {
     inputs: input.inputs,
     started_by: input.access.userId,
     idempotency_key: input.idempotencyKey ?? null,
+    ...(input.extra ?? {}),
   });
   const anchor = anchorDate(def, instance!);
   for (const [i, s] of def.steps.entries()) {
     const assignee = await resolveAssignee(s, roles, person, input.inputs);
+    const o = input.stepOverrides?.[s.key];
     await agentDb().insert("ops_workflow_steps", {
       instance_id: instance!.id,
       step_key: s.key,
@@ -512,14 +547,22 @@ export async function startWorkflow(input: {
       title: s.title,
       type: s.type,
       stage: s.stage || null,
-      config: s,
+      config: o?.checklist ? { ...s, checklist: o.checklist } : s,
       depends_on: s.dependsOn,
-      status: "blocked",
+      status: o?.status ?? "blocked",
       assignee_profile_id: assignee.profileId,
       assignee_role: assignee.role,
-      due_at: s.dueOffsetDays === null ? null : addDays(anchor, s.dueOffsetDays),
-      data: {},
+      due_at:
+        o && "dueAt" in o
+          ? o.dueAt
+            ? `${o.dueAt.slice(0, 10)}T17:00:00.000Z`
+            : null
+          : s.dueOffsetDays === null
+            ? null
+            : addDays(anchor, s.dueOffsetDays),
+      data: o?.data ?? {},
       evidence: [],
+      ...(o?.status === "not_applicable" ? { completed_at: new Date().toISOString() } : {}),
     });
   }
   const action = await proposeAction({
@@ -1070,7 +1113,7 @@ export async function onActionSettled(actionId: string): Promise<void> {
   if (action.instance_id) await advanceInstance(action.instance_id);
 }
 
-function canActOnStep(step: StepRow, access: OpsAccess): boolean {
+export function canActOnStep(step: StepRow, access: OpsAccess): boolean {
   if (step.type === "access_request") return access.isCoo; // the COO controls access
   if (step.type === "finance_handoff") return access.isFinanceOwner || access.isLeadership;
   if (step.assignee_profile_id && step.assignee_profile_id === access.userId) return true;
@@ -1293,6 +1336,7 @@ export async function setInstanceStatus(input: {
           "awaiting_approval",
           "waiting",
           "failed",
+          "external_verification",
         ]),
       ],
       { status: "cancelled" },
@@ -1520,6 +1564,7 @@ async function remindOverdueSteps(): Promise<number> {
   for (const s of steps) {
     const instance = instances.get(s.instance_id);
     if (!instance || !s.due_at || !STEP_TYPES[s.type].human) continue;
+    if (s.config.lifecycle) continue; // lifecycle reminders are raised by hr-lifecycle/reminders.ts
     const overdueDays = Math.floor((now - new Date(s.due_at).getTime()) / DAY);
     if (overdueDays < 0) continue;
     const { everyDays, escalateAfterDays } = s.config.reminder;
@@ -1591,5 +1636,7 @@ export async function sweepOperations(): Promise<Record<string, number>> {
   const { raiseDateReminders, sweepRegisters } = await import("./registers");
   const dated = await raiseDateReminders();
   const registers = await sweepRegisters();
-  return { advanced: active.length, retried, reminders, dated, ...registers };
+  const { sweepLifecycle } = await import("@/lib/hr-lifecycle/reminders");
+  const lifecycle = await sweepLifecycle().catch(() => ({ lifecycleReminders: 0 }));
+  return { advanced: active.length, retried, reminders, dated, ...registers, ...lifecycle };
 }

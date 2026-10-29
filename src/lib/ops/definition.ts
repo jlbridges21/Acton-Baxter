@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import type { LifecycleItem, LifecyclePhase } from "@/lib/hr-lifecycle/types";
 
 /** Roles a step can be assigned to. Concrete people come from leadership decisions. */
 export const ASSIGNEE_ROLES = [
@@ -17,6 +18,7 @@ export const ASSIGNEE_ROLES = [
   "finance_owner",
   "hiring_manager",
   "employee",
+  "tech_ops_manager",
   "specific_person",
 ] as const;
 export type AssigneeRole = (typeof ASSIGNEE_ROLES)[number];
@@ -29,6 +31,7 @@ export const ROLE_LABELS: Record<AssigneeRole, string> = {
   finance_owner: "Head of finance",
   hiring_manager: "Hiring manager",
   employee: "The employee",
+  tech_ops_manager: "Tech ops manager",
   specific_person: "A specific person",
 };
 
@@ -137,6 +140,25 @@ export const STEP_TYPES = {
 } as const;
 export type StepType = keyof typeof STEP_TYPES;
 
+function isLifecycleItemLike(v: unknown): v is LifecycleItem {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  const ref = o.sourceRef as Record<string, unknown> | undefined;
+  return (
+    typeof o.id === "string" &&
+    typeof o.text === "string" &&
+    o.text.length <= 4000 &&
+    typeof o.phase === "string" &&
+    Array.isArray(o.tags) &&
+    Array.isArray(o.citations) &&
+    Array.isArray(o.subItems) &&
+    typeof o.timing === "object" &&
+    !!ref &&
+    typeof ref.part === "string" &&
+    typeof ref.section === "string"
+  );
+}
+
 const key = z
   .string()
   .trim()
@@ -201,6 +223,14 @@ export const stepDefinitionSchema = z.object({
     .default({ type: null, settings: {} }),
   /** wait_until: days relative to the anchor date. */
   waitOffsetDays: z.number().int().min(-365).max(365).nullable().default(null),
+  /**
+   * HR lifecycle traceability: the checklist item this step comes from (exact wording, part,
+   * section, tags, citations, conditions, timing). Null for ordinary workflow steps.
+   */
+  lifecycle: z
+    .custom<LifecycleItem>(isLifecycleItemLike, "Invalid lifecycle item metadata.")
+    .nullable()
+    .default(null),
 });
 export type StepDefinition = z.infer<typeof stepDefinitionSchema>;
 
@@ -224,6 +254,16 @@ export const workflowDefinitionSchema = z.object({
   entities: z.array(z.string().max(40)).max(10).default([]),
   stages: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
   steps: z.array(stepDefinitionSchema).min(1).max(80),
+  /** Set on HR lifecycle templates: the phase and the checklist document version it came from. */
+  lifecycle: z
+    .object({
+      phase: z.enum(["preboarding", "onboarding", "offboarding"]) as z.ZodType<LifecyclePhase>,
+      documentKey: z.string().max(80),
+      documentVersion: z.string().max(40),
+      sourceId: z.string().uuid().nullable().default(null),
+    })
+    .nullable()
+    .default(null),
 });
 export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
 
@@ -320,6 +360,20 @@ export function validateDefinition(def: WorkflowDefinition): DefinitionIssue[] {
       issues.push({
         step: s.key,
         message: `"${s.title}": set how many days from the anchor date to wait.`,
+        severity: "error",
+      });
+    }
+    if (s.lifecycle && s.lifecycle.tags.length && !s.evidenceRequired) {
+      issues.push({
+        step: s.key,
+        message: `"${s.title}": legal ([CA]/[Fed]) checklist items must require completion evidence.`,
+        severity: "error",
+      });
+    }
+    if (s.lifecycle?.privilegedAccess && s.type !== "access_request") {
+      issues.push({
+        step: s.key,
+        message: `"${s.title}": privileged access items must stay COO access steps.`,
         severity: "error",
       });
     }
