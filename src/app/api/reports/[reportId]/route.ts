@@ -11,6 +11,7 @@ import {
   setPinned,
   updateReportMeta,
 } from "@/lib/reports/repo";
+import { actorOf } from "@/lib/reports/rules-http";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +71,7 @@ export async function PUT(request: Request, { params }: Params) {
       authorKind: "user",
       summary: body.summary ?? null,
       expectedVersion: body.expectedVersion,
+      ruleActor: actorOf(ctx),
     });
     return jsonOk({
       version: saved.report.version,
@@ -121,6 +123,7 @@ export async function PATCH(request: Request, { params }: Params) {
           authorId: ctx.user.id,
           authorKind: "user",
           summary: `Renamed to "${body.title}"`,
+          ruleActor: actorOf(ctx),
         })
       ).report;
     }
@@ -144,15 +147,26 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
+/**
+ * Delete a report. Its rule sets are detached (history kept); shared ones are never changed.
+ * `?archivePrivateRules=1` also archives private rule sets nothing else uses (needs "Edit
+ * business rules"); otherwise they are left in place and listed as unused in the rules audit.
+ */
+export async function DELETE(request: Request, { params }: Params) {
   try {
     const ctx = await requireReportsContext();
     const { reportId } = await params;
     const { report, permission } = await loadReportFor(reportId, ctx.requester, ctx.access);
     if (!permission.canDelete)
       throw new AuthorizationError("Only the owner or an administrator can delete this report.");
-    await deleteReport(report);
-    return jsonOk({ deleted: true });
+    const archivePrivateRules =
+      new URL(request.url).searchParams.get("archivePrivateRules") === "1";
+    if (archivePrivateRules && !ctx.access.canEditRules)
+      throw new AuthorizationError(
+        'Archiving its rules needs "Edit business rules (Reports)". Delete without archiving, or ask an administrator.',
+      );
+    const rules = await deleteReport(report, { archivePrivateRules, ruleActor: actorOf(ctx) });
+    return jsonOk({ deleted: true, rules });
   } catch (error) {
     return jsonError(error, "DELETE /api/reports/[reportId]");
   }

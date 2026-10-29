@@ -31,10 +31,11 @@ import {
 import { executeReport } from "@/lib/reports/engine";
 import { invalidateFieldCatalog } from "@/lib/reports/fields";
 import { jobFinancials, primaryCustomerOrder, type DocumentRow } from "@/lib/reports/financials";
-import { getReport, resetReportTemplatesForTests } from "@/lib/reports/repo";
+import { createReport, getReport, resetReportTemplatesForTests } from "@/lib/reports/repo";
 import {
   assignProject,
   createRuleSet,
+  getRuleSet,
   listRates,
   listRuleChanges,
   removeAssignment,
@@ -469,7 +470,16 @@ describe("with a synced JobTread fixture", () => {
   });
 
   it("runs the Sales Commissions dashboard with restricted access for non-financial viewers", async () => {
-    const rs = await createRuleSet({ name: "Sales commissions", key: "sales_commissions", actor });
+    // A dashboard made from the template gets its own empty rule set (never a shared one).
+    const dashboard = await createReport({
+      spec: SALES_COMMISSIONS_TEMPLATE,
+      ownerId: ADMIN_ID,
+      authorKind: "user",
+    });
+    const spec = dashboard.spec;
+    const rs = (await getRuleSet(spec.datasets[0]!.ruleSet!))!;
+    expect(rs).toMatchObject({ scope: "dashboard", owner_report_id: dashboard.id });
+    expect(await listRates(rs.id)).toEqual([]);
     await setRate({
       ruleSet: rs,
       salesperson: "Jesse",
@@ -485,7 +495,7 @@ describe("with a synced JobTread fixture", () => {
       actor,
     });
     const asAdmin = await executeReport({
-      spec: SALES_COMMISSIONS_TEMPLATE,
+      spec,
       access: await getReportsAccess(admin),
     });
     expect((asAdmin.widgets.total_commission as KpiResult).value).toBe(9000); // 90k × 10%
@@ -502,7 +512,7 @@ describe("with a synced JobTread fixture", () => {
     });
 
     const asEmployee = await executeReport({
-      spec: SALES_COMMISSIONS_TEMPLATE,
+      spec,
       access: await getReportsAccess(employee),
     });
     expect(asEmployee.widgets.total_commission!.status).toBe("restricted");
@@ -831,19 +841,9 @@ describe("with a synced JobTread fixture", () => {
     expect(att.every((a) => a.report_id === artifact.id)).toBe(true);
 
     // An authorized rate change updates the dashboard deterministically.
-    const rs = (
-      await agentDb().select<{
-        id: string;
-        key: string;
-        config: never;
-        name: string;
-        kind: "commission";
-        description: string;
-        created_by: null;
-        created_at: string;
-        updated_at: string;
-      }>("bi_rule_sets", { filters: [eq("key", ruleKey)] })
-    )[0]!;
+    const rs = (await getRuleSet(ruleKey))!;
+    // The dashboard owns the rule set Dexter created for it (created empty, then claimed).
+    expect(rs).toMatchObject({ scope: "dashboard", owner_report_id: report.id });
     await setRate({
       ruleSet: rs,
       salesperson: "Connor",

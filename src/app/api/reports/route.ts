@@ -11,6 +11,7 @@ import {
 } from "@/lib/reports/repo";
 import { BLANK_SPEC } from "@/lib/reports/spec";
 import { fileNewReport, listGroupsFor } from "@/lib/reports/groups";
+import { actorOf } from "@/lib/reports/rules-http";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +69,12 @@ const createSchema = z.discriminatedUnion("from", [
     reportId: z.string().uuid(),
     title: z.string().trim().min(1).max(160).optional(),
     groupId: z.string().uuid().optional(),
+    /**
+     * Rule sets of the source: "copy" (default, independent copy), "empty" (start with no
+     * rates), or "share" (keep using the same company rule set — must be chosen explicitly).
+     * Templates always start empty.
+     */
+    rules: z.enum(["copy", "share", "empty"]).optional(),
   }),
 ]);
 
@@ -82,13 +89,17 @@ export async function POST(request: Request) {
         ownerId: ctx.user.id,
         authorKind: "user",
         originTemplateKey: "blank",
+        ruleActor: actorOf(ctx),
       });
       if (body.groupId) await fileNewReport(ctx, report.id, body.groupId);
       return jsonOk({ id: report.id }, { status: 201 });
     }
     if (!(await getReport(body.reportId))) throw new NotFoundError("Report not found");
     const { report } = await loadReportFor(body.reportId, ctx.requester, ctx.access);
-    const copy = await duplicateReport(report, ctx.user.id, body.title);
+    const copy = await duplicateReport(report, ctx.user.id, body.title, {
+      rules: body.rules,
+      ruleActor: actorOf(ctx),
+    });
     if (body.groupId) await fileNewReport(ctx, copy.id, body.groupId);
     return jsonOk({ id: copy.id }, { status: 201 });
   } catch (error) {

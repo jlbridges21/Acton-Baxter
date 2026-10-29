@@ -9,6 +9,7 @@
  * Library models are top-level catalog cost groups.
  */
 
+import { TEMPLATE_RULE_SET_KEY } from "./rule-scope";
 import { reportSpecSchema, type ReportSpec } from "./spec";
 
 export const ACTIVE_PHASES = [
@@ -380,8 +381,11 @@ export const ACTIVE_PROJECTS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
   ],
 });
 
-/** Default rule set for the Sales Commissions template (created empty — no rates). */
-export const COMMISSION_RULE_SET_KEY = "sales_commissions";
+/**
+ * The template references the reserved placeholder, never a live rule set. A dashboard made
+ * from it starts with its own empty rule set unless the person copies or attaches one.
+ */
+const COMMISSION_RULE_SET_KEY = TEMPLATE_RULE_SET_KEY;
 
 export const SALES_COMMISSIONS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
   title: "Sales Commissions",
@@ -527,7 +531,7 @@ export const SALES_COMMISSIONS_TEMPLATE: ReportSpec = reportSpecSchema.parse({
       type: "text",
       title: "About these numbers",
       span: 12,
-      body: "Gross profit is projected: customer order price − cost from JobTread (the approved order, otherwise the latest draft). JobTread has no recorded customer payments, so the commission date is the payment date entered here for each project. Rates are set in Baxter and apply from their effective date. Ask Dexter to change the formula, the date source, or which salespeople appear.",
+      body: "Gross profit is projected: customer order price − cost from JobTread (the approved order, otherwise the latest draft). JobTread has no recorded customer payments, so the commission date is the payment date entered here for each project. Rates are set in Baxter and apply from their effective date. Each dashboard has its own rules unless someone deliberately attached a shared company rule set. Ask Dexter to change the formula, the date source, or which salespeople appear.",
     },
   ],
 });

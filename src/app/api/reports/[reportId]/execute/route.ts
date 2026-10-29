@@ -4,6 +4,7 @@ import { ValidationError } from "@/lib/errors";
 import { executeReport } from "@/lib/reports/engine";
 import { controlStateSchema, requireReportsContext } from "@/lib/reports/http";
 import { loadReportFor, recordExecution, updateReportMeta } from "@/lib/reports/repo";
+import { templateSafeSpec } from "@/lib/reports/rule-scope";
 import { parseReportSpec } from "@/lib/reports/spec";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ export async function POST(request: Request, { params }: Params) {
         throw new ValidationError(parsed.issues.map((i) => `${i.path} — ${i.message}`).join("; "));
       spec = parsed.spec;
     }
+    // Templates never read a live rule set (older template rows may still name one).
+    if (report.is_template) spec = templateSafeSpec(spec);
     const result = await executeReport({
       spec,
       access: ctx.access,

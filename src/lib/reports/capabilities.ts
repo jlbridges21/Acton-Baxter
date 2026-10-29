@@ -441,7 +441,9 @@ async function buildCtx(access: ReportsAccess): Promise<Ctx> {
       loadSourceRows("jobs").catch(() => ({ rows: [] as Row[] })),
       loadSourceRows("catalog_models").catch(() => ({ rows: [] as Row[] })),
       loadSourceRows("cost_items").catch(() => ({ rows: [] as Row[] })),
-      listRuleSets().catch(() => []),
+      listRuleSets()
+        .then((sets) => sets.filter((r) => r.status === "active"))
+        .catch(() => []),
       lastSuccessfulSync().catch(() => null),
     ]);
   const ratesBySet = new Map<string, number>();

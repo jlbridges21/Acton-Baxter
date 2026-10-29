@@ -18,6 +18,22 @@ import type { Requester } from "@/lib/agents/types";
 import type { ReportsAccess } from "./access";
 import { diffSpecs } from "./ops";
 import type { ReportPermission } from "./repo-types";
+import {
+  applyRuleBindings,
+  copyRuleSet,
+  discardPlannedRules,
+  planRuleBindings,
+  releaseReportRules,
+  archiveRuleSetRow,
+  type RuleChoices,
+} from "./rule-bindings";
+import {
+  rewriteRuleSetKeys,
+  ruleSetKeysIn,
+  templateSafeSpec,
+  TEMPLATE_RULE_SET_KEY,
+} from "./rule-scope";
+import { getRuleSet, SYSTEM_RULE_ACTOR, type RuleActor, type RuleSetRow } from "./rules";
 import { parseReportSpec, type ReportSpec } from "./spec";
 import { REPORT_TEMPLATES } from "./templates";
 
@@ -75,19 +91,7 @@ export function resetReportTemplatesForTests() {
 /** Create missing starter templates once per server instance (never overwrites edits). */
 export function ensureReportTemplates(): Promise<void> {
   templatesSeeded ??= (async () => {
-    // The commissions template needs its (empty) rule set to exist. No rates are created.
-    const { COMMISSION_RULE_SET_KEY } = await import("./templates");
-    const { createRuleSet, getRuleSet } = await import("./rules");
-    if (!(await getRuleSet(COMMISSION_RULE_SET_KEY).catch(() => null))) {
-      await createRuleSet({
-        key: COMMISSION_RULE_SET_KEY,
-        name: "Sales commissions",
-        description: "Default rule set for the Sales Commissions template.",
-        actor: { userId: null, label: "System" },
-      }).catch((error) => {
-        if (!isUniqueViolation(error)) throw error;
-      });
-    }
+    // Templates reference no live rule set (see rule-scope.ts); nothing is created for them.
     for (const t of REPORT_TEMPLATES) {
       const existing = await selectOne<ReportRow>("bi_reports", {
         filters: [eq("template_key", t.key)],
@@ -245,33 +249,62 @@ export async function createReport(input: {
   summary?: string;
   originTemplateKey?: string | null;
   originSuggestionKey?: string | null;
+  /** Who is creating it, for rule-set audit entries ("performed using …, via …"). */
+  ruleActor?: RuleActor;
+  /** Deliberate rule-set choices (e.g. attach a shared company rule set). */
+  ruleChoices?: RuleChoices;
 }): Promise<ReportRow> {
-  const spec = assertValid(input.spec);
-  const [row] = await agentDb().insert<ReportRow>("bi_reports", {
-    title: spec.title,
-    description: spec.description,
-    owner_id: input.ownerId,
-    visibility: "private",
-    is_template: false,
-    template_key: null,
-    status: "active",
-    spec,
-    version: 1,
-    created_by_agent: input.authorKind === "dexter",
-    ...(input.originTemplateKey ? { origin_template_key: input.originTemplateKey } : {}),
-    ...(input.originSuggestionKey ? { origin_suggestion_key: input.originSuggestionKey } : {}),
+  const actor = input.ruleActor ?? SYSTEM_RULE_ACTOR;
+  // Validates rule-set references before anything is written; a start-empty placeholder
+  // becomes a fresh dashboard rule set.
+  const plan = await planRuleBindings({
+    report: { id: null, is_template: false },
+    spec: assertValid(input.spec),
+    previousSpec: null,
+    actor,
+    choices: input.ruleChoices,
   });
-  await agentDb().insert("bi_report_revisions", {
-    report_id: row!.id,
-    version: 1,
-    spec,
-    title: spec.title,
-    change_summary: input.summary ?? "Created",
-    author_id: input.ownerId,
-    author_kind: input.authorKind,
-    task_id: input.taskId ?? null,
-  });
-  return row!;
+  const spec = plan.spec;
+  let row: ReportRow;
+  try {
+    [row] = (await agentDb().insert<ReportRow>("bi_reports", {
+      title: spec.title,
+      description: spec.description,
+      owner_id: input.ownerId,
+      visibility: "private",
+      is_template: false,
+      template_key: null,
+      status: "active",
+      spec,
+      version: 1,
+      created_by_agent: input.authorKind === "dexter",
+      ...(input.originTemplateKey ? { origin_template_key: input.originTemplateKey } : {}),
+      ...(input.originSuggestionKey ? { origin_suggestion_key: input.originSuggestionKey } : {}),
+    })) as [ReportRow];
+    await agentDb().insert("bi_report_revisions", {
+      report_id: row.id,
+      version: 1,
+      spec,
+      title: spec.title,
+      change_summary: input.summary ?? "Created",
+      author_id: input.ownerId,
+      author_kind: input.authorKind,
+      task_id: input.taskId ?? null,
+    });
+  } catch (error) {
+    await discardPlannedRules(plan, actor);
+    throw error;
+  }
+  try {
+    await applyRuleBindings({ report: row, plan, actor });
+  } catch (error) {
+    // A binding lost a race (rule set archived meanwhile): don't leave a half-made report.
+    await agentDb().remove("bi_report_revisions", [eq("report_id", row.id)]);
+    await agentDb().remove("bi_reports", [eq("id", row.id)]);
+    await discardPlannedRules(plan, actor);
+    throw error;
+  }
+  return row;
 }
 
 /**
@@ -286,25 +319,49 @@ export async function saveReportVersion(input: {
   summary?: string | null;
   taskId?: string | null;
   expectedVersion?: number;
+  ruleActor?: RuleActor;
+  ruleChoices?: RuleChoices;
 }): Promise<{ report: ReportRow; changes: string[] }> {
-  const spec = assertValid(input.spec);
+  let spec = assertValid(input.spec);
   if (input.expectedVersion !== undefined && input.expectedVersion !== input.report.version) {
     throw new ValidationError(
       "This report changed since you opened it. Reload to see the latest version.",
     );
   }
+  // Templates never point at a live rule set.
+  if (input.report.is_template) spec = templateSafeSpec(spec);
+  const actor = input.ruleActor ?? SYSTEM_RULE_ACTOR;
+  const plan = await planRuleBindings({
+    report: input.report,
+    spec,
+    previousSpec: input.report.spec,
+    actor,
+    choices: input.ruleChoices,
+  });
+  spec = plan.spec;
   const changes = diffSpecs(input.report.spec, spec);
-  if (changes.length === 0) return { report: input.report, changes };
+  if (changes.length === 0) {
+    await discardPlannedRules(plan, actor);
+    // Still record legacy references that had no binding yet.
+    await applyRuleBindings({
+      report: input.report,
+      plan: { ...plan, bind: plan.bind.filter((b) => !plan.created.includes(b.ruleSet)) },
+      actor,
+    });
+    return { report: input.report, changes };
+  }
   const nextVersion = input.report.version + 1;
   const [updated] = await agentDb().update<ReportRow>(
     "bi_reports",
     [eq("id", input.report.id), eq("version", input.report.version)],
     { spec, title: spec.title, description: spec.description, version: nextVersion },
   );
-  if (!updated)
+  if (!updated) {
+    await discardPlannedRules(plan, actor);
     throw new ValidationError(
       "This report was just changed by someone else. Reload and try again.",
     );
+  }
   await agentDb().insert("bi_report_revisions", {
     report_id: input.report.id,
     version: nextVersion,
@@ -315,6 +372,7 @@ export async function saveReportVersion(input: {
     author_kind: input.authorKind,
     task_id: input.taskId ?? null,
   });
+  await applyRuleBindings({ report: updated, plan, actor });
   return { report: updated, changes };
 }
 
@@ -341,22 +399,90 @@ export async function restoreRevision(report: ReportRow, version: number, author
   });
 }
 
-export async function duplicateReport(report: ReportRow, ownerId: string | null, title?: string) {
-  const spec = {
+/** What a duplicate does with the source's rule sets. Copy is the default. */
+export type DuplicateRulesMode = "copy" | "share" | "empty";
+
+/**
+ * Duplicate a report or create one from a template.
+ * Rules: templates always start empty. Reports default to copying their rule sets (the copy
+ * is independent). "share" keeps using the same company rule sets and must be chosen
+ * explicitly; private dashboard rule sets can't be shared.
+ */
+export async function duplicateReport(
+  report: ReportRow,
+  ownerId: string | null,
+  title?: string,
+  options: { rules?: DuplicateRulesMode; ruleActor?: RuleActor } = {},
+) {
+  const actor = options.ruleActor ?? SYSTEM_RULE_ACTOR;
+  const mode: DuplicateRulesMode = report.is_template ? "empty" : (options.rules ?? "copy");
+  let spec: ReportSpec = {
     ...report.spec,
     title: title ?? (report.is_template ? report.spec.title : `${report.spec.title} (copy)`),
   };
-  return createReport({
-    spec,
-    ownerId,
-    authorKind: "user",
-    summary: report.is_template
-      ? `Created from the ${report.spec.title} template`
-      : `Duplicated from "${report.title}"`,
-    originTemplateKey: report.is_template
-      ? report.template_key
-      : (report.origin_template_key ?? null),
-  });
+  const copies: RuleSetRow[] = [];
+  const attachShared: string[] = [];
+  if (mode === "empty") {
+    spec = templateSafeSpec(spec);
+  } else {
+    const sources = (
+      await Promise.all(
+        ruleSetKeysIn(spec).map(async (k) => (k === TEMPLATE_RULE_SET_KEY ? null : getRuleSet(k))),
+      )
+    ).filter((r): r is RuleSetRow => Boolean(r));
+    if (mode === "share") {
+      for (const rs of sources) {
+        if (rs.scope !== "company")
+          throw new ValidationError(
+            `"${rs.name}" belongs to the original dashboard and can't be shared. Duplicate with a copy of the rules instead.`,
+          );
+        attachShared.push(rs.key);
+      }
+    } else {
+      const map = new Map<string, string>();
+      try {
+        for (const rs of sources) {
+          const copy = await copyRuleSet({
+            source: rs,
+            actor,
+            name: `${spec.title} rules`.slice(0, 120),
+          });
+          copies.push(copy);
+          map.set(rs.key, copy.key);
+        }
+      } catch (error) {
+        for (const c of copies)
+          await archiveRuleSetRow(c, actor, "Duplicate failed; never used.").catch(() => undefined);
+        throw error;
+      }
+      spec = rewriteRuleSetKeys(spec, map);
+    }
+  }
+  try {
+    return await createReport({
+      spec,
+      ownerId,
+      authorKind: "user",
+      summary: report.is_template
+        ? `Created from the ${report.spec.title} template`
+        : `Duplicated from "${report.title}"${
+            mode === "copy" && copies.length
+              ? " (rules copied)"
+              : mode === "share"
+                ? " (shared rules)"
+                : ""
+          }`,
+      originTemplateKey: report.is_template
+        ? report.template_key
+        : (report.origin_template_key ?? null),
+      ruleActor: actor,
+      ruleChoices: { attachShared },
+    });
+  } catch (error) {
+    for (const c of copies)
+      await archiveRuleSetRow(c, actor, "Duplicate failed; never used.").catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function updateReportMeta(
@@ -367,9 +493,19 @@ export async function updateReportMeta(
   return updated!;
 }
 
-export async function deleteReport(report: ReportRow) {
+export async function deleteReport(
+  report: ReportRow,
+  options: { archivePrivateRules?: boolean; ruleActor?: RuleActor } = {},
+) {
   if (report.is_template)
     throw new AuthorizationError("Templates can be archived but not deleted.");
+  // Detach rule sets first (history kept). Shared sets are never touched; a private set is
+  // archived only when the person asked, otherwise it shows up as an orphan for review.
+  const rules = await releaseReportRules({
+    report,
+    actor: options.ruleActor ?? SYSTEM_RULE_ACTOR,
+    archivePrivate: Boolean(options.archivePrivateRules),
+  });
   await agentDb().remove("bi_reports", [eq("id", report.id)]);
   // Memory store has no cascades; Supabase cascades revisions/shares/views/messages.
   for (const t of [
@@ -381,6 +517,7 @@ export async function deleteReport(report: ReportRow) {
   ]) {
     await agentDb().remove(t, [eq("report_id", report.id)]);
   }
+  return rules;
 }
 
 export async function addShare(input: Omit<ShareRow, "id" | "created_at">): Promise<void> {

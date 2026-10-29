@@ -40,6 +40,7 @@ import { SOURCE_REGISTRY } from "./sources";
 import { canSeeField, CATEGORY_LABELS, type ReportsAccess } from "./access";
 import { computeCommissions, DEFAULT_COMMISSION_CONFIG, type CommissionJob } from "./commissions";
 import { groupDocumentsByJob, jobFinancials, type DocumentRow } from "./financials";
+import { TEMPLATE_RULE_SET_KEY } from "./rule-scope";
 import { getRuleSet, listAssignments, listRates } from "./rules";
 import {
   aggregate,
@@ -341,6 +342,29 @@ async function loadRawSource(
   return [];
 }
 
+/** JobTread jobs with the inputs commission calculations need (sales reps, gross profit). */
+async function commissionJobs(catalog: FieldCatalog, cache: DataCache): Promise<CommissionJob[]> {
+  const jobRows = await loadJobs(catalog, cache);
+  const docs = await loadDocs(cache);
+  const rep = resolveField(catalog, "sem:sales_rep");
+  const repKey = rep.ok ? rep.key : null;
+  return (cache.jobRaw ?? []).map((r, i) => ({
+    id: r.id,
+    name: r.name,
+    number: r.number,
+    salesReps: repKey ? asList(jobRows[i]?.[repKey]) : [],
+    projectedPrice: num(r.projected_price),
+    projectedCost: num(r.projected_cost),
+    financials: jobFinancials(docs.get(r.id) ?? []),
+  }));
+}
+
+/** Commission inputs for impact previews of rule changes (no access filtering; callers gate). */
+export async function loadCommissionJobs(): Promise<CommissionJob[]> {
+  await ensureJobTreadData();
+  return commissionJobs(await catalogFor(), { syncedAt: null });
+}
+
 /** Commission rows for a rule set: JobTread jobs + documents × Baxter rates/assignments. */
 async function loadCommissions(
   ruleSetKey: string,
@@ -350,31 +374,19 @@ async function loadCommissions(
   cache.commissions ??= new Map();
   const hit = cache.commissions.get(ruleSetKey);
   if (hit) return hit;
-  const ruleSet = await getRuleSet(ruleSetKey);
-  if (!ruleSet)
+  // Templates run against no rule set: every project shows "No rate set".
+  const ruleSet = ruleSetKey === TEMPLATE_RULE_SET_KEY ? null : await getRuleSet(ruleSetKey);
+  if (!ruleSet && ruleSetKey !== TEMPLATE_RULE_SET_KEY)
     throw new RefError(
       `The business rules "${ruleSetKey}" don't exist yet. Ask Dexter to set them up.`,
       false,
     );
-  const jobRows = await loadJobs(catalog, cache);
-  const docs = await loadDocs(cache);
-  const rep = resolveField(catalog, "sem:sales_rep");
-  const repKey = rep.ok ? rep.key : null;
-  const [rates, assignments] = await Promise.all([
-    listRates(ruleSet.id),
-    listAssignments(ruleSet.id),
-  ]);
-  const jobs: CommissionJob[] = (cache.jobRaw ?? []).map((r, i) => ({
-    id: r.id,
-    name: r.name,
-    number: r.number,
-    salesReps: repKey ? asList(jobRows[i]?.[repKey]) : [],
-    projectedPrice: num(r.projected_price),
-    projectedCost: num(r.projected_cost),
-    financials: jobFinancials(docs.get(r.id) ?? []),
-  }));
+  const jobs = await commissionJobs(catalog, cache);
+  const [rates, assignments] = ruleSet
+    ? await Promise.all([listRates(ruleSet.id), listAssignments(ruleSet.id)])
+    : [[], []];
   const rows = computeCommissions({
-    config: { ...DEFAULT_COMMISSION_CONFIG, ...ruleSet.config },
+    config: { ...DEFAULT_COMMISSION_CONFIG, ...(ruleSet?.config ?? {}) },
     jobs,
     rates,
     assignments,
@@ -909,6 +921,20 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
       // Rates and assignments are compensation data: financial access required to see them.
       if (!ctx.access.categories.has("financial"))
         throw new RefError(`Requires "${CATEGORY_LABELS.financial}" access.`, true);
+      if (w.ruleSet === TEMPLATE_RULE_SET_KEY) {
+        return {
+          id: w.id,
+          kind: "rule_editor",
+          status: "ok",
+          message:
+            "Templates have no rates. A dashboard created from this template starts with its own empty rule set.",
+          editor: w.type === "rate_editor" ? "rates" : "assignments",
+          ruleSet: w.ruleSet,
+          ruleSetName: null,
+          template: true,
+          canEdit: false,
+        };
+      }
       const ruleSet = await getRuleSet(w.ruleSet);
       return {
         id: w.id,
@@ -918,7 +944,7 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         editor: w.type === "rate_editor" ? "rates" : "assignments",
         ruleSet: w.ruleSet,
         ruleSetName: ruleSet?.name ?? null,
-        canEdit: ctx.access.canEditRules,
+        canEdit: ctx.access.canEditRules && ruleSet?.status === "active",
       };
     }
     case "kpi": {

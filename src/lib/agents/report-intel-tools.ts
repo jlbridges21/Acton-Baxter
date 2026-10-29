@@ -32,18 +32,37 @@ import {
 import { isBlank } from "@/lib/reports/compute";
 import { ensureJobTreadData, loadSourceRows } from "@/lib/reports/engine";
 import { getFieldCatalog, resolveField } from "@/lib/reports/fields";
+import { createHash } from "node:crypto";
+import { AppError, ValidationError } from "@/lib/errors";
+import {
+  auditRuleSets,
+  copyRuleSet,
+  createEmptyDashboardRules,
+  listConsumers,
+} from "@/lib/reports/rule-bindings";
+import {
+  callerActor,
+  needForRuleSet,
+  publicRate,
+  reportRules,
+  requireRulePermission,
+  RulePermissionError,
+  runRateOperation,
+  runReportRulesOperation,
+  runRuleSetOperation,
+  type RuleCaller,
+} from "@/lib/reports/rule-operations";
 import {
   assignProject,
-  createRuleSet,
   listAssignments,
   listRates,
   listRuleChanges,
   listRuleSets,
+  rateState,
   removeAssignment,
   requireRuleSet,
-  setRate,
+  todayIso,
   updateRuleSetConfig,
-  type RuleActor,
 } from "@/lib/reports/rules";
 import { getOrCreateSession, requirementsSchema, updateSession } from "@/lib/reports/sessions";
 import { SOURCE_REGISTRY } from "@/lib/reports/sources";
@@ -390,23 +409,55 @@ const attachment: AgentTool = {
 // Business rules
 // ---------------------------------------------------------------------------
 
+const RULE_WRITES = new Set([
+  "create",
+  "create_empty",
+  "copy",
+  "attach",
+  "detach",
+  "start_empty",
+  "configure",
+  "set_rate",
+  "assign",
+  "unassign",
+  "end_rate",
+  "void_rate",
+  "correct_rate",
+  "restore_rate",
+  "delete_rate",
+  "archive",
+  "restore_rules",
+  "set_scope",
+]);
+
 const rules: AgentTool = {
   key: "reports_rules",
   label: "Configure business rules",
   description:
-    "Creates and configures commission rule sets, rates, and project assignments stored in Baxter (never in JobTread). Changes are audited.",
+    "Inspects and manages commission rule sets stored in Baxter (never in JobTread): who uses each rule set, rates and their lifecycle (end, correct, void, restore), project assignments, and which rule set a dashboard uses. Every change is permission-checked, previewable, and audited.",
   modelUsage: `reports_rules {"action": ...}
- "list" — rule sets. "get" {"key"} — config, rates, assignments, salespeople options. "history" {"key"}.
- "create" {"name","description"?,"config"?} — new commission rule set; returns its key for {"source":"commissions","ruleSet":key} datasets.
- "configure" {"key","config":{"basis":${GROSS_PROFIT_BASES.map((b) => `"${b}"`).join("|")},"dateSource":${COMMISSION_DATE_SOURCES.map((b) => `"${b}"`).join("|")},"useJobTreadSalesRep":bool,"negativeGrossProfit":"zero"|"include","salespeople":[names]},"confirm"?:bool} — confirm=true only after the user approved the rules.
- "set_rate" {"key","salesperson","ratePct":0-100,"effectiveFrom":"YYYY-MM-DD","jobId"?: project override,"note"?}
- "assign" {"key","jobId" or "jobName","salesperson","splitPct"?:1-100,"paymentDate"?:"YYYY-MM-DD"} · "unassign" {"key","assignmentId"}
+IDENTITY: a rule set is its key ("rs_…") / id. Names are labels — never pick a rule set by its name. Scopes: dashboard (owned by one report), company (deliberately shared), template (reference rules; copy only).
+INSPECT (read-only):
+ "list" — rule sets with scope, status, review flag, consumer count. "get" {"key","reportId"?} — config, ALL rates with id/state/version, assignments, consumers, how it's attached to reportId.
+ "bindings" {"reportId"} — the rule sets a report uses and how each was attached (created empty / copied / attached shared / legacy). "consumers" {"key"} — every report and template using it.
+ "audit" — every rule set with findings. "orphans" — rule sets no report uses. "legacy" — rule sets/bindings from before ownership existed (needs review). "history" {"key"}.
+NEW DASHBOARDS start with their own EMPTY rules: in reports_create use "ruleSet":"new-dashboard-rules" (or "create_empty" first and use the returned key). Never reuse another dashboard's key.
+REPORT CHOICES (need edit access to the report): "start_empty" {"reportId","replaceKey"?} · "copy" {"key": source, "reportId"} (independent copy; without reportId returns an unclaimed copy key for reports_create) · "attach" {"reportId","key","confirmShared":true} (company rule sets only, only after the person explicitly chose SHARED rules) · "detach" {"reportId","key","reason"} (the report gets a new empty rule set; the old one is unchanged).
+RATES: "set_rate" {"key","salesperson","ratePct":0-100,"effectiveFrom":"YYYY-MM-DD","jobId"?,"note"?}
+ "end_rate" {"key","rateId","endDate","reason"} — last day it applies (history kept). Use when someone says a rate should stop.
+ "void_rate" {"key","rateId","reason"} — entered in error; removed from all calculations, row kept.
+ "correct_rate" {"key","rateId","changes":{"ratePct"?,"effectiveFrom"?,"effectiveTo"?,"jobId"?},"reason"} — new version; old one kept as superseded.
+ "restore_rate" {"key","rateId","reason"} — undo a void/correction (fails if it would overlap).
+ "delete_rate" {"key","rateId","reason","confirm":"DELETE"} — administrators only, and only for a rate that never applied; otherwise void it.
+RULE SETS: "configure" {"key","config":{"basis":${GROSS_PROFIT_BASES.map((b) => `"${b}"`).join("|")},"dateSource":${COMMISSION_DATE_SOURCES.map((b) => `"${b}"`).join("|")},"useJobTreadSalesRep":bool,"negativeGrossProfit":"zero"|"include","salespeople":[names]},"confirm"?:bool} · "assign" {"key","jobId" or "jobName","salesperson","splitPct"?,"paymentDate"?} · "unassign" {"key","assignmentId"} · "archive" {"key","reason"} (only when no report uses it; nothing is deleted) · "restore_rules" {"key","reason"} · "set_scope" {"key","scope","reason"} (administrators; resolves a legacy review).
+SAFETY: every change accepts "dryRun": true — ALWAYS dry-run end/void/correct/restore/delete/detach/attach/archive first, show the person the impact (rows and totals that change, other dashboards affected), and only apply after they confirm. Reasons are required. Pass the rate's "version" as "expectedVersion". Retries are safe (idempotent per task).
+Example requests: "Why does my new dashboard show Connor's and Kevin's rates?" → bindings, then consumers: explain it shares a legacy rule set and offer start_empty/copy. "Stop Kevin's Kornilov rate" → get, dry-run end_rate (or void_rate if it never should have applied), confirm, apply. "Use the company commission rates here" → confirm they want SHARED rules, dry-run attach, apply. "Clean up old commission rules" → orphans/legacy/audit, then propose archive per rule set.
 Bases: ${Object.entries(BASIS_LABELS)
     .map(([k, v]) => `${k} = ${v}`)
     .join("; ")}. Date sources: ${Object.entries(DATE_SOURCE_LABELS)
     .map(([k, v]) => `${k} = ${v}`)
     .join("; ")}.
-Only enter rates, splits, and dates the user explicitly stated. Writes need the requester's "Edit business rules" access.`,
+Only enter rates, splits, and dates the user explicitly stated. Writes need the requester's "Edit business rules" access; company/template rule sets and hard deletes need an administrator. If refused, relay the exact permission and handoff the tool returns.`,
   risk: "draft",
   alwaysRequiresApproval: false,
   available: true,
@@ -415,20 +466,39 @@ Only enter rates, splits, and dates the user explicitly stated. Writes need the 
       "list",
       "get",
       "history",
-      "create",
-      "configure",
-      "set_rate",
-      "assign",
-      "unassign",
-    ]),
+      "bindings",
+      "consumers",
+      "audit",
+      "orphans",
+      "legacy",
+      ...RULE_WRITES,
+    ] as [string, ...string[]]),
     key: z.string().max(60).optional(),
+    reportId: z.string().uuid().optional(),
+    replaceKey: z.string().max(60).optional(),
     name: z.string().trim().max(120).optional(),
     description: z.string().max(600).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
-    confirm: z.boolean().optional(),
+    confirm: z.union([z.boolean(), z.string().max(10)]).optional(),
+    confirmShared: z.boolean().optional(),
     salesperson: z.string().trim().max(80).optional(),
     ratePct: z.number().min(0).max(100).optional(),
     effectiveFrom: z.string().max(10).optional(),
+    endDate: z.string().max(10).optional(),
+    rateId: z.string().uuid().optional(),
+    changes: z
+      .object({
+        ratePct: z.number().min(0).max(100).optional(),
+        effectiveFrom: z.string().max(10).optional(),
+        effectiveTo: z.string().max(10).nullable().optional(),
+        jobId: z.string().max(40).nullable().optional(),
+      })
+      .optional(),
+    expectedVersion: z.number().int().positive().optional(),
+    scope: z.enum(["dashboard", "company", "template"]).optional(),
+    reason: z.string().max(400).optional(),
+    dryRun: z.boolean().optional(),
+    idempotencyKey: z.string().min(8).max(120).optional(),
     jobId: z.string().max(40).optional(),
     jobName: z.string().max(160).optional(),
     splitPct: z.number().min(1).max(100).optional(),
@@ -439,178 +509,428 @@ Only enter rates, splits, and dates the user explicitly stated. Writes need the 
   async execute(ctx, raw) {
     const input = this.args.parse(raw) as Record<string, unknown> & { action: string };
     const access = await accessFor(ctx);
-    if (!access.categories.has("financial")) {
-      return {
-        data: {
-          error: `Commission rules include compensation data and require "${CATEGORY_LABELS.financial}" access.`,
-        },
-        logSummary: "Rules refused: no financial access.",
-      };
-    }
-    const writes = ["create", "configure", "set_rate", "assign", "unassign"];
-    if (writes.includes(input.action) && !access.canEditRules) {
-      return {
-        data: {
-          saved: false,
-          error:
-            'The requester can view but not change business rules. An administrator can grant "Edit business rules (Reports)" on Dexter\'s Access tab.',
-        },
-        logSummary: "Rules write refused: no permission.",
-      };
-    }
-    const actor: RuleActor = {
-      userId: ctx.requester.userId,
-      label: `${ctx.requester.label} (via Dexter)`,
-    };
-    const key = String(input.key ?? "");
-    switch (input.action) {
-      case "list": {
-        const sets = await listRuleSets();
-        return {
-          data: { ruleSets: sets.map((r) => ({ key: r.key, name: r.name, config: r.config })) },
-          logSummary: `Listed ${sets.length} rule set(s).`,
-        };
-      }
-      case "create": {
-        const row = await createRuleSet({
-          name: String(input.name ?? "Sales commissions"),
-          description: input.description as string | undefined,
-          config: input.config as never,
-          actor,
-        });
-        return {
-          data: { saved: true, key: row.key, config: row.config },
-          logSummary: `Created rule set ${row.key}.`,
-        };
-      }
-      case "configure": {
-        const rs = await requireRuleSet(key);
-        const row = await updateRuleSetConfig(rs, (input.config ?? {}) as never, actor, {
-          confirm: Boolean(input.confirm),
-          note: input.note as string | undefined,
-        });
-        return {
-          data: { saved: true, key: row.key, config: row.config },
-          logSummary: `Configured ${row.key}.`,
-        };
-      }
-      case "set_rate": {
-        const rs = await requireRuleSet(key);
-        const row = await setRate({
-          ruleSet: rs,
-          salesperson: String(input.salesperson ?? ""),
-          jobId: (input.jobId as string) ?? null,
-          ratePct: Number(input.ratePct),
-          effectiveFrom: String(input.effectiveFrom ?? new Date().toISOString().slice(0, 10)),
-          note: input.note as string | undefined,
-          actor,
-        });
-        return { data: { saved: true, rate: row }, logSummary: `Set a rate in ${rs.key}.` };
-      }
-      case "assign": {
-        const rs = await requireRuleSet(key);
-        let jobId = input.jobId as string | undefined;
-        if (!jobId && input.jobName) {
-          const { rows } = await loadSourceRows("jobs");
-          const q = String(input.jobName).toLowerCase();
-          const matches = rows.filter(
-            (r) =>
-              String(r["job.name"] ?? "")
-                .toLowerCase()
-                .includes(q) || String(r["job.number"] ?? "") === q,
-          );
-          if (matches.length !== 1) {
-            return {
-              data: {
-                saved: false,
-                error: matches.length
-                  ? "Several projects match; ask which one."
-                  : "No project matches that name.",
-                candidates: matches
-                  .slice(0, 8)
-                  .map((r) => ({ id: r.id, name: r["job.name"], number: r["job.number"] })),
-              },
-              logSummary: "Assignment needs a specific project.",
-            };
-          }
-          jobId = matches[0]!.id;
-        }
-        const row = await assignProject({
-          ruleSet: rs,
-          jobId: String(jobId ?? ""),
-          salesperson: String(input.salesperson ?? ""),
-          splitPct: input.splitPct as number | undefined,
-          paymentDate: input.paymentDate as string | null | undefined,
-          note: input.note as string | undefined,
-          actor,
-        });
-        return {
-          data: { saved: true, assignment: row },
-          logSummary: `Assigned a project in ${rs.key}.`,
-        };
-      }
-      case "unassign": {
-        const rs = await requireRuleSet(key);
-        await removeAssignment(rs, String(input.assignmentId ?? ""), actor);
-        return { data: { saved: true }, logSummary: `Removed an assignment in ${rs.key}.` };
-      }
-      case "history": {
-        const rs = await requireRuleSet(key);
-        const changes = await listRuleChanges(rs.id, 40);
+    const caller: RuleCaller = { access, requester: ctx.requester, via: "dexter" };
+    // Retried tool calls in the same task replay instead of applying twice.
+    const idempotencyKey =
+      (input.idempotencyKey as string | undefined) ??
+      `dexter:${ctx.task.id}:${createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 32)}`;
+    try {
+      if (RULE_WRITES.has(input.action) && !input.dryRun)
+        requireRulePermission(caller, "edit_rules", "Changing business rules");
+      else requireRulePermission(caller, "view", "Reading business rules");
+      return await runRulesAction(ctx, caller, input, idempotencyKey);
+    } catch (error) {
+      if (error instanceof RulePermissionError)
         return {
           data: {
-            changes: changes.map((c) => ({
-              when: c.created_at,
-              who: c.changed_by_label,
-              entity: c.entity,
-              action: c.action,
-              after: c.after,
-              note: c.note,
-            })),
+            saved: false,
+            error: error.message,
+            requiredPermission: error.requiredPermission,
+            handoff: error.handoff,
           },
-          logSummary: `Read ${rs.key} history.`,
+          logSummary: `Rules ${input.action} refused: needs ${error.requiredPermission}.`,
         };
-      }
-      default: {
-        const rs = await requireRuleSet(key);
-        const catalog = await getFieldCatalog();
-        const rep = resolveField(catalog, "sem:sales_rep");
-        const repOptions = rep.ok ? (rep.def.options ?? []) : [];
-        const [rates, assignments] = await Promise.all([listRates(rs.id), listAssignments(rs.id)]);
+      if (error instanceof AppError && error.statusCode < 500)
         return {
-          data: {
-            key: rs.key,
-            name: rs.name,
-            config: rs.config,
-            rates: rates.map((r) => ({
-              salesperson: r.salesperson,
-              jobId: r.job_id,
-              ratePct: Number(r.rate_pct),
-              from: r.effective_from,
-              to: r.effective_to,
-            })),
-            assignments: assignments.map((a) => ({
-              id: a.id,
-              jobId: a.job_id,
-              salesperson: a.salesperson,
-              splitPct: Number(a.split_pct),
-              paymentDate: a.payment_date,
-            })),
-            salespeopleOptions: [
-              ...new Set([
-                ...rs.config.salespeople,
-                ...repOptions,
-                ...rates.map((r) => r.salesperson),
-              ]),
-            ],
-            jobtreadSalesRepField: rep.ok ? rep.def.label : "Not mapped",
-          },
-          logSummary: `Read ${rs.key}.`,
+          data: { saved: false, error: error.message },
+          logSummary: `Rules ${input.action} not done: ${error.message.slice(0, 80)}`,
         };
-      }
+      throw error;
     }
   },
 };
+
+async function runRulesAction(
+  ctx: ToolContext,
+  caller: RuleCaller,
+  input: Record<string, unknown> & { action: string },
+  idempotencyKey: string,
+) {
+  const key = String(input.key ?? "");
+  const reportId = input.reportId as string | undefined;
+  const dryRun = Boolean(input.dryRun);
+  const reason = String(input.reason ?? "");
+  const actor = callerActor(caller);
+  const needReport = () => {
+    if (!reportId) throw new ValidationError("Say which report (reportId).");
+    return reportId;
+  };
+  switch (input.action) {
+    case "list": {
+      const sets = (await listRuleSets()).filter((r) => r.status !== "copying");
+      const out = [];
+      for (const r of sets)
+        out.push({
+          key: r.key,
+          name: r.name,
+          scope: r.scope,
+          status: r.status,
+          needsReview: r.needs_review,
+          reports: (await listConsumers(r)).filter((c) => !c.isTemplate).length,
+        });
+      return { data: { ruleSets: out }, logSummary: `Listed ${sets.length} rule set(s).` };
+    }
+    case "bindings": {
+      const rules = await reportRules(caller, needReport());
+      return { data: rules, logSummary: `Read rule bindings of report ${rules.report.title}.` };
+    }
+    case "consumers": {
+      const rs = await requireRuleSet(key);
+      const consumers = await listConsumers(rs);
+      return {
+        data: { key: rs.key, name: rs.name, scope: rs.scope, consumers },
+        logSummary: `Listed ${consumers.length} consumer(s) of ${rs.key}.`,
+      };
+    }
+    case "audit":
+    case "orphans":
+    case "legacy": {
+      const entries = await auditRuleSets();
+      const pick =
+        input.action === "orphans"
+          ? entries.filter((e) => e.orphaned)
+          : input.action === "legacy"
+            ? entries.filter((e) => e.legacy)
+            : entries;
+      return {
+        data: {
+          readOnly: true,
+          ruleSets: pick.map((e) => ({
+            key: e.key,
+            name: e.name,
+            scope: e.scope,
+            status: e.status,
+            needsReview: e.needsReview,
+            orphaned: e.orphaned,
+            reports: e.consumers
+              .filter((c) => !c.isTemplate)
+              .map((c) => ({ reportId: c.reportId, title: c.title, mode: c.mode ?? "unrecorded" })),
+            templateReferences: e.templateReferences,
+            activeRates: e.activeRates,
+            inactiveRates: e.inactiveRates,
+            findings: e.findings,
+          })),
+        },
+        logSummary: `Rule-set ${input.action}: ${pick.length} result(s).`,
+      };
+    }
+    case "create":
+    case "create_empty": {
+      if (dryRun)
+        return {
+          data: {
+            dryRun: true,
+            preview:
+              "Creates a new EMPTY dashboard rule set (no rates). It belongs to the first report that uses it.",
+          },
+          logSummary: "Previewed creating empty rules.",
+        };
+      const row = await createEmptyDashboardRules({
+        actor,
+        name: String(input.name ?? "Commission rules"),
+      });
+      const config = input.config
+        ? (
+            await updateRuleSetConfig(row, input.config as never, actor, {
+              confirm: input.confirm === true,
+            })
+          ).config
+        : row.config;
+      return {
+        data: {
+          saved: true,
+          key: row.key,
+          scope: row.scope,
+          rates: 0,
+          config,
+          next: "Use this key in the dashboard's commission dataset and editors; it becomes that dashboard's private rule set.",
+        },
+        logSummary: `Created empty rule set ${row.key}.`,
+      };
+    }
+    case "copy": {
+      if (reportId) {
+        const res = await runReportRulesOperation({
+          caller,
+          reportId,
+          op: { type: "copy", fromKey: key, replaceKey: input.replaceKey as string | undefined },
+          dryRun,
+          idempotencyKey,
+          expectedVersion: input.expectedVersion as number | undefined,
+        });
+        return {
+          data: { saved: !res.dryRun, ...res },
+          logSummary: `${dryRun ? "Previewed" : "Did"} copy into report.`,
+        };
+      }
+      const source = await requireRuleSet(key);
+      if (dryRun)
+        return {
+          data: {
+            dryRun: true,
+            preview: {
+              from: source.name,
+              activeRates: (await listRates(source.id)).length,
+              result: "Independent dashboard rule set; the original is unchanged.",
+            },
+          },
+          logSummary: "Previewed a rule-set copy.",
+        };
+      const copy = await copyRuleSet({ source, actor, name: input.name as string | undefined });
+      return {
+        data: { saved: true, key: copy.key, copiedFrom: source.key, scope: copy.scope },
+        logSummary: `Copied ${source.key} to ${copy.key}.`,
+      };
+    }
+    case "attach":
+    case "detach":
+    case "start_empty": {
+      const op =
+        input.action === "attach"
+          ? {
+              type: "attach" as const,
+              key,
+              confirmShared: Boolean(input.confirmShared),
+              replaceKey: input.replaceKey as string | undefined,
+            }
+          : input.action === "detach"
+            ? { type: "detach" as const, key, reason }
+            : { type: "start_empty" as const, replaceKey: input.replaceKey as string | undefined };
+      const res = await runReportRulesOperation({
+        caller,
+        reportId: needReport(),
+        op,
+        dryRun,
+        idempotencyKey,
+        expectedVersion: input.expectedVersion as number | undefined,
+      });
+      return {
+        data: { saved: !res.dryRun, ...res },
+        logSummary: `${res.dryRun ? "Previewed" : "Applied"} ${input.action} on report.`,
+      };
+    }
+    case "set_rate":
+    case "end_rate":
+    case "void_rate":
+    case "correct_rate":
+    case "restore_rate":
+    case "delete_rate": {
+      const op =
+        input.action === "set_rate"
+          ? {
+              type: "set_rate" as const,
+              salesperson: String(input.salesperson ?? ""),
+              ratePct: Number(input.ratePct),
+              effectiveFrom: String(input.effectiveFrom ?? todayIso()),
+              jobId: (input.jobId as string) ?? null,
+              note: input.note as string | undefined,
+            }
+          : input.action === "end_rate"
+            ? {
+                type: "end_rate" as const,
+                rateId: String(input.rateId ?? ""),
+                endDate: String(input.endDate ?? ""),
+                reason,
+                expectedVersion: input.expectedVersion as number | undefined,
+              }
+            : input.action === "correct_rate"
+              ? {
+                  type: "correct_rate" as const,
+                  rateId: String(input.rateId ?? ""),
+                  changes: (input.changes ?? {}) as never,
+                  reason,
+                  expectedVersion: input.expectedVersion as number | undefined,
+                }
+              : input.action === "delete_rate"
+                ? {
+                    type: "delete_rate" as const,
+                    rateId: String(input.rateId ?? ""),
+                    reason,
+                    confirm: typeof input.confirm === "string" ? input.confirm : undefined,
+                    expectedVersion: input.expectedVersion as number | undefined,
+                  }
+                : {
+                    type: input.action as "void_rate" | "restore_rate",
+                    rateId: String(input.rateId ?? ""),
+                    reason,
+                    expectedVersion: input.expectedVersion as number | undefined,
+                  };
+      const res = await runRateOperation({ caller, ruleSetKey: key, op, dryRun, idempotencyKey });
+      return {
+        data: { saved: !res.dryRun, ...res },
+        logSummary: `${res.dryRun ? "Previewed" : "Applied"} ${input.action} in ${key}: ${res.preview.impactSummary}`,
+      };
+    }
+    case "archive":
+    case "restore_rules":
+    case "set_scope": {
+      const op =
+        input.action === "set_scope"
+          ? {
+              type: "set_scope" as const,
+              scope: (input.scope ?? "company") as "company",
+              reason,
+              expectedVersion: input.expectedVersion as number | undefined,
+            }
+          : {
+              type: input.action === "archive" ? ("archive" as const) : ("restore" as const),
+              reason,
+              expectedVersion: input.expectedVersion as number | undefined,
+            };
+      const res = await runRuleSetOperation({
+        caller,
+        ruleSetKey: key,
+        op,
+        dryRun,
+        idempotencyKey,
+      });
+      return {
+        data: { saved: !res.dryRun, ...res },
+        logSummary: `${res.dryRun ? "Previewed" : "Applied"} ${input.action} on ${key}.`,
+      };
+    }
+    case "configure": {
+      const rs = await requireRuleSet(key);
+      requireRulePermission(caller, needForRuleSet(rs), "Changing these rules");
+      if (dryRun)
+        return {
+          data: { dryRun: true, before: rs.config, patch: input.config },
+          logSummary: "Previewed config.",
+        };
+      const row = await updateRuleSetConfig(rs, (input.config ?? {}) as never, actor, {
+        confirm: input.confirm === true,
+        note: input.note as string | undefined,
+      });
+      return {
+        data: { saved: true, key: row.key, config: row.config },
+        logSummary: `Configured ${row.key}.`,
+      };
+    }
+    case "assign": {
+      const rs = await requireRuleSet(key);
+      requireRulePermission(caller, needForRuleSet(rs), "Assigning projects");
+      let jobId = input.jobId as string | undefined;
+      if (!jobId && input.jobName) {
+        const { rows } = await loadSourceRows("jobs");
+        const q = String(input.jobName).toLowerCase();
+        const matches = rows.filter(
+          (r) =>
+            String(r["job.name"] ?? "")
+              .toLowerCase()
+              .includes(q) || String(r["job.number"] ?? "") === q,
+        );
+        if (matches.length !== 1) {
+          return {
+            data: {
+              saved: false,
+              error: matches.length
+                ? "Several projects match; ask which one."
+                : "No project matches that name.",
+              candidates: matches
+                .slice(0, 8)
+                .map((r) => ({ id: r.id, name: r["job.name"], number: r["job.number"] })),
+            },
+            logSummary: "Assignment needs a specific project.",
+          };
+        }
+        jobId = matches[0]!.id;
+      }
+      if (dryRun)
+        return {
+          data: { dryRun: true, jobId, salesperson: input.salesperson },
+          logSummary: "Previewed assignment.",
+        };
+      const row = await assignProject({
+        ruleSet: rs,
+        jobId: String(jobId ?? ""),
+        salesperson: String(input.salesperson ?? ""),
+        splitPct: input.splitPct as number | undefined,
+        paymentDate: input.paymentDate as string | null | undefined,
+        note: input.note as string | undefined,
+        actor,
+      });
+      return {
+        data: { saved: true, assignment: row },
+        logSummary: `Assigned a project in ${rs.key}.`,
+      };
+    }
+    case "unassign": {
+      const rs = await requireRuleSet(key);
+      requireRulePermission(caller, needForRuleSet(rs), "Removing assignments");
+      if (dryRun) return { data: { dryRun: true }, logSummary: "Previewed unassign." };
+      await removeAssignment(rs, String(input.assignmentId ?? ""), actor);
+      return { data: { saved: true }, logSummary: `Removed an assignment in ${rs.key}.` };
+    }
+    case "history": {
+      const rs = await requireRuleSet(key);
+      const changes = await listRuleChanges(rs.id, 40);
+      return {
+        data: {
+          changes: changes.map((c) => ({
+            when: c.created_at,
+            who: c.changed_by_label,
+            entity: c.entity,
+            action: c.action,
+            after: c.after,
+            note: c.note,
+            reason: c.reason ?? null,
+            commissionsAffected: c.commissions_affected ?? null,
+          })),
+        },
+        logSummary: `Read ${rs.key} history.`,
+      };
+    }
+    default: {
+      const rs = await requireRuleSet(key);
+      const catalog = await getFieldCatalog();
+      const rep = resolveField(catalog, "sem:sales_rep");
+      const repOptions = rep.ok ? (rep.def.options ?? []) : [];
+      const [rates, assignments, consumers] = await Promise.all([
+        listRates(rs.id, { includeInactive: true }),
+        listAssignments(rs.id),
+        listConsumers(rs),
+      ]);
+      const today = todayIso();
+      void ctx;
+      return {
+        data: {
+          key: rs.key,
+          id: rs.id,
+          name: rs.name,
+          scope: rs.scope,
+          status: rs.status,
+          version: rs.version,
+          needsReview: rs.needs_review,
+          ownerReportId: rs.owner_report_id,
+          consumers: consumers.map((c) => ({
+            reportId: c.reportId,
+            title: c.title,
+            mode: c.mode ?? "unrecorded",
+            template: c.isTemplate,
+          })),
+          config: rs.config,
+          rates: rates.map((r) => ({ ...publicRate(r), state: rateState(r, today) })),
+          assignments: assignments.map((a) => ({
+            id: a.id,
+            jobId: a.job_id,
+            salesperson: a.salesperson,
+            splitPct: Number(a.split_pct),
+            paymentDate: a.payment_date,
+          })),
+          salespeopleOptions: [
+            ...new Set([
+              ...rs.config.salespeople,
+              ...repOptions,
+              ...rates.map((r) => r.salesperson),
+            ]),
+          ],
+          jobtreadSalesRepField: rep.ok ? rep.def.label : "Not mapped",
+        },
+        logSummary: `Read ${rs.key}.`,
+      };
+    }
+  }
+}
 
 export const REPORT_INTEL_TOOLS: AgentTool[] = [
   dataCatalog,

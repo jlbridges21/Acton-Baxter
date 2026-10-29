@@ -39,6 +39,8 @@ import {
 } from "@/lib/reports/spec";
 import type { AgentTool, ToolContext, ToolResult } from "./tools";
 import { ACTIVE_PHASES } from "@/lib/reports/templates";
+import { ruleActor } from "@/lib/reports/rules";
+import { ValidationError } from "@/lib/errors";
 import { attachAttachmentsToReport } from "@/lib/reports/attachments";
 import { attachSessionToReport } from "@/lib/reports/sessions";
 import { ensureJobTreadData, loadSourceRows } from "@/lib/reports/engine";
@@ -50,7 +52,7 @@ const PALETTE_LIST = PALETTE_NAMES.map((x) => `"${x}"`).join("|");
 const SPEC_GUIDE = `REPORT SPEC (JSON). Sources (from the source registry; reports_sources has fields, relationships, and freshness):
 ${describeSourcesForModel()}
 Fields: "job.*" built-ins (incl. job.orderGrossProfit, job.orderPrice, job.orderCost from customer orders), "cf:<id>" custom fields, "sem:<key>" business names, and each source's own prefix (see above). Use keys exactly as reports_list_fields returns them. A report can have several datasets from different sources; combine related sources by filtering/grouping on their link fields (e.g. item.model), never by duplicating rows.
-Commissions: dataset {"id","source":"commissions","ruleSet":<key from reports_rules>} — one row per project × salesperson with com.salesperson, com.jobName, com.grossProfit, com.ratePct, com.splitPct, com.commission, com.date, com.status. Editors: {"id","type":"rate_editor","ruleSet"} and {"id","type":"assignment_editor","ruleSet"} let authorized people set rates and assign projects in the report. A per-salesperson view is a "select" control on com.salesperson (use "default":[name] for a salesperson-specific copy).
+Commissions: dataset {"id","source":"commissions","ruleSet":<key from reports_rules>} — use "ruleSet":"new-dashboard-rules" to give a new dashboard its own EMPTY rule set (the default for new commission dashboards; never reuse another dashboard's key). A shared company rule set is only used when the person explicitly chose sharing: pass its key in reports_create "attachSharedRules", or use reports_rules "attach" on an existing report — one row per project × salesperson with com.salesperson, com.jobName, com.grossProfit, com.ratePct, com.splitPct, com.commission, com.date, com.status. Editors: {"id","type":"rate_editor","ruleSet"} and {"id","type":"assignment_editor","ruleSet"} let authorized people set rates and assign projects in the report. A per-salesperson view is a "select" control on com.salesperson (use "default":[name] for a salesperson-specific copy).
 { "title": str, "description": str,
   "datasets": [{ "id": "active_jobs", "source": ${SOURCE_LIST}, "label": str, "filters": [Condition] }],
   "calculations": [Calculation] (report-specific calculated fields, referenced as "calc:<key>" anywhere a field goes),
@@ -514,7 +516,7 @@ const createReportTool: AgentTool = {
   label: "Save a new report",
   description:
     "Validates and saves a new report definition owned by the requester (private until shared).",
-  modelUsage: `reports_create {"spec": ReportSpec, "summary"?: string, "group"?: group name or id, "createGroupIfMissing"?: boolean} — validates every field, dry-runs the report, and saves it. Fails with specific problems you must fix (unknown fields, missing controls). Widgets that would be empty are reported back.
+  modelUsage: `reports_create {"spec": ReportSpec, "summary"?: string, "group"?: group name or id, "createGroupIfMissing"?: boolean, "attachSharedRules"?: [company rule-set keys the person explicitly chose to share]} — validates every field, dry-runs the report, and saves it. Fails with specific problems you must fix (unknown fields, missing controls). Widgets that would be empty are reported back.
 Groups: if the person named a group, pass it (createGroupIfMissing only when they asked for a new group by name). If they didn't, you may suggest one obvious existing group (commissions → Sales, design handoff → Design, product comparison → Product Library) and ask before filing; if several fit, ask which. Never make grouping mandatory — leaving it Ungrouped is fine. Editing a report later keeps its group.\n${SPEC_GUIDE}`,
   risk: "draft",
   alwaysRequiresApproval: false,
@@ -524,6 +526,7 @@ Groups: if the person named a group, pass it (createGroupIfMissing only when the
     summary: z.string().max(300).optional(),
     group: z.string().trim().min(1).max(80).optional(),
     createGroupIfMissing: z.boolean().optional(),
+    attachSharedRules: z.array(z.string().max(60)).max(4).optional(),
   }),
   async execute(ctx, raw) {
     const input = this.args.parse(raw) as {
@@ -531,6 +534,7 @@ Groups: if the person named a group, pass it (createGroupIfMissing only when the
       summary?: string;
       group?: string;
       createGroupIfMissing?: boolean;
+      attachSharedRules?: string[];
     };
     const access = await accessFor(ctx);
     const parsed = parseReportSpec(input.spec);
@@ -546,13 +550,24 @@ Groups: if the person named a group, pass it (createGroupIfMissing only when the
         logSummary: "Report definition referenced unavailable fields.",
       };
     }
-    const report = await createReport({
-      spec: parsed.spec,
-      ownerId: ctx.requester.userId,
-      authorKind: "dexter",
-      taskId: ctx.task.id,
-      summary: input.summary ?? "Created by Dexter",
-    });
+    let report: Awaited<ReturnType<typeof createReport>>;
+    try {
+      report = await createReport({
+        spec: parsed.spec,
+        ownerId: ctx.requester.userId,
+        authorKind: "dexter",
+        taskId: ctx.task.id,
+        summary: input.summary ?? "Created by Dexter",
+        ruleActor: ruleActor(ctx.requester.label, ctx.requester.userId, "dexter"),
+        ruleChoices: { attachShared: input.attachSharedRules },
+      });
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      return {
+        data: { saved: false, problem: error.message },
+        logSummary: "Report not saved: rule-set choice needed.",
+      };
+    }
     if (ctx.requester.userId && !ctx.task.allowed_context?.reportId) {
       // The draft conversation, its plan, and its attachments now belong to the new report.
       await attachChatToReport(ctx.requester.userId, report.id);
@@ -657,15 +672,26 @@ Use the same spec vocabulary as reports_create.`,
         },
         logSummary: `Dry run: ${applied.summary.length} change(s) validated.`,
       };
-    const { report: saved, changes } = await saveReportVersion({
-      report,
-      spec: applied.spec,
-      authorId: ctx.requester.userId,
-      authorKind: "dexter",
-      summary: input.summary,
-      taskId: ctx.task.id,
-      expectedVersion: input.expectedVersion,
-    });
+    let result: Awaited<ReturnType<typeof saveReportVersion>>;
+    try {
+      result = await saveReportVersion({
+        report,
+        spec: applied.spec,
+        authorId: ctx.requester.userId,
+        authorKind: "dexter",
+        summary: input.summary,
+        taskId: ctx.task.id,
+        expectedVersion: input.expectedVersion,
+        ruleActor: ruleActor(ctx.requester.label, ctx.requester.userId, "dexter"),
+      });
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      return {
+        data: { saved: false, problem: error.message },
+        logSummary: "Edit not saved.",
+      };
+    }
+    const { report: saved, changes } = result;
     return artifactResult(saved, `Updated report "${saved.title}" to v${saved.version}.`, {
       changes: changes.length ? changes : ["No changes"],
       emptyWidgets: check.empty,

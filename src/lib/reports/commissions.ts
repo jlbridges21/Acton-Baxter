@@ -52,6 +52,8 @@ export const DEFAULT_COMMISSION_CONFIG: CommissionConfig = {
 };
 
 export type RateRow = {
+  /** Stored rate id (absent for ad-hoc rows): recorded on each commission as provenance. */
+  id?: string;
   salesperson: string;
   job_id: string | null;
   rate_pct: number | string;
@@ -99,6 +101,8 @@ export type CommissionRow = {
   ratePct: number | null;
   rateSource: "project override" | "salesperson rate" | null;
   rateEffectiveFrom: string | null;
+  /** The stored rate that produced ratePct (provenance). */
+  rateId: string | null;
   commission: number | null;
   commissionDate: string | null;
   status: CommissionStatus;
@@ -143,6 +147,7 @@ export function rateFor(rates: RateRow[], salesperson: string, jobId: string, da
       rate: num(override.rate_pct),
       source: "project override" as const,
       from: override.effective_from,
+      rateId: override.id ?? null,
     };
   const general = pick(live.filter((r) => !r.job_id));
   if (general)
@@ -150,6 +155,7 @@ export function rateFor(rates: RateRow[], salesperson: string, jobId: string, da
       rate: num(general.rate_pct),
       source: "salesperson rate" as const,
       from: general.effective_from,
+      rateId: general.id ?? null,
     };
   return null;
 }
@@ -245,6 +251,7 @@ export function computeCommissions(input: {
         ratePct: rate?.rate ?? null,
         rateSource: rate?.source ?? null,
         rateEffectiveFrom: rate?.from ?? null,
+        rateId: rate?.rateId ?? null,
         commission,
         commissionDate: date,
         status,

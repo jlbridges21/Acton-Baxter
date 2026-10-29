@@ -267,7 +267,7 @@ export function ReportsHub({ dexterAvatarUrl }: { dexterAvatarUrl: string | null
         onSelect: () => {
           if (
             !window.confirm(
-              `Delete "${r.title}"? This can't be undone. Archive it instead to keep its history.`,
+              `Delete "${r.title}"? This can't be undone. Archive it instead to keep its history.\n\nAny commission rules it uses are detached, not deleted: shared rules stay as they are, and its private rules are kept (open the report to archive them while deleting).`,
             )
           )
             return;

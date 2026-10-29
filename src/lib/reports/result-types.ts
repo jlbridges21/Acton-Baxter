@@ -156,6 +156,8 @@ export type RuleEditorResult = Base & {
   editor: "rates" | "assignments";
   ruleSet: string;
   ruleSetName: string | null;
+  /** A template's placeholder: no live rule set behind it. */
+  template?: boolean;
   canEdit: boolean;
 };
 

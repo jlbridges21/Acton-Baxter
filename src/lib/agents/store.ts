@@ -66,6 +66,8 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   jt_documents: [["id"]],
   jt_entity_catalog: [["entity"]],
   bi_rule_sets: [["key"]],
+  // Rule-set lifecycle (081_rule_set_lifecycle.sql)
+  bi_rule_operations: [["idempotency_key"]],
   ops_entities: [["key"]],
   ops_decisions: [["key"]],
   ops_workflow_templates: [["key"]],

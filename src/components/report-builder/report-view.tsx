@@ -61,6 +61,7 @@ import type { ControlState, ExecutionResult, FieldMeta } from "@/lib/reports/res
 import { CHART_TYPES, type ReportSpec, type WidgetSpec } from "@/lib/reports/spec";
 import { DexterChat } from "./dexter-chat";
 import { FilterBar } from "./filter-bar";
+import { ReportRulesDeleteNotice } from "./rule-editors";
 import { SavedViewsMenu } from "./saved-views-menu";
 import { ReportStyleDialog } from "./style-editor";
 import { DrillDrawer, HistoryDialog, RowDrawer, ShareDialog, type DrillData } from "./panels";
@@ -171,6 +172,7 @@ export function ReportView({
   const [chatOpen, setChatOpen] = useState(false);
   const [focus, setFocus] = useState<{ widgetId: string; title: string } | null>(null);
   // "Share…" in the Reports library links here with ?share=1.
+  const [archiveRules, setArchiveRules] = useState(false);
   const [dialog, setDialog] = useState<"share" | "history" | "add" | "delete" | "style" | null>(
     () => (params.get("share") === "1" ? "share" : null),
   );
@@ -423,7 +425,9 @@ export function ReportView({
   };
   const remove = async () => {
     try {
-      await aiFetch(`/api/reports/${reportId}`, { method: "DELETE" });
+      await aiFetch(`/api/reports/${reportId}${archiveRules ? "?archivePrivateRules=1" : ""}`, {
+        method: "DELETE",
+      });
       router.push("/reports");
     } catch (e) {
       setNotice({ tone: "error", text: errorMessage(e) });
@@ -829,7 +833,19 @@ export function ReportView({
         onClose={() => setDialog(null)}
         onConfirm={() => void remove()}
         title="Delete this report?"
-        description="The report and its version history will be deleted for everyone it's shared with. JobTread data isn't affected."
+        description={
+          <>
+            The report and its version history will be deleted for everyone it&apos;s shared with.
+            JobTread data isn&apos;t affected.
+            {dialog === "delete" ? (
+              <ReportRulesDeleteNotice
+                reportId={reportId}
+                archive={archiveRules}
+                onArchiveChange={setArchiveRules}
+              />
+            ) : null}
+          </>
+        }
         confirmLabel="Delete report"
         destructive
       />
