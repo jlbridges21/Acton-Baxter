@@ -55,6 +55,19 @@ export async function POST(request: Request) {
       .catch((error: unknown) => [
         { provider: "all", status: error instanceof Error ? error.message : "error" },
       ]);
+    // Weekly financial snapshots and alert rules (both off until an admin configures them).
+    const financialSnapshots = await import("@/lib/reports/snapshots")
+      .then((m) => m.maybeCaptureScheduledSnapshot())
+      .catch((error: unknown) => ({
+        captured: false,
+        reason: error instanceof Error ? error.message : "error",
+      }));
+    const financialAlerts = await import("@/lib/reports/alerts")
+      .then((m) => m.maybeEvaluateScheduledAlerts())
+      .catch((error: unknown) => ({
+        ran: false,
+        reason: error instanceof Error ? error.message : "error",
+      }));
     const result = await processQueuedJobs({ limit: 10 });
     recordCronInvocation({ ok: true, code: null });
     return jsonOk({
@@ -66,6 +79,8 @@ export async function POST(request: Request) {
       jobtreadDailySync,
       samOperations,
       searchIndex,
+      financialSnapshots,
+      financialAlerts,
     });
   } catch (error) {
     return jsonError(error, "POST /api/internal/process-jobs");

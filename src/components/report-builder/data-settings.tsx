@@ -18,6 +18,7 @@ import {
   Link2,
   Sigma,
   Database,
+  Landmark,
 } from "lucide-react";
 import {
   aiFetch,
@@ -176,6 +177,12 @@ export function DataSettings() {
             className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
           >
             <Sigma className="h-4 w-4" aria-hidden /> Metric Library
+          </Link>
+          <Link
+            href="/reports/settings/financial"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-[var(--acton-border)] bg-white px-3 py-1.5 text-sm font-semibold text-[var(--acton-navy)] hover:bg-[var(--acton-gray-50)] md:self-auto"
+          >
+            <Landmark className="h-4 w-4" aria-hidden /> Financial data
           </Link>
           <Link
             href="/reports/settings/health"

@@ -58,13 +58,24 @@ import { cn } from "@/lib/utils";
 import type { ReportPermission } from "@/lib/reports/repo-types";
 import type { CellValue } from "@/lib/reports/compute";
 import type { ControlState, ExecutionResult, FieldMeta } from "@/lib/reports/result-types";
-import { CHART_TYPES, type ReportSpec, type WidgetSpec } from "@/lib/reports/spec";
+import { CHART_TYPES, DRILL_RELATED, type ReportSpec, type WidgetSpec } from "@/lib/reports/spec";
+import { ROLLUPS } from "@/lib/reports/relationships";
 import { DexterChat } from "./dexter-chat";
 import { FilterBar } from "./filter-bar";
 import { ReportRulesDeleteNotice } from "./rule-editors";
 import { SavedViewsMenu } from "./saved-views-menu";
 import { ReportStyleDialog } from "./style-editor";
-import { DrillDrawer, HistoryDialog, RowDrawer, ShareDialog, type DrillData } from "./panels";
+import {
+  DrillDrawer,
+  GroupDrillDrawer,
+  HistoryDialog,
+  RowDrawer,
+  ShareDialog,
+  type DrillData,
+  type GroupDrillData,
+} from "./panels";
+import { ColumnFormatDialog } from "./column-format-editor";
+import type { ColumnFormat } from "@/lib/reports/column-format";
 import type { ChatArtifact, ReportDetail } from "./types";
 import { AddWidgetDialog } from "./widget-builder";
 import {
@@ -76,7 +87,7 @@ import {
   titleClass,
   useReportTheme,
 } from "./report-theme";
-import { ProvenanceButton, WidgetBody, type DrillRequest } from "./widgets";
+import { ProvenanceButton, WidgetBody, type DrillRequest, type GroupDrillRequest } from "./widgets";
 
 const SPAN_CLASS: Record<number, string> = {
   3: "md:col-span-6 xl:col-span-3",
@@ -154,6 +165,8 @@ export function ReportView({
     draft: ReportSpec;
     undo: ReportSpec[];
     redo: ReportSpec[];
+    /** Version the draft was started from; saving against a newer version is refused. */
+    baseVersion?: number;
   } | null>(null);
   const editing = edit !== null;
   const draft = edit?.draft ?? null;
@@ -169,6 +182,12 @@ export function ReportView({
     error: string | null;
   } | null>(null);
   const [rowView, setRowView] = useState<RowState>(null);
+  const [groupDrill, setGroupDrill] = useState<{
+    req: GroupDrillRequest;
+    data: GroupDrillData | null;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [focus, setFocus] = useState<{ widgetId: string; title: string } | null>(null);
   // "Share…" in the Reports library links here with ?share=1.
@@ -177,7 +196,7 @@ export function ReportView({
     () => (params.get("share") === "1" ? "share" : null),
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<ReportDetail | null> => {
     try {
       const res = await aiFetch<{ report: ReportDetail; permission: ReportPermission }>(
         `/api/reports/${reportId}`,
@@ -185,11 +204,17 @@ export function ReportView({
       setReport(res.report);
       setPermission(res.permission);
       setLoadError(null);
+      return res.report;
     } catch (e) {
       setLoadError(errorMessage(e));
+      return null;
     }
   }, [reportId]);
-  useLoad(load);
+  useLoad(
+    useCallback(async () => {
+      await load();
+    }, [load]),
+  );
 
   const spec = editing && draft ? draft : (report?.spec ?? null);
   const dirty =
@@ -240,7 +265,12 @@ export function ReportView({
   // ---- editing -----------------------------------------------------------
   const startEdit = () => {
     if (!report) return;
-    setEdit({ draft: structuredClone(report.spec), undo: [], redo: [] });
+    setEdit({
+      draft: structuredClone(report.spec),
+      undo: [],
+      redo: [],
+      baseVersion: report.version,
+    });
   };
   const stopEdit = () => setEdit(null);
   const applyDraft = useCallback((fn: (s: ReportSpec) => ReportSpec) => {
@@ -310,7 +340,12 @@ export function ReportView({
         `/api/reports/${reportId}`,
         {
           method: "PUT",
-          body: JSON.stringify({ spec: draft, expectedVersion: report.version }),
+          // The version this draft started from: if Dexter (or anyone) saved since, the server
+          // refuses instead of silently reverting their change.
+          body: JSON.stringify({
+            spec: draft,
+            expectedVersion: edit?.baseVersion ?? report.version,
+          }),
         },
       );
       setReport({
@@ -362,6 +397,26 @@ export function ReportView({
       setDrill({ req, data, loading: false, error: null });
     } catch (e) {
       setDrill({ req, data: null, loading: false, error: errorMessage(e) });
+    }
+  };
+  /** Grouped-table drill: same filters/controls/draft as the view; paged on the server. */
+  const openGroupDrill = async (req: GroupDrillRequest, offset = 0) => {
+    setGroupDrill((cur) => ({ req, data: cur?.data ?? null, loading: true, error: null }));
+    try {
+      const data = await aiFetch<GroupDrillData>(`/api/reports/${reportId}/drill`, {
+        method: "POST",
+        body: JSON.stringify({
+          state,
+          widgetId: req.widgetId,
+          path: req.path,
+          columnId: req.columnId ?? null,
+          offset,
+          ...(editing && draft ? { spec: draft } : {}),
+        }),
+      });
+      setGroupDrill({ req, data, loading: false, error: null });
+    } catch (e) {
+      setGroupDrill({ req, data: null, loading: false, error: errorMessage(e) });
     }
   };
   const exportWidget = async (
@@ -434,14 +489,25 @@ export function ReportView({
     }
   };
   const onArtifact = (a: ChatArtifact) => {
-    if (a.id === reportId) {
-      void load();
-      setRefreshTick((t) => t + 1);
-      setNotice({
-        tone: "success",
-        text: `Dexter updated this report (version ${a.version}). Use Version history to undo.`,
-      });
-    }
+    if (a.id !== reportId) return;
+    const wasDirty = dirty;
+    void load().then((fresh) => {
+      // A clean draft follows Dexter's new version (so a later save can't revert it); a draft
+      // with unsaved edits keeps them, and saving is refused until the person reloads.
+      if (fresh && !wasDirty)
+        setEdit((cur) =>
+          cur
+            ? { draft: structuredClone(fresh.spec), undo: [], redo: [], baseVersion: fresh.version }
+            : cur,
+        );
+    });
+    setRefreshTick((t) => t + 1);
+    setNotice({
+      tone: wasDirty ? "info" : "success",
+      text: wasDirty
+        ? `Dexter saved version ${a.version} while you have unsaved edits. Saving now would overwrite it, so it will be refused — discard your edits or copy them after reloading.`
+        : `Dexter updated this report (version ${a.version}). Use Version history to undo.`,
+    });
   };
 
   const visibleWidgets = useMemo(
@@ -742,6 +808,24 @@ export function ReportView({
                     onDrill={(req) => void openDrill(req)}
                     onOpenRow={(row, columns) => setRowView({ row, columns })}
                     onRulesChanged={() => setRefreshTick((t) => t + 1)}
+                    onDrillGroup={(req) => void openGroupDrill(req)}
+                    source={
+                      "dataset" in w
+                        ? spec.datasets.find((d) => d.id === w.dataset)?.source
+                        : undefined
+                    }
+                    onSavePreset={(key, label, format) =>
+                      applyDraft((s) => ({
+                        ...s,
+                        theme: {
+                          ...(s.theme ?? {}),
+                          columnPresets: {
+                            ...(s.theme?.columnPresets ?? {}),
+                            [key]: { label, format },
+                          },
+                        },
+                      }))
+                    }
                     onAskDexter={
                       canChat
                         ? () => {
@@ -768,6 +852,16 @@ export function ReportView({
           drill &&
           void exportWidget(drill.req.widgetId, drill.req.groupKey ?? null, drill.req.seriesKey)
         }
+        onOpenRow={(row, columns) => setRowView({ row, columns })}
+      />
+      <GroupDrillDrawer
+        open={Boolean(groupDrill)}
+        loading={groupDrill?.loading ?? false}
+        error={groupDrill?.error ?? null}
+        data={groupDrill?.data ?? null}
+        onClose={() => setGroupDrill(null)}
+        onNavigate={(path) => groupDrill && void openGroupDrill({ ...groupDrill.req, path })}
+        onPage={(offset) => groupDrill && void openGroupDrill(groupDrill.req, offset)}
         onOpenRow={(row, columns) => setRowView({ row, columns })}
       />
       <RowDrawer
@@ -892,8 +986,13 @@ function WidgetCard({
   onDrill,
   onOpenRow,
   onRulesChanged,
+  onDrillGroup,
+  onSavePreset,
   onAskDexter,
+  source,
 }: {
+  /** The widget's dataset source (drill paths must start from it). */
+  source?: string;
   widget: WidgetSpec;
   editing: boolean;
   result: ExecutionResult["widgets"][string] | undefined;
@@ -905,8 +1004,11 @@ function WidgetCard({
   onDrill: (req: DrillRequest) => void;
   onOpenRow: (row: NonNullable<RowState>["row"], columns: FieldMeta[]) => void;
   onRulesChanged: () => void;
+  onDrillGroup: (req: GroupDrillRequest) => void;
+  onSavePreset: (key: string, label: string, format: ColumnFormat) => void;
   onAskDexter?: () => void;
 }) {
+  const [formatting, setFormatting] = useState<string | null>(null);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: widget.id,
     disabled: !editing,
@@ -963,6 +1065,38 @@ function WidgetCard({
               </option>
             ))}
           </select>
+          {widget.type === "table" ? (
+            <select
+              aria-label="Drill-down"
+              title="What opens when a viewer clicks a group subtotal"
+              value={widget.drill?.enabled === false ? "off" : (widget.drill?.related ?? "records")}
+              onChange={(e) => {
+                const v = e.target.value;
+                const { related: _r, enabled: _e, ...rest } = widget.drill ?? {};
+                void _r;
+                void _e;
+                onChange({
+                  drill:
+                    v === "off"
+                      ? { ...rest, enabled: false }
+                      : v === "records"
+                        ? Object.keys(rest).length
+                          ? { ...rest, enabled: true }
+                          : undefined
+                        : { ...rest, enabled: true, related: v as (typeof DRILL_RELATED)[number] },
+                } as Partial<WidgetSpec>);
+              }}
+              className="h-8 rounded border border-[var(--acton-border)] px-1 text-xs"
+            >
+              <option value="records">Drill: records</option>
+              {DRILL_RELATED.filter((r) => source && r.startsWith(`${source}.`)).map((r) => (
+                <option key={r} value={r}>
+                  Drill: {ROLLUPS[r].label.toLowerCase()}
+                </option>
+              ))}
+              <option value="off">Drill: off</option>
+            </select>
+          ) : null}
           {widget.type === "chart" ? (
             <>
               <select
@@ -1084,10 +1218,81 @@ function WidgetCard({
           actions={{
             onDrill: editing ? undefined : onDrill,
             onOpenRow: editing ? undefined : onOpenRow,
+            onDrillGroup: editing ? undefined : onDrillGroup,
+            onFormatColumn: editing && widget.type === "table" ? setFormatting : undefined,
             onRulesChanged,
           }}
         />
       )}
+      {formatting && widget.type === "table" ? (
+        <ColumnEditorFor
+          widget={widget}
+          columnId={formatting}
+          result={result}
+          theme={theme}
+          onClose={() => setFormatting(null)}
+          onChange={onChange}
+          onSavePreset={onSavePreset}
+        />
+      ) : null}
     </section>
+  );
+}
+
+/** Opens the column editor for one table column and writes its format into the draft. */
+function ColumnEditorFor({
+  widget,
+  columnId,
+  result,
+  theme,
+  onClose,
+  onChange,
+  onSavePreset,
+}: {
+  widget: Extract<WidgetSpec, { type: "table" }>;
+  columnId: string;
+  result: ExecutionResult["widgets"][string] | undefined;
+  theme: ReturnType<typeof useReportTheme>;
+  onClose: () => void;
+  onChange: (changes: Partial<WidgetSpec>) => void;
+  onSavePreset: (key: string, label: string, format: ColumnFormat) => void;
+}) {
+  const col = widget.columns.find((c) => c.id === columnId);
+  const table = result && result.kind === "table" ? result : null;
+  const meta = table?.columns.find((c) => c.columnId === columnId);
+  if (!col) return null;
+  const sample = meta
+    ? table?.rows.map((r) => r.cells[meta.key]).find((v) => typeof v === "number")
+    : undefined;
+  return (
+    <ColumnFormatDialog
+      column={{
+        id: columnId,
+        label: meta?.label ?? col.label ?? col.field,
+        type: meta?.type ?? "text",
+      }}
+      others={widget.columns
+        .filter((c) => c.id && c.id !== columnId)
+        .map((c) => ({
+          id: c.id!,
+          label: table?.columns.find((m) => m.columnId === c.id)?.label ?? c.label ?? c.field,
+        }))}
+      current={widget.appearance?.columnFormats?.[columnId]}
+      theme={theme}
+      sample={sample}
+      onClose={onClose}
+      onSavePreset={onSavePreset}
+      onApply={(format) => {
+        const look = { ...(widget.appearance ?? {}) };
+        const formats = { ...(look.columnFormats ?? {}) };
+        if (format) formats[columnId] = format;
+        else delete formats[columnId];
+        if (Object.keys(formats).length) look.columnFormats = formats;
+        else delete look.columnFormats;
+        onChange({
+          appearance: Object.keys(look).length ? look : undefined,
+        } as Partial<WidgetSpec>);
+      }}
+    />
   );
 }

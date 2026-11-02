@@ -57,7 +57,7 @@ export const SYNCED_TARGETS = new Set(["job", "location", "customer"]);
  * Targets cached by the Sync Manager's accounts/contacts datasets. Their fields default to
  * "excluded" (defaultCategory) — values are cached only after an admin opts a field in.
  */
-export const EXTENDED_TARGETS = new Set(["vendor", "contact"]);
+export const EXTENDED_TARGETS = new Set(["vendor", "contact", "customerContact", "vendorContact"]);
 
 const CUSTOMER_GENERAL = new Set([
   "recommended br models",
@@ -494,6 +494,14 @@ export async function syncCustomFieldMetadata(
         error: error instanceof Error ? error.message : String(error),
       }),
     );
+  // Field Mapping Health snapshot (migration 083). Never fails a refresh.
+  await import("@/lib/reports/field-mappings")
+    .then((m) => m.revalidateFieldMappings())
+    .catch((error: unknown) =>
+      console.error("[jobtread.field_mappings.revalidate_failed]", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   return {
     seen: nodes.length,
     added,
@@ -511,13 +519,17 @@ export async function ensureSemanticDefaults(): Promise<void> {
   const fields = await listCustomFields();
   const current = new Map((await listSemanticFields()).map((s) => [s.key, s]));
   for (const def of SEMANTIC_DEFAULTS) {
-    const match = def.match
-      ? fields.find(
+    // Name matching is only a bootstrap: it maps when exactly one live field has the name.
+    // Several same-named fields are left unmapped (Field mapping health flags them for an
+    // administrator) rather than picking whichever came first.
+    const named = def.match
+      ? fields.filter(
           (f) =>
             f.target_type === def.match!.target &&
             f.name.trim().toLowerCase() === def.match!.name.toLowerCase(),
         )
-      : undefined;
+      : [];
+    const match = named.length === 1 ? named[0] : undefined;
     const prior = current.get(def.key);
     if (!prior) {
       await db.insert("jt_semantic_fields", {

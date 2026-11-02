@@ -52,6 +52,15 @@ export const ID_FIELDS: Record<string, ReportSource> = {
   "item.modelId": "catalog_models",
   "com.jobId": "jobs",
   "item.id": "cost_items",
+  "doc.jobId": "jobs",
+  "doc.id": "documents",
+  "doc.milestoneTaskId": "tasks",
+  "pay.documentId": "documents",
+  "pay.jobId": "jobs",
+  "pay.id": "payments",
+  "task.jobId": "jobs",
+  "task.id": "tasks",
+  "task.parentId": "tasks",
 };
 
 export function isRelCatalog(c: FieldCatalog): c is RelCatalog {
@@ -113,6 +122,9 @@ export function extendCatalogWithRelationships(
     catalog_models: [],
     cost_items: [],
     commissions: [],
+    documents: [],
+    payments: [],
+    tasks: [],
   };
   const relationshipErrors = new Map<string, string>();
   // Report definitions replace company ones with the same id.

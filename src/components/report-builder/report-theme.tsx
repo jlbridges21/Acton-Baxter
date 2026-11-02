@@ -15,6 +15,7 @@ import {
   type ReportTheme,
 } from "@/lib/reports/style";
 import type { WidgetSpec } from "@/lib/reports/spec";
+import { cellRuleStyle, formatNumberCell, type ColumnFormat } from "@/lib/reports/column-format";
 
 export const ReportThemeContext = createContext<ReportTheme | null>(null);
 
@@ -167,5 +168,106 @@ export function ruleRowStyle(
       : s.emphasis === "muted"
         ? { opacity: 0.6 }
         : {}),
+  };
+}
+
+/**
+ * Per-column presentation from `appearance.columnFormats` (keyed by stable column id), with
+ * the legacy per-field alignment as fallback. Presentation only: the raw cell values passed in
+ * are never changed, and conditional cell rules compare raw values, not formatted text.
+ */
+export function columnLook(
+  theme: ReportTheme | null,
+  w: WidgetSpec,
+  columns: Array<{ key: string; columnId?: string; ref?: string; type: string; width?: number }>,
+) {
+  const look = (appearanceOf(w) ?? {}) as {
+    columns?: Record<string, { align?: string }>;
+    columnFormats?: Record<string, ColumnFormat>;
+  };
+  const tokens = resolveTokens(theme);
+  const paint = (c?: string) => (c ? resolveColor(c, tokens) : undefined);
+  const formatOf = (c: { columnId?: string }) =>
+    c.columnId ? look.columnFormats?.[c.columnId] : undefined;
+  const keyOf = new Map(columns.map((c) => [c.columnId ?? c.key, c.key]));
+  // Pinned columns stick to the left in column order; offsets use each column's width.
+  const pinLeft = new Map<string, number>();
+  let offset = 0;
+  for (const c of columns) {
+    const f = formatOf(c);
+    if (f?.pin !== "left" || f.hidden) continue;
+    pinLeft.set(c.columnId ?? c.key, offset);
+    offset += f.width ?? c.width ?? 160;
+  }
+  return {
+    format: formatOf,
+    id: (c: { key: string; columnId?: string }) => c.columnId ?? c.key,
+    /** Hidden by default in the report (viewers can still show it from Columns). */
+    hiddenByDefault: columns.filter((c) => formatOf(c)?.hidden).map((c) => c.columnId ?? c.key),
+    align: (c: { columnId?: string; ref?: string }) =>
+      formatOf(c)?.cell?.align ?? (c.ref ? look.columns?.[c.ref]?.align : undefined),
+    headerAlign: (c: { columnId?: string; ref?: string }) =>
+      formatOf(c)?.header?.align ??
+      formatOf(c)?.cell?.align ??
+      (c.ref ? look.columns?.[c.ref]?.align : undefined),
+    headerStyle: (c: { columnId?: string; key: string; width?: number }): CSSProperties => {
+      const f = formatOf(c);
+      const left = pinLeft.get(c.columnId ?? c.key);
+      const width = f?.width ?? c.width;
+      return {
+        ...(f?.header?.background ? { backgroundColor: paint(f.header.background) } : {}),
+        ...(f?.header?.text ? { color: paint(f.header.text) } : {}),
+        ...(f?.header?.bold ? { fontWeight: 700 } : {}),
+        ...(width ? { width, minWidth: width, maxWidth: width } : {}),
+        ...(left !== undefined
+          ? {
+              position: "sticky",
+              left,
+              zIndex: 2,
+              background: f?.header?.background
+                ? paint(f.header.background)
+                : "var(--acton-gray-50)",
+            }
+          : {}),
+      };
+    },
+    /** Style for one cell, given the row's raw cells (for rules that read another column). */
+    cellStyle: (
+      c: { columnId?: string; key: string; width?: number },
+      cells: Record<string, unknown>,
+    ): CSSProperties => {
+      const f = formatOf(c);
+      const left = pinLeft.get(c.columnId ?? c.key);
+      const width = f?.width ?? c.width;
+      const rule = f?.rules?.length
+        ? cellRuleStyle(f, (col) => cells[col ? (keyOf.get(col) ?? "") : c.key])
+        : null;
+      const raw = cells[c.key];
+      const neg =
+        typeof raw === "number" &&
+        raw < 0 &&
+        (f?.number?.negative === "red" || f?.number?.negative === "red_parens");
+      const bg = rule?.background ?? f?.cell?.background;
+      return {
+        ...(bg ? { backgroundColor: paint(bg) } : {}),
+        ...(rule?.color
+          ? { color: paint(rule.color) }
+          : neg
+            ? { color: tokens.negative }
+            : f?.cell?.text
+              ? { color: paint(f.cell.text) }
+              : {}),
+        ...(f?.cell?.bold || rule?.emphasis === "bold" ? { fontWeight: 700 } : {}),
+        ...(rule?.emphasis === "muted" ? { opacity: 0.6 } : {}),
+        ...(rule?.accent ? { boxShadow: `inset 3px 0 0 ${paint(rule.accent)}` } : {}),
+        ...(width ? { width, minWidth: width, maxWidth: width } : {}),
+        ...(left !== undefined
+          ? { position: "sticky", left, zIndex: 1, background: bg ? paint(bg) : "#ffffff" }
+          : {}),
+      };
+    },
+    /** Display text; null → use the default formatter. */
+    text: (c: { columnId?: string; type: string }, raw: unknown): string | null =>
+      formatNumberCell(raw, c.type, formatOf(c)?.number)?.text ?? null,
   };
 }

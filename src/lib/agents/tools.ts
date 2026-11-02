@@ -20,6 +20,8 @@ import { LIFECYCLE_TOOLS } from "./lifecycle-tools";
 import { OPS_TOOLS } from "./ops-tools";
 import { REPORT_GROUP_TOOLS } from "./report-group-tools";
 import { REPORT_ENGINE_TOOLS } from "./report-engine-tools";
+import { REPORT_PRESENTATION_TOOLS } from "./report-presentation-tools";
+import { FINANCIAL_TOOLS } from "./financial-tools";
 import { REPORT_INTEL_TOOLS } from "./report-intel-tools";
 import { REPORT_TOOLS } from "./report-tools";
 import {
@@ -328,6 +330,8 @@ export const TOOL_REGISTRY: AgentTool[] = [
   ...REPORT_GROUP_TOOLS,
   ...DATA_SYNC_TOOLS,
   ...REPORT_ENGINE_TOOLS,
+  ...REPORT_PRESENTATION_TOOLS,
+  ...FINANCIAL_TOOLS,
   knowledgeSearch,
   onboardingTemplates,
   onboardingProgress,

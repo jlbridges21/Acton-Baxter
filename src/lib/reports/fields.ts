@@ -15,6 +15,13 @@ import {
 } from "@/lib/jobtread/metadata";
 import { agentDb } from "@/lib/agents/store";
 import { analyzeAliases, type AliasStatus } from "@/lib/jobtread/alias-audit";
+import { ENTITY_PIPELINES } from "./field-mapping-core";
+import {
+  DOCUMENT_FIELDS,
+  FIELD_SYNC_ATTRIBUTE,
+  PAYMENT_FIELDS,
+  TASK_FIELDS,
+} from "./financial-fields";
 import { RELATIONSHIPS } from "./relationships";
 import type { ReportSource } from "./spec";
 
@@ -675,6 +682,12 @@ export type RelatedFieldSetting = { relationship: string; field_ref: string; ena
 export type FieldCatalog = {
   /** cf:<id> of fields removed from JobTread (kept so reports can explain them). */
   stale?: Map<string, { name: string; removedAt: string }>;
+  /**
+   * cf:<id> of live fields that aren't usable in reports, with the documented reason
+   * (field-mapping-core ExclusionReason). Messages never include the field's label, so a
+   * report can't reveal the name of an excluded field to a viewer.
+   */
+  unavailable?: Map<string, { reason: string; message: string }>;
   /** Fields per source, including approved related fields (marked with `via`). */
   bySource: Record<ReportSource, FieldDef[]>;
   /** Approved related fields per source, by canonical key. */
@@ -696,6 +709,22 @@ export type FieldCatalog = {
     }
   >;
 };
+
+/** JobTread attributes the sync recorded as not returned to this grant, per dataset. */
+async function listDroppedSyncAttributes(): Promise<Map<string, Set<string>>> {
+  const rows = await agentDb()
+    .select<{ entity: string; dropped_fields: unknown }>("jt_sync_entities", {
+      columns: "entity, dropped_fields",
+      limit: 100,
+    })
+    .catch(() => []);
+  return new Map(
+    rows.map((r) => [
+      r.entity,
+      new Set(Array.isArray(r.dropped_fields) ? (r.dropped_fields as string[]) : []),
+    ]),
+  );
+}
 
 /** Cached per JobTread organization (tenant-safe key). */
 let cached: { at: number; org: string; catalog: FieldCatalog } | null = null;
@@ -724,11 +753,19 @@ export function buildRelatedFields(
     catalog_models: new Map(),
     cost_items: new Map(),
     commissions: new Map(),
+    documents: new Map(),
+    payments: new Map(),
+    tasks: new Map(),
   } as FieldCatalog["related"];
-  const listed = { jobs: [], catalog_models: [], cost_items: [], commissions: [] } as Record<
-    ReportSource,
-    FieldDef[]
-  >;
+  const listed = {
+    jobs: [],
+    catalog_models: [],
+    cost_items: [],
+    commissions: [],
+    documents: [],
+    payments: [],
+    tasks: [],
+  } as Record<ReportSource, FieldDef[]>;
   for (const rel of Object.values(RELATIONSHIPS)) {
     const mine = settings.filter((s) => s.relationship === rel.id);
     const refs = new Map<string, RelatedField["approvedBy"]>(
@@ -760,16 +797,48 @@ export function buildRelatedFields(
 export async function getFieldCatalog(): Promise<FieldCatalog> {
   const org = currentOrganizationId();
   if (cached && cached.org === org && Date.now() - cached.at < 30_000) return cached.catalog;
-  const [allCustom, semantic, relatedSettings] = await Promise.all([
+  const [allCustom, semantic, relatedSettings, disabled, droppedAttributes] = await Promise.all([
     listCustomFields({ includeRemoved: true }),
     listSemanticFields(),
     listRelatedFieldSettings(),
+    import("./field-mappings")
+      .then((m) => m.reportingDisabledRefs())
+      .catch(() => new Set<string>()),
+    listDroppedSyncAttributes(),
   ]);
   const fields = allCustom.filter((f) => !f.removed_at);
   const aliasFindings = analyzeAliases(semantic, allCustom);
+  const unavailable: NonNullable<FieldCatalog["unavailable"]> = new Map();
+  for (const f of fields) {
+    const pipeline = ENTITY_PIPELINES[f.target_type];
+    const reason: [string, string] | null = !pipeline
+      ? ["unsupported_api", "its JobTread record type isn't available through Baxter's integration"]
+      : !pipeline.valuesRequested
+        ? ["not_synced", `${pipeline.label.toLowerCase()} custom field values aren't synced yet`]
+        : f.category === "excluded" && pipeline.exposed
+          ? ["intentional", "an administrator excluded it under Field access"]
+          : f.category === "excluded"
+            ? ["not_synced", "its values aren't synced until an administrator allows the field"]
+            : !pipeline.exposed
+              ? [
+                  "synced_not_exposed",
+                  `${pipeline.label.toLowerCase()} aren't a report source yet (values are synced)`,
+                ]
+              : disabled.has(`cf:${f.id}`)
+                ? ["intentional", "an administrator turned it off for reports"]
+                : null;
+    if (reason)
+      unavailable.set(`cf:${f.id}`, {
+        reason: reason[0],
+        message: `Field cf:${f.id} isn't available in reports: ${reason[1]}. See Reports → Data settings → Field catalog → Field mapping health.`,
+      });
+  }
   const custom: FieldDef[] = fields
     .filter(
-      (f) => f.category !== "excluded" && ["job", "location", "customer"].includes(f.target_type),
+      (f) =>
+        f.category !== "excluded" &&
+        ["job", "location", "customer"].includes(f.target_type) &&
+        !unavailable.has(`cf:${f.id}`),
     )
     .map((f) => {
       const { type, multi } = customFieldType(f);
@@ -789,8 +858,31 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
       };
     });
   const jobs = [...JOB_BUILTINS, ...JOB_FINANCIAL_FIELDS, ...custom];
+  // Financial-source fields whose JobTread attribute this grant doesn't return are hidden and
+  // explained (unsupported by the API for this connection), never shown as blank columns.
+  const supported = (defs: FieldDef[]) =>
+    defs.filter((f) => {
+      const m = FIELD_SYNC_ATTRIBUTE[f.key];
+      if (!m || !droppedAttributes.get(m.entity)?.has(m.attribute)) return true;
+      unavailable.set(f.key, {
+        reason: "unsupported_api",
+        message: `Field ${f.key} isn't available in reports: JobTread doesn't return ${m.entity}.${m.attribute} to Baxter's connection. See Reports → Data settings → Financial data.`,
+      });
+      return false;
+    });
+  const documents = supported(DOCUMENT_FIELDS);
+  const payments = supported(PAYMENT_FIELDS);
+  const tasks = supported(TASK_FIELDS);
   const byKey = new Map<string, FieldDef>(
-    [...jobs, ...MODEL_FIELDS, ...ITEM_FIELDS, ...COMMISSION_FIELDS].map((f) => [f.key, f]),
+    [
+      ...jobs,
+      ...MODEL_FIELDS,
+      ...ITEM_FIELDS,
+      ...COMMISSION_FIELDS,
+      ...documents,
+      ...payments,
+      ...tasks,
+    ].map((f) => [f.key, f]),
   );
   const allFields = new Map(fields.map((f) => [f.id, f]));
   const semanticMap: FieldCatalog["semantic"] = new Map(
@@ -809,7 +901,9 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
                 ? "Its JobTread field is excluded from reports by an administrator."
                 : !["job", "location", "customer"].includes(cf.target_type)
                   ? `It maps to a ${cf.target_type} field; only job, location, and customer field values are in report data today.`
-                  : undefined;
+                  : disabled.has(`cf:${cf.id}`)
+                    ? "Its JobTread field is turned off for reports by an administrator."
+                    : undefined;
         return [
           `sem:${s.key}`,
           {
@@ -831,6 +925,9 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
     catalog_models: MODEL_FIELDS,
     cost_items: ITEM_FIELDS,
     commissions: COMMISSION_FIELDS,
+    documents,
+    payments,
+    tasks,
   };
   const { related, listed } = buildRelatedFields(
     { bySource: own, byKey, semantic: semanticMap },
@@ -843,11 +940,15 @@ export async function getFieldCatalog(): Promise<FieldCatalog> {
   );
   const catalog: FieldCatalog = {
     stale,
+    unavailable,
     bySource: {
       jobs: [...own.jobs, ...listed.jobs],
       catalog_models: [...own.catalog_models, ...listed.catalog_models],
       cost_items: [...own.cost_items, ...listed.cost_items],
       commissions: [...own.commissions, ...listed.commissions],
+      documents: [...own.documents, ...listed.documents],
+      payments: [...own.payments, ...listed.payments],
+      tasks: [...own.tasks, ...listed.tasks],
     },
     related,
     byKey,
@@ -887,7 +988,9 @@ export function fieldOnSource(
 export function resolveField(
   catalog: FieldCatalog,
   ref: string,
-): { ok: true; def: FieldDef; key: string; warning?: string } | { ok: false; reason: string } {
+):
+  | { ok: true; def: FieldDef; key: string; warning?: string }
+  | { ok: false; reason: string; code?: string } {
   let key = ref;
   let warning: string | undefined;
   if (ref.startsWith("sem:")) {
@@ -920,6 +1023,8 @@ export function resolveField(
       ok: false,
       reason: `“${removed.name}” (${key}) was removed from JobTread on ${removed.removedAt.slice(0, 10)}. Replace it in this report (Reports → Data settings → Field catalog shows a repair preview).`,
     };
+  const off = !def ? catalog.unavailable?.get(key) : undefined;
+  if (off) return { ok: false, reason: off.message, code: off.reason };
   if (!def)
     return { ok: false, reason: `Field "${ref}" doesn't exist in the connected JobTread data.` };
   return {

@@ -12,6 +12,10 @@ export type FieldMeta = {
   wrap?: boolean;
   /** The field reference as written in the spec (for per-column appearance). */
   ref?: string;
+  /** Stable column id (tables): formatting, viewer prefs, and drill paths are keyed by it. */
+  columnId?: string;
+  /** Column width in px (column format, or the column's own width). */
+  width?: number;
 };
 
 export type Provenance = {

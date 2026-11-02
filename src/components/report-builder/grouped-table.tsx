@@ -8,14 +8,41 @@
  */
 
 import { Fragment, useCallback, useMemo, useState, useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, Columns3 } from "lucide-react";
+import { ChevronDown, ChevronRight, Columns3, Paintbrush } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CellValue } from "@/lib/reports/compute";
 import type { FieldMeta, TableGroup, TableResult } from "@/lib/reports/result-types";
 import type { WidgetSpec } from "@/lib/reports/spec";
 import { formatValue } from "./format";
-import { ruleRowStyle, tableLook, useReportTheme } from "./report-theme";
+import { columnLook, ruleRowStyle, tableLook, useReportTheme } from "./report-theme";
+
+export type GroupDrillRequest = {
+  widgetId: string;
+  /** Group labels from the top level down (the TableGroup id, parsed). */
+  path: string[];
+  /** Column clicked (stable column id), when a subtotal cell was clicked. */
+  columnId?: string;
+  title: string;
+};
+
+/** Edit mode: a small button in a column header that opens the column editor. */
+export function FormatColumnButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      aria-label={`Format column ${label}`}
+      title="Format column"
+      className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded align-middle text-[var(--acton-muted)] hover:bg-[var(--acton-gray-100)] hover:text-[var(--acton-navy)] print:hidden"
+    >
+      <Paintbrush className="h-3 w-3" aria-hidden />
+    </button>
+  );
+}
 
 const NUMERIC = new Set(["number", "currency", "percent", "sqft"]);
 const ROWS_PER_GROUP = 50;
@@ -94,20 +121,27 @@ export function ColumnsMenu({
       </Button>
       {open ? (
         <div className="absolute right-0 z-20 mt-1 w-56 rounded-md border border-[var(--acton-border)] bg-white p-2 shadow-lg">
-          {columns.map((c) => (
-            <label key={c.key} className="flex items-center gap-2 px-1 py-1 text-xs">
-              <input
-                type="checkbox"
-                checked={!hidden.includes(c.key)}
-                onChange={(e) =>
-                  onChange(
-                    e.target.checked ? hidden.filter((k) => k !== c.key) : [...hidden, c.key],
-                  )
-                }
-              />
-              {c.label}
-            </label>
-          ))}
+          {columns.map((c) => {
+            // Stable column id (older prefs stored the field key; both are honored).
+            const id = c.columnId ?? c.key;
+            const off = hidden.includes(id) || hidden.includes(c.key);
+            return (
+              <label key={id} className="flex items-center gap-2 px-1 py-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={!off}
+                  onChange={(e) =>
+                    onChange(
+                      e.target.checked
+                        ? hidden.filter((k) => k !== id && k !== c.key)
+                        : [...hidden, id],
+                    )
+                  }
+                />
+                {c.label}
+              </label>
+            );
+          })}
           {hidden.length ? (
             <button
               type="button"
@@ -127,9 +161,14 @@ export function GroupedTable({
   widget,
   result,
   onOpenRow,
+  onFormatColumn,
+  onDrillGroup,
 }: {
   widget: WidgetSpec;
   result: TableResult;
+  onFormatColumn?: (columnId: string) => void;
+  /** Open a group's records (drill-down). Absent in edit mode. */
+  onDrillGroup?: (req: GroupDrillRequest) => void;
   onOpenRow?: (
     row: { id: string; cells: Record<string, CellValue>; jobtreadUrl?: string },
     columns: FieldMeta[],
@@ -138,6 +177,7 @@ export function GroupedTable({
   const widgetId = widget.id;
   const theme = useReportTheme();
   const look = tableLook(theme, widget);
+  const cl = columnLook(theme, widget, result.columns);
   const groups = useMemo(() => result.groups ?? [], [result.groups]);
   const levels = result.groupLevels ?? [];
   const scope =
@@ -153,12 +193,23 @@ export function GroupedTable({
   );
   const [hidden, setHidden] = useViewerPref<string[]>(
     `baxter.report.columns:${scope}:${widgetId}`,
-    [],
+    cl.hiddenByDefault,
   );
   const [shown, setShown] = useState<Record<string, number>>({});
   const open = useMemo(() => new Set(expanded ?? defaultOpen), [expanded, defaultOpen]);
   const rowsById = useMemo(() => new Map(result.rows.map((r) => [r.id, r])), [result.rows]);
-  const columns = result.columns.filter((c) => !hidden.includes(c.key));
+  const columns = result.columns.filter(
+    (c) => !hidden.includes(cl.id(c)) && !hidden.includes(c.key),
+  );
+  const show = (value: CellValue | undefined, meta: FieldMeta) =>
+    value === undefined ? "" : (cl.text(meta, value) ?? formatValue(value, meta.type));
+  const drill = (g: TableGroup, meta?: FieldMeta) =>
+    onDrillGroup?.({
+      widgetId,
+      path: JSON.parse(g.id) as string[],
+      columnId: meta?.columnId,
+      title: `${g.fieldLabel}: ${g.label}${meta ? ` — ${meta.label}` : ""}`,
+    });
 
   const toggle = (id: string) => {
     const next = new Set(open);
@@ -168,21 +219,26 @@ export function GroupedTable({
   };
   const expandTo = (level: number) => setExpanded(collectIds(groups, level));
 
-  const cell = (value: CellValue | undefined, meta: FieldMeta) => (
+  const cell = (
+    value: CellValue | undefined,
+    meta: FieldMeta,
+    cells: Record<string, CellValue>,
+  ) => (
     <td
-      key={meta.key}
+      key={cl.id(meta)}
+      style={cl.cellStyle(meta, cells)}
       className={cn(
         "max-w-md align-top",
         look.cell,
         look.cellBorder,
         NUMERIC.has(meta.type) && "text-right tabular-nums",
-        look.align(meta.ref) === "center" && "text-center",
-        look.align(meta.ref) === "left" && "text-left",
-        look.align(meta.ref) === "right" && "text-right",
+        cl.align(meta) === "center" && "text-center",
+        cl.align(meta) === "left" && "text-left",
+        cl.align(meta) === "right" && "text-right",
         meta.wrap ? "whitespace-pre-wrap" : "truncate",
       )}
     >
-      {value === undefined ? "" : formatValue(value, meta.type)}
+      {show(value, meta)}
     </td>
   );
 
@@ -225,25 +281,52 @@ export function GroupedTable({
               )}
               <span className="text-xs font-normal text-[var(--acton-muted)]">{g.fieldLabel}:</span>{" "}
               {g.label}
-              <span className="ml-1 text-xs font-normal text-[var(--acton-muted)]">
-                ({g.count.toLocaleString()})
-              </span>
+              {onDrillGroup ? null : (
+                <span className="ml-1 text-xs font-normal text-[var(--acton-muted)]">
+                  ({g.count.toLocaleString()})
+                </span>
+              )}
             </button>
+            {onDrillGroup ? (
+              <button
+                type="button"
+                className="ml-1 text-xs font-normal text-[var(--acton-muted)] underline decoration-dotted hover:text-[var(--acton-navy)]"
+                onClick={() => drill(g)}
+                aria-label={`Open the ${g.count} records in ${g.label}`}
+              >
+                ({g.count.toLocaleString()})
+              </button>
+            ) : null}
           </td>
-          {columns.map((c) => (
-            <td
-              key={c.key}
-              className={cn(look.cell, NUMERIC.has(c.type) && "text-right tabular-nums")}
-              title={
-                g.incomplete?.[c.key]
-                  ? `${g.incomplete[c.key]} record(s) have no value and aren't in this subtotal`
-                  : undefined
-              }
-            >
-              {g.values[c.key] === undefined ? "" : formatValue(g.values[c.key], c.type)}
-              {g.incomplete?.[c.key] ? <span className="text-amber-700">*</span> : null}
-            </td>
-          ))}
+          {columns.map((c) => {
+            const v = g.values[c.key];
+            const text = show(v, c);
+            return (
+              <td
+                key={cl.id(c)}
+                className={cn(look.cell, NUMERIC.has(c.type) && "text-right tabular-nums")}
+                title={
+                  g.incomplete?.[c.key]
+                    ? `${g.incomplete[c.key]} record(s) have no value and aren't in this subtotal`
+                    : undefined
+                }
+              >
+                {onDrillGroup && v !== undefined && v !== null ? (
+                  <button
+                    type="button"
+                    className="underline decoration-dotted underline-offset-2 hover:text-[var(--acton-navy)]"
+                    onClick={() => drill(g, c)}
+                    aria-label={`Drill into ${c.label} for ${g.label}`}
+                  >
+                    {text}
+                  </button>
+                ) : (
+                  text
+                )}
+                {g.incomplete?.[c.key] ? <span className="text-amber-700">*</span> : null}
+              </td>
+            );
+          })}
         </tr>
         {isOpen && !leaf ? g.children.map(renderGroup) : null}
         {isOpen && leaf
@@ -264,7 +347,7 @@ export function GroupedTable({
                   onClick={clickable ? () => onOpenRow!(r, result.columns) : undefined}
                 >
                   <td aria-hidden />
-                  {columns.map((c) => cell(r.cells[c.key], c))}
+                  {columns.map((c) => cell(r.cells[c.key], c, r.cells))}
                 </tr>
               );
             })
@@ -348,12 +431,15 @@ export function GroupedTable({
               </th>
               {columns.map((c) => (
                 <th
-                  key={c.key}
+                  key={cl.id(c)}
                   scope="col"
+                  style={cl.headerStyle(c)}
                   className={cn(
                     "font-semibold whitespace-nowrap",
                     look.cell,
-                    NUMERIC.has(c.type) && "text-right",
+                    (cl.headerAlign(c) ?? (NUMERIC.has(c.type) ? "right" : undefined)) ===
+                      "right" && "text-right",
+                    cl.headerAlign(c) === "center" && "text-center",
                   )}
                   title={c.description ?? c.origin}
                 >
@@ -363,6 +449,12 @@ export function GroupedTable({
                       ? " ↑"
                       : " ↓"
                     : ""}
+                  {onFormatColumn && c.columnId ? (
+                    <FormatColumnButton
+                      label={c.label}
+                      onClick={() => onFormatColumn(c.columnId!)}
+                    />
+                  ) : null}
                 </th>
               ))}
             </tr>
@@ -376,12 +468,10 @@ export function GroupedTable({
                 </td>
                 {columns.map((c) => (
                   <td
-                    key={c.key}
+                    key={cl.id(c)}
                     className={cn("px-3 py-2", NUMERIC.has(c.type) && "text-right tabular-nums")}
                   >
-                    {result.totals![c.key] === undefined
-                      ? ""
-                      : formatValue(result.totals![c.key], c.type)}
+                    {show(result.totals![c.key], c)}
                     {result.totalsIncomplete?.[c.key] ? (
                       <span className="text-amber-700">*</span>
                     ) : null}

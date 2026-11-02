@@ -133,10 +133,12 @@ async function upsertRemovingMissing(
   table: string,
   rows: Array<Record<string, unknown> & { id: string }>,
   syncedAt: string,
+  optionalColumns: string[] = [],
 ) {
   const db = agentDb();
+  const { upsertWithOptionalColumns } = await import("./tolerant-upsert");
   for (let i = 0; i < rows.length; i += 100) {
-    await db.upsert(table, rows.slice(i, i + 100), ["id"]);
+    await upsertWithOptionalColumns(table, rows.slice(i, i + 100), optionalColumns);
   }
   const existing = await db.select<{ id: string; removed_at: string | null }>(table, {
     filters: [{ col: "removed_at", op: "is_null" }],
@@ -180,40 +182,52 @@ type DocumentNode = {
   dueDate: string | null;
   signedAt: string | null;
   createdAt: string | null;
+  updatedAt?: string | null;
   price: number | null;
   cost: number | null;
   tax: number | null;
   amountPaid: number | null;
   balance: number | null;
   job: { id: string } | null;
+  account?: { id: string; name: string | null } | null;
+  customFieldValues?: CfConn;
 };
 
-/** Financial documents (orders, invoices, bills): totals and dates only — no line items. */
-export async function syncDocuments(stats: PaveStats): Promise<{ seen: number; removed: number }> {
-  const nodes = await paginate<DocumentNode>({
-    connection: "documents",
-    nodes: {
-      id: {},
-      type: {},
-      status: {},
-      number: {},
-      name: {},
-      issueDate: {},
-      dueDate: {},
-      signedAt: {},
-      createdAt: {},
-      price: {},
-      cost: {},
-      tax: {},
-      amountPaid: {},
-      balance: {},
-      job: { id: {} },
-    },
-    pageSize: 100,
-    stats,
-  });
-  const syncedAt = new Date().toISOString();
-  const rows = nodes.map((n) => ({
+/** Requested on every document. If JobTread rejects one, the sync fails loudly. */
+export const DOCUMENT_REQUIRED_NODES = {
+  id: {},
+  type: {},
+  status: {},
+  number: {},
+  name: {},
+  issueDate: {},
+  createdAt: {},
+  price: {},
+  cost: {},
+  job: { id: {} },
+};
+
+/**
+ * Invoice-level attributes requested when the grant returns them. Any JobTread says doesn't
+ * exist is dropped and recorded (Reports → Data settings shows it as unsupported by the API),
+ * instead of failing the whole documents sync.
+ */
+export const DOCUMENT_OPTIONAL_NODES: Record<string, unknown> = {
+  dueDate: {},
+  signedAt: {},
+  updatedAt: {},
+  tax: {},
+  amountPaid: {},
+  balance: {},
+  account: { id: {}, name: {} },
+  customFieldValues: CF_NODES,
+};
+
+/** Columns added by migration 084 (written only once it's applied). */
+const DOCUMENT_084_COLUMNS = ["source_updated_at", "account_id", "account_name", "fields"];
+
+export function normalizeDocument(n: DocumentNode, allowed: Set<string>, syncedAt: string) {
+  return {
     id: n.id,
     job_id: n.job?.id ?? null,
     type: n.type,
@@ -222,18 +236,62 @@ export async function syncDocuments(stats: PaveStats): Promise<{ seen: number; r
     name: n.name,
     issue_date: n.issueDate?.slice(0, 10) ?? null,
     due_date: n.dueDate?.slice(0, 10) ?? null,
-    signed_at: n.signedAt,
+    signed_at: n.signedAt ?? null,
     price: toNumber(n.price),
     cost: toNumber(n.cost),
     tax: toNumber(n.tax),
     amount_paid: toNumber(n.amountPaid),
     balance: toNumber(n.balance),
     source_created_at: n.createdAt,
+    source_updated_at: n.updatedAt ?? null,
+    account_id: n.account?.id ?? null,
+    account_name: n.account?.name ?? null,
+    fields: collectValues(n.customFieldValues, allowed),
     synced_at: syncedAt,
     removed_at: null,
-  }));
-  const removed = await upsertRemovingMissing("jt_documents", rows, syncedAt);
-  return { seen: rows.length, removed };
+  };
+}
+
+/** Financial documents (orders, invoices, bills): totals and dates only — no line items. */
+export async function syncDocuments(
+  stats: PaveStats,
+): Promise<{ seen: number; removed: number; dropped: string[] }> {
+  const { missingField } = await import("./catalog");
+  const dropped: string[] = [];
+  let nodes: DocumentNode[] = [];
+  for (let attempt = 0; ; attempt++) {
+    const optional = Object.fromEntries(
+      Object.entries(DOCUMENT_OPTIONAL_NODES).filter(([k]) => !dropped.includes(k)),
+    );
+    try {
+      nodes = await paginate<DocumentNode>({
+        connection: "documents",
+        nodes: { ...DOCUMENT_REQUIRED_NODES, ...optional },
+        pageSize: 100,
+        stats,
+      });
+      break;
+    } catch (error) {
+      const field = missingField(error);
+      if (!field || !(field in optional) || attempt > 8) throw error;
+      dropped.push(field);
+    }
+  }
+  const fields = await listCustomFields();
+  // Document custom field values are cached only for fields an admin hasn't excluded.
+  const allowed = new Set(
+    fields
+      .filter((f) => f.category !== "excluded" && /document|invoice|order/i.test(f.target_type))
+      .map((f) => f.id),
+  );
+  const syncedAt = new Date().toISOString();
+  const rows = nodes.map((n) => normalizeDocument(n, allowed, syncedAt));
+  const removed = await upsertRemovingMissing("jt_documents", rows, syncedAt, DOCUMENT_084_COLUMNS);
+  // Record what this grant doesn't return, so reports hide those fields and explain why.
+  await agentDb()
+    .update("jt_sync_entities", [eq("entity", "documents")], { dropped_fields: dropped })
+    .catch(() => undefined);
+  return { seen: rows.length, removed, dropped };
 }
 
 type ModelNode = {

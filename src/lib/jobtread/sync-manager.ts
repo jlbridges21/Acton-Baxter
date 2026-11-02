@@ -609,6 +609,10 @@ async function reconcile(table: string, generation: string): Promise<number> {
 
 /** Reports cache the catalog for a minute; refresh it after catalog data changes. */
 async function invalidateReportCaches(key: SyncEntityKey) {
+  if (["documents", "payments", "tasks", "jobs"].includes(key))
+    await import("@/lib/reports/financial-data")
+      .then((m) => m.invalidateFinancialContext())
+      .catch(() => undefined);
   if (!["catalog_models", "cost_groups", "cost_items", "jobs"].includes(key)) return;
   await import("@/lib/reports/engine")
     .then((m) => m.invalidateCatalogContext())
@@ -716,8 +720,13 @@ export async function advanceRun(input: EntityRunRow, deadline: number): Promise
       const page = await fetchPage(def, cursor, dropped, stats, onDrop);
       const syncedAt = nowIso();
       const rows = page.nodes.map((n) => def.normalize!(n, { syncedAt, allowedFields }));
+      const { upsertWithOptionalColumns } = await import("./tolerant-upsert");
       for (let i = 0; i < rows.length; i += 100)
-        await agentDb().upsert(def.table, rows.slice(i, i + 100), ["id"]);
+        await upsertWithOptionalColumns(
+          def.table,
+          rows.slice(i, i + 100),
+          def.optionalColumns ?? [],
+        );
       pages++;
       seen += rows.length;
       upserted += rows.length;

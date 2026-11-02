@@ -18,6 +18,7 @@ import { ArrowLeft, Database, RefreshCw, Search } from "lucide-react";
 import { aiFetch, errorMessage, formatRelative, Notice, Pill, useLoad } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { FieldMappingHealth } from "./field-mapping-health";
 
 type Field = {
   ref: string;
@@ -309,6 +310,8 @@ export function FieldCatalogAdmin() {
           reports (no report source for their values; excluded by default).
         </p>
       </section>
+
+      <FieldMappingHealth />
 
       {problemAliases.length ? (
         <section className={card}>

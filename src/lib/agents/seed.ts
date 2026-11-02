@@ -18,6 +18,8 @@ import {
   DEXTER_AVATAR_PATH,
   DEXTER_DATA_SYNC_TOOLS,
   DEXTER_ENGINE_TOOLS,
+  DEXTER_PRESENTATION_TOOLS,
+  DEXTER_FINANCIAL_TOOLS,
   DEXTER_GROUP_TOOLS,
   DEXTER_DEFAULT_CONFIG,
   DEXTER_LIMITS_V1,
@@ -240,6 +242,8 @@ async function runSeed(): Promise<void> {
     await addDexterSourceRegistryTool(dexter.id);
     await addDexterEngineTools(dexter.id);
     await addDexterFieldCatalogTools(dexter.id);
+    await addDexterPresentationTools(dexter.id);
+    await addDexterFinancialTools(dexter.id);
   }
   const sam = await selectOne<AgentRow>("ai_agents", { filters: [eq("slug", SAM_SLUG)] });
   if (sam) {
@@ -492,6 +496,52 @@ async function addDexterFieldCatalogTools(dexterId: string) {
     published,
     { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
     `${DEXTER_FIELD_CATALOG_MARKER}: native JobTread field catalog, field audit/repair, report styling`,
+  );
+}
+
+const DEXTER_PRESENTATION_MARKER = "System: Dexter field mappings, column formatting, drill-downs";
+
+/** One-time: enable the field mapping / column format / drill tools (admin edits kept). */
+async function addDexterPresentationTools(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_PRESENTATION_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, ...DEXTER_PRESENTATION_TOOLS])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_PRESENTATION_MARKER}: id-keyed field mapping health, column formatting by stable column id, grouped-table drill-downs`,
+  );
+}
+
+const DEXTER_FINANCIAL_MARKER = "System: Dexter financial reporting tools";
+
+/** One-time: enable the invoice / payment / PP# / snapshot / alert tools (admin edits kept). */
+async function addDexterFinancialTools(dexterId: string) {
+  const versions = await agentDb().select<ConfigVersionRow>("ai_agent_config_versions", {
+    filters: [eq("agent_id", dexterId)],
+  });
+  const published = versions.find((v) => v.status === "published");
+  if (!published || versions.some((v) => v.status === "draft")) return;
+  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_FINANCIAL_MARKER))) return;
+  const parsed = agentConfigSchema.safeParse(published.config);
+  if (!parsed.success) return;
+  const enabled = [...new Set([...parsed.data.tools.enabled, ...DEXTER_FINANCIAL_TOOLS])];
+  if (enabled.length === parsed.data.tools.enabled.length) return;
+  await publishSystemVersion(
+    dexterId,
+    versions,
+    published,
+    { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
+    `${DEXTER_FINANCIAL_MARKER}: invoices, payments, tasks, PP# milestones, weekly snapshots, alerts`,
   );
 }
 

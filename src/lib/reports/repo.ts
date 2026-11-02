@@ -34,7 +34,7 @@ import {
   TEMPLATE_RULE_SET_KEY,
 } from "./rule-scope";
 import { getRuleSet, SYSTEM_RULE_ACTOR, type RuleActor, type RuleSetRow } from "./rules";
-import { parseReportSpec, type ReportSpec } from "./spec";
+import { parseReportSpec, withColumnIds, type ReportSpec } from "./spec";
 import { REPORT_TEMPLATES } from "./templates";
 
 export type ReportRow = {
@@ -173,6 +173,13 @@ export function permissionFor(
 }
 
 export async function getReport(id: string): Promise<ReportRow | null> {
+  const row = await getReportRaw(id);
+  // Legacy table columns get their deterministic stable ids (formatting/drill key on them).
+  return row ? { ...row, spec: withColumnIds(row.spec) } : null;
+}
+
+/** The row exactly as stored (integrity checks look for duplicate explicit column ids). */
+export async function getReportRaw(id: string): Promise<ReportRow | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   return selectOne<ReportRow>("bi_reports", { filters: [eq("id", id)] });
 }

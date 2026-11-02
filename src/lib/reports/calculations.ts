@@ -112,7 +112,15 @@ export function extendCatalogWithCalcs(
     byKey,
     calcs: new Map(),
     calcErrors,
-    calcOrder: { jobs: [], catalog_models: [], cost_items: [], commissions: [] },
+    calcOrder: {
+      jobs: [],
+      catalog_models: [],
+      cost_items: [],
+      commissions: [],
+      documents: [],
+      payments: [],
+      tasks: [],
+    },
   };
 
   // Pass 1: parse + analyze each calculation against the (provisional) catalog.

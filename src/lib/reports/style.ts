@@ -227,6 +227,82 @@ export type ConditionalRule = z.infer<typeof conditionalRuleSchema>;
 
 const rules = z.array(conditionalRuleSchema).max(12);
 
+// ── Table columns (keyed by stable column id; see column-format.ts) ─────────────────────
+
+export const COLUMN_ID = /^[a-z][a-z0-9_]{0,47}$/;
+export const columnIdSchema = z
+  .string()
+  .regex(
+    COLUMN_ID,
+    "Column ids are lowercase letters, digits, and underscores (start with a letter).",
+  );
+
+export const NUMBER_STYLES = ["auto", "number", "currency", "percent", "plain"] as const;
+export const NEGATIVE_STYLES = ["minus", "parens", "red", "red_parens"] as const;
+export const ALIGNS = ["left", "center", "right"] as const;
+
+const columnTextStyle = z
+  .object({
+    background: colorSchema.optional(),
+    text: colorSchema.optional(),
+    bold: z.boolean().optional(),
+    align: z.enum(ALIGNS).optional(),
+  })
+  .strict();
+
+export const numberFormatSchema = z
+  .object({
+    style: z.enum(NUMBER_STYLES).optional(),
+    decimals: z.number().int().min(0).max(6).optional(),
+    thousands: z.boolean().optional(),
+    negative: z.enum(NEGATIVE_STYLES).optional(),
+    /** Percent inputs: "whole" = 12.5 means 12.5% (Baxter's convention), "fraction" = 0.125. */
+    percentInput: z.enum(["whole", "fraction"]).optional(),
+    prefix: z.string().max(4).optional(),
+    suffix: z.string().max(8).optional(),
+  })
+  .strict();
+
+/** A cell rule: evaluates the raw value of this column (or `column`, another column id). */
+export const cellRuleSchema = z
+  .object({
+    column: columnIdSchema.optional(),
+    op: z.enum(RULE_OPS),
+    value: ruleValue.optional(),
+    style: ruleStyleSchema,
+  })
+  .strict()
+  .superRefine((r, ctx) => {
+    if (r.op === "between" && !(Array.isArray(r.value) && r.value.length === 2))
+      ctx.addIssue({ code: "custom", path: ["value"], message: '"between" needs [low, high].' });
+    if (["in", "not_in"].includes(r.op) && !Array.isArray(r.value))
+      ctx.addIssue({
+        code: "custom",
+        path: ["value"],
+        message: `"${r.op}" needs a list of values.`,
+      });
+    if (!["blank", "not_blank", "between", "in", "not_in"].includes(r.op) && r.value === undefined)
+      ctx.addIssue({ code: "custom", path: ["value"], message: `"${r.op}" needs a value.` });
+  });
+export type CellRule = z.infer<typeof cellRuleSchema>;
+
+export const columnFormatSchema = z
+  .object({
+    header: columnTextStyle.optional(),
+    cell: columnTextStyle.optional(),
+    number: numberFormatSchema.optional(),
+    width: z.number().int().min(60).max(600).optional(),
+    hidden: z.boolean().optional(),
+    pin: z.enum(["left"]).nullable().optional(),
+    rules: z.array(cellRuleSchema).max(8).optional(),
+  })
+  .strict();
+export type ColumnFormat = z.infer<typeof columnFormatSchema>;
+
+export const columnFormatsSchema = z
+  .record(columnIdSchema, columnFormatSchema)
+  .refine((r) => Object.keys(r).length <= 40, { message: "At most 40 column formats." });
+
 export const themeSchema = z
   .object({
     palette: paletteName.optional(),
@@ -252,6 +328,19 @@ export const themeSchema = z
     nullColor: colorSchema.optional(),
     /** Optional status colors by value (e.g. "Blocked" → token:negative), applied to any field. */
     statusColors: valueColors.optional(),
+    /** Report-level column format presets (in addition to the built-in ones). */
+    columnPresets: z
+      .record(
+        z
+          .string()
+          .regex(
+            /^[a-z][a-z0-9_]{0,31}$/,
+            "Preset keys are lowercase letters, digits, and underscores.",
+          ),
+        z.object({ label: z.string().trim().min(1).max(40), format: columnFormatSchema }).strict(),
+      )
+      .refine((r) => Object.keys(r).length <= 12, { message: "At most 12 presets." })
+      .optional(),
   })
   .strict();
 export type ReportTheme = z.infer<typeof themeSchema>;
@@ -308,12 +397,15 @@ export const tableStyleSchema = z
     groupHeader: z.enum(["default", "emphasized", "subtle"]).optional(),
     subtotal: z.enum(["default", "bold"]).optional(),
     rules: rules.optional(),
+    /** Legacy per-field alignment (kept for older reports; columnFormats wins). */
     columns: z
       .record(
         styleFieldRef,
         z.object({ align: z.enum(["left", "center", "right"]).optional() }).strict(),
       )
       .optional(),
+    /** Per-column formatting keyed by stable column id. Presentation only. */
+    columnFormats: columnFormatsSchema.optional(),
     controls: z
       .object({
         search: z.boolean().optional(),

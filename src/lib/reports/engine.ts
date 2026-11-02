@@ -31,9 +31,10 @@ import {
   isCalcCatalog,
   type CalcCatalog,
 } from "./calculations";
-import { buildGroupTree, type GroupColumn } from "./grouping";
+import { buildGroupTree, summarizeGroup, type GroupColumn } from "./grouping";
+import { DRILL_PAGE_MAX, reconcileChildren, rowsAtPath, type Reconciliation } from "./drill-core";
 import { catalogFor } from "./metrics";
-import { attachRelated, relationshipsFrom } from "./relationships";
+import { attachRelated, relationshipsFrom, ROLLUPS } from "./relationships";
 import { ID_FIELDS, isRelCatalog } from "./report-relationships";
 import { firstRuleStyle } from "./style";
 import { SOURCE_REGISTRY } from "./sources";
@@ -256,6 +257,9 @@ type DataCache = {
   models?: Row[];
   items?: Row[];
   commissions?: Map<string, Row[]>;
+  /** Financial sources (documents, payments, tasks), raw and with related fields. */
+  financial?: Partial<Record<"documents" | "payments" | "tasks", Row[]>>;
+  financialRelated?: Partial<Record<"documents" | "payments" | "tasks", Row[]>>;
   /** Rows with rollups and row calculations applied, per source (+ rule set). */
   enriched?: Map<string, Row[]>;
   /** Jobs and models with related fields attached. */
@@ -336,10 +340,33 @@ async function loadRawSource(
   cache: DataCache,
 ): Promise<Row[]> {
   if (source === "jobs") return loadJobs(catalog, cache);
+  if (source === "documents" || source === "payments" || source === "tasks")
+    return loadFinancialSource(source, cache);
+  if (source === "commissions") return [];
   const context = await loadCatalogContext();
   if (source === "catalog_models") return context.modelRows;
   if (source === "cost_items") return context.items();
   return [];
+}
+
+/** Invoice-level documents, payments, and tasks from the synced cache (financial-data.ts). */
+async function loadFinancialSource(
+  source: "documents" | "payments" | "tasks",
+  cache: DataCache,
+): Promise<Row[]> {
+  cache.financial ??= {};
+  if (!cache.financial[source]) {
+    const { documentRows, loadFinancialContext, paymentRows, taskRows } =
+      await import("./financial-data");
+    const ctx = await loadFinancialContext();
+    cache.financial[source] =
+      source === "documents"
+        ? documentRows(ctx)
+        : source === "payments"
+          ? paymentRows(ctx)
+          : taskRows(ctx);
+  }
+  return cache.financial[source]!;
 }
 
 /** JobTread jobs with the inputs commission calculations need (sales reps, gross profit). */
@@ -461,6 +488,16 @@ async function loadBaseSource(
     );
     cache.commissions.set(key, rows);
     return rows;
+  }
+  if (ds.source === "documents" || ds.source === "payments" || ds.source === "tasks") {
+    cache.financialRelated ??= {};
+    cache.financialRelated[ds.source] ??= await withRelatedFields(
+      ds.source,
+      await loadFinancialSource(ds.source, cache),
+      catalog,
+      cache,
+    );
+    return cache.financialRelated[ds.source]!;
   }
   if (ds.source === "cost_items") {
     if (!cache.items) {
@@ -1201,6 +1238,8 @@ async function runWidget(ctx: Ctx, w: WidgetSpec): Promise<WidgetResult> {
         origin: f.def.origin,
         wrap: c.wrap || undefined,
         ref: c.field,
+        columnId: c.id,
+        width: w.appearance?.columnFormats?.[c.id ?? ""]?.width ?? c.width,
       }));
       if (summary)
         meta.push({
@@ -1779,7 +1818,10 @@ export async function drilldown(input: {
           ? jobTreadJobUrl(r.id)
           : source === "commissions" && typeof r["com.jobId"] === "string"
             ? jobTreadJobUrl(r["com.jobId"])
-            : undefined,
+            : (source === "documents" || source === "tasks" || source === "payments") &&
+                typeof r[`${SOURCE_REGISTRY[source].fieldPrefix}jobId`] === "string"
+              ? jobTreadJobUrl(r[`${SOURCE_REGISTRY[source].fieldPrefix}jobId`] as string)
+              : undefined,
     })),
   };
 }
@@ -1878,4 +1920,266 @@ export async function checkSpecFields(
       );
   }
   return { missing, restricted };
+}
+
+export type GroupDrillResult = {
+  title: string;
+  /** Group path from the top level, for breadcrumbs. */
+  breadcrumbs: Array<{ field: string; fieldLabel: string; label: string }>;
+  /** Filters, controls, and widget filters in effect (the drill keeps them all). */
+  filters: string[];
+  /** The aggregate that was clicked (when a subtotal cell was clicked). */
+  metric: {
+    columnId: string | null;
+    key: string;
+    label: string;
+    type: FieldMeta["type"];
+    mode: GroupColumn["mode"];
+    value: CellValue;
+    /** Calculated field: its formula. */
+    formula?: string;
+  } | null;
+  reconciliation: Reconciliation | null;
+  /** Next grouping level under this group (click to drill further). */
+  next: { field: string; fieldLabel: string } | null;
+  children: Array<{ label: string; count: number; value: CellValue }>;
+  /** Records (this page). For a related drill these are the related source's records. */
+  records: {
+    source: string;
+    label: string;
+    columns: FieldMeta[];
+    rows: Array<{ id: string; cells: Record<string, CellValue>; jobtreadUrl?: string }>;
+    total: number;
+    offset: number;
+    limit: number;
+    subtotals: Record<string, CellValue>;
+  };
+  notes: string[];
+};
+
+/**
+ * Records behind one grouped-table group (and optionally one subtotal), with breadcrumbs,
+ * reconciliation against child groups, and server-side paging. Uses the same grouping
+ * levels, filters, controls, column access, and calculations as the table itself, so the
+ * numbers match what the viewer clicked.
+ */
+export async function drillGroup(input: {
+  spec: ReportSpec;
+  access: ReportsAccess;
+  state?: ControlState;
+  widgetId: string;
+  path: string[];
+  columnId?: string | null;
+  offset?: number;
+  limit?: number;
+}): Promise<GroupDrillResult> {
+  const catalog = await catalogFor(input.spec);
+  const ctx: Ctx = {
+    spec: input.spec,
+    catalog,
+    access: input.access,
+    state: input.state ?? {},
+    data: { syncedAt: null },
+    issues: [],
+    live: new Map(),
+    liveFetchedAt: null,
+  };
+  const w = input.spec.widgets.find((x) => x.id === input.widgetId);
+  if (!w || w.type !== "table") throw new RefError("Only table groups can be drilled here.", false);
+  if (w.drill?.enabled === false)
+    throw new RefError("Drill-downs are turned off for this table.", false);
+  const levels = (viewGroupLevels(ctx, w.id) ?? w.groupLevels).flatMap((ref) => {
+    try {
+      const f = rowField(ctx, ref, "group by");
+      return canSeeField(ctx.access, f.def) ? [{ key: f.key, label: f.def.label }] : [];
+    } catch (error) {
+      if (!(error instanceof RefError)) throw error;
+      return [];
+    }
+  });
+  if (!input.path.length || input.path.length > levels.length)
+    throw new RefError("That group isn't in this table any more. Refresh the report.", false);
+
+  // Columns the viewer may see (same rules as the table: restricted columns are dropped).
+  const columns: Array<{ c: (typeof w.columns)[number]; f: { key: string; def: FieldDef } }> = [];
+  for (const c of w.columns) {
+    try {
+      columns.push({ c, f: requireField(ctx, c.field) });
+    } catch (error) {
+      if (!(error instanceof RefError)) throw error;
+    }
+  }
+  const aggregateCols = new Map(
+    columns
+      .filter((x) => x.f.def.calc?.basis === "aggregate")
+      .map((x) => [x.f.key, runMetric(ctx, { op: "formula", field: x.c.field })] as const),
+  );
+  const groupColumnFor = (x: (typeof columns)[number]): GroupColumn => {
+    const agg = aggregateCols.get(x.f.key);
+    if (agg) return { key: x.f.key, mode: "formula", evaluate: (rs) => agg.evaluate!(rs) };
+    if (x.c.aggregate !== "auto") return { key: x.f.key, mode: x.c.aggregate };
+    return {
+      key: x.f.key,
+      mode: ["currency", "number", "sqft"].includes(x.f.def.type) ? "sum" : "none",
+    };
+  };
+
+  const filters: string[] = [];
+  let rows = filterRows(
+    await datasetRows(ctx, w.dataset, filters),
+    canonicalConditions(ctx, w.filters),
+  );
+  w.filters.forEach((f) => filters.push(describeCondition(ctx, f)));
+  const levelKeys = levels.map((l) => l.key);
+  rows = rowsAtPath(rows, levelKeys, input.path);
+  const breadcrumbs = input.path.map((label, i) => ({
+    field: levels[i]!.key,
+    fieldLabel: levels[i]!.label,
+    label,
+  }));
+  const next = levels[input.path.length]
+    ? { field: levels[input.path.length]!.key, fieldLabel: levels[input.path.length]!.label }
+    : null;
+
+  // The clicked aggregate, its reconciliation, and the next level's breakdown.
+  const clicked = input.columnId ? columns.find((x) => x.c.id === input.columnId) : undefined;
+  if (input.columnId && !clicked)
+    throw new RefError("That column isn't available to you in this table.", true);
+  const notes: string[] = [];
+  let metric: GroupDrillResult["metric"] = null;
+  let reconciliation: Reconciliation | null = null;
+  let children: GroupDrillResult["children"] = [];
+  const countColumn: GroupColumn = { key: "id", mode: "count" };
+  const target = clicked ? { ...groupColumnFor(clicked), type: clicked.f.def.type } : countColumn;
+  const rec = reconcileChildren(rows, next?.field ?? null, target);
+  reconciliation = rec.reconciliation;
+  children = rec.children;
+  if (clicked) {
+    metric = {
+      columnId: clicked.c.id ?? null,
+      key: clicked.f.key,
+      label: clicked.c.label || clicked.f.def.label,
+      type:
+        clicked.c.format !== "auto" ? (clicked.c.format as FieldMeta["type"]) : clicked.f.def.type,
+      mode: target.mode,
+      value: rec.reconciliation.parent,
+      ...(clicked.f.def.calc ? { formula: calcFormula(ctx, clicked.f.key) } : {}),
+    };
+  }
+
+  const offset = Math.max(0, input.offset ?? 0);
+  const limit = Math.min(Math.max(1, input.limit ?? 50), DRILL_PAGE_MAX);
+  const source = input.spec.datasets.find((d) => d.id === w.dataset)!.source;
+
+  // Related drill: the child records of this group's records through a real rollup join.
+  if (w.drill?.related) {
+    const rollup = ROLLUPS[w.drill.related];
+    const parentIds = new Set(rows.map((r) => r.id));
+    const childRows = (await loadSource({ source: rollup.child }, ctx.catalog, ctx.data)).filter(
+      (r) => typeof r[rollup.childKey] === "string" && parentIds.has(r[rollup.childKey] as string),
+    );
+    const cols: FieldMeta[] = [];
+    for (const ref of SOURCE_REGISTRY[rollup.child].drilldownFields) {
+      const r = resolveField(catalog, ref);
+      if (r.ok && canSeeField(input.access, r.def) && !cols.some((c) => c.key === r.key))
+        cols.push({ key: r.key, label: r.def.label, type: r.def.type, origin: r.def.origin });
+    }
+    const sorted = sortRows(childRows, [
+      { field: SOURCE_REGISTRY[rollup.child].labelField, dir: "asc" },
+    ]);
+    const subtotals = summarizeGroup(
+      sorted,
+      cols
+        .filter((c) => ["currency", "number", "sqft"].includes(c.type))
+        .map((c) => ({ key: c.key, mode: "sum" as const })),
+    ).values;
+    notes.push(
+      `${rollup.label} of the ${rows.length} record(s) in this group, joined by ${rollup.childKey} (JobTread id).`,
+    );
+    return {
+      title: `${breadcrumbs.map((b) => b.label).join(" › ")} — ${rollup.label}`,
+      breadcrumbs,
+      filters,
+      metric,
+      reconciliation,
+      next,
+      children,
+      records: {
+        source: rollup.child,
+        label: rollup.label,
+        columns: cols,
+        rows: sorted.slice(offset, offset + limit).map((r) => ({
+          id: r.id,
+          cells: Object.fromEntries(cols.map((c) => [c.key, r[c.key] ?? null])),
+        })),
+        total: sorted.length,
+        offset,
+        limit,
+        subtotals,
+      },
+      notes,
+    };
+  }
+
+  // Records of the table's own source, with the configured drill columns.
+  const wanted = w.drill?.columns?.length
+    ? columns.filter((x) => w.drill!.columns!.includes(x.c.id ?? ""))
+    : columns;
+  const sort = w.sort.flatMap((s) => {
+    const r = resolveField(ctx.catalog, s.field);
+    return r.ok && canSeeField(ctx.access, r.def) ? [{ field: r.key, dir: s.dir }] : [];
+  });
+  const sorted = sortRows(
+    rows,
+    sort.length ? sort : [{ field: SOURCE_REGISTRY[source].labelField, dir: "asc" }],
+  );
+  const meta: FieldMeta[] = wanted.map(({ c, f }) => ({
+    key: f.key,
+    label: c.label || f.def.label,
+    type: c.format !== "auto" ? (c.format as FieldMeta["type"]) : f.def.type,
+    description: f.def.description,
+    origin: f.def.origin,
+    ref: c.field,
+    columnId: c.id,
+  }));
+  const cell = (r: Row, k: string): CellValue => {
+    const agg = aggregateCols.get(k);
+    return agg ? agg.evaluate!([r]) : (r[k] ?? null);
+  };
+  const subtotals = summarizeGroup(sorted, wanted.map(groupColumnFor)).values;
+  if (rows.some((r) => levelKeys.some((k) => Array.isArray(r[k]) && (r[k] as string[]).length > 1)))
+    notes.push(
+      "Some records have several values in a grouping field; they appear in each matching group.",
+    );
+  return {
+    title:
+      breadcrumbs.map((b) => `${b.fieldLabel}: ${b.label}`).join(" › ") || w.title || "Records",
+    breadcrumbs,
+    filters,
+    metric,
+    reconciliation,
+    next,
+    children,
+    records: {
+      source,
+      label: w.title || "Records",
+      columns: meta,
+      rows: sorted.slice(offset, offset + limit).map((r) => ({
+        id: r.id,
+        cells: Object.fromEntries(meta.map((m) => [m.key, cell(r, m.key)])),
+        // Only real JobTread records get a link (jobs; commission rows link to their job).
+        jobtreadUrl:
+          source === "jobs"
+            ? jobTreadJobUrl(r.id)
+            : source === "commissions" && typeof r["com.jobId"] === "string"
+              ? jobTreadJobUrl(r["com.jobId"])
+              : undefined,
+      })),
+      total: sorted.length,
+      offset,
+      limit,
+      subtotals,
+    },
+    notes,
+  };
 }

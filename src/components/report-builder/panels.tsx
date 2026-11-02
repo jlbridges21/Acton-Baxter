@@ -530,3 +530,272 @@ export function HistoryDialog({
     </Dialog>
   );
 }
+
+export type GroupDrillData = {
+  title: string;
+  breadcrumbs: Array<{ field: string; fieldLabel: string; label: string }>;
+  filters: string[];
+  metric: {
+    columnId: string | null;
+    key: string;
+    label: string;
+    type: FieldMeta["type"];
+    mode: string;
+    value: CellValue;
+    formula?: string;
+  } | null;
+  reconciliation: {
+    additive: boolean;
+    parent: CellValue;
+    childrenTotal: number | null;
+    overlap: number;
+    status: "reconciled" | "overlap" | "mismatch" | "recomputed" | "not_applicable";
+    message: string;
+  } | null;
+  next: { field: string; fieldLabel: string } | null;
+  children: Array<{ label: string; count: number; value: CellValue }>;
+  records: {
+    source: string;
+    label: string;
+    columns: FieldMeta[];
+    rows: Array<{ id: string; cells: Record<string, CellValue>; jobtreadUrl?: string }>;
+    total: number;
+    offset: number;
+    limit: number;
+    subtotals: Record<string, CellValue>;
+  };
+  notes: string[];
+};
+
+const RECON_TONE: Record<string, string> = {
+  reconciled: "text-emerald-800",
+  overlap: "text-amber-800",
+  mismatch: "text-red-700",
+  recomputed: "text-[var(--acton-muted)]",
+  not_applicable: "text-[var(--acton-muted)]",
+};
+
+/**
+ * Drill view for a grouped-table group or subtotal: breadcrumbs (click to go back up), the
+ * clicked metric (with its formula for calculated fields), reconciliation with the next level,
+ * child groups (click to drill further), and the records — paged on the server.
+ */
+export function GroupDrillDrawer({
+  open,
+  loading,
+  error,
+  data,
+  onClose,
+  onNavigate,
+  onPage,
+  onOpenRow,
+}: {
+  open: boolean;
+  loading: boolean;
+  error: string | null;
+  data: GroupDrillData | null;
+  onClose: () => void;
+  /** Go to another path (breadcrumb or child group). */
+  onNavigate: (path: string[]) => void;
+  onPage: (offset: number) => void;
+  onOpenRow: (row: GroupDrillData["records"]["rows"][number], columns: FieldMeta[]) => void;
+}) {
+  const path = data?.breadcrumbs.map((b) => b.label) ?? [];
+  const r = data?.records;
+  const metricType = data?.metric?.type ?? "count";
+  return (
+    <Drawer open={open} onClose={onClose} title={data?.title ?? "Records"}>
+      {loading ? <p className="text-sm text-[var(--acton-muted)]">Loading records…</p> : null}
+      {error ? <Notice tone="error">{error}</Notice> : null}
+      {data && r ? (
+        <div className="space-y-4">
+          <nav aria-label="Drill path" className="flex flex-wrap items-center gap-1 text-xs">
+            {path.length > 1 ? (
+              <button
+                type="button"
+                className="mr-1 rounded border border-[var(--acton-border)] px-2 py-0.5 hover:bg-[var(--acton-gray-50)]"
+                onClick={() => onNavigate(path.slice(0, -1))}
+              >
+                ← Back
+              </button>
+            ) : null}
+            {data.breadcrumbs.map((b, i) => (
+              <span key={`${b.field}:${i}`} className="inline-flex items-center gap-1">
+                {i ? <span aria-hidden>›</span> : null}
+                {i < data.breadcrumbs.length - 1 ? (
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => onNavigate(path.slice(0, i + 1))}
+                  >
+                    {b.fieldLabel}: {b.label}
+                  </button>
+                ) : (
+                  <span className="font-semibold text-[var(--acton-navy)]" aria-current="page">
+                    {b.fieldLabel}: {b.label}
+                  </span>
+                )}
+              </span>
+            ))}
+          </nav>
+
+          {data.metric ? (
+            <section className="rounded-md border border-[var(--acton-border)] p-3">
+              <p className="text-xs text-[var(--acton-muted)]">{data.metric.label}</p>
+              <p className="text-2xl font-bold text-[var(--acton-navy)] tabular-nums">
+                {formatValue(data.metric.value, data.metric.type)}
+              </p>
+              {data.metric.formula ? (
+                <p className="mt-1 text-xs">
+                  Formula: <code className="break-all">{data.metric.formula}</code>
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {data.reconciliation && data.reconciliation.status !== "not_applicable" ? (
+            <p className={`text-xs ${RECON_TONE[data.reconciliation.status] ?? ""}`}>
+              {data.reconciliation.additive && data.reconciliation.childrenTotal !== null
+                ? `Child groups total ${formatValue(data.reconciliation.childrenTotal, metricType)}. `
+                : ""}
+              {data.reconciliation.message}
+            </p>
+          ) : null}
+
+          {data.next && data.children.length ? (
+            <section aria-label={`By ${data.next.fieldLabel}`}>
+              <h3 className="text-sm font-semibold text-[var(--acton-navy)]">
+                By {data.next.fieldLabel}
+              </h3>
+              <ul className="mt-1 divide-y divide-[var(--acton-gray-100)] rounded-md border border-[var(--acton-border)] text-sm">
+                {data.children.map((c) => (
+                  <li key={c.label}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left hover:bg-[var(--acton-gray-50)]"
+                      onClick={() => onNavigate([...path, c.label])}
+                    >
+                      <span>
+                        {c.label}{" "}
+                        <span className="text-xs text-[var(--acton-muted)]">
+                          ({c.count.toLocaleString()})
+                        </span>
+                      </span>
+                      <span className="tabular-nums">{formatValue(c.value, metricType)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {data.filters.length ? (
+            <p className="text-xs text-[var(--acton-muted)]">
+              Filters kept: {data.filters.join(" · ")}
+            </p>
+          ) : null}
+          {data.notes.map((n) => (
+            <p key={n} className="text-xs text-[var(--acton-muted)]">
+              {n}
+            </p>
+          ))}
+
+          <section aria-label={r.label}>
+            <p className="mb-2 text-sm text-[var(--acton-muted)]">
+              {r.total.toLocaleString()} record{r.total === 1 ? "" : "s"}
+              {r.total > r.rows.length
+                ? ` · showing ${r.offset + 1}–${r.offset + r.rows.length}`
+                : ""}
+              . Only fields your access allows are shown.
+            </p>
+            <div className="overflow-x-auto rounded-md border border-[var(--acton-border)]">
+              <table className="w-full text-sm">
+                <thead className="bg-[var(--acton-gray-50)] text-left text-xs text-[var(--acton-muted)]">
+                  <tr>
+                    {r.columns.map((c) => (
+                      <th
+                        key={c.columnId ?? c.key}
+                        className="px-3 py-2 font-semibold whitespace-nowrap"
+                      >
+                        {c.label}
+                      </th>
+                    ))}
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.rows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="cursor-pointer border-t border-[var(--acton-gray-100)] hover:bg-[var(--acton-gray-50)]"
+                      onClick={() => onOpenRow(row, r.columns)}
+                    >
+                      {r.columns.map((c) => (
+                        <td
+                          key={c.columnId ?? c.key}
+                          className="max-w-56 truncate px-3 py-1.5 text-[var(--acton-navy)]"
+                        >
+                          {formatValue(row.cells[c.key], c.type)}
+                        </td>
+                      ))}
+                      <td className="px-3 py-1.5">
+                        {row.jobtreadUrl ? (
+                          <a
+                            href={row.jobtreadUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label="Open in JobTread"
+                            className="text-[var(--acton-muted)] hover:text-[var(--acton-navy)]"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                          </a>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {Object.values(r.subtotals).some((v) => v !== null && v !== undefined) ? (
+                  <tfoot>
+                    <tr className="border-t-2 border-[var(--acton-border)] bg-[var(--acton-gray-50)] font-semibold">
+                      {r.columns.map((c, i) => (
+                        <td key={c.columnId ?? c.key} className="px-3 py-1.5 tabular-nums">
+                          {r.subtotals[c.key] !== undefined && r.subtotals[c.key] !== null
+                            ? formatValue(r.subtotals[c.key], c.type)
+                            : i === 0
+                              ? "Subtotal (all records)"
+                              : ""}
+                        </td>
+                      ))}
+                      <td />
+                    </tr>
+                  </tfoot>
+                ) : null}
+              </table>
+            </div>
+            {r.total > r.limit ? (
+              <div className="mt-2 flex items-center justify-end gap-2 text-xs">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={r.offset === 0 || loading}
+                  onClick={() => onPage(Math.max(0, r.offset - r.limit))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={r.offset + r.limit >= r.total || loading}
+                  onClick={() => onPage(r.offset + r.limit)}
+                >
+                  Next
+                </Button>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
+    </Drawer>
+  );
+}

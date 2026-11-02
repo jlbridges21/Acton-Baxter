@@ -1,10 +1,9 @@
 import { z } from "zod";
 import { jsonError, jsonOk } from "@/lib/api";
-import { ValidationError } from "@/lib/errors";
 import { drilldown } from "@/lib/reports/engine";
+import { drillSpec } from "@/lib/reports/drill-http";
 import { controlStateSchema, requireReportsContext } from "@/lib/reports/http";
 import { loadReportFor, recordExecution } from "@/lib/reports/repo";
-import { parseReportSpec } from "@/lib/reports/spec";
 
 export const dynamic = "force-dynamic";
 
@@ -26,14 +25,9 @@ export async function POST(request: Request, { params }: Params) {
     const { reportId } = await params;
     const { report, permission } = await loadReportFor(reportId, ctx.requester, ctx.access);
     const body = bodySchema.parse(await request.json());
-    let spec = report.spec;
-    if (body.spec !== undefined && permission.canEdit) {
-      const parsed = parseReportSpec(body.spec);
-      if (!parsed.ok) throw new ValidationError("The draft report isn't valid.");
-      spec = parsed.spec;
-    }
+    // Drafts only from editors; templates never read a live rule set (same as execute).
     const result = await drilldown({
-      spec,
+      spec: drillSpec(report, permission, body.spec),
       access: ctx.access,
       state: body.state,
       widgetId: body.widgetId,

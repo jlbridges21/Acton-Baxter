@@ -610,6 +610,7 @@ const updateReportTool: AgentTool = {
  {"op":"move_widget","id","to":"top"|"bottom"|{"after":id}|{"before":id}} | {"op":"reorder_widgets","order":[ids]}
  {"op":"add_dataset","dataset"} | {"op":"set_dataset_filters","id","filters":[Condition]} | {"op":"add_control","control"} | {"op":"update_control","id","changes"} | {"op":"remove_control","id"}
  {"op":"set_theme","theme":Theme,"mode"?:"merge"|"replace"} | {"op":"remove_theme"} | {"op":"set_widget_appearance","id","appearance":Appearance,"mode"?:"merge"|"replace"} | {"op":"remove_widget_appearance","id"}
+ {"op":"set_column_format","id":tableId,"column":columnId,"format":ColumnFormat,"mode"?:"merge"|"replace"|"reset"} | {"op":"prune_column_formats","id"} — prefer reports_format_column, which resolves a column by name. Table columns have stable "id"s (shown by reports_get); keep them when you rewrite "columns" so their formatting stays attached (columns without an id inherit one by field, then label).
 "dryRun": true validates everything and returns the change list, problems (with operation paths), and readability warnings without saving — use it for styling and field changes, then repeat without dryRun.
 Use the same spec vocabulary as reports_create.`,
   risk: "draft",

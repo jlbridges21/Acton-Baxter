@@ -63,6 +63,9 @@ const SOURCE_LABELS: Record<ReportSource, string> = {
   catalog_models: "Product Library models",
   cost_items: "Cost items",
   commissions: "Commissions",
+  documents: "Financial documents (invoices)",
+  payments: "Payments",
+  tasks: "Tasks & schedule",
 };
 const BASIS_HELP = {
   row: "One value per record (e.g. Price − Cost for each job). Can be filtered, grouped, sorted, and summed or averaged.",

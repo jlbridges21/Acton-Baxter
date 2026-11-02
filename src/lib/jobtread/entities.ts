@@ -60,6 +60,8 @@ export type SyncEntityDef = {
   args?: Record<string, unknown>;
   nodes?: Record<string, unknown>;
   pageSize?: number;
+  /** Columns from a newer migration; skipped (not fatal) until the migration is applied. */
+  optionalColumns?: string[];
   normalize?: (node: Node, ctx: NormalizeContext) => Row;
 };
 
@@ -131,8 +133,10 @@ export const SYNC_ENTITIES: SyncEntityDef[] = [
     sensitivity: "financial",
     priority: 30,
     dependsOn: ["jobs"],
-    privacy: "No line items or attachments.",
-    usedFor: "Order price/cost, gross profit, commissions.",
+    privacy:
+      "No line items or attachments. Document custom field values only for fields an admin allowed.",
+    usedFor:
+      "Invoice reports (lifecycle, payment status, overdue), PP# milestones, order price/cost, commissions.",
   },
   {
     key: "catalog_models",
@@ -252,9 +256,10 @@ export const SYNC_ENTITIES: SyncEntityDef[] = [
     priority: 60,
     dependsOn: ["jobs"],
     privacy: "Task names, dates, and progress only.",
-    usedFor: "Milestone timelines, schedule slippage, workload.",
+    usedFor: "Tasks report source, milestone timelines, PP# milestone links, schedule slippage.",
     connection: "tasks",
     pageSize: 100,
+    optionalColumns: ["parent_id"],
     nodes: {
       id: {},
       name: {},
@@ -266,10 +271,13 @@ export const SYNC_ENTITIES: SyncEntityDef[] = [
       isToDo: {},
       createdAt: {},
       job: rel,
+      // Dropped automatically (and recorded) if this grant doesn't expose it.
+      parentTask: rel,
     },
     normalize: (n, ctx) => ({
       id: String(n.id),
       job_id: relId(n.job),
+      parent_id: relId(n.parentTask),
       name: str(n.name),
       start_date: day(n.startDate),
       end_date: day(n.endDate),
@@ -359,7 +367,9 @@ export const SYNC_ENTITIES: SyncEntityDef[] = [
       account_id: relId(n.account),
       name: str(n.name),
       title: str(n.title),
-      fields: allowedValues(n, ["contact"], ctx),
+      // JobTread's contact targets are customerContact / vendorContact ("contact" kept for
+      // older catalogs). Filtering on "contact" alone never matched, so no values were cached.
+      fields: allowedValues(n, ["customerContact", "vendorContact", "contact"], ctx),
       source_created_at: str(n.createdAt),
       synced_at: ctx.syncedAt,
       removed_at: null,
@@ -421,22 +431,35 @@ export const SYNC_ENTITIES: SyncEntityDef[] = [
   {
     key: "payments",
     label: "Payments",
-    description: "Customer payment amounts and dates.",
+    description: "Customer payment amounts, dates, and type (refunds stay their own records).",
     kind: "paged",
     catalogEntity: "payments",
     table: "jt_payments",
     sensitivity: "financial",
     priority: 120,
     dependsOn: ["documents"],
-    privacy: "Amounts and dates only — no payment methods or account numbers.",
-    usedFor: "Cash collected, commission payment dates.",
+    privacy: "Amounts, dates, and type only — no payment methods, references, or account numbers.",
+    usedFor: "Payments report source, balance verification, cash collected, overdue alerts.",
     connection: "payments",
     pageSize: 100,
-    nodes: { id: {}, amount: {}, date: {}, createdAt: {}, document: rel, job: rel },
+    optionalColumns: ["account_id", "payment_type"],
+    // `type` and `account` are dropped automatically (and recorded) if the grant lacks them.
+    nodes: {
+      id: {},
+      amount: {},
+      date: {},
+      type: {},
+      createdAt: {},
+      document: rel,
+      job: rel,
+      account: rel,
+    },
     normalize: (n, ctx) => ({
       id: String(n.id),
       job_id: relId(n.job),
       document_id: relId(n.document),
+      account_id: relId(n.account),
+      payment_type: str(n.type),
       amount: num(n.amount),
       paid_on: day(n.date),
       source_created_at: str(n.createdAt),

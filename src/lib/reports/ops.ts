@@ -6,6 +6,13 @@
 
 import { z } from "zod";
 import {
+  assignColumnIds,
+  columnFormatSchema,
+  columnIdSchema,
+  mergeColumnFormat,
+  orphanedFormats,
+} from "./column-format";
+import {
   basicStyleSchema,
   chartStyleSchema,
   kpiStyleSchema,
@@ -40,7 +47,11 @@ export const reportOpSchema = z.discriminatedUnion("op", [
       .or(z.object({ before: widgetId }))
       .default("bottom"),
   }),
-  /** Shallow merge into an existing widget (keeps its id and type). */
+  /**
+   * Merge into an existing widget (keeps its id and type). Regenerated table columns keep
+   * their ids (matched by field, then label), and `appearance` merges into the existing look
+   * (column formats per column id) instead of replacing it.
+   */
   z.object({
     op: z.literal("update_widget"),
     id: widgetId,
@@ -91,10 +102,43 @@ export const reportOpSchema = z.discriminatedUnion("op", [
     mode: z.enum(["merge", "replace"]).default("merge"),
   }),
   z.object({ op: z.literal("remove_widget_appearance"), id: widgetId }),
+  /** One table column's formatting, by stable column id. Presentation only. */
+  z.object({
+    op: z.literal("set_column_format"),
+    id: widgetId,
+    column: columnIdSchema,
+    format: z.record(z.string(), z.unknown()),
+    /** merge (default; null clears a key), replace, or reset (back to default). */
+    mode: z.enum(["merge", "replace", "reset"]).default("merge"),
+  }),
+  /** Drop formats whose column was deleted (stale config). */
+  z.object({ op: z.literal("prune_column_formats"), id: widgetId }),
 ]);
 export type ReportOp = z.infer<typeof reportOpSchema>;
 
 type Position = "top" | "bottom" | { after: string } | { before: string };
+
+type Look = Record<string, unknown>;
+/**
+ * Merge an appearance patch into the current one: top-level keys from the patch win, except
+ * per-column maps, which merge per key (column id / field ref) so styling one column never
+ * drops another's. `null` removes a key.
+ */
+export function mergeAppearance(current: Look | undefined, patch: Look): Look {
+  const out: Look = { ...(current ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete out[k];
+    else if ((k === "columnFormats" || k === "columns") && v && typeof v === "object") {
+      const map: Look = { ...((out[k] as Look) ?? {}) };
+      for (const [col, f] of Object.entries(v as Look)) {
+        if (f === null) delete map[col];
+        else map[col] = k === "columnFormats" ? mergeColumnFormat(map[col] as never, f as Look) : f;
+      }
+      out[k] = map;
+    } else out[k] = v;
+  }
+  return out;
+}
 
 function insertAt<T extends { id: string }>(list: T[], item: T, pos: Position): T[] {
   const out = list.filter((x) => x.id !== item.id);
@@ -178,7 +222,18 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
         if (!need(idx >= 0, `Widget "${op.id}"`)) break;
         const { id: _ignoredId, ...changes } = op.changes;
         void _ignoredId;
-        const merged = { ...draft.widgets[idx]!, ...changes, id: op.id };
+        const before = draft.widgets[idx]!;
+        if (before.type === "table" && Array.isArray(changes.columns))
+          changes.columns = assignColumnIds(
+            changes.columns as Array<{ field: string; id?: string; label?: string }>,
+            before.columns as Array<{ field: string; id?: string; label?: string }>,
+          );
+        if (changes.appearance && typeof changes.appearance === "object")
+          changes.appearance = mergeAppearance(
+            before.appearance as Look | undefined,
+            changes.appearance as Look,
+          );
+        const merged = { ...before, ...changes, id: op.id };
         const parsed = widgetSchema.safeParse(merged);
         if (!parsed.success) {
           issues.push({
@@ -317,7 +372,7 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
           next.appearance =
             op.mode === "replace"
               ? op.appearance
-              : { ...((current.appearance as Record<string, unknown>) ?? {}), ...op.appearance };
+              : mergeAppearance(current.appearance as Look | undefined, op.appearance);
         const parsed = widgetSchema.safeParse(next);
         if (!parsed.success) {
           issues.push(
@@ -335,6 +390,74 @@ export function applyReportOps(current: ReportSpec, rawOps: unknown[]): ApplyRes
         summary.push(
           `${op.op === "remove_widget_appearance" ? "Reset the look of" : "Styled"} "${widgetTitle(op.id)}"`,
         );
+        break;
+      }
+      case "set_column_format":
+      case "prune_column_formats": {
+        const idx = draft.widgets.findIndex((w) => w.id === op.id);
+        if (!need(idx >= 0, `Widget "${op.id}"`)) break;
+        const current = draft.widgets[idx]!;
+        if (current.type !== "table") {
+          issues.push({ path: `operations[${i}]`, message: `"${op.id}" isn't a table.` });
+          break;
+        }
+        const columns = current.columns as Array<{ id: string; field: string; label?: string }>;
+        const look = { ...((current.appearance as Look) ?? {}) };
+        const formats = { ...((look.columnFormats as Look) ?? {}) };
+        if (op.op === "prune_column_formats") {
+          const gone = orphanedFormats(formats, columns);
+          for (const k of gone) delete formats[k];
+          summary.push(
+            gone.length
+              ? `Removed formatting for deleted column(s) ${gone.join(", ")} in "${widgetTitle(op.id)}"`
+              : `No stale column formatting in "${widgetTitle(op.id)}"`,
+          );
+        } else {
+          if (!columns.some((c) => c.id === op.column)) {
+            issues.push({
+              path: `operations[${i}].column`,
+              message: `Column "${op.column}" isn't in "${widgetTitle(op.id)}". Columns: ${columns.map((c) => `${c.id} (${c.label ?? c.field})`).join(", ")}.`,
+            });
+            break;
+          }
+          if (op.mode === "reset") delete formats[op.column];
+          else {
+            let format;
+            try {
+              format =
+                op.mode === "replace"
+                  ? columnFormatSchema.parse(op.format)
+                  : mergeColumnFormat(formats[op.column] as never, op.format);
+            } catch (error) {
+              if (!(error instanceof z.ZodError)) throw error;
+              issues.push(
+                ...error.issues.slice(0, 5).map((issue) => ({
+                  path: [`operations[${i}].format`, ...issue.path.map(String)].join("."),
+                  message: issue.message,
+                })),
+              );
+              break;
+            }
+            formats[op.column] = format;
+          }
+          const col = columns.find((c) => c.id === op.column)!;
+          summary.push(
+            `${op.mode === "reset" ? "Reset" : "Formatted"} column "${col.label ?? col.field}" (${op.column}) in "${widgetTitle(op.id)}"`,
+          );
+        }
+        if (Object.keys(formats).length) look.columnFormats = formats;
+        else delete look.columnFormats;
+        const next: LooseWidget = { ...current, appearance: look };
+        if (!Object.keys(look).length) delete next.appearance;
+        const parsed = widgetSchema.safeParse(next);
+        if (!parsed.success) {
+          issues.push({
+            path: `operations[${i}]`,
+            message: parsed.error.issues[0]?.message ?? "Invalid format",
+          });
+          break;
+        }
+        draft.widgets[idx] = parsed.data as unknown as LooseWidget;
         break;
       }
       case "set_relationship": {

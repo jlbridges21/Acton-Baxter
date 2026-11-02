@@ -81,11 +81,18 @@ import {
   resolveDisplayType,
   type DisplayType,
 } from "./format";
-import { ColumnsMenu, GroupedTable, useViewerPref } from "./grouped-table";
+import {
+  ColumnsMenu,
+  GroupedTable,
+  useViewerPref,
+  FormatColumnButton,
+  type GroupDrillRequest,
+} from "./grouped-table";
 import {
   color,
   ruleRowStyle,
   tableLook,
+  columnLook,
   kpiValueClass,
   paletteFor,
   styled,
@@ -123,6 +130,8 @@ export type DrillRequest = {
   title: string;
 };
 
+export type { GroupDrillRequest };
+
 export type WidgetActions = {
   onDrill?: (req: DrillRequest) => void;
   onOpenRow?: (
@@ -131,6 +140,10 @@ export type WidgetActions = {
   ) => void;
   /** Business-rule editors changed something; re-run the report. */
   onRulesChanged?: () => void;
+  /** Edit mode: open the column editor for a table column (by stable column id). */
+  onFormatColumn?: (columnId: string) => void;
+  /** Open the drill view for a grouped-table subtotal (group path, optional column). */
+  onDrillGroup?: (req: GroupDrillRequest) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -923,6 +936,8 @@ function TableWidget({
       <GroupedTable
         widget={spec}
         result={result}
+        onFormatColumn={actions.onFormatColumn}
+        onDrillGroup={actions.onDrillGroup}
         onOpenRow={
           spec.type === "table" && spec.rowDrilldown && actions.onOpenRow
             ? actions.onOpenRow
@@ -946,10 +961,13 @@ function FlatTable({
   const tableSpec = spec.type === "table" ? spec : null;
   const theme = useReportTheme();
   const look = tableLook(theme, spec);
+  const cl = columnLook(theme, spec, result.columns);
   const [sorting, setSorting] = useState<SortingState>([]);
+  // Viewer column choices are keyed by stable column id; the report's own "hidden" formats
+  // are the default until the viewer chooses.
   const [hiddenColumns, setHiddenColumns] = useViewerPref<string[]>(
     `baxter.report.columns:${typeof window === "undefined" ? "" : window.location.pathname}:${spec.id}`,
-    [],
+    cl.hiddenByDefault,
   );
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
@@ -983,15 +1001,18 @@ function FlatTable({
           ]
         : []),
       ...result.columns.map((c): ColumnDef<TableRowData> => ({
-        id: c.key,
+        id: cl.id(c),
         header: c.label,
         accessorFn: (r) => r.cells[c.key] ?? null,
+        // Sorting and search read raw values; formatting is display only.
         sortingFn: (a, b) => compareCells(a.original.cells[c.key], b.original.cells[c.key]),
         filterFn: "includesString",
-        cell: ({ row }) => formatValue(row.original.cells[c.key], c.type),
+        cell: ({ row }) =>
+          cl.text(c, row.original.cells[c.key]) ?? formatValue(row.original.cells[c.key], c.type),
       })),
     ],
-    [result.columns, comparable, selected],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- cl derives from spec + columns
+    [result.columns, comparable, selected, spec],
   );
 
   const table = useReactTable({
@@ -1000,7 +1021,11 @@ function FlatTable({
     state: {
       sorting,
       globalFilter: search,
-      columnVisibility: Object.fromEntries(hiddenColumns.map((k) => [k, false])),
+      columnVisibility: Object.fromEntries(
+        result.columns
+          .filter((c) => hiddenColumns.includes(cl.id(c)) || hiddenColumns.includes(c.key))
+          .map((c) => [cl.id(c), false]),
+      ),
     },
     onSortingChange: setSorting,
     onGlobalFilterChange: setSearch,
@@ -1083,16 +1108,18 @@ function FlatTable({
               <tr key={hg.id}>
                 {hg.headers.map((h) => {
                   const sorted = h.column.getIsSorted();
-                  const meta = result.columns.find((c) => c.key === h.column.id);
+                  const meta = result.columns.find((c) => cl.id(c) === h.column.id);
+                  const headAlign = meta ? cl.headerAlign(meta) : undefined;
                   return (
                     <th
                       key={h.id}
                       scope="col"
+                      style={meta ? cl.headerStyle(meta) : undefined}
                       className={cn(
                         "font-semibold whitespace-nowrap",
                         look.cell,
-                        look.align(meta?.ref) === "right" && "text-right",
-                        look.align(meta?.ref) === "center" && "text-center",
+                        headAlign === "right" && "text-right",
+                        headAlign === "center" && "text-center",
                       )}
                       aria-sort={
                         sorted === "asc"
@@ -1119,6 +1146,12 @@ function FlatTable({
                       ) : (
                         flexRender(h.column.columnDef.header, h.getContext())
                       )}
+                      {actions.onFormatColumn && meta?.columnId ? (
+                        <FormatColumnButton
+                          label={meta.label}
+                          onClick={() => actions.onFormatColumn!(meta.columnId!)}
+                        />
+                      ) : null}
                     </th>
                   );
                 })}
@@ -1147,13 +1180,14 @@ function FlatTable({
                 }
               >
                 {row.getVisibleCells().map((cell) => {
-                  const meta = result.columns.find((c) => c.key === cell.column.id);
+                  const meta = result.columns.find((c) => cl.id(c) === cell.column.id);
                   const numeric =
                     meta && ["number", "currency", "percent", "sqft"].includes(meta.type);
-                  const align = look.align(meta?.ref);
+                  const align = meta ? cl.align(meta) : undefined;
                   return (
                     <td
                       key={cell.id}
+                      style={meta ? cl.cellStyle(meta, row.original.cells) : undefined}
                       className={cn(
                         "max-w-md align-top",
                         look.cell,

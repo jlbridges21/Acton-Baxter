@@ -47,6 +47,9 @@ export async function GET() {
       catalog_models: { business: [], all: visible("catalog_models") },
       cost_items: { business: [], all: visible("cost_items") },
       commissions: { business: [], all: visible("commissions") },
+      documents: { business: [], all: visible("documents") },
+      payments: { business: [], all: visible("payments") },
+      tasks: { business: [], all: visible("tasks") },
     });
   } catch (error) {
     return jsonError(error, "GET /api/reports/fields");

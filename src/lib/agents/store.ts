@@ -55,6 +55,7 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   jt_connection: [["id"]],
   jt_custom_fields: [["id"]],
   jt_semantic_fields: [["key"]],
+  jt_field_mappings: [["organization_id", "internal_ref"]],
   jt_jobs: [["id"]],
   jt_catalog_models: [["id"]],
   bi_reports: [["template_key"]],
@@ -116,6 +117,16 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   jt_payments: [["id"]],
   jt_time_entries: [["id"]],
   bi_value_mappings: [["kind", "source_field", "match_type", "pattern"]],
+  // Financial reporting (084_financial_reporting.sql)
+  bi_financial_settings: [["id"]],
+  bi_pp_config: [["id"]],
+  bi_pp_links: [["document_id"]],
+  bi_snapshot_settings: [["id"]],
+  bi_snapshot_runs: [["period_start", "calc_version"]],
+  bi_snapshots: [["period_start", "metric", "dimension_key", "calc_version"]],
+  bi_alert_rules: [["key"]],
+  bi_alert_events: [["dedupe_key"]],
+  bi_alert_deliveries: [["event_id", "recipient", "channel"]],
 };
 
 const NO_ID_TABLES = new Set([
@@ -137,6 +148,9 @@ const NO_ID_TABLES = new Set([
   "global_search_recents",
   "jt_sync_settings",
   "jt_sync_entities",
+  "bi_financial_settings",
+  "bi_pp_config",
+  "bi_snapshot_settings",
 ]);
 const NO_UPDATED_AT = new Set([
   "ai_agent_config_versions",

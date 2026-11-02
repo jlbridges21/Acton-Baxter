@@ -169,6 +169,114 @@ export const SOURCE_REGISTRY: Record<ReportSource, SourceMeta> = {
     ],
     notes: ["Requires a ruleSet on the dataset (reports_rules)."],
   },
+  documents: {
+    id: "documents",
+    label: "Financial documents (invoices)",
+    description:
+      "Every JobTread financial document — customer invoices, customer orders, vendor bills and orders — with amounts, dates, lifecycle and payment status, balance verification, and PP# milestone links.",
+    grain: "One row per JobTread document (sums never double count).",
+    sourceSystem: "JobTread (cached)",
+    fieldPrefix: "doc.",
+    labelField: "doc.number",
+    drilldownFields: [
+      "doc.number",
+      "doc.name",
+      "doc.job",
+      "doc.lifecycle",
+      "doc.paymentStatus",
+      "doc.dueDate",
+      "doc.total",
+      "doc.amountPaid",
+      "doc.balance",
+    ],
+    syncEntities: ["documents", "jobs"],
+    relationships: [
+      {
+        to: "jobs",
+        cardinality: "many-to-one",
+        via: "doc.jobId (JobTread job id)",
+        description:
+          "Each document belongs to one job. Approved job fields (Project Manager, Phase, Status…) are readable on document rows (e.g. sem:project_manager).",
+      },
+      {
+        to: "payments",
+        cardinality: "one-to-many",
+        via: "pay.documentId",
+        description: "Payments applied to the document (when payment sync is on).",
+      },
+      {
+        to: "tasks",
+        cardinality: "many-to-one",
+        via: "doc.milestoneTaskId (approved PP# link)",
+        description: "A PP# invoice's approved schedule milestone.",
+      },
+    ],
+    notes: [
+      'Invoices: filter doc.type = "Customer invoice". Lifecycle (doc.lifecycle) and payment status (doc.paymentStatus) are separate; an unmapped JobTread status shows "Unknown".',
+      "doc.overdue is true only for a verified unpaid balance past due; it is blank (not false) when balances aren't verified — say so instead of reporting zero overdue.",
+      "Invoiced = sum doc.total of issued invoices; paid = doc.amountPaid; outstanding = doc.balance. Never add payment records on top of doc.amountPaid (that double counts).",
+      "doc.ppNumber, doc.milestone and doc.milestonePct come from the admin's PP# mapping; they're blank until it's configured.",
+    ],
+  },
+  payments: {
+    id: "payments",
+    label: "Payments",
+    description:
+      "JobTread payment records: amount, date, kind (payment, refund, reversal), and the invoice and job they belong to.",
+    grain: "One row per JobTread payment (refunds and reversals are their own rows).",
+    sourceSystem: "JobTread (cached)",
+    fieldPrefix: "pay.",
+    labelField: "pay.date",
+    drilldownFields: ["pay.date", "pay.amount", "pay.kind", "pay.documentNumber", "pay.job"],
+    syncEntities: ["payments", "documents", "jobs"],
+    relationships: [
+      {
+        to: "documents",
+        cardinality: "many-to-one",
+        via: "pay.documentId",
+        description: "The invoice the payment was applied to.",
+      },
+      {
+        to: "jobs",
+        cardinality: "many-to-one",
+        via: "pay.jobId",
+        description: "The payment's job.",
+      },
+    ],
+    notes: [
+      "Sum pay.signedAmount for cash collected (refunds subtract). Payment sync is off by default; when it is off or never succeeded, say payment data is incomplete — never report $0 collected.",
+    ],
+  },
+  tasks: {
+    id: "tasks",
+    label: "Tasks & schedule",
+    description:
+      "JobTread schedule tasks, milestone groups, and to-dos with dates, progress, and completion.",
+    grain: "One row per JobTread task.",
+    sourceSystem: "JobTread (cached)",
+    fieldPrefix: "task.",
+    labelField: "task.name",
+    drilldownFields: [
+      "task.name",
+      "task.job",
+      "task.startDate",
+      "task.endDate",
+      "task.progress",
+      "task.scheduleStatus",
+    ],
+    syncEntities: ["tasks", "jobs"],
+    relationships: [
+      {
+        to: "jobs",
+        cardinality: "many-to-one",
+        via: "task.jobId (JobTread job id)",
+        description: "Each task belongs to one job; approved job fields are readable on task rows.",
+      },
+    ],
+    notes: [
+      "Milestones are milestone groups (task.isMilestoneGroup = true). task.scheduleStatus Late = past end date and not complete.",
+    ],
+  },
 };
 
 /** Compact, model-facing summary of every source (used in Dexter's spec guide). */

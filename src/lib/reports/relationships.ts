@@ -13,7 +13,13 @@
 import type { Row } from "./compute";
 import type { ReportSource } from "./spec";
 
-export type RelationshipId = "cost_items.job" | "commissions.job";
+export type RelationshipId =
+  | "cost_items.job"
+  | "commissions.job"
+  | "documents.job"
+  | "payments.job"
+  | "payments.document"
+  | "tasks.job";
 
 export type Relationship = {
   id: RelationshipId;
@@ -70,6 +76,52 @@ export const RELATIONSHIPS: Record<RelationshipId, Relationship> = {
       "sem:total_sqft",
     ],
   },
+  "documents.job": {
+    id: "documents.job",
+    from: "documents",
+    to: "jobs",
+    key: "doc.jobId",
+    label: "Job",
+    description:
+      "Financial documents carry approved fields of their JobTread job (Project Manager, Phase, Status…), matched by document.job.id.",
+    defaultFields: [
+      "job.city",
+      "job.state",
+      "sem:phase",
+      "sem:status",
+      "sem:project_manager",
+      "sem:sales_rep",
+      "sem:contract_type",
+    ],
+  },
+  "payments.job": {
+    id: "payments.job",
+    from: "payments",
+    to: "jobs",
+    key: "pay.jobId",
+    label: "Job",
+    description: "Payments carry approved fields of their JobTread job, matched by job id.",
+    defaultFields: ["job.number", "job.customer", "sem:phase", "sem:project_manager"],
+  },
+  "payments.document": {
+    id: "payments.document",
+    from: "payments",
+    to: "documents",
+    key: "pay.documentId",
+    label: "Invoice",
+    description:
+      "Payments carry approved fields of the invoice they were applied to, matched by payment.document.id.",
+    defaultFields: ["doc.name", "doc.lifecycle", "doc.dueDate", "doc.total", "doc.ppNumber"],
+  },
+  "tasks.job": {
+    id: "tasks.job",
+    from: "tasks",
+    to: "jobs",
+    key: "task.jobId",
+    label: "Job",
+    description: "Tasks carry approved fields of their JobTread job, matched by task.job.id.",
+    defaultFields: ["job.customer", "sem:phase", "sem:status", "sem:project_manager"],
+  },
 };
 
 /**
@@ -77,7 +129,14 @@ export const RELATIONSHIPS: Record<RelationshipId, Relationship> = {
  * stable id (e.g. a job's total budget cost from its cost items). Rollups produce one value
  * per parent, so they can never multiply parent rows or double count parent totals.
  */
-export type RollupId = "jobs.cost_items" | "jobs.commissions" | "catalog_models.cost_items";
+export type RollupId =
+  | "jobs.cost_items"
+  | "jobs.commissions"
+  | "catalog_models.cost_items"
+  | "jobs.documents"
+  | "jobs.payments"
+  | "jobs.tasks"
+  | "documents.payments";
 
 export type Rollup = {
   id: RollupId;
@@ -114,6 +173,38 @@ export const ROLLUPS: Record<RollupId, Rollup> = {
     label: "Model budget lines",
     description:
       "A Product Library model's catalog lines (cost items whose model id is the model's id).",
+  },
+  "jobs.documents": {
+    id: "jobs.documents",
+    parent: "jobs",
+    child: "documents",
+    childKey: "doc.jobId",
+    label: "Financial documents (invoices)",
+    description: "A job's JobTread documents (documents whose job id is the job's id).",
+  },
+  "jobs.payments": {
+    id: "jobs.payments",
+    parent: "jobs",
+    child: "payments",
+    childKey: "pay.jobId",
+    label: "Payments",
+    description: "A job's synced JobTread payment records.",
+  },
+  "jobs.tasks": {
+    id: "jobs.tasks",
+    parent: "jobs",
+    child: "tasks",
+    childKey: "task.jobId",
+    label: "Tasks",
+    description: "A job's JobTread schedule tasks and milestone groups.",
+  },
+  "documents.payments": {
+    id: "documents.payments",
+    parent: "documents",
+    child: "payments",
+    childKey: "pay.documentId",
+    label: "Payments on the invoice",
+    description: "Payments applied to a document (payment.document.id).",
   },
 };
 

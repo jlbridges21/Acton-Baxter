@@ -11,11 +11,13 @@
  *   sem:<key>        business vocabulary mapped by admins (sem:phase → cf:22Pg…)
  *   model.*          Product Library (catalog model) attributes
  *   item.* / com.*   cost-item and commission attributes
+ *   doc.* / pay.* / task.*  financial document (invoice), payment, and task attributes
  *   calc:<key>       a calculated field: defined in the spec's `calculations` or in the
  *                    shared Metric Library (row formula, aggregate formula, or rollup)
  */
 
 import { z } from "zod";
+import { assignColumnIds, columnIdSchema } from "./column-format";
 import {
   basicStyleSchema,
   chartStyleSchema,
@@ -34,11 +36,19 @@ export const fieldRef = z
   .string()
   .trim()
   .regex(
-    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|item\.[a-zA-Z]+|com\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60}|calc:[a-z][a-z0-9_]{1,40})$/,
+    /^(job\.[a-zA-Z]+|model\.[a-zA-Z]+|item\.[a-zA-Z]+|com\.[a-zA-Z]+|doc\.[a-zA-Z]+|pay\.[a-zA-Z]+|task\.[a-zA-Z]+|cf:[A-Za-z0-9]{6,40}|sem:[a-z0-9_]{2,60}|calc:[a-z][a-z0-9_]{1,40})$/,
     "Unknown field reference format.",
   );
 
-export const SOURCES = ["jobs", "catalog_models", "cost_items", "commissions"] as const;
+export const SOURCES = [
+  "jobs",
+  "catalog_models",
+  "cost_items",
+  "commissions",
+  "documents",
+  "payments",
+  "tasks",
+] as const;
 export type ReportSource = (typeof SOURCES)[number];
 
 export const OPERATORS = [
@@ -320,6 +330,8 @@ export const COLUMN_AGGREGATES = [
   "none",
 ] as const;
 const columnSchema = z.object({
+  /** Stable column id (formatting, viewer prefs, and drill paths are keyed by it). */
+  id: columnIdSchema.optional(),
   field: fieldRef,
   label: z.string().max(60).optional(),
   format: z.enum(FORMATS).default("auto"),
@@ -331,6 +343,16 @@ const columnSchema = z.object({
    */
   aggregate: z.enum(COLUMN_AGGREGATES).default("auto"),
 });
+
+/** Related sources a table drill may open (stable-id rollup relationships; see relationships.ts). */
+export const DRILL_RELATED = [
+  "jobs.cost_items",
+  "catalog_models.cost_items",
+  "jobs.documents",
+  "jobs.payments",
+  "jobs.tasks",
+  "documents.payments",
+] as const;
 
 export const HIGHLIGHT_TONES = ["green", "amber", "red", "blue", "gray"] as const;
 
@@ -416,6 +438,19 @@ export const widgetSchema = z.discriminatedUnion("type", [
      * any of its lines has no value; percentages are not summed.
      */
     summarize: z.boolean().default(false),
+    /**
+     * Drill-downs from grouped subtotals: which record columns to show (stable column ids;
+     * default = the table's columns) and optionally a related source reached through a real
+     * stable-id relationship (e.g. a job group's budget lines).
+     */
+    drill: z
+      .object({
+        enabled: z.boolean().default(true),
+        columns: z.array(columnIdSchema).max(30).optional(),
+        related: z.enum(DRILL_RELATED).optional(),
+      })
+      .strict()
+      .optional(),
   }),
   z.object({
     ...widgetBase,
@@ -500,11 +535,40 @@ export const reportSpecSchema = z.object({
   relationships: z.array(relationshipSchema).max(10).default([]),
   controls: z.array(controlSchema).max(12).default([]),
   /** Order = layout order on a 12-column grid. */
-  widgets: z.array(widgetSchema).max(40).default([]),
+  widgets: z
+    .array(widgetSchema)
+    .max(40)
+    .default([])
+    // Every table column gets a stable id (legacy columns: deterministic from field + order).
+    // (The type keeps `id` optional so widgets parsed on their own stay assignable.)
+    .transform(
+      (ws) =>
+        ws.map((w) =>
+          w.type === "table" ? { ...w, columns: assignColumnIds(w.columns) } : w,
+        ) as typeof ws,
+    ),
   /** Optional report-wide styling (palette, tokens, density, category colors…). */
   theme: themeSchema.optional(),
 });
 export type ReportSpec = z.infer<typeof reportSpecSchema>;
+
+/**
+ * Give stored table columns their stable ids without re-validating the whole spec (older
+ * rows were saved before column ids existed). Deterministic: the same stored spec always
+ * gets the same ids, and the first save persists them.
+ */
+export function withColumnIds<T>(spec: T): T {
+  const s = spec as { widgets?: unknown };
+  if (!s || !Array.isArray(s.widgets)) return spec;
+  return {
+    ...(spec as object),
+    widgets: s.widgets.map((w: { type?: string; columns?: unknown }) =>
+      w && w.type === "table" && Array.isArray(w.columns)
+        ? { ...w, columns: assignColumnIds(w.columns as Array<{ field: string; id?: string }>) }
+        : w,
+    ),
+  } as T;
+}
 
 export type SpecIssue = { path: string; message: string };
 
@@ -594,6 +658,22 @@ export function checkSpecReferences(spec: ReportSpec): SpecIssue[] {
             message: 'KPI rules compare the KPI value; "category" applies to charts only.',
           });
       });
+    if (w.type === "table" && w.drill) {
+      const ids = new Set(w.columns.map((c) => c.id));
+      (w.drill.columns ?? []).forEach((c, j) => {
+        if (!ids.has(c))
+          issues.push({
+            path: `widgets[${i}].drill.columns[${j}]`,
+            message: `Drill column "${c}" isn't a column of table "${w.id}".`,
+          });
+      });
+      const source = datasetById.get(w.dataset)?.source;
+      if (w.drill.related && source && !w.drill.related.startsWith(`${source}.`))
+        issues.push({
+          path: `widgets[${i}].drill.related`,
+          message: `"${w.drill.related}" starts from ${w.drill.related.split(".")[0]}, but table "${w.id}" shows ${source}. Drill paths must follow a real relationship from the table's source.`,
+        });
+    }
     if (w.type === "table" && w.groupLevels.length && w.summarize)
       issues.push({
         path: `widgets[${i}]`,
