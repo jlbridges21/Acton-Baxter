@@ -56,24 +56,12 @@ import {
   type FinancialSettings,
   type PaymentsState,
 } from "@/lib/reports/financial-core";
-import {
-  invalidateFinancialContext,
-  loadFinancialContext,
-  saveFinancialSettings,
-} from "@/lib/reports/financial-data";
+import { invalidateFinancialContext, saveFinancialSettings } from "@/lib/reports/financial-data";
 import { financialReadiness, projectManagerAudit } from "@/lib/reports/financial-overview";
 import { paymentsBackfill } from "@/lib/reports/financial-http";
 import { getFieldCatalog, invalidateFieldCatalog, resolveField } from "@/lib/reports/fields";
 import { auditProjectManager } from "@/lib/reports/pm-audit-core";
-import {
-  drillLevels,
-  effectiveLinks,
-  ppConfigSchema,
-  previewPpMatches,
-  type PpLinkRow,
-} from "@/lib/reports/pp-core";
-import { decidePpLink, projectFinancialDrill, recordSuggestions } from "@/lib/reports/pp-mapping";
-import { savePpConfig } from "@/lib/reports/financial-data";
+import { projectFinancialDrill } from "@/lib/reports/pp-mapping";
 import { computeReadiness } from "@/lib/reports/readiness-core";
 import { RELATIONSHIPS, ROLLUPS } from "@/lib/reports/relationships";
 import {
@@ -310,109 +298,6 @@ describe("overdue and reconciliation", () => {
     expect(t.completeness).not.toBe("complete");
     expect(t.reasons.join(" ")).toMatch(/isn't mapped/);
     expect(t.reasons.join(" ")).toMatch(/Payment sync is turned off/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 8–10. PP# configuration, matching, approval, drill gating
-// ---------------------------------------------------------------------------
-describe("PP# mapping", () => {
-  const tasks = [
-    { id: "t-a", job_id: "job00000001", name: "PP#2", is_group: true },
-    { id: "t-b", job_id: "job00000002", name: "PP#2", is_group: true },
-    { id: "t-c", job_id: "job00000003", name: "PP#2", is_group: true },
-    { id: "t-d", job_id: "job00000003", name: "pp#2", is_group: true },
-  ];
-  const config = ppConfigSchema.parse({
-    classification: { mode: "name_pattern", pattern: "PP#\\s*(\\d+)" },
-    milestonePct: { mode: "name_pattern", pattern: "(\\d+)%" },
-    link: { mode: "task_name_pattern", template: "PP#{pp}" },
-  });
-
-  it("validates configuration", () => {
-    expect(
-      ppConfigSchema.safeParse({ link: { mode: "task_name_pattern", template: "PP#" } }).success,
-    ).toBe(false);
-    expect(
-      ppConfigSchema.safeParse({ classification: { mode: "name_pattern", pattern: "(" } }).success,
-    ).toBe(false);
-    expect(ppConfigSchema.parse({}).classification.mode).toBe("none");
-  });
-
-  it("previews matched, ambiguous, and unmatched by stable job ids only", () => {
-    const docs = [
-      inv({ id: "d1", job_id: "job00000001" }),
-      inv({ id: "d3", job_id: "job00000003" }),
-      inv({ id: "d4", job_id: "job00000004" }),
-      inv({ id: "d5", name: "Deposit" }),
-    ];
-    const p = previewPpMatches(docs, tasks, [], config);
-    expect(p).toMatchObject({ classified: 3, notClassified: 1, matched: 1 });
-    expect(p.matchedItems[0]).toMatchObject({
-      documentId: "d1",
-      pp: "2",
-      milestonePct: 20,
-      match: { taskId: "t-a" },
-    });
-    expect(p.ambiguous.map((i) => i.documentId)).toEqual(["d3"]);
-    expect(p.unmatched.map((i) => i.documentId)).toEqual(["d4"]);
-    expect(previewPpMatches(docs, tasks, [], ppConfigSchema.parse({})).classified).toBe(0);
-  });
-
-  it("uses only approved links unless auto-accept is on", () => {
-    const links: PpLinkRow[] = [
-      {
-        document_id: "d1",
-        task_id: "t-a",
-        job_id: "job00000001",
-        pp_number: "2",
-        milestone_pct: 20,
-        match_method: "rule",
-        status: "suggested",
-      },
-      {
-        document_id: "d2",
-        task_id: "t-a",
-        job_id: "job00000001",
-        pp_number: "3",
-        milestone_pct: null,
-        match_method: "manual",
-        status: "approved",
-      },
-      {
-        document_id: "d3",
-        task_id: "t-c",
-        job_id: "job00000003",
-        pp_number: "2",
-        milestone_pct: null,
-        match_method: "rule",
-        status: "rejected",
-      },
-    ];
-    expect([...effectiveLinks(links, config).keys()]).toEqual(["d2"]);
-    expect([...effectiveLinks(links, { ...config, autoAcceptUnique: true }).keys()].sort()).toEqual(
-      ["d1", "d2"],
-    );
-  });
-
-  it("enables drill levels only when their relationship is verified", () => {
-    const off = drillLevels({
-      tasksSynced: true,
-      documentsSynced: true,
-      paymentsSynced: false,
-      approvedLinks: 0,
-      ppConfigured: false,
-    });
-    expect(off.filter((l) => l.enabled).map((l) => l.key)).toEqual(["project", "invoice"]);
-    expect(off.find((l) => l.key === "milestone")?.reason).toMatch(/PP# mapping/);
-    const on = drillLevels({
-      tasksSynced: true,
-      documentsSynced: true,
-      paymentsSynced: true,
-      approvedLinks: 2,
-      ppConfigured: true,
-    });
-    expect(on.every((l) => l.enabled)).toBe(true);
   });
 });
 
@@ -865,7 +750,7 @@ describe("financial reporting end to end (fixture)", () => {
     });
     const drill = await projectFinancialDrill("job00000001");
     expect(drill.levels.find((l) => l.key === "payments")?.enabled).toBe(true);
-    expect(drill.levels.find((l) => l.key === "milestone")?.enabled).toBe(false);
+    expect(drill.levels.find((l) => l.key === "task")?.enabled).toBe(false);
     expect((drill.invoices[0] as { payments: unknown[] }).payments).toHaveLength(2);
   });
 
@@ -880,44 +765,6 @@ describe("financial reporting end to end (fixture)", () => {
     expect(
       phase.ok && rows.find((r) => r["task.jobId"] === "job00000001")?.[phase.key],
     ).toBeTruthy();
-  });
-
-  it("records PP# suggestions, requires approval, and validates manual links", async () => {
-    await requestEntitySync({ entities: ["tasks"], triggeredBy: "test" });
-    await drainJobs();
-    const ctx = await (invalidate(), loadFinancialContext());
-    const task = ctx.tasks.find((t) => t.job_id === "job00000001" && t.is_group)!;
-    await agentDb().update("jt_tasks", [eq("id", task.id)], { name: "PP#1" });
-    await savePpConfig(
-      ppConfigSchema.parse({
-        classification: { mode: "name_pattern", pattern: "PP#(\\d+)" },
-        link: { mode: "task_name_pattern", template: "PP#{pp}" },
-      }),
-      ADMIN_ID,
-    );
-    invalidate();
-    expect(await recordSuggestions()).toMatchObject({ created: 1 });
-    invalidate();
-    let row = (await loadSourceRows("documents")).rows.find((r) => r.id === "docInv0001")!;
-    expect(row).toMatchObject({
-      "doc.ppNumber": "1",
-      "doc.milestoneTaskId": null,
-      "doc.ppLinkStatus": "suggested",
-    });
-    await decidePpLink({ documentId: "docInv0001", decision: "approve", actor: ADMIN_ID });
-    invalidate();
-    row = (await loadSourceRows("documents")).rows.find((r) => r.id === "docInv0001")!;
-    expect(row).toMatchObject({ "doc.milestoneTaskId": task.id, "doc.milestone": "PP#1" });
-    const other = ctx.tasks.find((t) => t.job_id === "job00000003")!;
-    await expect(
-      decidePpLink({
-        documentId: "docInv0001",
-        decision: "manual",
-        taskId: other.id,
-        actor: ADMIN_ID,
-      }),
-    ).rejects.toThrow(/different job/);
-    expect(await recordSuggestions()).toMatchObject({ created: 0, keptDecisions: 1 });
   });
 
   it("captures immutable weekly snapshots once per period and explains missing history", async () => {

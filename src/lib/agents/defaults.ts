@@ -556,6 +556,7 @@ export const DEXTER_FINANCIAL_TOOLS = [
   "reports_week_compare",
   "reports_alerts",
   "reports_pm_completeness",
+  "reports_pp_milestones",
 ];
 
 export const DEXTER_TOOLS = [
@@ -647,6 +648,9 @@ export const DEXTER_DEFAULT_CONFIG: AgentConfig = agentConfigSchema.parse({
       "Which invoices are overdue?",
       "What's our outstanding balance by project manager?",
       "Show the PP# milestones, invoices, and payments for the Otlans project.",
+      "Which PP#3 invoices do we have, and what milestones are they linked to?",
+      "Which PP# invoices are missing a milestone?",
+      "Show the PP#1–PP#10 schedule for each project.",
       "What changed in our financials since last Monday?",
       "Build a report of unpaid invoices by job.",
     ],

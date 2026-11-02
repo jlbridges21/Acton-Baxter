@@ -43,18 +43,66 @@ field is assumed to exist:
 - Project Manager audit: completeness by PM and by phase, values outside the JobTread options, multi-person values, open jobs with no PM, and defects by class.
 - Sync writes tolerate migration 084 not being applied: unknown columns are stripped and the write is retried.
 
-## 4. Phase 2 — PP#
+## 4. Phase 2 — PP#1–PP#10 mapping
 
-`bi_pp_config` controls:
+### Root cause of "Invalid input: expected string, received undefined" (fixed 2026-11-02)
 
-- **classification**: `document_field`, `name_pattern` or `number_pattern` (the first capture group is the PP#).
-- **milestonePct**: a field or a pattern.
-- **link**: `document_field_task_id`, or `task_name_pattern` with `{pp}`, matched within the same job ID (milestone groups or all tasks), or `manual_only`.
-- **autoAcceptUnique**: whether unique matches skip approval.
+1. **Field-name mismatch.** Schema v1 required `classification.pattern` and `link.template`, but the JSON editor showed only `{"mode":"none"}` and gave no hint of the key names. A natural edit such as `{"mode":"name_pattern","regex":"…"}` therefore failed at `config.classification.pattern`, and a link written with `pattern` failed at `config.link.template`. `jsonError` returns only `issues[0].message`, so the path never reached the screen.
+2. **Clobbered edits.** Every other action on the settings page (grace-days and snapshot `onBlur` saves, status mapping) called `load()`, which reset the PP# textarea to the saved v0 config. A preview or save after that sent the original config.
 
-The preview lists matched, ambiguous and unmatched invoices. "Record suggested links" stores suggestions and never overwrites approved, rejected or manual decisions. Manual links must point to a task on the invoice's own job.
+Fixes:
 
-The drill path is Project → PP# milestone → Invoice → Payments (`/api/reports/financial/drill`, `reports_project_financials`). Each level is on only when its join is verified.
+- **Schema:** schema v2 uses `classification.regex`, and v1 `pattern` is still accepted and renamed.
+- **Field-path errors:** validation is mode-aware, and failures come back as a 422 with errors such as `classification.regex: Required when classification.mode is name_pattern.`
+- **Editor:** a separate component (`pp-mapping-editor.tsx`) owns its draft. The structured controls and the JSON view share that draft, and page reloads never touch it.
+
+### Config schema (stored in `bi_pp_config.config`, `schemaVersion: 2`)
+
+```json
+{
+  "schemaVersion": 2,
+  "caseSensitive": false,
+  "classification": {
+    "mode": "name_pattern",
+    "regex": "PP#(10|[1-9])\\b",
+    "fallbackFieldId": null
+  },
+  "link": {
+    "mode": "task_name_pattern",
+    "template": "PP#{pp}:",
+    "scope": "all_tasks",
+    "directFieldId": null
+  },
+  "percentages": {
+    "standard": { "1": 10, "2": 10, "…": 10, "10": 10 },
+    "overrides": [{ "jobId": "…", "split": { "1": 5, "…": 0 }, "note": "…" }]
+  },
+  "autoAcceptUnique": false
+}
+```
+
+- `classification.mode`: `none` | `name_pattern` (needs `regex`; optional `fallbackFieldId`) | `number_pattern` (needs `regex`) | `document_field` (needs `fieldId`). Capture group 1 is the PP number and must be 1–10.
+  - Names are trimmed and whitespace is collapsed. Matching is case-insensitive unless `caseSensitive` is set.
+  - Only customer invoices are classified.
+  - Patterns are checked before use: no back-references, no nested repetition, at most 200 characters, at least one capture group. JavaScript regexes can't execute code.
+- `link.mode`: `none` | `manual_only` | `document_field_task_id` (needs `fieldId`) | `task_name_pattern` (needs `template` containing `{pp}`; optional `directFieldId`, checked first).
+  - A task matches when its normalised name starts with the rendered template and the next character isn't a digit, so PP#1 never links to "PP#10:".
+  - Only tasks with the invoice's own job ID are considered. Two or more matches are ambiguous; none is unmatched.
+  - No verified direct JobTread invoice→task relationship exists in the synced data, so the direct path is only a configurable document field.
+- `percentages.standard` must cover PP#1–10 and total 100%. Each override must also total 100% and appears as "project override". Percentages never change amounts or imply payment.
+- `autoAcceptUnique` defaults to false. Suggested links are not verified until an administrator approves them.
+
+### Workflow
+
+- **Preview** (`preview_pp`, read-only): counts for inspected, classified, unclassified and ambiguous invoices, matched and unmatched links, counts by PP#, and per-invoice name, project, PP# and task.
+- **Save** (`save_pp_config` with `expectedVersion`): validates, then saves version N+1 only if N is still current (otherwise 409 `PP_CONFIG_CONFLICT`). It writes `bi_pp_config_history` and revalidates stored links: disagreements get `conflict` set, and decisions are never reset.
+- **Record suggestions**: unique matches under the saved rule. Approved, rejected and manual rows are never overwritten.
+- **Review** (Data settings → Financial data → PP# mapping → Review): unclassified and ambiguous invoices (choose PP#1–10 and optionally a task in the same project), ambiguous and unlinked invoices (choose a task), pending approvals (approve or reject), and approved links (with conflicts flagged).
+  - There's one row per invoice (unique `document_id`), recording approver, time and method.
+- **Reporting fields:** `doc.ppNumber`, `doc.ppApproval`, `doc.ppVerified`, `doc.milestonePct`, `doc.milestonePctSource`, `doc.milestone`, `doc.milestoneTaskId`, `doc.milestoneStart`, `doc.milestoneEnd`, `doc.milestoneComplete` and `doc.ppLinkStatus`, alongside the project, customer, PM (via the job join), invoice and payment fields.
+  - JobTread gives no actual task completion date, only whether the task is complete.
+- **Drill** (`/api/reports/financial/drill`, `reports_project_financials`, `reports_pp_milestones` schedule): Project → PP#1–10 → Invoice → Task (→ Payments), within one project.
+- **Dexter** `reports_pp_milestones`: PP# invoices by project, PP#n invoices with milestones, invoices missing a milestone, pending approvals, and the PP#1–10 schedule per project. Unapproved links are labelled as unreviewed, and missing payment data is labelled as unavailable rather than $0.
 
 ## 5. Phase 3 — snapshots
 

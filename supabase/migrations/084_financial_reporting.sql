@@ -70,6 +70,16 @@ create table if not exists public.bi_pp_config (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+-- Every saved PP# configuration version (who, when, what) — the audit trail.
+create table if not exists public.bi_pp_config_history (
+  id uuid primary key default gen_random_uuid(),
+  version integer not null unique,
+  config jsonb not null,
+  updated_by text,
+  revalidation jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
 -- Invoice → milestone links. "suggested" links come from the configured rule and are not used
 -- in reports until approved (or until the rule is configured to auto-accept unique matches).
 create table if not exists public.bi_pp_links (
@@ -79,10 +89,17 @@ create table if not exists public.bi_pp_links (
   task_id text,
   pp_number text,
   milestone_pct numeric,
+  -- How the PP number was decided (configured rule, or an administrator's manual choice).
+  classification_method text not null default 'rule'
+    check (classification_method in ('rule', 'manual')),
+  -- How the task was decided.
   match_method text not null check (match_method in ('rule', 'manual')),
   status text not null default 'suggested'
     check (status in ('suggested', 'approved', 'rejected')),
   config_version integer,
+  -- Set when a later rule version or sync disagrees with this link. Links are never reset.
+  conflict text,
+  revalidated_at timestamptz,
   note text,
   decided_by text,
   decided_at timestamptz,
@@ -224,6 +241,7 @@ create index if not exists bi_alert_audit_event_idx on public.bi_alert_audit (ev
 alter table public.bi_financial_settings enable row level security;
 alter table public.bi_pp_config enable row level security;
 alter table public.bi_pp_links enable row level security;
+alter table public.bi_pp_config_history enable row level security;
 alter table public.bi_snapshot_settings enable row level security;
 alter table public.bi_snapshot_runs enable row level security;
 alter table public.bi_snapshots enable row level security;

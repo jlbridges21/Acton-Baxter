@@ -1,5 +1,5 @@
 import { jsonError, jsonOk } from "@/lib/api";
-import { financialOverview, runFinancialAction } from "@/lib/reports/financial-http";
+import { financialOverview, isFieldErrors, runFinancialAction } from "@/lib/reports/financial-http";
 import { requireReportsAdmin } from "@/lib/reports/http";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,9 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const ctx = await requireReportsAdmin();
-    return jsonOk(await runFinancialAction(ctx, await request.json()));
+    const result = await runFinancialAction(ctx, await request.json().catch(() => null));
+    // Validation problems come back with their field paths so the editor can show each one.
+    return jsonOk(result, isFieldErrors(result) ? { status: 422 } : undefined);
   } catch (error) {
     return jsonError(error, "POST /api/reports/admin/financial");
   }

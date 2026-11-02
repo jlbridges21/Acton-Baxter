@@ -322,7 +322,149 @@ const pmTool: AgentTool = {
   },
 };
 
+const ppArgs = z.object({
+  action: z
+    .enum(["by_project", "by_number", "missing_milestone", "pending", "schedule"])
+    .default("by_project"),
+  pp: z.number().int().min(1).max(10).optional(),
+  jobId: z.string().max(80).optional(),
+  jobName: z.string().max(120).optional(),
+  limit: z.number().int().min(1).max(200).default(60),
+});
+const ppTool: AgentTool = {
+  key: "reports_pp_milestones",
+  label: "PP# progress-payment milestones",
+  description:
+    "PP#1–PP#10 invoices by project or number, their linked milestone tasks, invoices missing a milestone, pending approvals, and each project's PP# schedule.",
+  modelUsage: `reports_pp_milestones {"action": "by_project"|"by_number"|"missing_milestone"|"pending"|"schedule", "pp"?: 1-10, "jobId"? | "jobName"?, "limit"?} — every invoice has ppApproval: only "Approved" (verified: true) links are verified milestones; "Pending approval", "Classified by rule (no link yet)", and auto-accepted links must be described as unreviewed. Never call an unapproved link verified. Payment fields: "Unverified" or null means payment data isn't available — say so, never $0. "schedule" needs a project and shows PP#1–10 with the configured % (standard or labelled project override) — percentages are a split, not amounts paid. If ppConfigured is false, tell an administrator to configure ${SETTINGS} → PP# mapping.`,
+  risk: "read",
+  alwaysRequiresApproval: false,
+  available: true,
+  args: ppArgs,
+  async execute(ctx, raw) {
+    return guarded(async () => {
+      const a = ppArgs.parse(raw ?? {});
+      const access = await requireReportsAccess(ctx.requester);
+      const financial = access.categories.has("financial");
+      const { documentRows, loadFinancialContext } = await import("@/lib/reports/financial-data");
+      const fctx = await loadFinancialContext();
+      let jobId = a.jobId;
+      if (!jobId && a.jobName) {
+        const q = a.jobName.trim().toLowerCase();
+        const hits = [...fctx.jobs.values()].filter(
+          (j) => j.name.toLowerCase().includes(q) || j.number === a.jobName,
+        );
+        if (hits.length !== 1)
+          return {
+            data: hits.length
+              ? {
+                  status: "ambiguous",
+                  matches: hits
+                    .slice(0, 10)
+                    .map((j) => ({ id: j.id, name: j.name, number: j.number })),
+                }
+              : { status: "not_found", message: `No synced project matches "${a.jobName}".` },
+            logSummary: `PP# project lookup: ${hits.length} matches`,
+          };
+        jobId = hits[0]!.id;
+      }
+      const ppConfigured = fctx.pp.config.classification.mode !== "none";
+      const rows = documentRows(fctx).filter(
+        (r) => r["doc.type"] === "Customer invoice" && (!jobId || r["doc.jobId"] === jobId),
+      );
+      const brief = (r: (typeof rows)[number]) => ({
+        invoiceId: r.id,
+        number: r["doc.number"],
+        name: r["doc.name"],
+        project: r["doc.job"],
+        customer: r["doc.customer"],
+        pp: r["doc.ppNumber"],
+        percent: r["doc.milestonePct"],
+        percentSource: r["doc.milestonePctSource"],
+        ppApproval: r["doc.ppApproval"],
+        verified: r["doc.ppVerified"] === true,
+        milestone: r["doc.milestone"],
+        milestoneScheduledStart: r["doc.milestoneStart"],
+        milestoneScheduledEnd: r["doc.milestoneEnd"],
+        milestoneComplete: r["doc.milestoneComplete"],
+        invoiceStatus: r["doc.lifecycle"],
+        ...(financial
+          ? {
+              amount: r["doc.total"],
+              paymentStatus: r["doc.paymentStatus"],
+              balanceVerification: r["doc.balanceVerification"],
+            }
+          : { amount: "hidden (needs financial access)" }),
+      });
+      const pp = rows.filter((r) => r["doc.ppNumber"] !== null);
+      let data: Record<string, unknown>;
+      if (a.action === "schedule") {
+        if (!jobId) throw new Error("Pass jobId or jobName for a project's PP# schedule.");
+        const { projectFinancialDrill } = await import("@/lib/reports/pp-mapping");
+        data = { ...(await projectFinancialDrill(jobId)) };
+        if (!financial)
+          data = {
+            ...data,
+            note: "Amounts and payments hidden (needs financial access).",
+            pp:
+              (data.pp as Array<Record<string, unknown>> | null)?.map((p) => ({
+                ...p,
+                invoices: (p.invoices as Array<Record<string, unknown>>).map((i) => ({
+                  ...i,
+                  total: undefined,
+                  payments: undefined,
+                })),
+              })) ?? null,
+          };
+      } else if (a.action === "by_number") {
+        if (!a.pp) throw new Error("Pass pp (1–10).");
+        data = {
+          invoices: pp
+            .filter((r) => r["doc.ppNumber"] === a.pp)
+            .slice(0, a.limit)
+            .map(brief),
+        };
+      } else if (a.action === "missing_milestone") {
+        data = {
+          invoices: pp
+            .filter((r) => !r["doc.milestoneTaskId"])
+            .slice(0, a.limit)
+            .map(brief),
+          note: "PP# invoices without an approved milestone task.",
+        };
+      } else if (a.action === "pending") {
+        data = {
+          invoices: rows
+            .filter((r) =>
+              [
+                "Pending approval",
+                "Auto-accepted (unique match)",
+                "Ambiguous — needs manual review",
+                "Unclassified",
+                "Approved — needs review (conflict)",
+              ].includes(String(r["doc.ppApproval"])),
+            )
+            .slice(0, a.limit)
+            .map(brief),
+        };
+      } else {
+        const byProject = new Map<string, ReturnType<typeof brief>[]>();
+        for (const r of pp) {
+          const k = String(r["doc.job"] ?? r["doc.jobId"] ?? "(no project)");
+          byProject.set(k, [...(byProject.get(k) ?? []), brief(r)]);
+        }
+        data = { projects: Object.fromEntries([...byProject].slice(0, a.limit)) };
+      }
+      return {
+        data: { ppConfigured, configVersion: fctx.pp.version, ...data },
+        logSummary: `PP# ${a.action}: ${pp.length} PP# invoices`,
+      };
+    });
+  },
+};
+
 export const FINANCIAL_TOOLS: AgentTool[] = [
+  ppTool,
   readinessTool,
   invoicesTool,
   projectTool,

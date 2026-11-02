@@ -14,29 +14,15 @@ import {
   CalendarClock,
   ClipboardCheck,
   Landmark,
-  Milestone,
   RefreshCw,
   UserCheck,
 } from "lucide-react";
 import { aiFetch, errorMessage, formatRelative, Notice, Pill, useLoad } from "@/components/ai/ui";
 import { Button } from "@/components/ui/button";
+import { PpMappingEditor } from "./pp-mapping-editor";
 
 type Area = { key: string; label: string; state: string; detail: string; setting: string };
 type InventoryRow = { type: string; status: string; count: number; lifecycle: string };
-type PreviewItem = {
-  documentId: string;
-  number: string | null;
-  name: string | null;
-  jobId: string | null;
-  pp: string;
-  match: {
-    status: string;
-    taskId?: string;
-    candidates?: Array<{ id: string; name: string | null }>;
-    reason?: string;
-  };
-  link: { status: string; task_id: string | null } | null;
-};
 type Overview = {
   areas: Area[];
   counts: Record<string, number>;
@@ -152,44 +138,35 @@ export function FinancialSettings() {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [statusMap, setStatusMap] = useState<Record<string, string>>({});
-  const [ppText, setPpText] = useState("");
-  const [preview, setPreview] = useState<{
-    preview: {
-      classified: number;
-      matched: number;
-      notClassified: number;
-      ambiguous: PreviewItem[];
-      unmatched: PreviewItem[];
-      matchedItems: PreviewItem[];
-      pendingApproval: number;
-      approved: number;
-    };
-  } | null>(null);
   const [ruleText, setRuleText] = useState("");
 
   const load = useCallback(async () => {
     try {
       const d = await aiFetch<Overview>("/api/reports/admin/financial");
       setData(d);
-      setStatusMap(
-        Object.fromEntries(d.statusInventory.map((r) => [`${r.type}|${r.status}`, r.lifecycle])),
-      );
-      setPpText(JSON.stringify(d.pp.config, null, 2));
+      // Unsaved status choices win over a reload triggered by another save on this page.
+      setStatusMap((current) => ({
+        ...Object.fromEntries(d.statusInventory.map((r) => [`${r.type}|${r.status}`, r.lifecycle])),
+        ...current,
+      }));
+      // Only the first load fills the rule editor, so saving something else never wipes edits.
       setRuleText(
-        JSON.stringify(
-          {
-            key: "overdue-30",
-            kind: "overdue_invoice",
-            name: "Invoices 30+ days overdue",
-            enabled: false,
-            config: { minDaysPastDue: 30 },
-            recipients: [{ type: "role", value: "admin" }],
-            channel: "in_app",
-            slackChannel: null,
-          },
-          null,
-          2,
-        ),
+        (current) =>
+          current ||
+          JSON.stringify(
+            {
+              key: "overdue-30",
+              kind: "overdue_invoice",
+              name: "Invoices 30+ days overdue",
+              enabled: false,
+              config: { minDaysPastDue: 30 },
+              recipients: [{ type: "role", value: "admin" }],
+              channel: "in_app",
+              slackChannel: null,
+            },
+            null,
+            2,
+          ),
       );
     } catch (e) {
       setError(errorMessage(e));
@@ -474,142 +451,7 @@ export function FinancialSettings() {
         </section>
       ) : null}
 
-      <section className={card} aria-label="PP# mapping">
-        <h2 className="flex items-center gap-2 font-semibold text-[var(--acton-navy)]">
-          <Milestone className="h-4 w-4" aria-hidden /> PP# milestone mapping
-        </h2>
-        <p className="mt-1 text-sm text-[var(--acton-muted)]">
-          There&apos;s no confirmed rule yet, so nothing is matched until you configure it.
-          Classification: <code>document_field</code> (fieldId), <code>name_pattern</code> or{" "}
-          <code>number_pattern</code> (regex; the first capture group is the PP#). Link:{" "}
-          <code>task_name_pattern</code> (template with <code>{"{pp}"}</code>),{" "}
-          <code>document_field_task_id</code>, or <code>manual_only</code>. Suggested links stay out
-          of reports until approved unless <code>autoAcceptUnique</code> is on.
-        </p>
-        <textarea
-          aria-label="PP# configuration"
-          className={`${input} mt-2 h-48 w-full font-mono text-xs`}
-          value={ppText}
-          onChange={(e) => setPpText(e.target.value)}
-        />
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy !== null}
-            onClick={() => {
-              const c = parseJson(ppText);
-              if (c)
-                void act("pp-preview", { action: "preview_pp", config: c }, (r) =>
-                  setPreview(r as never),
-                );
-            }}
-          >
-            Preview matches
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy !== null || !migrated}
-            onClick={() => {
-              const c = parseJson(ppText);
-              if (c) void act("pp-save", { action: "save_pp_config", config: c });
-            }}
-          >
-            Save configuration
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy !== null || !migrated}
-            onClick={() =>
-              void act("pp-suggest", { action: "record_pp_suggestions" }, (r) =>
-                setMessage(JSON.stringify(r)),
-              )
-            }
-          >
-            Record suggested links
-          </Button>
-        </div>
-        {preview ? (
-          <div className="mt-3 text-sm">
-            <p>
-              {preview.preview.classified} PP# invoices · {preview.preview.matched} unique matches ·{" "}
-              {preview.preview.ambiguous.length} ambiguous · {preview.preview.unmatched.length}{" "}
-              unmatched · {preview.preview.notClassified} invoices not PP# ·{" "}
-              {preview.preview.approved} approved · {preview.preview.pendingApproval} awaiting
-              approval
-            </p>
-            {[
-              ...preview.preview.ambiguous,
-              ...preview.preview.unmatched,
-              ...preview.preview.matchedItems,
-            ]
-              .slice(0, 60)
-              .map((i) => (
-                <div
-                  key={i.documentId}
-                  className="mt-1 flex flex-wrap items-center gap-2 border-t border-[var(--acton-border)] pt-1 text-xs"
-                >
-                  <span className="font-semibold">#{i.number ?? i.documentId}</span>
-                  <span>PP {i.pp}</span>
-                  <Pill className="bg-gray-100">{i.match.status}</Pill>
-                  {i.match.reason ? (
-                    <span className="text-[var(--acton-muted)]">{i.match.reason}</span>
-                  ) : null}
-                  {i.link ? <Pill className="bg-sky-50">{i.link.status}</Pill> : null}
-                  {i.link?.status === "suggested" ? (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          void act("decide", {
-                            action: "decide_pp_link",
-                            documentId: i.documentId,
-                            decision: "approve",
-                          })
-                        }
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          void act("decide", {
-                            action: "decide_pp_link",
-                            documentId: i.documentId,
-                            decision: "reject",
-                          })
-                        }
-                      >
-                        Reject
-                      </Button>
-                    </>
-                  ) : null}
-                  {i.match.candidates?.map((c) => (
-                    <Button
-                      key={c.id}
-                      size="sm"
-                      variant="secondary"
-                      onClick={() =>
-                        void act("decide", {
-                          action: "decide_pp_link",
-                          documentId: i.documentId,
-                          decision: "manual",
-                          taskId: c.id,
-                          ppNumber: i.pp,
-                        })
-                      }
-                    >
-                      Link to “{c.name}”
-                    </Button>
-                  ))}
-                </div>
-              ))}
-          </div>
-        ) : null}
-      </section>
+      <PpMappingEditor />
 
       <section className={card} aria-label="Snapshots">
         <h2 className="flex items-center gap-2 font-semibold text-[var(--acton-navy)]">

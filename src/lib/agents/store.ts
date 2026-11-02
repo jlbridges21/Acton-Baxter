@@ -121,6 +121,7 @@ const MEMORY_UNIQUE: Record<string, string[][]> = {
   bi_financial_settings: [["id"]],
   bi_pp_config: [["id"]],
   bi_pp_links: [["document_id"]],
+  bi_pp_config_history: [["version"]],
   bi_snapshot_settings: [["id"]],
   bi_snapshot_runs: [["period_start", "calc_version"]],
   bi_snapshots: [["period_start", "metric", "dimension_key", "calc_version"]],

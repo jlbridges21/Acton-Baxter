@@ -10,9 +10,14 @@ import { StoreError } from "@/lib/agents/store";
 import { ValidationError } from "@/lib/errors";
 import { alertRuleInputSchema } from "./alert-core";
 import { LIFECYCLE_STATUSES } from "./financial-core";
-import { getPpConfig, saveFinancialSettings, savePpConfig } from "./financial-data";
+import {
+  getPpConfig,
+  revalidateStoredLinks,
+  saveFinancialSettings,
+  savePpConfig,
+} from "./financial-data";
 import { financialReadiness, projectManagerAudit } from "./financial-overview";
-import { ppConfigSchema } from "./pp-core";
+import { validatePpConfig, type PpFieldError } from "./pp-core";
 import type { ReportsContext } from "./http";
 
 /** Pending migrations surface as a clear 400, not a generic server error. */
@@ -42,15 +47,29 @@ export const financialActionSchema = z.discriminatedUnion("action", [
     balanceSource: z.enum(["payments_reconciled", "jobtread_balance"]).optional(),
     overdueGraceDays: z.number().int().min(0).max(120).optional(),
   }),
-  z.object({ action: z.literal("save_pp_config"), config: ppConfigSchema }),
-  z.object({ action: z.literal("preview_pp"), config: ppConfigSchema.optional() }),
+  // The config is validated separately (validatePpConfig) so every problem comes back with
+  // its field path instead of one generic message.
+  z.object({
+    action: z.literal("save_pp_config"),
+    config: z.unknown(),
+    expectedVersion: z
+      .number({ error: "expectedVersion: Required (the version you loaded)" })
+      .int()
+      .min(0),
+  }),
+  z.object({ action: z.literal("preview_pp"), config: z.unknown().optional() }),
+  z.object({ action: z.literal("get_pp") }),
+  z.object({ action: z.literal("revalidate_pp") }),
   z.object({ action: z.literal("record_pp_suggestions") }),
   z.object({
     action: z.literal("decide_pp_link"),
     documentId: z.string().min(1).max(80),
     decision: z.enum(["approve", "reject", "manual"]),
     taskId: z.string().max(80).nullable().optional(),
-    ppNumber: z.string().max(40).nullable().optional(),
+    ppNumber: z
+      .union([z.number().int().min(1).max(10), z.string().max(2)])
+      .nullable()
+      .optional(),
     milestonePct: z.number().min(0).max(100).nullable().optional(),
     note: z.string().max(300).nullable().optional(),
   }),
@@ -85,17 +104,62 @@ export async function financialOverview() {
   return { ...readiness, pp, snapshots, alerts };
 }
 
+/** A 422 response body: every problem with its field path. */
+export type FieldErrors = { ok: false; errors: PpFieldError[]; notes?: string[] };
+
+export function isFieldErrors(x: unknown): x is FieldErrors {
+  return Boolean(
+    x &&
+    typeof x === "object" &&
+    (x as FieldErrors).ok === false &&
+    Array.isArray((x as FieldErrors).errors),
+  );
+}
+
 export async function runFinancialAction(ctx: ReportsContext, raw: unknown) {
-  const body = financialActionSchema.parse(raw);
+  const parsedBody = financialActionSchema.safeParse(raw);
+  if (!parsedBody.success)
+    return {
+      ok: false,
+      errors: parsedBody.error.issues.map((i) => ({
+        path: i.path.map(String).join("."),
+        message: i.message,
+      })),
+    } satisfies FieldErrors;
+  const body = parsedBody.data;
   const actor = ctx.requester.userId ?? ctx.requester.label;
   return withMigrationMessage(async () => {
     switch (body.action) {
       case "save_settings":
         return { settings: await saveFinancialSettings(body, actor) };
-      case "save_pp_config":
-        return { pp: await savePpConfig(body.config, actor) };
-      case "preview_pp":
-        return (await import("./pp-mapping")).ppPreview(body.config);
+      case "save_pp_config": {
+        const checked = validatePpConfig(body.config);
+        if (!checked.ok)
+          return { ok: false, errors: checked.errors, notes: checked.notes } satisfies FieldErrors;
+        const saved = await savePpConfig(checked.config, actor, body.expectedVersion);
+        return {
+          ok: true,
+          notes: checked.notes,
+          ...(await (await import("./pp-mapping")).ppPreview()),
+          revalidation: saved.revalidation,
+        };
+      }
+      case "preview_pp": {
+        if (body.config === undefined)
+          return { ok: true, ...(await (await import("./pp-mapping")).ppPreview()) };
+        const checked = validatePpConfig(body.config);
+        if (!checked.ok)
+          return { ok: false, errors: checked.errors, notes: checked.notes } satisfies FieldErrors;
+        return {
+          ok: true,
+          notes: checked.notes,
+          ...(await (await import("./pp-mapping")).ppPreview(checked.config)),
+        };
+      }
+      case "get_pp":
+        return { ok: true, ...(await (await import("./pp-mapping")).ppPreview()) };
+      case "revalidate_pp":
+        return { revalidation: await revalidateStoredLinks((await getPpConfig()).config) };
       case "record_pp_suggestions":
         return (await import("./pp-mapping")).recordSuggestions();
       case "decide_pp_link":

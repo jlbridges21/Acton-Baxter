@@ -531,17 +531,25 @@ async function addDexterFinancialTools(dexterId: string) {
   });
   const published = versions.find((v) => v.status === "published");
   if (!published || versions.some((v) => v.status === "draft")) return;
-  if (versions.some((v) => (v.change_summary ?? "").startsWith(DEXTER_FINANCIAL_MARKER))) return;
   const parsed = agentConfigSchema.safeParse(published.config);
   if (!parsed.success) return;
-  const enabled = [...new Set([...parsed.data.tools.enabled, ...DEXTER_FINANCIAL_TOOLS])];
-  if (enabled.length === parsed.data.tools.enabled.length) return;
+  // Each financial tool is added once: a tool an admin later turned off stays off.
+  const offered = new Set(
+    versions
+      .filter((v) => (v.change_summary ?? "").startsWith(DEXTER_FINANCIAL_MARKER))
+      .flatMap((v) => /tools: (.*)$/.exec(v.change_summary ?? "")?.[1]?.split(", ") ?? []),
+  );
+  const missing = DEXTER_FINANCIAL_TOOLS.filter(
+    (t) => !offered.has(t) && !parsed.data.tools.enabled.includes(t),
+  );
+  if (!missing.length) return;
+  const enabled = [...parsed.data.tools.enabled, ...missing];
   await publishSystemVersion(
     dexterId,
     versions,
     published,
     { ...parsed.data, tools: { ...parsed.data.tools, enabled } },
-    `${DEXTER_FINANCIAL_MARKER}: invoices, payments, tasks, PP# milestones, weekly snapshots, alerts`,
+    `${DEXTER_FINANCIAL_MARKER}: invoices, payments, tasks, PP# milestones, weekly snapshots, alerts — tools: ${missing.join(", ")}`,
   );
 }
 

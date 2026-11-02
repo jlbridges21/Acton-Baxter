@@ -10,7 +10,8 @@
 
 import "server-only";
 
-import { agentDb, eq, StoreError } from "@/lib/agents/store";
+import { agentDb, eq, isUniqueViolation, StoreError } from "@/lib/agents/store";
+import { AppError } from "@/lib/errors";
 import type { Row } from "./compute";
 import {
   DEFAULT_FINANCIAL_SETTINGS,
@@ -32,12 +33,14 @@ import {
   type StatusMapEntry,
 } from "./financial-core";
 import {
-  classifyDocument,
+  classifyInvoice,
   DEFAULT_PP_CONFIG,
   effectiveLinks,
-  milestonePctOf,
-  ppConfigSchema,
+  milestonePercent,
+  revalidateLinks,
+  validatePpConfig,
   type PpConfig,
+  type PpFieldError,
   type PpLinkRow,
 } from "./pp-core";
 
@@ -143,47 +146,126 @@ export async function saveFinancialSettings(patch: Partial<FinancialSettings>, a
   return getFinancialSettings();
 }
 
-export async function getPpConfig(): Promise<{
+export type PpConfigState = {
   config: PpConfig;
   version: number;
   migrated: boolean;
   updatedAt: string | null;
-}> {
+  updatedBy: string | null;
+  /** Set when the stored config doesn't validate (defaults are used and nothing matches). */
+  storedErrors: PpFieldError[] | null;
+};
+
+export async function getPpConfig(): Promise<PpConfigState> {
   try {
-    const [row] = await agentDb().select<{ config: unknown; version: number; updated_at: string }>(
-      "bi_pp_config",
-      { filters: [eq("id", "default")], limit: 1 },
-    );
-    const parsed = ppConfigSchema.safeParse(row?.config ?? {});
+    const [row] = await agentDb().select<{
+      config: unknown;
+      version: number;
+      updated_at: string;
+      updated_by: string | null;
+    }>("bi_pp_config", { filters: [eq("id", "default")], limit: 1 });
+    const checked = validatePpConfig(row?.config ?? {});
     return {
-      config: parsed.success ? parsed.data : DEFAULT_PP_CONFIG,
+      config: checked.ok ? checked.config : DEFAULT_PP_CONFIG,
       version: row?.version ?? 0,
       migrated: true,
       updatedAt: row?.updated_at ?? null,
+      updatedBy: row?.updated_by ?? null,
+      storedErrors: checked.ok ? null : checked.errors,
     };
   } catch (error) {
     if (!isMissingSchema(error)) throw error;
-    return { config: DEFAULT_PP_CONFIG, version: 0, migrated: false, updatedAt: null };
+    return {
+      config: DEFAULT_PP_CONFIG,
+      version: 0,
+      migrated: false,
+      updatedAt: null,
+      updatedBy: null,
+      storedErrors: null,
+    };
   }
 }
 
-export async function savePpConfig(config: PpConfig, actor: string) {
+/** Saving with a version the editor didn't load (someone saved in between). */
+export class PpConfigConflictError extends AppError {
+  constructor(current: PpConfigState) {
+    super(
+      `The PP# configuration was changed to version ${current.version}${current.updatedBy ? ` by ${current.updatedBy}` : ""}${current.updatedAt ? ` at ${current.updatedAt}` : ""} after you opened it. Reload it, re-apply your changes, and save again.`,
+      { code: "PP_CONFIG_CONFLICT", statusCode: 409, expose: true },
+    );
+  }
+}
+
+/**
+ * Save a validated config as the next version — only if the editor loaded the current version
+ * (optimistic concurrency). Records history and revalidates stored links (flags, never resets).
+ */
+export async function savePpConfig(config: PpConfig, actor: string, expectedVersion: number) {
   const current = await getPpConfig();
   if (!current.migrated)
     throw new StoreError(`PP# mapping needs migration ${MIGRATION_084}.`, "MIGRATION_REQUIRED");
-  await agentDb().upsert(
-    "bi_pp_config",
-    {
-      id: "default",
-      config,
-      version: current.version + 1,
-      updated_by: actor,
-      updated_at: new Date().toISOString(),
-    },
-    ["id"],
-  );
+  if (current.version !== expectedVersion) throw new PpConfigConflictError(current);
+  const db = agentDb();
+  const now = new Date().toISOString();
+  const version = current.version + 1;
+  const row = { config, version, updated_by: actor, updated_at: now };
+  if (current.version === 0) {
+    try {
+      await db.insert("bi_pp_config", { id: "default", ...row });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new PpConfigConflictError(await getPpConfig());
+      throw error;
+    }
+  } else {
+    const updated = await db.update(
+      "bi_pp_config",
+      [eq("id", "default"), eq("version", expectedVersion)],
+      row,
+    );
+    if (!updated.length) throw new PpConfigConflictError(await getPpConfig());
+  }
   invalidateFinancialContext();
-  return getPpConfig();
+  const revalidation = await revalidateStoredLinks(config);
+  await db
+    .insert("bi_pp_config_history", { version, config, updated_by: actor, revalidation })
+    .catch(() => undefined);
+  return { ...(await getPpConfig()), revalidation };
+}
+
+/** Flag stored links that disagree with a config or the synced data (decisions are kept). */
+export async function revalidateStoredLinks(config: PpConfig) {
+  const ctx = await loadFinancialContext();
+  const results = revalidateLinks(ctx.ppLinks, ctx.documents, ctx.tasks, config);
+  const now = new Date().toISOString();
+  let flagged = 0;
+  let cleared = 0;
+  for (const r of results) {
+    const prior = ctx.ppLinks.find((l) => l.document_id === r.documentId);
+    if ((prior?.conflict ?? null) === r.conflict) continue;
+    await agentDb().update("bi_pp_links", [eq("document_id", r.documentId)], {
+      conflict: r.conflict,
+      revalidated_at: now,
+    });
+    if (r.conflict) flagged++;
+    else cleared++;
+  }
+  invalidateFinancialContext();
+  return { checked: results.length, flagged, cleared };
+}
+
+export async function listPpConfigHistory(limit = 20) {
+  return agentDb()
+    .select<{
+      version: number;
+      updated_by: string | null;
+      created_at: string;
+      revalidation: unknown;
+    }>("bi_pp_config_history", {
+      order: { col: "version", ascending: false },
+      limit,
+      columns: "version, updated_by, created_at, revalidation",
+    })
+    .catch(() => []);
 }
 
 export async function listPpLinks(): Promise<PpLinkRow[]> {
@@ -310,8 +392,33 @@ export function documentRows(ctx: FinancialContext): Row[] {
   return documentsWithFacts(ctx).map(({ doc, facts }) => {
     const job = doc.job_id ? ctx.jobs.get(doc.job_id) : undefined;
     const link = links.get(doc.id);
-    const pp = link?.pp_number ?? classifyDocument(doc, ctx.pp.config);
+    const stored = allLinks.get(doc.id);
     const isInvoice = doc.type === "customerInvoice";
+    const ruled = isInvoice ? classifyInvoice(doc, ctx.pp.config) : null;
+    const ppText = link?.pp_number ?? (ruled?.status === "classified" ? String(ruled.pp) : null);
+    const pp = ppText ? Number(ppText) : null;
+    const pct = milestonePercent(ctx.pp.config, pp, doc.job_id);
+    const linkPct = toNum(link?.milestone_pct ?? null);
+    const task = link?.task_id ? tasks.get(link.task_id) : undefined;
+    const approval = !isInvoice
+      ? null
+      : stored?.status === "approved"
+        ? stored.conflict
+          ? "Approved — needs review (conflict)"
+          : "Approved"
+        : stored?.status === "rejected"
+          ? "Rejected"
+          : stored?.status === "suggested"
+            ? link
+              ? "Auto-accepted (unique match)"
+              : "Pending approval"
+            : ruled?.status === "classified"
+              ? "Classified by rule (no link yet)"
+              : ruled?.status === "ambiguous"
+                ? "Ambiguous — needs manual review"
+                : ctx.pp.config.classification.mode === "none"
+                  ? null
+                  : "Unclassified";
     return {
       id: doc.id,
       "doc.id": doc.id,
@@ -341,12 +448,17 @@ export function documentRows(ctx: FinancialContext): Row[] {
       "doc.paymentCount": ctx.paymentsState.lastSucceededAt ? facts.paymentCount : null,
       "doc.lastPaymentDate": facts.lastPaymentDate,
       "doc.ppNumber": isInvoice ? pp : null,
-      "doc.milestonePct": isInvoice
-        ? (toNum(link?.milestone_pct ?? null) ?? milestonePctOf(doc, ctx.pp.config))
-        : null,
+      "doc.ppApproval": approval,
+      "doc.ppVerified": isInvoice ? stored?.status === "approved" && !stored.conflict : null,
+      "doc.milestonePct": isInvoice ? (linkPct ?? pct.pct) : null,
+      "doc.milestonePctSource":
+        isInvoice && pp ? (linkPct !== null ? "approved link" : pct.source) : null,
       "doc.milestoneTaskId": link?.task_id ?? null,
-      "doc.milestone": link?.task_id ? (tasks.get(link.task_id)?.name ?? null) : null,
-      "doc.ppLinkStatus": isInvoice ? (allLinks.get(doc.id)?.status ?? (pp ? "none" : null)) : null,
+      "doc.milestone": task?.name ?? null,
+      "doc.milestoneStart": day(task?.start_date),
+      "doc.milestoneEnd": day(task?.end_date),
+      "doc.milestoneComplete": task ? (toNum(task.completed) ?? 0) >= 1 : null,
+      "doc.ppLinkStatus": isInvoice ? (stored?.status ?? (pp ? "none" : null)) : null,
       "doc.statusConflict": facts.conflict,
       "doc.createdAt": day(doc.source_created_at),
       "doc.updatedAt": day(doc.source_updated_at),
