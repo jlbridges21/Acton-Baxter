@@ -49,3 +49,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Configurator local/dev data (import output) and source renderings (2.8 GB, not committed)
+/.configurator-local/
+/ActonADU_Configurator/Models/
+/ActonADU_Configurator/legacy_snapshot/media/
+/ActonADU_Configurator/import-report.json

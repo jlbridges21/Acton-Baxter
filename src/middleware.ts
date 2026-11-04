@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isAppAccessRole, isPendingAccessRole } from "@/lib/auth/roles";
 import { updateSession } from "@/lib/supabase/middleware";
 import { getEnv } from "@/lib/env";
+import { isConfiguratorHost } from "@/lib/configurator/public-paths";
 import { isAnonymousPublicPath } from "@/lib/public-paths";
 
 const PUBLIC_PATHS = ["/login"];
@@ -10,6 +11,13 @@ const AUTH_OPTIONAL_PREFIXES = ["/api/health", "/api/slack", "/api/internal"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // design.actonadu.com (once DNS points here) serves the public configurator at its root.
+  if (pathname === "/" && isConfiguratorHost(request.headers.get("host"))) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/design";
+    return NextResponse.rewrite(url);
+  }
 
   if (pathname.startsWith("/_next") || pathname.startsWith("/favicon") || pathname.includes(".")) {
     return NextResponse.next();

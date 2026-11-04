@@ -111,6 +111,7 @@ describe("getAdminNavSections", () => {
       "QR Code",
       "Tours",
       "Surveys",
+      "Configurator",
     ]);
     expect(sections.find((s) => s.id === "connectors")?.links.map((l) => l.label)).toEqual([
       "Connectors",

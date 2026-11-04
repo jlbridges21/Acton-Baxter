@@ -1,0 +1,17 @@
+/*
+ * Customer configurator typography. The existing site declares "Circular Pro" but its font
+ * files are not actually served (they return the HTML page), so customers see the browser's
+ * sans-serif. Same declaration here keeps the look identical; add licensed Circular Pro
+ * files with @font-face if Acton wants the intended typeface.
+ */
+.configurator-root {
+  font-family: "Circular Pro", sans-serif;
+}
+
+.configurator-root .no-scrollbar {
+  scrollbar-width: none;
+}
+
+.configurator-root .no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

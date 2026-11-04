@@ -1,3 +1,4 @@
+import { isAnonymousConfiguratorPath } from "@/lib/configurator/public-paths";
 import { isAnonymousTourPath } from "@/lib/tours/public-paths";
 
 /** `/surveys` stays authenticated. `/s/` (respondent page) and its public API do not. */
@@ -10,5 +11,9 @@ export function isAnonymousSurveyPath(pathname: string): boolean {
  * Route handlers behind these paths must do their own access checks.
  */
 export function isAnonymousPublicPath(pathname: string): boolean {
-  return isAnonymousTourPath(pathname) || isAnonymousSurveyPath(pathname);
+  return (
+    isAnonymousTourPath(pathname) ||
+    isAnonymousSurveyPath(pathname) ||
+    isAnonymousConfiguratorPath(pathname)
+  );
 }

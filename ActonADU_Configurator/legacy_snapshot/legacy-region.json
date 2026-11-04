@@ -1,0 +1,1152 @@
+{
+ "source": "Legacy design.actonadu.com quote API swept for ZIPs 93900-96199 on 2026-11-04 (manzanita-i448-a1); every priced ZIP returned basePrice 316000, i.e. one pricing region. ZIPs mapped to USPS place names via api.zippopotam.us.",
+ "regionName": "Bay Area",
+ "pricedZips": [
+  "94002",
+  "94005",
+  "94010",
+  "94014",
+  "94015",
+  "94018",
+  "94019",
+  "94020",
+  "94021",
+  "94022",
+  "94024",
+  "94025",
+  "94027",
+  "94028",
+  "94030",
+  "94034",
+  "94037",
+  "94038",
+  "94039",
+  "94040",
+  "94041",
+  "94042",
+  "94043",
+  "94044",
+  "94046",
+  "94060",
+  "94061",
+  "94062",
+  "94063",
+  "94065",
+  "94066",
+  "94070",
+  "94074",
+  "94080",
+  "94085",
+  "94086",
+  "94087",
+  "94089",
+  "94112",
+  "94128",
+  "94132",
+  "94134",
+  "94141",
+  "94301",
+  "94303",
+  "94304",
+  "94305",
+  "94306",
+  "94401",
+  "94402",
+  "94403",
+  "94404",
+  "94450",
+  "94501",
+  "94502",
+  "94504",
+  "94505",
+  "94506",
+  "94507",
+  "94508",
+  "94509",
+  "94511",
+  "94513",
+  "94514",
+  "94516",
+  "94517",
+  "94518",
+  "94519",
+  "94520",
+  "94521",
+  "94522",
+  "94523",
+  "94524",
+  "94525",
+  "94526",
+  "94528",
+  "94530",
+  "94531",
+  "94536",
+  "94537",
+  "94538",
+  "94539",
+  "94541",
+  "94542",
+  "94543",
+  "94544",
+  "94545",
+  "94546",
+  "94547",
+  "94548",
+  "94549",
+  "94550",
+  "94551",
+  "94552",
+  "94553",
+  "94555",
+  "94556",
+  "94560",
+  "94561",
+  "94562",
+  "94563",
+  "94564",
+  "94565",
+  "94566",
+  "94568",
+  "94569",
+  "94572",
+  "94575",
+  "94577",
+  "94578",
+  "94579",
+  "94580",
+  "94582",
+  "94583",
+  "94586",
+  "94587",
+  "94588",
+  "94595",
+  "94596",
+  "94597",
+  "94598",
+  "94601",
+  "94602",
+  "94603",
+  "94605",
+  "94606",
+  "94607",
+  "94608",
+  "94609",
+  "94610",
+  "94611",
+  "94612",
+  "94613",
+  "94614",
+  "94615",
+  "94618",
+  "94619",
+  "94621",
+  "94626",
+  "94644",
+  "94702",
+  "94703",
+  "94704",
+  "94705",
+  "94706",
+  "94707",
+  "94708",
+  "94709",
+  "94710",
+  "94714",
+  "94720",
+  "94800",
+  "94801",
+  "94802",
+  "94803",
+  "94804",
+  "94805",
+  "94806",
+  "94807",
+  "94850",
+  "94901",
+  "94903",
+  "94904",
+  "94920",
+  "94924",
+  "94925",
+  "94929",
+  "94930",
+  "94933",
+  "94937",
+  "94938",
+  "94939",
+  "94940",
+  "94941",
+  "94945",
+  "94946",
+  "94947",
+  "94949",
+  "94950",
+  "94952",
+  "94956",
+  "94957",
+  "94960",
+  "94963",
+  "94964",
+  "94965",
+  "94970",
+  "94971",
+  "94973",
+  "95002",
+  "95008",
+  "95013",
+  "95014",
+  "95020",
+  "95022",
+  "95023",
+  "95027",
+  "95029",
+  "95030",
+  "95031",
+  "95032",
+  "95033",
+  "95037",
+  "95038",
+  "95041",
+  "95042",
+  "95043",
+  "95044",
+  "95046",
+  "95050",
+  "95051",
+  "95053",
+  "95054",
+  "95070",
+  "95076",
+  "95086",
+  "95089",
+  "95101",
+  "95110",
+  "95111",
+  "95112",
+  "95113",
+  "95115",
+  "95116",
+  "95117",
+  "95118",
+  "95119",
+  "95120",
+  "95121",
+  "95122",
+  "95123",
+  "95124",
+  "95125",
+  "95126",
+  "95127",
+  "95128",
+  "95129",
+  "95130",
+  "95131",
+  "95132",
+  "95133",
+  "95134",
+  "95135",
+  "95136",
+  "95137",
+  "95138",
+  "95139",
+  "95140",
+  "95141",
+  "95142",
+  "95148",
+  "95150",
+  "95304",
+  "95376",
+  "95377",
+  "95391",
+  "95607"
+ ],
+ "unresolvedZips": [
+  "94034",
+  "94046",
+  "94450",
+  "94504",
+  "94644",
+  "94714",
+  "94800",
+  "95022",
+  "95027",
+  "95029",
+  "95086",
+  "95089"
+ ],
+ "zipCities": {
+  "94002": [
+   "Belmont"
+  ],
+  "94005": [
+   "Brisbane"
+  ],
+  "94010": [
+   "Burlingame"
+  ],
+  "94014": [
+   "Daly City"
+  ],
+  "94015": [
+   "Daly City"
+  ],
+  "94018": [
+   "El Granada"
+  ],
+  "94019": [
+   "Half Moon Bay"
+  ],
+  "94020": [
+   "La Honda"
+  ],
+  "94021": [
+   "Loma Mar"
+  ],
+  "94022": [
+   "Los Altos"
+  ],
+  "94024": [
+   "Los Altos"
+  ],
+  "94025": [
+   "Menlo Park"
+  ],
+  "94027": [
+   "Atherton"
+  ],
+  "94028": [
+   "Portola Valley"
+  ],
+  "94030": [
+   "Millbrae"
+  ],
+  "94034": [],
+  "94037": [
+   "Montara"
+  ],
+  "94038": [
+   "Moss Beach"
+  ],
+  "94039": [
+   "Mountain View"
+  ],
+  "94040": [
+   "Mountain View"
+  ],
+  "94041": [
+   "Mountain View"
+  ],
+  "94042": [
+   "Mountain View"
+  ],
+  "94043": [
+   "Mountain View"
+  ],
+  "94044": [
+   "Pacifica"
+  ],
+  "94046": [],
+  "94060": [
+   "Pescadero"
+  ],
+  "94061": [
+   "Redwood City"
+  ],
+  "94062": [
+   "Redwood City"
+  ],
+  "94063": [
+   "Redwood City"
+  ],
+  "94065": [
+   "Redwood City"
+  ],
+  "94066": [
+   "San Bruno"
+  ],
+  "94070": [
+   "San Carlos"
+  ],
+  "94074": [
+   "San Gregorio"
+  ],
+  "94080": [
+   "South San Francisco"
+  ],
+  "94085": [
+   "Sunnyvale"
+  ],
+  "94086": [
+   "Sunnyvale"
+  ],
+  "94087": [
+   "Sunnyvale"
+  ],
+  "94089": [
+   "Sunnyvale"
+  ],
+  "94112": [
+   "San Francisco"
+  ],
+  "94128": [
+   "San Francisco"
+  ],
+  "94132": [
+   "San Francisco"
+  ],
+  "94134": [
+   "San Francisco"
+  ],
+  "94141": [
+   "San Francisco"
+  ],
+  "94301": [
+   "Palo Alto"
+  ],
+  "94303": [
+   "Palo Alto"
+  ],
+  "94304": [
+   "Palo Alto"
+  ],
+  "94305": [
+   "Stanford"
+  ],
+  "94306": [
+   "Palo Alto"
+  ],
+  "94401": [
+   "San Mateo"
+  ],
+  "94402": [
+   "San Mateo"
+  ],
+  "94403": [
+   "San Mateo"
+  ],
+  "94404": [
+   "San Mateo"
+  ],
+  "94450": [],
+  "94501": [
+   "Alameda"
+  ],
+  "94502": [
+   "Alameda"
+  ],
+  "94504": [],
+  "94505": [
+   "Discovery Bay"
+  ],
+  "94506": [
+   "Danville"
+  ],
+  "94507": [
+   "Alamo"
+  ],
+  "94508": [
+   "Angwin"
+  ],
+  "94509": [
+   "Antioch"
+  ],
+  "94511": [
+   "Bethel Island"
+  ],
+  "94513": [
+   "Brentwood"
+  ],
+  "94514": [
+   "Byron"
+  ],
+  "94516": [
+   "Canyon"
+  ],
+  "94517": [
+   "Clayton"
+  ],
+  "94518": [
+   "Concord"
+  ],
+  "94519": [
+   "Concord"
+  ],
+  "94520": [
+   "Concord"
+  ],
+  "94521": [
+   "Concord"
+  ],
+  "94522": [
+   "Concord"
+  ],
+  "94523": [
+   "Pleasant Hill"
+  ],
+  "94524": [
+   "Concord"
+  ],
+  "94525": [
+   "Crockett"
+  ],
+  "94526": [
+   "Danville"
+  ],
+  "94528": [
+   "Diablo"
+  ],
+  "94530": [
+   "El Cerrito"
+  ],
+  "94531": [
+   "Antioch"
+  ],
+  "94536": [
+   "Fremont"
+  ],
+  "94537": [
+   "Fremont"
+  ],
+  "94538": [
+   "Fremont"
+  ],
+  "94539": [
+   "Fremont"
+  ],
+  "94541": [
+   "Hayward"
+  ],
+  "94542": [
+   "Hayward"
+  ],
+  "94543": [
+   "Hayward"
+  ],
+  "94544": [
+   "Hayward"
+  ],
+  "94545": [
+   "Hayward"
+  ],
+  "94546": [
+   "Castro Valley"
+  ],
+  "94547": [
+   "Hercules"
+  ],
+  "94548": [
+   "Knightsen"
+  ],
+  "94549": [
+   "Lafayette"
+  ],
+  "94550": [
+   "Livermore"
+  ],
+  "94551": [
+   "Livermore"
+  ],
+  "94552": [
+   "Castro Valley"
+  ],
+  "94553": [
+   "Martinez"
+  ],
+  "94555": [
+   "Fremont"
+  ],
+  "94556": [
+   "Moraga"
+  ],
+  "94560": [
+   "Newark"
+  ],
+  "94561": [
+   "Oakley"
+  ],
+  "94562": [
+   "Oakville"
+  ],
+  "94563": [
+   "Orinda"
+  ],
+  "94564": [
+   "Pinole"
+  ],
+  "94565": [
+   "Pittsburg"
+  ],
+  "94566": [
+   "Pleasanton"
+  ],
+  "94568": [
+   "Dublin"
+  ],
+  "94569": [
+   "Port Costa"
+  ],
+  "94572": [
+   "Rodeo"
+  ],
+  "94575": [
+   "Moraga"
+  ],
+  "94577": [
+   "San Leandro"
+  ],
+  "94578": [
+   "San Leandro"
+  ],
+  "94579": [
+   "San Leandro"
+  ],
+  "94580": [
+   "San Lorenzo"
+  ],
+  "94582": [
+   "San Ramon"
+  ],
+  "94583": [
+   "San Ramon"
+  ],
+  "94586": [
+   "Sunol"
+  ],
+  "94587": [
+   "Union City"
+  ],
+  "94588": [
+   "Pleasanton"
+  ],
+  "94595": [
+   "Walnut Creek"
+  ],
+  "94596": [
+   "Walnut Creek"
+  ],
+  "94597": [
+   "Walnut Creek"
+  ],
+  "94598": [
+   "Walnut Creek"
+  ],
+  "94601": [
+   "Oakland"
+  ],
+  "94602": [
+   "Oakland"
+  ],
+  "94603": [
+   "Oakland"
+  ],
+  "94605": [
+   "Oakland"
+  ],
+  "94606": [
+   "Oakland"
+  ],
+  "94607": [
+   "Oakland"
+  ],
+  "94608": [
+   "Emeryville"
+  ],
+  "94609": [
+   "Oakland"
+  ],
+  "94610": [
+   "Oakland"
+  ],
+  "94611": [
+   "Oakland"
+  ],
+  "94612": [
+   "Oakland"
+  ],
+  "94613": [
+   "Oakland"
+  ],
+  "94614": [
+   "Oakland"
+  ],
+  "94615": [
+   "Oakland"
+  ],
+  "94618": [
+   "Oakland"
+  ],
+  "94619": [
+   "Oakland"
+  ],
+  "94621": [
+   "Oakland"
+  ],
+  "94626": [
+   "Oakland"
+  ],
+  "94644": [],
+  "94702": [
+   "Berkeley"
+  ],
+  "94703": [
+   "Berkeley"
+  ],
+  "94704": [
+   "Berkeley"
+  ],
+  "94705": [
+   "Berkeley"
+  ],
+  "94706": [
+   "Albany"
+  ],
+  "94707": [
+   "Berkeley"
+  ],
+  "94708": [
+   "Berkeley"
+  ],
+  "94709": [
+   "Berkeley"
+  ],
+  "94710": [
+   "Berkeley"
+  ],
+  "94714": [],
+  "94720": [
+   "Berkeley"
+  ],
+  "94800": [],
+  "94801": [
+   "Richmond"
+  ],
+  "94802": [
+   "Richmond"
+  ],
+  "94803": [
+   "El Sobrante"
+  ],
+  "94804": [
+   "Richmond"
+  ],
+  "94805": [
+   "Richmond"
+  ],
+  "94806": [
+   "San Pablo"
+  ],
+  "94807": [
+   "Richmond"
+  ],
+  "94850": [
+   "Richmond"
+  ],
+  "94901": [
+   "San Rafael"
+  ],
+  "94903": [
+   "San Rafael"
+  ],
+  "94904": [
+   "Greenbrae"
+  ],
+  "94920": [
+   "Belvedere Tiburon"
+  ],
+  "94924": [
+   "Bolinas"
+  ],
+  "94925": [
+   "Corte Madera"
+  ],
+  "94929": [
+   "Dillon Beach"
+  ],
+  "94930": [
+   "Fairfax"
+  ],
+  "94933": [
+   "Forest Knolls"
+  ],
+  "94937": [
+   "Inverness"
+  ],
+  "94938": [
+   "Lagunitas"
+  ],
+  "94939": [
+   "Larkspur"
+  ],
+  "94940": [
+   "Marshall"
+  ],
+  "94941": [
+   "Mill Valley"
+  ],
+  "94945": [
+   "Novato"
+  ],
+  "94946": [
+   "Nicasio"
+  ],
+  "94947": [
+   "Novato"
+  ],
+  "94949": [
+   "Novato"
+  ],
+  "94950": [
+   "Olema"
+  ],
+  "94952": [
+   "Petaluma"
+  ],
+  "94956": [
+   "Point Reyes Station"
+  ],
+  "94957": [
+   "Ross"
+  ],
+  "94960": [
+   "San Anselmo"
+  ],
+  "94963": [
+   "San Geronimo"
+  ],
+  "94964": [
+   "San Quentin"
+  ],
+  "94965": [
+   "Sausalito"
+  ],
+  "94970": [
+   "Stinson Beach"
+  ],
+  "94971": [
+   "Tomales"
+  ],
+  "94973": [
+   "Woodacre"
+  ],
+  "95002": [
+   "Alviso"
+  ],
+  "95008": [
+   "Campbell"
+  ],
+  "95013": [
+   "Coyote"
+  ],
+  "95014": [
+   "Cupertino"
+  ],
+  "95020": [
+   "Gilroy"
+  ],
+  "95022": [],
+  "95023": [
+   "Hollister"
+  ],
+  "95027": [],
+  "95029": [],
+  "95030": [
+   "Los Gatos"
+  ],
+  "95031": [
+   "Los Gatos"
+  ],
+  "95032": [
+   "Los Gatos"
+  ],
+  "95033": [
+   "Los Gatos"
+  ],
+  "95037": [
+   "Morgan Hill"
+  ],
+  "95038": [
+   "Morgan Hill"
+  ],
+  "95041": [
+   "Mount Hermon"
+  ],
+  "95042": [
+   "New Almaden"
+  ],
+  "95043": [
+   "Paicines"
+  ],
+  "95044": [
+   "Redwood Estates"
+  ],
+  "95046": [
+   "San Martin"
+  ],
+  "95050": [
+   "Santa Clara"
+  ],
+  "95051": [
+   "Santa Clara"
+  ],
+  "95053": [
+   "Santa Clara"
+  ],
+  "95054": [
+   "Santa Clara"
+  ],
+  "95070": [
+   "Saratoga"
+  ],
+  "95076": [
+   "Watsonville"
+  ],
+  "95086": [],
+  "95089": [],
+  "95101": [
+   "San Jose"
+  ],
+  "95110": [
+   "San Jose"
+  ],
+  "95111": [
+   "San Jose"
+  ],
+  "95112": [
+   "San Jose"
+  ],
+  "95113": [
+   "San Jose"
+  ],
+  "95115": [
+   "San Jose"
+  ],
+  "95116": [
+   "San Jose"
+  ],
+  "95117": [
+   "San Jose"
+  ],
+  "95118": [
+   "San Jose"
+  ],
+  "95119": [
+   "San Jose"
+  ],
+  "95120": [
+   "San Jose"
+  ],
+  "95121": [
+   "San Jose"
+  ],
+  "95122": [
+   "San Jose"
+  ],
+  "95123": [
+   "San Jose"
+  ],
+  "95124": [
+   "San Jose"
+  ],
+  "95125": [
+   "San Jose"
+  ],
+  "95126": [
+   "San Jose"
+  ],
+  "95127": [
+   "San Jose"
+  ],
+  "95128": [
+   "San Jose"
+  ],
+  "95129": [
+   "San Jose"
+  ],
+  "95130": [
+   "San Jose"
+  ],
+  "95131": [
+   "San Jose"
+  ],
+  "95132": [
+   "San Jose"
+  ],
+  "95133": [
+   "San Jose"
+  ],
+  "95134": [
+   "San Jose"
+  ],
+  "95135": [
+   "San Jose"
+  ],
+  "95136": [
+   "San Jose"
+  ],
+  "95137": [
+   "San Jose"
+  ],
+  "95138": [
+   "San Jose"
+  ],
+  "95139": [
+   "San Jose"
+  ],
+  "95140": [
+   "Mount Hamilton"
+  ],
+  "95141": [
+   "San Jose"
+  ],
+  "95142": [
+   "San Jose"
+  ],
+  "95148": [
+   "San Jose"
+  ],
+  "95150": [
+   "San Jose"
+  ],
+  "95304": [
+   "Tracy",
+   "Banta"
+  ],
+  "95376": [
+   "Tracy"
+  ],
+  "95377": [
+   "Tracy"
+  ],
+  "95391": [
+   "Tracy"
+  ],
+  "95607": [
+   "Capay"
+  ]
+ },
+ "cities": [
+  "Alameda",
+  "Alamo",
+  "Albany",
+  "Alviso",
+  "Angwin",
+  "Antioch",
+  "Atherton",
+  "Banta",
+  "Belmont",
+  "Belvedere Tiburon",
+  "Berkeley",
+  "Bethel Island",
+  "Bolinas",
+  "Brentwood",
+  "Brisbane",
+  "Burlingame",
+  "Byron",
+  "Campbell",
+  "Canyon",
+  "Capay",
+  "Castro Valley",
+  "Clayton",
+  "Concord",
+  "Corte Madera",
+  "Coyote",
+  "Crockett",
+  "Cupertino",
+  "Daly City",
+  "Danville",
+  "Diablo",
+  "Dillon Beach",
+  "Discovery Bay",
+  "Dublin",
+  "El Cerrito",
+  "El Granada",
+  "El Sobrante",
+  "Emeryville",
+  "Fairfax",
+  "Forest Knolls",
+  "Fremont",
+  "Gilroy",
+  "Greenbrae",
+  "Half Moon Bay",
+  "Hayward",
+  "Hercules",
+  "Hollister",
+  "Inverness",
+  "Knightsen",
+  "La Honda",
+  "Lafayette",
+  "Lagunitas",
+  "Larkspur",
+  "Livermore",
+  "Loma Mar",
+  "Los Altos",
+  "Los Gatos",
+  "Marshall",
+  "Martinez",
+  "Menlo Park",
+  "Mill Valley",
+  "Millbrae",
+  "Montara",
+  "Moraga",
+  "Morgan Hill",
+  "Moss Beach",
+  "Mount Hamilton",
+  "Mount Hermon",
+  "Mountain View",
+  "New Almaden",
+  "Newark",
+  "Nicasio",
+  "Novato",
+  "Oakland",
+  "Oakley",
+  "Oakville",
+  "Olema",
+  "Orinda",
+  "Pacifica",
+  "Paicines",
+  "Palo Alto",
+  "Pescadero",
+  "Petaluma",
+  "Pinole",
+  "Pittsburg",
+  "Pleasant Hill",
+  "Pleasanton",
+  "Point Reyes Station",
+  "Port Costa",
+  "Portola Valley",
+  "Redwood City",
+  "Redwood Estates",
+  "Richmond",
+  "Rodeo",
+  "Ross",
+  "San Anselmo",
+  "San Bruno",
+  "San Carlos",
+  "San Francisco",
+  "San Geronimo",
+  "San Gregorio",
+  "San Jose",
+  "San Leandro",
+  "San Lorenzo",
+  "San Martin",
+  "San Mateo",
+  "San Pablo",
+  "San Quentin",
+  "San Rafael",
+  "San Ramon",
+  "Santa Clara",
+  "Saratoga",
+  "Sausalito",
+  "South San Francisco",
+  "Stanford",
+  "Stinson Beach",
+  "Sunnyvale",
+  "Sunol",
+  "Tomales",
+  "Tracy",
+  "Union City",
+  "Walnut Creek",
+  "Watsonville",
+  "Woodacre"
+ ]
+}

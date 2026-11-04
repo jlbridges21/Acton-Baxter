@@ -175,6 +175,18 @@ export const BAXTER_TOOLS: BaxterTool[] = [
     aliases: ["qr", "qr code"],
   },
   {
+    key: "configurator",
+    name: "Configurator",
+    description:
+      "Models, renderings, styles and regional pricing for the customer ADU configurator.",
+    href: "/configurator",
+    enabled: true,
+    adminOnly: true,
+    icon: House,
+    ctaLabel: "Open Configurator",
+    aliases: ["design", "design.actonadu.com", "adu configurator", "pricing regions"],
+  },
+  {
     key: "tours",
     name: "Tours",
     description: "Build 360° virtual tours from panorama photos.",
