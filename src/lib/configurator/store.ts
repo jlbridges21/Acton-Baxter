@@ -167,11 +167,14 @@ export function resetConfiguratorMemoryForTests(seed?: {
 type PgError = { code?: string; message?: string } | null;
 
 function isMissingTable(error: PgError): boolean {
-  return Boolean(
-    error &&
-    (error.code === "42P01" ||
-      error.code === "PGRST205" ||
-      /does not exist|schema cache/i.test(error.message ?? "")),
+  if (!error) return false;
+  // Only a missing *table* means "not set up". Other errors (e.g. a bad column) are real bugs.
+  return (
+    error.code === "42P01" ||
+    error.code === "PGRST205" ||
+    /relation "?[\w.]*configurator_\w+"? does not exist|could not find the table/i.test(
+      error.message ?? "",
+    )
   );
 }
 
@@ -455,7 +458,7 @@ type ReleaseRow = {
   rolled_back_from: number | null;
   summary: PublishSummary;
   snapshot?: ReleaseSnapshot;
-  profiles?: { full_name: string | null; email: string | null } | null;
+  profiles?: { full_name: string | null } | null;
 };
 
 function releaseFromRow(row: ReleaseRow): ReleaseSummary {
@@ -464,7 +467,7 @@ function releaseFromRow(row: ReleaseRow): ReleaseSummary {
     notes: row.notes,
     publishedAt: row.published_at,
     publishedBy: row.published_by,
-    publishedByName: row.profiles?.full_name ?? row.profiles?.email ?? null,
+    publishedByName: row.profiles?.full_name ?? null,
     rolledBackFrom: row.rolled_back_from,
     summary: row.summary,
   };
@@ -507,7 +510,7 @@ export async function listReleases(): Promise<ReleaseSummary[]> {
   const { data, error } = await supabase
     .from("configurator_releases")
     .select(
-      "version, notes, published_at, published_by, rolled_back_from, summary, profiles:published_by(full_name, email)",
+      "version, notes, published_at, published_by, rolled_back_from, summary, profiles:published_by(full_name)",
     )
     .order("version", { ascending: false })
     .limit(100);
