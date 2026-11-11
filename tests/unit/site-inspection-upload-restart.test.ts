@@ -277,7 +277,9 @@ describe("completed uploads must not restart", () => {
     expect(prepareCalls.filter((id) => id === PHOTO)).toHaveLength(1);
     expect(completeCalls.filter((id) => id === PHOTO)).toEqual([PHOTO]);
     expect(startOrder).toEqual([VIDEO, PHOTO]);
-    expect(maxInFlight).toBe(1);
+    // A photo may now ride alongside the single video lane, so in-flight can
+    // reach 2. One stuck video previously starved every photo behind it.
+    expect(maxInFlight).toBeLessThanOrEqual(2);
     assertProgressNeverRestarts(PHOTO);
     assertProgressNeverRestarts(VIDEO);
     expect(await listMediaQueueItemsForTests()).toHaveLength(0);
@@ -297,6 +299,7 @@ describe("completed uploads must not restart", () => {
     await drainUntilSettled();
 
     expect(startOrder).toEqual(ids);
+    // Photos still upload one at a time — only the video lane is separate.
     expect(maxInFlight).toBe(1);
     for (const id of ids) {
       expect(sendsById.get(id)).toBe(1);
@@ -328,8 +331,11 @@ describe("completed uploads must not restart", () => {
     await drainUntilSettled();
 
     expect(startOrder).toEqual([VIDEO, PHOTO, "photo-late"]);
-    expect(maxInFlight).toBe(1);
-    expect(completeCalls).toEqual([VIDEO, PHOTO, "photo-late"]);
+    // Video lane and photo lane run in parallel, so at most one of each.
+    expect(maxInFlight).toBeLessThanOrEqual(2);
+    // Photos no longer wait for the video to finish, so completion order is not
+    // the start order. Every file must still complete exactly once.
+    expect([...completeCalls].sort()).toEqual([PHOTO, VIDEO, "photo-late"].sort());
     for (const id of [VIDEO, PHOTO, "photo-late"]) {
       expect(sendsById.get(id)).toBe(1);
       assertProgressNeverRestarts(id);

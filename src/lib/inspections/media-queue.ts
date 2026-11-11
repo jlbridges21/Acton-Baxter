@@ -38,8 +38,25 @@ export const UPLOAD_REQUEST_TIMEOUT_MS = 90_000;
 export const QUEUE_STALL_WATCHDOG_MS = 3 * 60_000;
 /** Periodic drain tick — recovers when backoff expires or a drain loop exited early. */
 export const DRAIN_POLL_INTERVAL_MS = 15_000;
-/** Large videos on cell need a long window; TUS resume handles shorter outages. */
+/**
+ * Large videos on cell need a long window; TUS resume handles shorter outages.
+ * This is a ceiling for a transfer that IS progressing, not a stall allowance —
+ * see TUS_NO_PROGRESS_TIMEOUT_MS.
+ */
 const TUS_UPLOAD_TIMEOUT_MS = 3 * 60 * 60 * 1000;
+/**
+ * Abort a video transfer that moves no bytes for this long.
+ *
+ * Without this the only guard was the 3-hour wall clock above. One video that
+ * stalled at 0% on weak signal held the single upload slot for three hours, so
+ * every other file behind it — including every photo — sat in `queued` and the
+ * UI showed them all as stalled at 0%. Retry All reset the queue and the same
+ * item stalled again, which is why retrying never appeared to do anything.
+ *
+ * Aborting on no-progress frees the slot in minutes instead of hours, and the
+ * item retries with backoff from its last byte offset.
+ */
+export const TUS_NO_PROGRESS_TIMEOUT_MS = 90_000;
 
 export type QueueItemStatus = "queued" | "uploading" | "finalizing" | "uploaded" | "failed";
 
@@ -122,6 +139,9 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 let draining = false;
 let drainingStartedAt = 0;
 let activeUploads = 0;
+/** Per-lane in-flight counts so a video cannot block photos (see drainMediaQueue). */
+let inFlightVideos = 0;
+let inFlightPhotos = 0;
 /** Bumped by retryAll so superseded processOne handlers do not corrupt state. */
 let drainGeneration = 0;
 const listeners = new Set<QueueListener>();
@@ -154,6 +174,8 @@ export function resetMediaQueueMemoryForTests(): void {
   draining = false;
   drainingStartedAt = 0;
   activeUploads = 0;
+  inFlightVideos = 0;
+  inFlightPhotos = 0;
   drainGeneration = 0;
   listeners.clear();
   inFlight.clear();
@@ -636,18 +658,29 @@ export async function purgeOrphanMediaQueueEntries(
   return removed;
 }
 
+/**
+ * Only 410 Gone means "this inspection is deleted, stop trying".
+ *
+ * 404 used to count too, which made any transient 404 — a deploy swapping the
+ * route out, a cold start, a proxy hiccup — permanently delete the only copy of
+ * a field photo. Queued bytes are irreplaceable without a second site visit, so
+ * an ambiguous signal now parks the item as failed and leaves the user to
+ * decide, rather than discarding it for them.
+ */
 function isInspectionGoneStatus(status: number): boolean {
-  return status === 404 || status === 410;
+  return status === 410;
 }
 
-function isInspectionGoneMessage(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("not found") ||
-    m.includes("deleted") ||
-    m.includes("no longer available") ||
-    m.includes("inspection not found")
-  );
+/**
+ * Deliberately NOT a message-substring check.
+ *
+ * This previously matched any error text containing "not found" or "deleted",
+ * so unrelated server messages ("Unknown checklist item…", a storage error
+ * mentioning a deleted object) could silently destroy queued media. Discarding
+ * is now driven solely by the HTTP status above.
+ */
+function isInspectionGoneMessage(_message: string): boolean {
+  return false;
 }
 
 function backoffMs(attempts: number): number {
@@ -965,11 +998,34 @@ function uploadTus(input: {
   return new Promise((resolve, reject) => {
     void (async () => {
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let noProgressTimeoutId: ReturnType<typeof setTimeout> | null = null;
+      let lastBytesUploaded = -1;
       let upload: TusUpload | null = null;
       let settled = false;
+      /**
+       * Free the single upload slot when a transfer moves no bytes. Abort with
+       * terminate=false so the server-side upload and its Location survive and
+       * the retry resumes from the last offset instead of restarting at zero.
+       */
+      const armNoProgressWatchdog = () => {
+        if (noProgressTimeoutId) clearTimeout(noProgressTimeoutId);
+        noProgressTimeoutId = setTimeout(() => {
+          try {
+            upload?.abort(false);
+          } catch {
+            /* ignore */
+          }
+          settle(() =>
+            reject(
+              uploadAttemptError("Upload made no progress — will retry from where it stopped"),
+            ),
+          );
+        }, TUS_NO_PROGRESS_TIMEOUT_MS);
+      };
       const settle = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        if (noProgressTimeoutId) clearTimeout(noProgressTimeoutId);
         activeAbortByClientId.delete(input.clientMediaId);
         fn();
       };
@@ -1073,10 +1129,17 @@ function uploadTus(input: {
             settle(() => reject(error));
           },
           onProgress: (bytesUploaded, bytesTotal) => {
+            // Any forward movement resets the no-progress watchdog. A transfer
+            // that keeps moving is allowed the full TUS_UPLOAD_TIMEOUT_MS.
+            if (bytesUploaded > lastBytesUploaded) {
+              lastBytesUploaded = bytesUploaded;
+              armNoProgressWatchdog();
+            }
             if (bytesTotal > 0) input.onProgress(bytesUploaded / bytesTotal);
           },
           onSuccess: () => {
             if (timeoutId) clearTimeout(timeoutId);
+            if (noProgressTimeoutId) clearTimeout(noProgressTimeoutId);
             settle(() => resolve());
           },
         });
@@ -1127,6 +1190,7 @@ function uploadTus(input: {
             upload.resumeFromPreviousUpload(previous[0]!);
           }
         }
+        armNoProgressWatchdog();
         upload.start();
       } catch (error) {
         if (timeoutId) clearTimeout(timeoutId);
@@ -1644,6 +1708,22 @@ async function finalizeMediaUpload(item: MediaQueueItem): Promise<SiteInspection
 }
 
 export async function drainMediaQueue(): Promise<void> {
+  // A leaked activeUploads count wedges the queue permanently: the inner loop
+  // below only starts work while activeUploads < MEDIA_UPLOAD_CONCURRENCY, and
+  // `draining` is cleared in the finally long before activeUploads is. The old
+  // recovery check looked only at `draining`, so a slot that was never released
+  // left every item sitting in `queued` at 0% with nothing able to clear it —
+  // and Retry All appeared to do nothing. Reclaim slots with no live upload.
+  if (activeUploads > 0 && inFlight.size === 0) {
+    console.error("[site-inspection-media] reclaiming leaked upload slots", {
+      activeUploads,
+      inFlightVideos,
+      inFlightPhotos,
+    });
+    activeUploads = 0;
+    inFlightVideos = 0;
+    inFlightPhotos = 0;
+  }
   if (draining) {
     // Safety: a hung listAllItems / IDB op must not leave draining=true forever.
     if (drainingStartedAt && Date.now() - drainingStartedAt > UPLOAD_REQUEST_TIMEOUT_MS) {
@@ -1659,6 +1739,8 @@ export async function drainMediaQueue(): Promise<void> {
       drainingStartedAt = 0;
       inFlight.clear();
       activeUploads = 0;
+      inFlightVideos = 0;
+      inFlightPhotos = 0;
       drainGeneration += 1;
     } else {
       return;
@@ -1704,13 +1786,28 @@ export async function drainMediaQueue(): Promise<void> {
         (a, b) => a.createdAt - b.createdAt || a.clientMediaId.localeCompare(b.clientMediaId),
       );
 
-      while (
-        generation === drainGeneration &&
-        activeUploads < MEDIA_UPLOAD_CONCURRENCY &&
-        ready.length
-      ) {
-        const next = ready.shift()!;
+      // One video at a time (ADR: parallel transfers were slower on a phone and
+      // raced on progress writes), but a photo may ride alongside it. A single
+      // large video otherwise blocks every photo behind it, which is how 45
+      // files ended up sitting at 0% together.
+      let lanesFull = false;
+      while (generation === drainGeneration && ready.length) {
+        const videoBusy = inFlightVideos > 0;
+        const photoBusy = inFlightPhotos >= MEDIA_UPLOAD_CONCURRENCY;
+        const index = ready.findIndex((entry) =>
+          entry.mediaType === "video" ? !videoBusy : !photoBusy,
+        );
+        if (index === -1) {
+          // Every free lane is taken. Stop here: the .finally() of a running
+          // upload re-enters the drain. Looping again on a non-empty `ready`
+          // would spin the event loop without starting anything.
+          lanesFull = true;
+          break;
+        }
+        const next = ready.splice(index, 1)[0]!;
         if (inFlight.has(next.clientMediaId)) continue;
+        if (next.mediaType === "video") inFlightVideos += 1;
+        else inFlightPhotos += 1;
         inFlight.add(next.clientMediaId);
         activeUploads += 1;
         console.info("[site-inspection-media] drain starting upload", {
@@ -1737,13 +1834,15 @@ export async function drainMediaQueue(): Promise<void> {
           .finally(() => {
             inFlight.delete(next.clientMediaId);
             activeUploads = Math.max(0, activeUploads - 1);
+            if (next.mediaType === "video") inFlightVideos = Math.max(0, inFlightVideos - 1);
+            else inFlightPhotos = Math.max(0, inFlightPhotos - 1);
             if (generation === drainGeneration) {
               void drainMediaQueue();
             }
           });
       }
 
-      if (activeUploads >= MEDIA_UPLOAD_CONCURRENCY || !ready.length) {
+      if (lanesFull || !ready.length) {
         break;
       }
     }
@@ -1778,6 +1877,8 @@ export async function retryAllMediaUploads(inspectionId?: string): Promise<numbe
   activeAbortByClientId.clear();
   inFlight.clear();
   activeUploads = 0;
+  inFlightVideos = 0;
+  inFlightPhotos = 0;
   draining = false;
   drainingStartedAt = 0;
   drainGeneration += 1;
