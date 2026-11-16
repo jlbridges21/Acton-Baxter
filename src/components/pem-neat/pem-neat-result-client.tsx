@@ -10,6 +10,7 @@ import { ExportPemNeatPdfButton } from "@/components/pem-neat/export-pem-neat-pd
 import { PemNeatPrintHeader } from "@/components/pem-neat/pem-neat-print-header";
 import { BuildertrendFieldsPanel } from "@/components/pem-neat/buildertrend-fields-panel";
 import { ConfirmDialog } from "@/components/pem-neat/confirm-dialog";
+import { SyncToGhlButton } from "@/components/pem-neat/sync-to-ghl-button";
 import { CopyButton } from "@/components/pem-neat/copy-button";
 import {
   GeneratingCard,
@@ -292,6 +293,12 @@ export function PemNeatResultClient({
             </button>
             {result ? (
               <>
+                <SyncToGhlButton
+                  pemNeatId={item.id}
+                  prospectName={item.prospect_name}
+                  fields={btFields}
+                  disabled={isGenerating}
+                />
                 <CopyButton
                   getText={() => followUpEmailCopy}
                   label="Copy Follow-Up Email"

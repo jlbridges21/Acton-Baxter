@@ -17,6 +17,7 @@
         "AI_PROVIDER=deterministic",
         "ENABLE_SLACK_INTEGRATION=false",
         "ENABLE_GHL_INTEGRATION=false",
+        "PEM_NEAT_GHL_SYNC=false",
         "npx",
         "next",
         "dev",
